@@ -51,7 +51,7 @@ public static partial class MetaBuiltins
     /// second argument outside this set is domain_error(stream_property).</summary>
     private static readonly HashSet<string> KnownStreamProperties = new()
     {
-        "file_name", "mode", "alias", "input", "output", "end_of_stream",
+        "file_name", "mode", "alias", "input", "output", "end_of_stream", "buffer_size",
         "position", "type", "reposition", "eof_action", "encoding", "bom",
     };
 
@@ -126,8 +126,12 @@ public static partial class MetaBuiltins
             if (Want("bom") && h.HadBom is bool hb)
                 pairs.Add((h, new CompoundTerm("bom",
                     new Term[] { new AtomTerm(hb ? "true" : "false") })));
-            if (h.IsReader ? Want("input") : Want("output"))
-                pairs.Add((h, h.IsReader ? (Term)new AtomTerm("input") : new AtomTerm("output")));
+            if (h.LiveConnection is { } live && Want("buffer_size"))
+                pairs.Add((h, new CompoundTerm("buffer_size", new Term[] { new IntTerm(live.BufferSize) })));
+            if (h.IsReader && Want("input"))
+                pairs.Add((h, new AtomTerm("input")));
+            if (h.IsWriter && Want("output"))
+                pairs.Add((h, new AtomTerm("output")));
             if (h.IsReader && Want("end_of_stream"))
             {
                 // §8.11.8: not / at / past. A binary reader has no
@@ -138,7 +142,7 @@ public static partial class MetaBuiltins
                 try
                 {
                     state = h.PastEof ? "past"
-                        : ReferenceEquals(h, registry.UserInput) ? "not"
+                        : ReferenceEquals(h, registry.UserInput) || h.BlocksOnRead ? "not"
                         : h.Reader is not null ? (h.Reader.Peek() >= 0 ? "not" : "at")
                         : h.BinaryStream is { CanSeek: true } bs
                             ? (bs.Position < bs.Length ? "not" : "at")

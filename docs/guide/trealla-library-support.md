@@ -10,7 +10,7 @@ see the end of this document).
 functionality can exist on Shumway works, including clp(Z) and clp(B), which
 are certified against Markus Triska's own test suites running from the
 Trealla tree. What does not run needs a capability the engine does not have
-(C FFI, network sockets, their VM's task engine). The one library that does
+(C FFI, their VM's task engine). The one library that does
 not load, `rbtrees`, depends on a `library('dialect/commons')` that is not
 present in the Trealla tree.**
 
@@ -81,7 +81,7 @@ is what runs their real `clpz.pl`.
 | rbtrees | ✗ | - | YAP-heritage source: `:- hmtype ... ---> ...` directives Shumway's reader rejects, and a `library('dialect/commons')` dependency not present in the Trealla tree. `library(assoc)` covers the ground |
 | reif | ✓ | ✓ | `if_/3`, `tfilter/3` |
 | si | ✓ | ✓ | the safe-inference type tests |
-| sockets | ✓ | - | network sockets |
+| sockets | ✓ | ✓ | the engine's own `library(sockets)`, with the same predicates |
 | sqlite3 | ✓ | - | C FFI |
 | tabling | ✓ | - | the native `:- table` (variant tabling, well-founded negation) serves this ground |
 | time | ✓ | ✓ | `sleep/1`; `current_time/1`/`format_time` load |

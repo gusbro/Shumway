@@ -9,7 +9,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 
 Kind says whether a program may define a predicate of the same name: never for control and ISO, inside a module for engine, anywhere for library. See [redefining-predicates.md](redefining-predicates.md).
 
-Sections: [Unification & comparison](#unification--comparison) · [Type checking](#type-checking) · [Arithmetic](#arithmetic) · [Term ordering](#term-ordering) · [Term inspection & construction](#term-inspection--construction) · [Control](#control) · [Findall & aggregation](#findall--aggregation) · [Database](#database) · [Lists](#lists) · [Atoms & strings](#atoms--strings) · [Attributed variables](#attributed-variables) · [Coroutining](#coroutining) · [Reified conditions](#reified-conditions) · [Input / output](#input--output) · [Flags, operators & reflection](#flags-operators--reflection) · [Grammar](#grammar) · [Global variables](#global-variables) · [Messages](#messages) · [Time](#time) · [Quad tests](#quad-tests) · [CLP(FD): domains](#clpfd-domains) · [CLP(FD): arithmetic constraints](#clpfd-arithmetic-constraints) · [CLP(FD): global constraints](#clpfd-global-constraints) · [CLP(FD): labeling](#clpfd-labeling) · [CLP(FD): reification](#clpfd-reification) · [CLP(FD): reflection](#clpfd-reflection) · [CLP(R)](#clpr)
+Sections: [Unification & comparison](#unification--comparison) · [Type checking](#type-checking) · [Arithmetic](#arithmetic) · [Term ordering](#term-ordering) · [Term inspection & construction](#term-inspection--construction) · [Control](#control) · [Findall & aggregation](#findall--aggregation) · [Database](#database) · [Lists](#lists) · [Atoms & strings](#atoms--strings) · [Attributed variables](#attributed-variables) · [Coroutining](#coroutining) · [Reified conditions](#reified-conditions) · [Input / output](#input--output) · [Flags, operators & reflection](#flags-operators--reflection) · [Grammar](#grammar) · [Global variables](#global-variables) · [Messages](#messages) · [Time](#time) · [Quad tests](#quad-tests) · [Sockets](#sockets) · [TLS](#tls) · [Processes](#processes) · [CLP(FD): domains](#clpfd-domains) · [CLP(FD): arithmetic constraints](#clpfd-arithmetic-constraints) · [CLP(FD): global constraints](#clpfd-global-constraints) · [CLP(FD): labeling](#clpfd-labeling) · [CLP(FD): reification](#clpfd-reification) · [CLP(FD): reflection](#clpfd-reflection) · [CLP(R)](#clpr)
 
 ## Unification & comparison
 
@@ -549,6 +549,59 @@ Load with `:- use_module(library(quads)).`
 | `quads_result(-Passed, -Total)` | library | The counts the last run of run_quads/0,1 reported. Fails when nothing has been run, so a script can tell "none run" from "none passed". |
 | `run_quads` | library | Runs every loaded quad test and prints quads: Passed/Total, listing the failing ids and any test whose expected block could not be classified. |
 | `run_quads(+Id)` | library | Runs the single quad test with the given id and reports it the same way. |
+
+## Sockets
+
+Load with `:- use_module(library(sockets)).`
+
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `current_host(?Host)` | library | The name of this machine. |
+| `current_hostname(?Host)` | library | The same as current_host/1. |
+| `socket_client_open(+Address, -Stream, +Options)` | library | Connects to Address and opens one stream for both directions. Address is Host:Port, inet(Host, Port), Port or unix(Path). Options: type, encoding, eof_action, alias, buffer_size, timeout, nodelay, keepalive. |
+| `socket_select(+Servers, -ServersReady, +Inputs, -InputsReady, +Outputs, -OutputsReady, +Timeout)` | library | Waits until a server has a connection or a stream can be read or written without waiting. Each entry may be Term-Entry. Timeout is in seconds, or off to wait for as long as it takes. |
+| `socket_server_accept(+ServerSocket, -Client, -Stream, +Options)` | library | Waits for a connection and opens one stream for both directions. Client is the address it came from. Options as for socket_client_open/3. |
+| `socket_server_close(+ServerSocket)` | library | Stops listening. |
+| `socket_server_open(?Address, -ServerSocket)` | library | As socket_server_open/3 with no options. |
+| `socket_server_open(?Address, -ServerSocket, +Options)` | library | Listens on Address. A variable for the port takes a free one and gives its number. Options: reuseaddr, loopback, backlog, numeric_nodename, numeric_servname. |
+| `socket_shutdown(+Stream, +How)` | library | Ends one direction of a connection and leaves the other open. How is read, write or read_write. |
+| `udp_bind(+Socket, ?Address)` | library | Gives the socket a local address. A variable for the port takes a free one and gives its number. |
+| `udp_close(+Socket)` | library | Closes a UDP socket. |
+| `udp_receive(+Socket, -Data, -From, +Options)` | library | Waits for one datagram. From is Host:Port, ready for udp_send/4. Options: type, encoding, as (atom, string, chars or codes), timeout. |
+| `udp_send(+Socket, +Data, +To, +Options)` | library | Sends one datagram. Data is text, or a list of bytes with type(binary). Options: type, encoding. |
+| `udp_socket(-Socket)` | library | As udp_socket/2 with no options. |
+| `udp_socket(-Socket, +Options)` | library | Opens a UDP socket. Options: broadcast, reuseaddr. |
+
+## TLS
+
+Load with `:- use_module(library(tls)).`
+
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `tls_client_context(-Context, +Options)` | library | What a client negotiation needs. Options: hostname, verify, cacert_file, and for a client certificate pkcs12, pkcs12_file, certificate_file, key_file, password. The server's certificate is verified unless verify(false). |
+| `tls_client_negotiate(+Context, +Stream0, -Stream)` | library | Turns Stream0, a connection to a server, into an encrypted stream. Stream0 is gone after this, whether it works or not. |
+| `tls_server_context(-Context, +Options)` | library | What a server negotiation needs. Options: pkcs12, pkcs12_file, certificate_file, key_file, password. A certificate and its key are required. |
+| `tls_server_negotiate(+Context, +Stream0, -Stream)` | library | Turns Stream0, a connection from a client, into an encrypted stream. Stream0 is gone after this, whether it works or not. |
+
+## Processes
+
+Load with `:- use_module(library(process)).`
+
+| Predicate | Kind | Description |
+| --- | --- | --- |
+| `is_process(@Term)` | library | True for a process reference not yet released. |
+| `process_create(+Executable, +Arguments)` | library | As process_create/3 with no options. |
+| `process_create(+Executable, +Arguments, +Options)` | library | Starts a program and goes on without waiting for it. Executable is a file, a name to look up on the search path, or path(Name). Options: stdin, stdout, stderr (each std, null, file(F), stream(S), pipe(S) or pipe(S, Options)), process, wait, cwd, env, environment, detached, window, priority. |
+| `process_group_kill(+Process)` | library | Ends a process and the ones it started. |
+| `process_group_kill(+Process, +Signal)` | library | As process_group_kill/1. .NET can only kill a whole tree, so Signal has to be SIGKILL. |
+| `process_id(-Pid)` | library | The operating system's id of this process. |
+| `process_id(+Process, -Pid)` | library | The operating system's id of a process. |
+| `process_kill(+Process)` | library | Sends SIGKILL. |
+| `process_kill(+Process, +Signal)` | library | Sends a signal, a number or a name such as 'SIGTERM'. On Windows any signal ends the process. |
+| `process_release(+Process)` | library | Lets go of a process reference. The process goes on. |
+| `process_wait(+Process, -Status)` | library | Waits for a process to end. Status is exit(Code) or killed(Signal). |
+| `process_wait(+Process, -Status, +Options)` | library | As process_wait/2. Options: timeout(Seconds), which can give Status = timeout, and release(Boolean). |
+| `process_which(+Executable, -File)` | library | The file an executable name stands for. Fails if there is none. |
 
 ## CLP(FD): domains
 

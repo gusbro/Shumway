@@ -3,8 +3,9 @@ using System.IO;
 namespace Shumway.Core;
 
 /// <summary>
-/// A registered Prolog stream. Wraps either a <see cref="TextReader"/>
-/// or a <see cref="TextWriter"/> (never both) along with the metadata
+/// A registered Prolog stream. Wraps a <see cref="TextReader"/>, a
+/// <see cref="TextWriter"/>, both for a stream of two directions, or a
+/// byte stream, along with the metadata
 /// ISO §8.11 wants reflective access to: mode, alias, source filename
 /// (when applicable), and a per-handle id used both for the
 /// <c>Foreign</c> cell payload and for ordered enumeration via
@@ -41,7 +42,8 @@ public sealed class StreamHandle
     public bool IsBinary => BinaryStream is not null;
 
     /// <summary>The mode this stream was opened in — <c>read</c>,
-    /// <c>write</c>, or <c>append</c>.</summary>
+    /// <c>write</c>, <c>append</c>, or <c>readwrite</c> for one that goes both
+    /// ways, such as a socket.</summary>
     public string Mode { get; }
 
     /// <summary>The path passed to <c>open/3</c> if this is a file
@@ -76,6 +78,84 @@ public sealed class StreamHandle
     /// detected; write side: written). Null when unknown / not applicable
     /// (console streams, binary).</summary>
     public bool? HadBom { get; set; }
+
+    /// <summary>True when a read can wait on the other end of a pipe or a socket, so
+    /// that a question about the stream's state must not read to answer it.</summary>
+    public bool BlocksOnRead { get; init; }
+
+    /// <summary>The pipe or socket behind the stream, if that is what it is.</summary>
+    public LiveStream? LiveConnection { get; set; }
+
+    /// <summary>The socket behind the stream, if that is what it is.</summary>
+    public System.Net.Sockets.Socket? Socket { get; set; }
+
+    private readonly object _copyGate = new();
+    private int _copies;
+    private Action? _closeAfterCopies;
+
+    /// <summary>A copy to or from a child process starts using the stream. The program can
+    /// close the stream meanwhile, as it can a descriptor the child also holds: the real
+    /// close waits for the last copy.</summary>
+    public void CopyStarted()
+    {
+        lock (_copyGate) _copies++;
+    }
+
+    /// <summary>A copy is over; if the program closed the stream, this closes it.</summary>
+    public void CopyEnded()
+    {
+        Action? close = null;
+        lock (_copyGate)
+        {
+            if (--_copies == 0)
+            {
+                close = _closeAfterCopies;
+                _closeAfterCopies = null;
+            }
+        }
+        close?.Invoke();
+    }
+
+    /// <summary>Leaves the real close for the last copy, if one is still running.</summary>
+    public bool TryCloseAfterCopies(Action close)
+    {
+        lock (_copyGate)
+        {
+            if (_copies == 0) return false;
+            _closeAfterCopies = close;
+            return true;
+        }
+    }
+
+    /// <summary>Takes the bytes read ahead of the program's reads, for a copy to send first.</summary>
+    public byte[] TakeInputBuffered()
+    {
+        if (_peekedByte != NoPeekedByte)
+        {
+            int peeked = _peekedByte;
+            _peekedByte = NoPeekedByte;
+            return peeked < 0 ? Array.Empty<byte>() : new[] { (byte)peeked };
+        }
+        if (Reader is null) return Array.Empty<byte>();
+        string decoded = Reader.TakeDecodedAhead();
+        byte[] first = decoded.Length == 0 ? Array.Empty<byte>()
+            : (TextEncodings.ByName(EncodingName ?? "utf8") ?? System.Text.Encoding.UTF8).GetBytes(decoded);
+        byte[] rest = Reader.Inner is StrictTextReader strict ? strict.TakeBuffered() : Array.Empty<byte>();
+        byte[] all = new byte[first.Length + rest.Length];
+        Buffer.BlockCopy(first, 0, all, 0, first.Length);
+        Buffer.BlockCopy(rest, 0, all, first.Length, rest.Length);
+        return all;
+    }
+
+    /// <summary>The host name the stream connected to, if it did.</summary>
+    public string? PeerHost { get; set; }
+
+    /// <summary>The encoding the program named for the stream, if it did.</summary>
+    public string? NamedEncoding { get; set; }
+
+    /// <summary>Whether input has already reached the stream's own buffers, so that a
+    /// read will not wait on the connection.</summary>
+    public bool HasBufferedInput => _peekedByte != NoPeekedByte || (Reader?.HasBuffered ?? false);
 
     /// <summary>The <c>eof_action</c> stream option: <c>eof_code</c>
     /// (a handle's default; open/3,4 set <c>StreamRegistry.DefaultEofAction</c>.
@@ -115,9 +195,9 @@ public sealed class StreamHandle
     public bool Closed { get; internal set; }
 
     public bool IsReader => Reader is not null
-        || (BinaryStream is not null && Mode == "read");
+        || (BinaryStream is not null && Mode is "read" or "readwrite");
     public bool IsWriter => Writer is not null
-        || (BinaryStream is not null && (Mode == "write" || Mode == "append"));
+        || (BinaryStream is not null && Mode is "write" or "append" or "readwrite");
 
     public StreamHandle(int id, TextReader reader, string mode, string? filename = null, string? alias = null)
     {
@@ -139,9 +219,42 @@ public sealed class StreamHandle
         if (alias is not null) _aliases.Add(alias);
     }
 
+    /// <summary>A text stream of two directions over one connection.</summary>
+    public StreamHandle(int id, TextReader reader, TextWriter writer, string mode,
+        string? filename = null, string? alias = null)
+        : this(id, reader, mode, filename, alias)
+    {
+        Writer = writer;
+    }
+
+    private const int NoPeekedByte = int.MinValue;
+    private int _peekedByte = NoPeekedByte;
+
+    /// <summary>The next byte of a binary stream, or -1 at its end.</summary>
+    public int ReadByte()
+    {
+        if (_peekedByte == NoPeekedByte) return BinaryStream!.ReadByte();
+        int b = _peekedByte;
+        _peekedByte = NoPeekedByte;
+        return b;
+    }
+
+    /// <summary>The next byte of a binary stream without consuming it, or -1 at its
+    /// end. A stream that cannot seek keeps it for the next read.</summary>
+    public int PeekByte()
+    {
+        if (_peekedByte != NoPeekedByte) return _peekedByte;
+        Stream bs = BinaryStream!;
+        if (!bs.CanSeek) return _peekedByte = bs.ReadByte();
+        long pos = bs.Position;
+        int b = bs.ReadByte();
+        bs.Position = pos;
+        return b;
+    }
+
     /// <summary>Binary-stream constructor. <paramref name="binaryStream"/>
     /// is read from for <c>read</c> mode, written to for <c>write</c>
-    /// / <c>append</c>. The text-side <see cref="Reader"/> /
+    /// / <c>append</c>, and both for <c>readwrite</c>. The text-side <see cref="Reader"/> /
     /// <see cref="Writer"/> stay null.</summary>
     public StreamHandle(int id, Stream binaryStream, string mode, string? filename = null, string? alias = null)
     {
@@ -179,6 +292,21 @@ public sealed class PositionTrackingReader : TextReader
     /// REPL's may answer -1 now and yield more once the user types.</summary>
     private int _buffered = Empty;
     private int _buffered2 = Empty;
+
+    /// <summary>Whether characters or bytes are held here or in the reader below, ahead
+    /// of their read.</summary>
+    internal bool HasBuffered => _buffered != Empty || (Inner is StrictTextReader { HasBuffered: true });
+
+    /// <summary>Takes the characters a peek decoded ahead of their read: one past the BMP,
+    /// or a line end already translated.</summary>
+    internal string TakeDecodedAhead()
+    {
+        string ahead = (_buffered != Empty ? ((char)_buffered).ToString() : "")
+            + (_buffered2 != Empty ? ((char)_buffered2).ToString() : "");
+        _buffered = Empty;
+        _buffered2 = Empty;
+        return ahead;
+    }
 
     /// <summary>The wrapped reader (typically a <c>StreamReader</c> for a
     /// file stream, or <c>Console.In</c> for <c>user_input</c>).</summary>

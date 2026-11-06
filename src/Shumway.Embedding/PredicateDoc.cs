@@ -112,6 +112,9 @@ public static class PredicateDoc
         "Messages",
         "Time",
         "Quad tests",
+        "Sockets",
+        "TLS",
+        "Processes",
         "CLP(FD): domains",
         "CLP(FD): arithmetic constraints",
         "CLP(FD): global constraints",
@@ -137,6 +140,9 @@ public static class PredicateDoc
         ("Coroutining", "coroutining", "UseCoroutining"),
         ("Reified conditions", "reif", "UseReif"),
         ("Quad tests", "quads", null),
+        ("Sockets", "sockets", null),
+        ("TLS", "tls", null),
+        ("Processes", "process", null),
         ("CLP(FD): domains", "clpfd", "UseClpfd"),
         ("CLP(FD): arithmetic constraints", "clpfd", "UseClpfd"),
         ("CLP(FD): global constraints", "clpfd", "UseClpfd"),
@@ -167,6 +173,9 @@ public static class PredicateDoc
         foreach (var lib in LibraryBundles.Names)
             CollectDocComments(LibraryBundles.SourceOf(lib), entries, PredicateKind.Library);
         CollectDocComments(CompatLibraries.QuadsSource, entries, PredicateKind.Library);
+        CollectDocComments(CompatLibraries.SocketsSource, entries, PredicateKind.Library);
+        CollectDocComments(CompatLibraries.TlsSource, entries, PredicateKind.Library);
+        CollectDocComments(CompatLibraries.ProcessSource, entries, PredicateKind.Library);
         return entries;
     }
 

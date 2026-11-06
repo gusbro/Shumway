@@ -20,6 +20,9 @@ namespace Shumway.Core;
 ///   reader that catches the error can resynchronise.</item>
 /// </list>
 ///
+/// <para>A tolerant reader gives U+FFFD for that code unit instead of raising, for text
+/// from a program or a peer whose encoding nobody can know.</para>
+///
 /// <para>An astral code point decodes to its surrogate pair, delivered as
 /// two consecutive UTF-16 units — the <see cref="StreamReader"/> behaviour
 /// the rest of the engine already expects. The text starts where the stream
@@ -38,12 +41,15 @@ public sealed class StrictTextReader : TextReader
     private readonly long _start;
     private readonly Form _form;
     private readonly int _unit;
+    private readonly bool _tolerant;
 
     /// <param name="stream">The file, positioned where the text starts.</param>
     /// <param name="encodingName">The engine name of the encoding.</param>
-    public StrictTextReader(Stream stream, string encodingName)
+    /// <param name="tolerant">Whether an ill-formed sequence reads as U+FFFD.</param>
+    public StrictTextReader(Stream stream, string encodingName, bool tolerant = false)
     {
         _stream = stream;
+        _tolerant = tolerant;
         _start = stream.CanSeek ? stream.Position : 0;
         _form = encodingName switch
         {
@@ -63,6 +69,18 @@ public sealed class StrictTextReader : TextReader
             _ => 1,
         };
     }
+
+    /// <summary>Gives up the bytes it read ahead, for whoever reads the stream next.</summary>
+    internal byte[] TakeBuffered()
+    {
+        var held = new byte[_bufLen - _bufPos];
+        Buffer.BlockCopy(_buf, _bufPos, held, 0, held.Length);
+        _bufPos = _bufLen;
+        return held;
+    }
+
+    /// <summary>Whether it holds input ahead of its reads.</summary>
+    internal bool HasBuffered => _pendingLow >= 0 || _bufPos < _bufLen;
 
     /// <summary>The underlying stream — the reposition machinery seeks it
     /// (see <c>set_stream_position/2</c>).</summary>
@@ -106,6 +124,17 @@ public sealed class StrictTextReader : TextReader
     /// name="length"/> is the sequence's byte count. Throws (consuming
     /// nothing) on an ill-formed sequence.</summary>
     private int DecodeNext(out int length)
+    {
+        if (!_tolerant) return Decode(out length);
+        try { return Decode(out length); }
+        catch (PrologRuntimeException ex) when (ex.Kind == "representation_error")
+        {
+            length = Math.Min(_unit, _bufLen - _bufPos);
+            return 0xFFFD;
+        }
+    }
+
+    private int Decode(out int length)
     {
         if (Available(1) < 1) { length = 0; return -1; }
         if (_form != Form.Utf8) return DecodeOther(out length);

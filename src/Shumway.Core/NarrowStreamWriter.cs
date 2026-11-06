@@ -16,8 +16,10 @@ public sealed class NarrowStreamWriter : StreamWriter
     /// <param name="stream">The file.</param>
     /// <param name="encoding">The encoding of the stream.</param>
     /// <param name="last">The last character the encoding holds.</param>
-    public NarrowStreamWriter(Stream stream, Encoding encoding, char last)
-        : base(stream, encoding) => _last = last;
+    /// <param name="leaveOpen">Whether the file stays open when the writer closes.</param>
+    /// <param name="chars">The characters it holds before encoding them.</param>
+    public NarrowStreamWriter(Stream stream, Encoding encoding, char last, bool leaveOpen = false, int chars = 1024)
+        : base(stream, encoding, chars, leaveOpen) => _last = last;
 
     private void Check(char c)
     {

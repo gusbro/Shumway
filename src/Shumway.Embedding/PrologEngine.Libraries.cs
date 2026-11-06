@@ -49,6 +49,22 @@ public sealed partial class PrologEngine
     // dependency importing it again) does not load it twice.
     private readonly HashSet<string> _loadedEngineLibraries = new();
 
+    // What the network libraries keep behind the terms they give out: server and UDP
+    // sockets, TLS contexts. No managed reference may live in a heap cell.
+    private readonly Dictionary<int, object> _netObjects = new();
+    private int _nextNetObjectId;
+
+    internal int AddNetObject(object entry)
+    {
+        int id = ++_nextNetObjectId;
+        _netObjects[id] = entry;
+        return id;
+    }
+
+    internal object? NetObject(int id) => _netObjects.TryGetValue(id, out object? entry) ? entry : null;
+
+    internal void RemoveNetObject(int id) => _netObjects.Remove(id);
+
     /// <summary>Loads one of the engine's own libraries by name, as a
     /// bundle that calls it asks.</summary>
     internal void UseEngineLibrary(string name)
@@ -816,6 +832,7 @@ public sealed partial class PrologEngine
             // (1) the engine's own libraries take precedence: they carry
             // native hooks and stay bare-global (no import table).
             if (LibraryBundles.IsEngineLibrary(libName)) { UseLibrary(libName); return null; }
+            if (CompatLibraries.IsNative(libName) && UseCompatLibrary(libName)) return libName;
             switch (libName)
             {
                 default:

@@ -169,7 +169,7 @@ that none of it is a defect to report:
 | capability | status in Shumway | what it blocks here |
 |---|---|---|
 | **delimited continuations** (`reset/3`, `shift/1`) | not implemented: an execution-model feature, not a library | `cont`, and Scryer's tabling which is built on it (Shumway's native `:- table` covers the feature) |
-| **Rust-side FFI / sockets / TLS / process control** | absent by construction: Shumway's foreign interface is .NET (`[PrologPredicate]`) and C (`:- native`, P/Invoke), not Scryer's Rust ABI | `ffi`, `sockets`, `tls`, `wasm`, `process`, `sgml` |
+| **Rust-side FFI** | absent by construction: Shumway's foreign interface is .NET (`[PrologPredicate]`) and C (`:- native`, P/Invoke), not Scryer's Rust ABI. `sockets`, `tls` and `process` are the engine's own libraries, with the same predicates, and take precedence over Scryer's files | `ffi`, `wasm`, `sgml` |
 | **cryptographic primitives** | no crypto backend; the randomness on offer is a seedable PRNG, **not a CSPRNG** | `crypto` hashes / HKDF / curves. `hex_bytes/2` and byte generation work, but never for key material |
 | **introspection of Scryer's own VM** | not applicable: Shumway has its own bytecode and `shumway-disasm` | `diag` (`wam_instructions/2`) |
 
@@ -180,7 +180,7 @@ cannot be served:
 |---|---|---|
 | **delimited continuations** | `cont` (`reset/3`, `shift/1`) | a VM execution-model feature |
 | `tabling` | Scryer's tabling is built on `cont` | **Shumway's own native `:- table` covers the feature**; `:- table p/2` works through our tabling engine |
-| **native bindings** | `ffi`, `sockets`, `tls`, `wasm`, `sgml` (`load_html`), `process` | Rust-side FFI / network / OS |
+| **native bindings** | `ffi`, `wasm`, `sgml` (`load_html`) | Rust-side FFI |
 | **crypto natives** | `crypto` hashes, HKDF, curves | Rust crypto backend (the pure parts DO work, see above) |
 | **VM introspection** | `diag` (`wam_instructions/2`) | decompiles Scryer's WAM; Shumway has `shumway-disasm` for its own |
 | **bootstrap internals** | `builtins`, `loader`, `ops_and_meta_predicates` | Scryer-internal modules; load as inert data |

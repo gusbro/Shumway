@@ -279,6 +279,8 @@ public static partial class MetaBuiltins
         // (the exception carries the offending object too when present).
         "permission_error" => WrapWithStampedContext(
             BuildPermissionError(re), re),
+        "timeout_error" => WrapWithStampedContext(
+            new CompoundTerm("timeout_error", new Term[] { new AtomTerm(re.Detail) }), re),
         "system_error" => WrapWithStampedContext(
             string.IsNullOrEmpty(re.Detail)
                 ? (Term)new AtomTerm("system_error")

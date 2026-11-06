@@ -18,16 +18,22 @@ beyond the classic data-structure set.
   sweep on a 4-core machine and are green run alone (in the 2026-09 sweep
   one did, `lof_anomaly_detector`, 27/27 alone). Treat those timeouts as
   machine-load sensitivity, not failures.
-- **3 suites are structurally N/A**: `process` (spawns OS processes), `redis`
-  (network sockets), `java` (an in-process JVM). Their testers run under the
-  announced dialect and would fail honestly, but they measure the host
-  platform gap, not Prolog conformance: the sweep harness skips them with a
-  distinct marker instead of mis-scoring them.
-- **23 suites declare themselves not applicable** (the sockets/HTTP service
-  stack, and `git`, `memcached`, `linda`, `gravatar`, `open_ai`, `open_id`,
-  `rest`, `s3`, which need external binaries or network services) and a
-  couple remain genuinely too slow to score (`isolation_forest_anomaly_detector`,
-  `simulated_annealing`: 30+ minutes even alone).
+- **`java` is structurally N/A**: it needs an in-process JVM. Its tester would fail
+  honestly, but it measures the host platform gap, not Prolog conformance: the sweep
+  harness skips it with a distinct marker instead of mis-scoring it.
+- **The network and process libraries wait for a branch on Logtalk's side.** Shumway
+  has [`library(sockets)`, `library(tls)` and `library(process)`](network-and-processes.md),
+  but the sweep ran before them, so they count as not applicable (the sockets/HTTP
+  service stack, and `memcached`, `gravatar`, `open_ai`, `open_id`, `rest`, `s3`). With a
+  `shumway` branch in `socket.lgt` and `process.lgt` and the adapter's `sockets` feature
+  on, in a clone (2026-11), these pass: `process` 13 with 1 skipped, `sockets` 8, `mqtt`
+  179, `rest` 66, `s3` 49, `http_server_core` 38, `open_id` 33, `smtp` 23, `open_ai` 18,
+  `http_process_transport` 17 (with `ncat` on the path), `http_client_core` 12, `gravatar`
+  8, `http_socket_transport` 1, and against real servers `amqp` 188, `redis` 55 and `stomp`
+  24. `memcached` was not run: it needs a server that was not there.
+- **`git` and `linda` declare themselves not applicable**: they need external binaries
+  or threads. A couple remain genuinely too slow to score
+  (`isolation_forest_anomaly_detector`, `simulated_annealing`: 30+ minutes even alone).
 
 Highlights among the green suites: **random 216/216**, **types 149/149**,
 **crypto 158/158**, **linear_algebra 72/72**, **ieee_754 77/77** and the whole

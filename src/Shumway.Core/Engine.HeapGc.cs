@@ -298,6 +298,14 @@ public sealed partial class Activation
         if (_deadlineAt != 0) CheckDeadline();
     }
 
+    /// <summary>A safe point for an operation waiting on the outside world: raises what
+    /// a cancellation or the time limit asks for.</summary>
+    public void WaitSafePoint()
+    {
+        if (_cancelRequested) ThrowQueryCancelled();
+        if (_deadlineAt != 0) CheckDeadline();
+    }
+
     /// <summary>The half of <see cref="BacktrackSafePoint"/> after the
     /// countdown reached zero, for generated code that decrements the
     /// countdown itself (ADR-060).</summary>

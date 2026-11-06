@@ -53,9 +53,12 @@ public sealed class HostFileStream : Stream
 
     public override void Flush()
     {
-        try { _file.Flush(); }
-        catch (IOException ex) { throw Failed(ex); }
-        catch (UnauthorizedAccessException ex) { throw Failed(ex); }
+        lock (_writeGate)
+        {
+            try { _file.Flush(); }
+            catch (IOException ex) { throw Failed(ex); }
+            catch (UnauthorizedAccessException ex) { throw Failed(ex); }
+        }
     }
 
     public override int Read(byte[] buffer, int offset, int count)
@@ -72,18 +75,28 @@ public sealed class HostFileStream : Stream
         catch (UnauthorizedAccessException ex) { throw Failed(ex); }
     }
 
+    // A child's output copied here shares the file with what the program writes: one
+    // position, so neither overwrites the other, as with a descriptor they both hold.
+    private readonly object _writeGate = new();
+
     public override void Write(byte[] buffer, int offset, int count)
     {
-        try { _file.Write(buffer, offset, count); }
-        catch (IOException ex) { throw Failed(ex); }
-        catch (UnauthorizedAccessException ex) { throw Failed(ex); }
+        lock (_writeGate)
+        {
+            try { _file.Write(buffer, offset, count); }
+            catch (IOException ex) { throw Failed(ex); }
+            catch (UnauthorizedAccessException ex) { throw Failed(ex); }
+        }
     }
 
     public override void WriteByte(byte value)
     {
-        try { _file.WriteByte(value); }
-        catch (IOException ex) { throw Failed(ex); }
-        catch (UnauthorizedAccessException ex) { throw Failed(ex); }
+        lock (_writeGate)
+        {
+            try { _file.WriteByte(value); }
+            catch (IOException ex) { throw Failed(ex); }
+            catch (UnauthorizedAccessException ex) { throw Failed(ex); }
+        }
     }
 
 #if !NETFRAMEWORK
@@ -98,9 +111,12 @@ public sealed class HostFileStream : Stream
 
     public override void Write(ReadOnlySpan<byte> buffer)
     {
-        try { _file.Write(buffer); }
-        catch (IOException ex) { throw Failed(ex); }
-        catch (UnauthorizedAccessException ex) { throw Failed(ex); }
+        lock (_writeGate)
+        {
+            try { _file.Write(buffer); }
+            catch (IOException ex) { throw Failed(ex); }
+            catch (UnauthorizedAccessException ex) { throw Failed(ex); }
+        }
     }
 #endif
 
