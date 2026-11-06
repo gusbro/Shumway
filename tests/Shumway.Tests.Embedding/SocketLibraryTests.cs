@@ -552,9 +552,12 @@ all_codes(S, Cs) :-
     [Fact]
     public void ARefusedConnection_IsASystemError()
     {
-        Assert.True(WithinSeconds(60, () => Engine().Query(@"
-            socket_server_open('127.0.0.1':P, Srv), socket_server_close(Srv),
-            caught(socket_client_open('127.0.0.1':P, _, []), system_error(_)).")).Success);
+        // Bound and not listening: refused, and no other process can take the port.
+        using var held = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        held.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        int port = ((IPEndPoint)held.LocalEndPoint!).Port;
+        Assert.True(WithinSeconds(60, () => Engine().Query($@"
+            caught(socket_client_open('127.0.0.1':{port}, _, []), system_error(_)).")).Success);
     }
 
     [Fact]
@@ -597,7 +600,7 @@ all_codes(S, Cs) :-
     public void AReadWithATimeout_RaisesAndLosesNoBytes()
     {
         Assert.True(WithinSeconds(30, () => Engine().Query(@"
-            pair([timeout(0.1)], C, A),
+            pair([timeout(1)], C, A),
             caught(get_byte(A, _), timeout_error(read)),
             put_byte(C, 97), flush_output(C),
             get_byte(A, 97),

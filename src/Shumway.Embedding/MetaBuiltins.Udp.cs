@@ -74,7 +74,7 @@ public static partial class MetaBuiltins
         int port = portTerm is VarTerm ? 0 : ResolvePort(portTerm, false, "udp");
         IPAddress ip = host.Length == 0
             ? (Socket.OSSupportsIPv6 ? IPAddress.IPv6Any : IPAddress.Any)
-            : ToSocketFamily(ResolveHost(engine.Streams!, host, new SocketOptions(), address)[0]);
+            : ResolveHost(engine.Streams!, host, new SocketOptions(), address)[0];
         udp.Client.Client.Bind(new IPEndPoint(ip, port));
         if (portTerm is not VarTerm) return true;
         int chosen = ((IPEndPoint)udp.Client.Client.LocalEndPoint!).Port;
@@ -87,11 +87,6 @@ public static partial class MetaBuiltins
 
     /// <summary><c>'$udp_bind'(+Socket, ?Address)</c></summary>
     public static bool UdpBind(Activation engine) => NetCall(engine, BindUdpSocket);
-
-    /// <summary>The socket is dual mode where IPv6 exists, so an IPv4 address goes mapped.
-    /// Not left to the socket: .NET Framework has refused the IPv4 form under load.</summary>
-    private static IPAddress ToSocketFamily(IPAddress ip)
-        => Socket.OSSupportsIPv6 && ip.AddressFamily == AddressFamily.InterNetwork ? ip.MapToIPv6() : ip;
 
     private sealed class DatagramOptions
     {
@@ -154,6 +149,10 @@ public static partial class MetaBuiltins
         return buffer.ToArray();
     }
 
+    /// <summary>Not SendAsync: on .NET Framework it gives Winsock the address without pinning
+    /// it, and a collection at that moment sends to garbage or fails. A datagram does not wait.</summary>
+    internal static void Send(UdpClient client, byte[] bytes, IPEndPoint to) => client.Client.SendTo(bytes, to);
+
     private static bool SendDatagram(Activation engine)
     {
         UdpSocketEntry udp = RequireUdpSocket(engine, MaterializeRegister(engine, 0));
@@ -165,8 +164,8 @@ public static partial class MetaBuiltins
         if (unixPath is not null || host.Length == 0)
             throw new ShumwayPrologException(IsoError.DomainError("socket_address", to));
         int port = ResolvePort(portTerm, false, "udp");
-        IPAddress ip = ToSocketFamily(ResolveHost(engine.Streams!, host, new SocketOptions(), to)[0]);
-        engine.Streams!.Wait(udp.Client.SendAsync(bytes, bytes.Length, new IPEndPoint(ip, port)), 0, "write");
+        IPAddress ip = ResolveHost(engine.Streams!, host, new SocketOptions(), to)[0];
+        Send(udp.Client, bytes, new IPEndPoint(ip, port));
         return true;
     }
 

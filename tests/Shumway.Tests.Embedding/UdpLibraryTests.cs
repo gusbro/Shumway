@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
@@ -204,6 +205,57 @@ pair(A, P, B) :-
             udp_send(B, x, '127.0.0.1':P, []),
             udp_receive(A, x, _, [as(atom), timeout(5)]),
             udp_close(A), udp_close(B).")).Success);
+    }
+
+    [Fact]
+    [Trait("Category", "Slow")]
+    public void ASend_DoesNotMindACollection()
+    {
+        using var server = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+        var to = new IPEndPoint(IPAddress.Loopback.MapToIPv6(), ((IPEndPoint)server.Client.LocalEndPoint!).Port);
+        int errors = 0;
+        string? first = null;
+        bool stop = false;
+        var collectors = new Thread[2];
+        for (int i = 0; i < collectors.Length; i++)
+        {
+            collectors[i] = new Thread(() =>
+            {
+                var keep = new object[64];
+                for (int n = 0; !Volatile.Read(ref stop); n++)
+                {
+                    // Garbage between live objects, for a compaction to have something to move.
+                    keep[n % keep.Length] = new byte[1024];
+                    for (int k = 0; k < 200; k++) GC.KeepAlive(new byte[256]);
+                    GC.Collect(0, GCCollectionMode.Forced, blocking: true, compacting: true);
+                }
+            });
+            collectors[i].Start();
+        }
+        var senders = new Thread[4];
+        for (int i = 0; i < senders.Length; i++)
+        {
+            senders[i] = new Thread(() =>
+            {
+                var data = new byte[] { 1 };
+                for (int n = 0; n < 3000; n++)
+                {
+                    using var client = new UdpClient(AddressFamily.InterNetworkV6);
+                    client.Client.DualMode = true;
+                    try { MetaBuiltins.Send(client, data, to); }
+                    catch (SocketException ex)
+                    {
+                        Interlocked.Increment(ref errors);
+                        Interlocked.CompareExchange(ref first, ex.Message, null);
+                    }
+                }
+            });
+            senders[i].Start();
+        }
+        foreach (Thread s in senders) s.Join();
+        Volatile.Write(ref stop, true);
+        foreach (Thread c in collectors) c.Join();
+        Assert.True(errors == 0, $"{errors} sends failed, the first with: {first}");
     }
 
     [Fact]
