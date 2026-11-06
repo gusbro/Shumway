@@ -476,6 +476,9 @@ public sealed partial class Activation
         if (_b > f.SnapB) return false;
         int rec = f.PushRecord;
         if (!IsCatchRecord(rec, i, CatchTrailPush)) return false;
+        // A younger choice point at the address of one a cut removed: what follows
+        // lowers the trails and the boundary to the frame's, below what it saved.
+        if (ExtraTopAtB() > rec) return false;
         if (CatchDiag)
             System.Console.Error.WriteLine($"[catch] reclaim idx={i} rec={rec} xTop={_extraTrailTop}");
         NeuterCatchRecord(rec);
@@ -526,15 +529,33 @@ public sealed partial class Activation
     // A record of a frame that is gone. On top of the trail it goes, with
     // any neutered records below it; elsewhere it stays as a record that
     // undoes nothing, the entries after it being live, until a compaction.
+    // Not below the top the newest choice point saved: comparing addresses does
+    // not make it older than the frame, a cut can have freed the address.
     private void NeuterCatchRecord(int rec)
     {
         ExtraTrailEntry e = _extraTrail[rec];
         e.OldValue = new Cell(CatchTrailReclaimed);
         _extraTrail[rec] = e;
-        while (_extraTrailTop > 0
+        // Below where the last compaction stopped it would never be walked again,
+        // and a loop that cuts after each catch would keep one for good.
+        if (rec < _compactedExtra)
+        {
+            _compactedExtra = rec;
+            _compactedBinding = Math.Min(_compactedBinding, e.BindingTrailMarker);
+        }
+        int floor = ExtraTopAtB();
+        while (_extraTrailTop > floor
                && _extraTrail[_extraTrailTop - 1].Type == TrailType.CatchFrame
                && _extraTrail[_extraTrailTop - 1].OldValue.Data == CatchTrailReclaimed)
             _extraTrailTop--;
+    }
+
+    // The extra trail top the newest choice point saved, 0 with none.
+    private int ExtraTopAtB()
+    {
+        if (_b < 0) return 0;
+        int arity = (int)_stack[_b + CpArityOffset].Data;
+        return (int)_stack[_b + CpExtraTrailOffset(arity)].Data;
     }
 
     // The heap top of the newest choice point, 0 with none.
