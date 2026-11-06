@@ -196,12 +196,44 @@ text_of(S, Atom) :- all_codes(S, Cs), atom_codes(Atom, Cs).
     }
 
     [Fact]
+    public void APriority_ForAChildAlreadyEnded_IsNoError()
+    {
+        var start = new ProcessStartInfo(Windows ? "cmd.exe" : "sh", Windows ? "/c exit 0" : "-c \"exit 0\"")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        using Process child = Process.Start(start)!;
+        Assert.True(child.WaitForExit(30000));
+        MetaBuiltins.SetPriority(child, 5);
+    }
+
+    [Fact]
     public void Null_DoesNotStallAProgramThatWritesALot()
     {
         string loop = Windows ? "for /L %i in (1,1,3000) do @echo 0123456789012345678901234567890123456789" : "i=0; while [ $i -lt 3000 ]; do echo 0123456789012345678901234567890123456789; i=$((i+1)); done";
-        Assert.True(Q(Engine(), $@"
-            run('{loop}', [stdout(null), process(P)]),
-            process_wait(P, exit(0)).").Success);
+        var e = Engine();
+        var started = Q(e, $"run('{loop}', [stdout(null), process(P)]), process_id(P, Pid).");
+        long process = ((IntTerm)((CompoundTerm)started["P"]!).Args[0]).Value;
+        var clock = Stopwatch.StartNew();
+        string status = Q(e, $"process_wait('$process'({process}), Status, [timeout(45)]).")["Status"]!.ToString()!;
+        if (status == "timeout")
+        {
+            string cpu = CpuOverTwoSeconds((int)((IntTerm)started["Pid"]!).Value);
+            Q(e, $"process_group_kill('$process'({process})), process_wait('$process'({process}), _).");
+            Assert.Fail($"the child had not ended after {clock.Elapsed.TotalSeconds:N0} s, and used {cpu}");
+        }
+        Assert.Equal("exit(0)", status);
+    }
+
+    /// <summary>Tells a child that is slow from one that is blocked.</summary>
+    private static string CpuOverTwoSeconds(int pid)
+    {
+        using Process child = Process.GetProcessById(pid);
+        TimeSpan before = child.TotalProcessorTime;
+        Thread.Sleep(2000);
+        child.Refresh();
+        return $"{(child.TotalProcessorTime - before).TotalMilliseconds:N0} ms of CPU in its last 2 s";
     }
 
     [Fact]

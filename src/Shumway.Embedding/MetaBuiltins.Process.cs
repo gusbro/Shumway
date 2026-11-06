@@ -249,6 +249,16 @@ public static partial class MetaBuiltins
         _ => ProcessPriorityClass.Idle,
     };
 
+    /// <summary>A child that has already ended has no priority to set, and started well.</summary>
+    internal static void SetPriority(Process process, long nice)
+    {
+        try { process.PriorityClass = PriorityClassOf(nice); }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
+        {
+            if (!process.HasExited) throw new PrologRuntimeException("system_error", ex.Message);
+        }
+    }
+
     /// <summary><c>'$process_start'(+Exe, +Args, +Options, -In, -Out, -Err, -Process)</c>. The
     /// library binds the variables the options hold, which a copy of them could not.</summary>
     public static bool ProcessStart(Activation engine) => NetCall(engine, StartProcess);
@@ -346,14 +356,7 @@ public static partial class MetaBuiltins
         {
             throw new PrologRuntimeException("system_error", ex.Message);
         }
-        if (priority is long nice)
-        {
-            try { process.PriorityClass = PriorityClassOf(nice); }
-            catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
-            {
-                throw new PrologRuntimeException("system_error", ex.Message);
-            }
-        }
+        if (priority is long nice) SetPriority(process, nice);
         var entry = new ProcessEntry(process);
         int id = RequireHost(engine, "library(process)").AddNetObject(entry);
 
@@ -378,7 +381,11 @@ public static partial class MetaBuiltins
         {
             case "null":
                 if (writes) pipe.Dispose();
-                else _ = RunCopy(() => DrainQuietly(pipe, Stream.Null));
+                else _ = RunCopy(() =>
+                {
+                    // Closed however it ends: with nobody reading, the child would wait for ever.
+                    using (pipe) DrainQuietly(pipe, Stream.Null);
+                });
                 return none;
             case "file":
                 Task fileCopy = StartFilePump(spec.File!, pipe, writes);
