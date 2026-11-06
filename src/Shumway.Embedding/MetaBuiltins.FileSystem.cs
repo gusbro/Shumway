@@ -198,6 +198,22 @@ public static partial class MetaBuiltins
     /// <summary>Runs <paramref name="command"/> through the platform shell
     /// and returns its exit code. Blocking; stdout/stderr inherit the
     /// process streams (matching SWI / GNU shell/1-2 behaviour).</summary>
+    internal static System.Diagnostics.ProcessStartInfo ShellStartInfo(string command, bool windows)
+    {
+#if !NETFRAMEWORK
+        if (!windows)
+        {
+            // Its own argument: an Arguments string goes through .NET's Windows-style parsing,
+            // where a backslash before a quote escapes it, and the command falls apart.
+            var psi = new System.Diagnostics.ProcessStartInfo("/bin/sh");
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add(command);
+            return psi;
+        }
+#endif
+        return new System.Diagnostics.ProcessStartInfo("cmd.exe", "/C " + command);
+    }
+
     private static int RunShell(string command)
     {
         // Diagnostic dry-run: record every command instead of executing it.
@@ -224,9 +240,7 @@ public static partial class MetaBuiltins
             else if (trimmed.StartsWith("cmd /c ", StringComparison.OrdinalIgnoreCase))
                 command = trimmed.Substring("cmd /c ".Length);
         }
-        var psi = OperatingSystem.IsWindows()
-            ? new System.Diagnostics.ProcessStartInfo("cmd.exe", "/C " + command)
-            : new System.Diagnostics.ProcessStartInfo("/bin/sh", "-c \"" + command.Replace("\"", "\\\"") + "\"");
+        System.Diagnostics.ProcessStartInfo psi = ShellStartInfo(command, OperatingSystem.IsWindows());
         psi.UseShellExecute = false;
         try
         {
