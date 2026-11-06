@@ -50,6 +50,36 @@ public sealed class StreamRegistry
     /// (user_input opens with <c>reset</c> regardless).</summary>
     public string DefaultEofAction { get; set; } = "error";
 
+    /// <summary>The activation running a query now. A read that waits on a pipe or a
+    /// socket does not know it otherwise, and it answers for cancellation and for the
+    /// time limit.</summary>
+    public Activation? Running { get; set; }
+
+    private const int WaitStepMs = 50;
+
+    /// <summary>Waits for an operation that may take as long as the other end wants, in
+    /// steps, so that the running query can be cancelled or run out of time while it
+    /// waits. A timeout of zero waits for as long as it takes, and one that passes raises
+    /// <c>timeout_error(Operation)</c>. What the operation fails with arrives as
+    /// <c>system_error</c>.</summary>
+    public void Wait(System.Threading.Tasks.Task task, int timeoutMs = 0, string operation = "read")
+    {
+        long deadline = timeoutMs > 0 ? System.Environment.TickCount64 + timeoutMs : long.MaxValue;
+        try
+        {
+            while (!task.Wait(WaitStepMs))
+            {
+                Running?.WaitSafePoint();
+                if (System.Environment.TickCount64 >= deadline)
+                    throw new PrologRuntimeException("timeout_error", operation);
+            }
+        }
+        catch (AggregateException ex) when (ex.InnerException is not null)
+        {
+            throw new PrologRuntimeException("system_error", ex.InnerException.Message);
+        }
+    }
+
     public StreamHandle CurrentInput { get; private set; }
     public StreamHandle CurrentOutput { get; private set; }
 

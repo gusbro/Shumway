@@ -43,6 +43,12 @@ public static class RuntimeCaps
         && !OperatingSystem.IsBrowser();
 #endif
 
+    /// <summary>True when the engine has sockets and can start programs, which a browser
+    /// does not allow. A feature switch: read it directly, for the trimmer to delete those
+    /// builtins and the certificate code they reach.</summary>
+    [FeatureSwitchDefinition("Shumway.NetworkAndProcesses")]
+    public static bool SupportsNetworkAndProcesses => !OperatingSystem.IsBrowser();
+
     /// <summary>True when the engine may compile predicates to WebAssembly
     /// modules and run them natively — the browser's Tier-1
     /// (docs/design/wasm-tier1-plan.md), where IL emission is unavailable but

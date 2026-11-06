@@ -126,8 +126,10 @@ public static partial class MetaBuiltins
             if (Want("bom") && h.HadBom is bool hb)
                 pairs.Add((h, new CompoundTerm("bom",
                     new Term[] { new AtomTerm(hb ? "true" : "false") })));
-            if (h.IsReader ? Want("input") : Want("output"))
-                pairs.Add((h, h.IsReader ? (Term)new AtomTerm("input") : new AtomTerm("output")));
+            if (h.IsReader && Want("input"))
+                pairs.Add((h, new AtomTerm("input")));
+            if (h.IsWriter && Want("output"))
+                pairs.Add((h, new AtomTerm("output")));
             if (h.IsReader && Want("end_of_stream"))
             {
                 // §8.11.8: not / at / past. A binary reader has no
@@ -138,7 +140,7 @@ public static partial class MetaBuiltins
                 try
                 {
                     state = h.PastEof ? "past"
-                        : ReferenceEquals(h, registry.UserInput) ? "not"
+                        : ReferenceEquals(h, registry.UserInput) || h.BlocksOnRead ? "not"
                         : h.Reader is not null ? (h.Reader.Peek() >= 0 ? "not" : "at")
                         : h.BinaryStream is { CanSeek: true } bs
                             ? (bs.Position < bs.Length ? "not" : "at")

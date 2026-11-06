@@ -97,6 +97,10 @@
   <ItemGroup>
     <RuntimeHostConfigurationOption Include="Shumway.RuntimeCodegen"
                                     Value="false" Trim="true" />
+    <!-- No sockets and no programs in a browser: those builtins only refuse, and what
+         they would have needed stays out of the download. -->
+    <RuntimeHostConfigurationOption Include="Shumway.NetworkAndProcesses"
+                                    Value="false" Trim="true" />
     <!-- The wasm Tier-1 (docs/design/wasm-tier1-plan.md): promoted predicates
          compile to WebAssembly modules and run natively. Browser only. -->
     <RuntimeHostConfigurationOption Include="Shumway.WasmCodegen"

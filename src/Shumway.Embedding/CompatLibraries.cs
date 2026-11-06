@@ -37,6 +37,9 @@ internal static class CompatLibraries
             "format" => Format,
             "dif"    => Dif,
             "quads"  => Quads,
+            "sockets" => Sockets,
+            "tls" => Tls,
+            "process" => ProcessLibrary,
             "$project_atts" => ProjectAtts,
             "atts" => Atts,
             // Scryer's bootstrap module. It used to be a no-op on the
@@ -72,6 +75,204 @@ internal static class CompatLibraries
     /// generator: its exports carry <c>%!</c> doc comments like the always-on
     /// libraries do.</summary>
     internal static string QuadsSource => Quads;
+
+    internal static string SocketsSource => Sockets;
+
+    internal static string TlsSource => Tls;
+
+    internal static string ProcessSource => ProcessLibrary;
+
+    /// <summary>The libraries over the engine's own native code. They take precedence over
+    /// a file of that name on the search path: another system's file would call native
+    /// predicates of that system.</summary>
+    internal static bool IsNative(string name) => name is "sockets" or "tls" or "process";
+
+    private const string ProcessLibrary = """
+        :- module(process, [process_create/2, process_create/3, process_wait/2, process_wait/3,
+                            process_kill/1, process_kill/2, process_group_kill/1, process_group_kill/2,
+                            process_id/1, process_id/2, is_process/1, process_release/1, process_which/2]).
+
+        '$process_call'(Goal, Predicate) :-
+            catch(Goal, error(Error, _), throw(error(Error, Predicate))).
+
+        %! process_create(+Executable, +Arguments) | Processes | As process_create/3 with no options.
+        process_create(Executable, Arguments) :-
+            process_create(Executable, Arguments, []).
+
+        %! process_create(+Executable, +Arguments, +Options) | Processes | Starts a program and goes on without waiting for it. Executable is a file, a name to look up on the search path, or path(Name). Options: stdin, stdout, stderr (each std, null, file(F), stream(S), pipe(S) or pipe(S, Options)), process, wait, cwd, env, environment, detached, window, priority.
+        process_create(Executable, Arguments, Options) :-
+            '$process_call'('$process_start'(Executable, Arguments, Options, In, Out, Err, Process),
+                            process_create/3),
+            '$process_bind'(Options, In, Out, Err, Process),
+            (   '$process_option'(wait(Status), Options)
+            ->  process_wait(Process, Status)
+            ;   '$process_option'(process(_), Options)
+            ->  true
+            ;   process_release(Process)
+            ).
+
+        '$process_option'(Option, [First|Rest]) :-
+            (   First = Option -> true ; '$process_option'(Option, Rest) ).
+
+        '$process_bind'([], _, _, _, _).
+        '$process_bind'([Option|Options], In, Out, Err, Process) :-
+            '$process_bind_one'(Option, In, Out, Err, Process),
+            '$process_bind'(Options, In, Out, Err, Process).
+
+        '$process_bind_one'(stdin(Spec), In, _, _, _) :- !, '$process_bind_pipe'(Spec, In).
+        '$process_bind_one'(stdout(Spec), _, Out, _, _) :- !, '$process_bind_pipe'(Spec, Out).
+        '$process_bind_one'(stderr(Spec), _, _, Err, _) :- !, '$process_bind_pipe'(Spec, Err).
+        '$process_bind_one'(process(Process), _, _, _, Process) :- !.
+        '$process_bind_one'(_, _, _, _, _).
+
+        '$process_bind_pipe'(pipe(Stream), Stream) :- !.
+        '$process_bind_pipe'(pipe(Stream, _), Stream) :- !.
+        '$process_bind_pipe'(_, _).
+
+        %! process_wait(+Process, -Status) | Processes | Waits for a process to end. Status is exit(Code) or killed(Signal).
+        process_wait(Process, Status) :-
+            process_wait(Process, Status, []).
+
+        %! process_wait(+Process, -Status, +Options) | Processes | As process_wait/2. Options: timeout(Seconds), which can give Status = timeout, and release(Boolean).
+        process_wait(Process, Status, Options) :-
+            '$process_call'('$process_wait'(Process, Status, Options), process_wait/3).
+
+        %! process_kill(+Process) | Processes | Sends SIGKILL.
+        process_kill(Process) :-
+            process_kill(Process, 'SIGKILL').
+
+        %! process_kill(+Process, +Signal) | Processes | Sends a signal, a number or a name such as 'SIGTERM'. On Windows any signal ends the process.
+        process_kill(Process, Signal) :-
+            '$process_call'('$process_kill'(Process, Signal), process_kill/2).
+
+        %! process_group_kill(+Process) | Processes | Ends a process and the ones it started.
+        process_group_kill(Process) :-
+            '$process_call'('$process_group_kill'(Process), process_group_kill/1).
+
+        %! process_group_kill(+Process, +Signal) | Processes | As process_group_kill/1. .NET can only kill a whole tree, so Signal has to be SIGKILL.
+        process_group_kill(Process, Signal) :-
+            (   ( Signal == 'SIGKILL' ; Signal == 9 ; Signal == kill )
+            ->  process_group_kill(Process)
+            ;   var(Signal)
+            ->  throw(error(instantiation_error, process_group_kill/2))
+            ;   throw(error(domain_error(process_group_signal, Signal), process_group_kill/2))
+            ).
+
+        %! process_id(-Pid) | Processes | The operating system's id of this process.
+        process_id(Pid) :-
+            '$process_id'(Pid).
+
+        %! process_id(+Process, -Pid) | Processes | The operating system's id of a process.
+        process_id(Process, Pid) :-
+            '$process_call'('$process_id'(Process, Pid), process_id/2).
+
+        %! is_process(@Term) | Processes | True for a process reference not yet released.
+        is_process(Term) :-
+            '$is_process'(Term).
+
+        %! process_release(+Process) | Processes | Lets go of a process reference. The process goes on.
+        process_release(Process) :-
+            '$process_call'('$process_release'(Process), process_release/1).
+
+        %! process_which(+Executable, -File) | Processes | The file an executable name stands for. Fails if there is none.
+        process_which(Executable, File) :-
+            '$process_call'('$process_which'(Executable, File), process_which/2).
+        """;
+
+    private const string Tls = """
+        :- module(tls, [tls_client_context/2, tls_client_negotiate/3,
+                        tls_server_context/2, tls_server_negotiate/3]).
+
+        '$tls_call'(Goal, Predicate) :-
+            catch(Goal, error(Error, _), throw(error(Error, Predicate))).
+
+        %! tls_client_context(-Context, +Options) | TLS | What a client negotiation needs. Options: hostname, verify, cacert_file, and for a client certificate pkcs12, pkcs12_file, certificate_file, key_file, password. The server's certificate is verified unless verify(false).
+        tls_client_context(Context, Options) :-
+            '$tls_call'('$tls_client_context'(Context, Options), tls_client_context/2).
+
+        %! tls_client_negotiate(+Context, +Stream0, -Stream) | TLS | Turns Stream0, a connection to a server, into an encrypted stream. Stream0 is gone after this, whether it works or not.
+        tls_client_negotiate(Context, Stream0, Stream) :-
+            '$tls_call'('$tls_client_negotiate'(Context, Stream0, Stream), tls_client_negotiate/3).
+
+        %! tls_server_context(-Context, +Options) | TLS | What a server negotiation needs. Options: pkcs12, pkcs12_file, certificate_file, key_file, password. A certificate and its key are required.
+        tls_server_context(Context, Options) :-
+            '$tls_call'('$tls_server_context'(Context, Options), tls_server_context/2).
+
+        %! tls_server_negotiate(+Context, +Stream0, -Stream) | TLS | Turns Stream0, a connection from a client, into an encrypted stream. Stream0 is gone after this, whether it works or not.
+        tls_server_negotiate(Context, Stream0, Stream) :-
+            '$tls_call'('$tls_server_negotiate'(Context, Stream0, Stream), tls_server_negotiate/3).
+        """;
+
+    private const string Sockets = """
+        :- module(sockets, [socket_client_open/3, socket_server_open/2, socket_server_open/3,
+                            socket_server_accept/4, socket_server_close/1, socket_select/7,
+                            socket_shutdown/2, current_host/1, current_hostname/1,
+                            udp_socket/1, udp_socket/2, udp_bind/2, udp_send/4, udp_receive/4, udp_close/1]).
+
+        % The internals raise with their own name; what a program sees is this library's.
+        '$socket_call'(Goal, Predicate) :-
+            catch(Goal, error(Error, _), throw(error(Error, Predicate))).
+
+        %! socket_client_open(+Address, -Stream, +Options) | Sockets | Connects to Address and opens one stream for both directions. Address is Host:Port, inet(Host, Port), Port or unix(Path). Options: type, encoding, eof_action, alias, timeout, nodelay, keepalive.
+        socket_client_open(Address, Stream, Options) :-
+            '$socket_call'('$socket_client_open'(Address, Stream, Options), socket_client_open/3).
+
+        %! socket_server_open(?Address, -ServerSocket) | Sockets | As socket_server_open/3 with no options.
+        socket_server_open(Address, ServerSocket) :-
+            socket_server_open(Address, ServerSocket, []).
+
+        %! socket_server_open(?Address, -ServerSocket, +Options) | Sockets | Listens on Address. A variable for the port takes a free one and gives its number. Options: reuseaddr, loopback, backlog, numeric_nodename, numeric_servname.
+        socket_server_open(Address, ServerSocket, Options) :-
+            '$socket_call'('$socket_server_open'(Address, ServerSocket, Options), socket_server_open/3).
+
+        %! socket_server_accept(+ServerSocket, -Client, -Stream, +Options) | Sockets | Waits for a connection and opens one stream for both directions. Client is the address it came from. Options as for socket_client_open/3.
+        socket_server_accept(ServerSocket, Client, Stream, Options) :-
+            '$socket_call'('$socket_server_accept'(ServerSocket, Client, Stream, Options), socket_server_accept/4).
+
+        %! socket_server_close(+ServerSocket) | Sockets | Stops listening.
+        socket_server_close(ServerSocket) :-
+            '$socket_call'('$socket_server_close'(ServerSocket), socket_server_close/1).
+
+        %! socket_select(+Servers, -ServersReady, +Inputs, -InputsReady, +Outputs, -OutputsReady, +Timeout) | Sockets | Waits until a server has a connection or a stream can be read or written without waiting. Each entry may be Term-Entry. Timeout is in seconds, or off to wait for as long as it takes.
+        socket_select(Servers, ServersReady, Inputs, InputsReady, Outputs, OutputsReady, Timeout) :-
+            '$socket_call'('$socket_select'(Servers, ServersReady, Inputs, InputsReady, Outputs, OutputsReady, Timeout), socket_select/7).
+
+        %! socket_shutdown(+Stream, +How) | Sockets | Ends one direction of a connection and leaves the other open. How is read, write or read_write.
+        socket_shutdown(Stream, How) :-
+            '$socket_call'('$socket_shutdown'(Stream, How), socket_shutdown/2).
+
+        %! current_host(?Host) | Sockets | The name of this machine.
+        current_host(Host) :-
+            '$socket_call'('$current_host'(Host), current_host/1).
+
+        %! current_hostname(?Host) | Sockets | The same as current_host/1.
+        current_hostname(Host) :-
+            current_host(Host).
+
+        %! udp_socket(-Socket) | Sockets | As udp_socket/2 with no options.
+        udp_socket(Socket) :-
+            udp_socket(Socket, []).
+
+        %! udp_socket(-Socket, +Options) | Sockets | Opens a UDP socket. Options: broadcast, reuseaddr.
+        udp_socket(Socket, Options) :-
+            '$socket_call'('$udp_socket'(Socket, Options), udp_socket/2).
+
+        %! udp_bind(+Socket, ?Address) | Sockets | Gives the socket a local address. A variable for the port takes a free one and gives its number.
+        udp_bind(Socket, Address) :-
+            '$socket_call'('$udp_bind'(Socket, Address), udp_bind/2).
+
+        %! udp_send(+Socket, +Data, +To, +Options) | Sockets | Sends one datagram. Data is text, or a list of bytes with type(binary). Options: type, encoding.
+        udp_send(Socket, Data, To, Options) :-
+            '$socket_call'('$udp_send'(Socket, Data, To, Options), udp_send/4).
+
+        %! udp_receive(+Socket, -Data, -From, +Options) | Sockets | Waits for one datagram. From is Host:Port, ready for udp_send/4. Options: type, encoding, as (atom, string, chars or codes), timeout.
+        udp_receive(Socket, Data, From, Options) :-
+            '$socket_call'('$udp_receive'(Socket, Data, From, Options), udp_receive/4).
+
+        %! udp_close(+Socket) | Sockets | Closes a UDP socket.
+        udp_close(Socket) :-
+            '$socket_call'('$udp_close'(Socket), udp_close/1).
+        """;
 
     // library(dcgs) — the generic DCG helpers. seq//1 and '...'//0 moved into
     // the prelude (they are built-in now), joining phrase/2,3; the library

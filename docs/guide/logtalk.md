@@ -113,10 +113,9 @@ Shumway; only that one selector borrows SWI's name.
   collection, on a pristine tree, closes at **100% of the structurally
   supported set: 214 suites all fully green, 11,634 tests, 0 failures**
   (measured 2026-09; the compute-heavy ML suites may need a run without
-  machine contention). The three libraries whose *operation* needs an OS capability
-  Shumway does not provide (`process` (OS processes), `redis` (sockets),
-  `java` (a JVM)) are excluded as structurally N/A, documented rather than
-  hidden. Details and reproduction in
+  machine contention). `java` needs a JVM, and is excluded as structurally N/A,
+  documented rather than hidden. The `process` and `sockets` libraries need a
+  branch for Shumway on Logtalk's side. Details and reproduction in
   [`logtalk-library-support.md`](logtalk-library-support.md).
 - **Benchmarks** (`examples/benchmarks`): Shumway Tier-0 matches or beats
   GProlog-interpreted on every shape; Tier-1 wins 4–7× across the board.

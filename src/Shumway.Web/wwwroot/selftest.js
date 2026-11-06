@@ -1052,6 +1052,29 @@ export async function run(session, emit, out, editor, workspace) {
     }
   }
 
+  // A browser has no sockets and cannot start programs. Each predicate says so, rather
+  // than a missing program, a quiet failure or a .NET exception.
+  check('the network libraries load', await solutions(
+    'use_module(library(sockets)), use_module(library(tls)), use_module(library(process)).'), 'true');
+  for (const goal of [
+    "socket_client_open('127.0.0.1':1, _, [])", "socket_server_open('127.0.0.1':_, _)",
+    "socket_server_open('127.0.0.1':_, _, [])", 'socket_server_accept(x, _, _, [])',
+    'socket_server_close(x)', 'socket_shutdown(x, write)', 'socket_select([], _, [], _, [], _, 0)',
+    'current_host(_)', 'current_hostname(_)',
+    'udp_socket(_)', 'udp_socket(_, [])', 'udp_bind(x, 1)', "udp_send(x, a, '127.0.0.1':1, [])",
+    'udp_receive(x, _, _, [])', 'udp_close(x)',
+    'tls_client_context(_, [])', 'tls_server_context(_, [])',
+    'tls_client_negotiate(x, y, _)', 'tls_server_negotiate(x, y, _)',
+    'process_create(path(ls), [], [])', "process_create('/bin/ls', [], [])",
+    'process_wait(x, _)', 'process_wait(x, _, [])', 'process_kill(x)', 'process_kill(x, 9)',
+    'process_group_kill(x)', 'process_group_kill(x, 9)', 'process_release(x)',
+    'process_id(_)', 'process_id(x, _)', 'process_which(ls, _)',
+  ]) {
+    check(`in a browser ${goal} refuses`, await solutions(
+      `catch((${goal}, R = ran), error(system_error(_), _), R = refused).`), 'R = refused');
+  }
+  check('in a browser is_process/1 fails', await solutions('is_process(x).'), '');
+
   // Persistence is reported rather than assumed: a browser may refuse storage,
   // and the session must still work when it does.
   emit(`note: origin-private storage ${workspace.persistent() ? 'available' : 'UNAVAILABLE'}`

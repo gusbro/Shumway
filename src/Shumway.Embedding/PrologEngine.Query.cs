@@ -161,6 +161,18 @@ public sealed partial class PrologEngine
         BytecodeInterpreter interp, Shumway.Core.ProgramView program, Activation engine,
         Func<InterpreterResult> step)
     {
+        Shumway.Core.StreamRegistry? streams = engine.Streams;
+        if (streams is null) return RunStepsCatching(interp, program, engine, step);
+        Activation? outer = streams.Running;
+        streams.Running = engine;
+        try { return RunStepsCatching(interp, program, engine, step); }
+        finally { streams.Running = outer; }
+    }
+
+    private InterpreterResult RunStepsCatching(
+        BytecodeInterpreter interp, Shumway.Core.ProgramView program, Activation engine,
+        Func<InterpreterResult> step)
+    {
         while (true)
         {
             try

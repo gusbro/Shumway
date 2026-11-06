@@ -510,6 +510,7 @@ public static partial class MetaBuiltins
             + "the absolute form. A trailing / is kept when FileSpec has one and never "
             + "added. The 3-arg form with options (extensions, file_type, "
             + "access, file_search_path) is not yet supported.");
+        RegisterNetworkAndProcesses();
         BuiltinsRegistry.Register("working_directory", 2, WorkingDirectory2,
             Io, "working_directory(-Old, +New)",
             "Unifies Old with the current working directory; if New differs, changes "

@@ -1503,6 +1503,11 @@ host, they read one character, as `get_char/1` and `get_code/1` do. That
 includes line ends. A host with its own keyboard implements `IKeyReader` on
 the reader it gives to `PrologEngine.In`.
 
+### Sockets, TLS and processes
+
+`library(sockets)`, `library(tls)` and `library(process)` connect a program to the
+network and to other programs. See [network-and-processes.md](network-and-processes.md).
+
 ### `set_stream/2`
 
 `set_stream(Stream, Property)` sets one of two properties of an open

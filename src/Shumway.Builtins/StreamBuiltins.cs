@@ -177,18 +177,71 @@ public static class StreamBuiltins
     {
         var fs = SharedFileStream(
             path, append ? FileMode.Append : FileMode.Create, FileAccess.Write);
-        System.Text.Encoding enc = TextEncodings.ByName(encodingName)!;
-        StreamWriter w = encodingName switch
-        {
-            "iso_latin_1" => new NarrowStreamWriter(fs, enc, '\u00FF'),
-            "ascii" => new NarrowStreamWriter(fs, enc, '\u007F'),
-            _ => new StreamWriter(fs, enc),
-        };
-        w.NewLine = "\n";
+        StreamWriter w = TextWriterOver(fs, encodingName);
         // Our encoding instances never carry a preamble — the mark is
         // written by hand, in the stream's encoding.
         if (writeBom) w.Write('\uFEFF');
         return w;
+    }
+
+    /// <summary>A text writer in the encoding, which raises for what a narrow one cannot hold.</summary>
+    public static StreamWriter TextWriterOver(Stream stream, string encodingName, bool leaveOpen = false)
+    {
+        System.Text.Encoding enc = TextEncodings.ByName(encodingName)!;
+        StreamWriter w = encodingName switch
+        {
+            "iso_latin_1" => new NarrowStreamWriter(stream, enc, '\u00FF', leaveOpen),
+            "ascii" => new NarrowStreamWriter(stream, enc, '\u007F', leaveOpen),
+            _ => new StreamWriter(stream, enc, 1024, leaveOpen),
+        };
+        w.NewLine = "\n";
+        return w;
+    }
+
+    /// <summary>Registers a stream over a pipe or a socket. Binary with
+    /// <paramref name="binary"/>; otherwise text, and in the default encoding it never
+    /// raises on what it reads, since nobody can know what the other end sends. Naming
+    /// an encoding asserts it, and then what does not fit it is an error.</summary>
+    /// <param name="registry">Where the stream goes, and what its waits answer to.</param>
+    /// <param name="connection">The pipe or socket.</param>
+    /// <param name="mode"><c>read</c>, <c>write</c> or <c>readwrite</c>.</param>
+    /// <param name="binary">Whether it is a byte stream.</param>
+    /// <param name="encodingName">The engine name of the encoding asked for, if any.</param>
+    /// <param name="alias">The alias asked for, if any.</param>
+    /// <param name="eofAction">The end of stream action asked for, if any.</param>
+    /// <param name="translateNewlines">Whether CR-LF reads as a newline (ADR-045).</param>
+    public static StreamHandle OpenLiveStream(
+        StreamRegistry registry, Stream connection, string mode, bool binary,
+        string? encodingName, string? alias, string? eofAction, bool translateNewlines)
+    {
+        var live = new LiveStream(connection, registry);
+        bool reads = mode is "read" or "readwrite", writes = mode is "write" or "readwrite";
+        int id = registry.NextId();
+        StreamHandle handle;
+        if (binary)
+        {
+            handle = new StreamHandle(id, live, mode, alias: alias) { BlocksOnRead = true };
+        }
+        else
+        {
+            string effective = encodingName ?? registry.DefaultEncodingName;
+            PositionTrackingReader? reader = reads
+                ? new PositionTrackingReader(
+                    new StrictTextReader(live, effective, tolerant: encodingName is null), translateNewlines)
+                : null;
+            StreamWriter? writer = writes ? TextWriterOver(live, effective) : null;
+            handle = reader is not null && writer is not null
+                ? new StreamHandle(id, reader, writer, mode, alias: alias) { BlocksOnRead = true }
+                : reader is not null
+                    ? new StreamHandle(id, reader, mode, alias: alias) { BlocksOnRead = true }
+                    : new StreamHandle(id, writer!, mode, alias: alias) { BlocksOnRead = true };
+            handle.EncodingName = effective;
+            handle.NamedEncoding = encodingName;
+        }
+        handle.LiveConnection = live;
+        handle.EofAction = eofAction ?? registry.DefaultEofAction;
+        registry.Add(handle);
+        return handle;
     }
 
     /// <summary>A writer for a text file written whole, with no stream behind it, under
@@ -651,12 +704,22 @@ public static class StreamBuiltins
     private static void Release(Activation engine, StreamHandle h, bool force)
     {
         PrologRuntimeException? failed = null;
-        if (h.Reader is not null) Attempt(h.Reader.Dispose, ref failed);
+        // Still in use by a copy to or from a child: it leaves the program now and
+        // closes for real when the copy ends.
+        if (h.TryCloseAfterCopies(() => CloseConnections(h)))
+        {
+            if (h.Writer is not null) Attempt(h.Writer.Flush, ref failed);
+            engine.Streams!.Remove(h);
+            if (failed is not null && !force) throw failed;
+            return;
+        }
+        // The writer first: a stream of two directions shares one connection.
         if (h.Writer is not null)
         {
             Attempt(h.Writer.Flush, ref failed);
             Attempt(h.Writer.Dispose, ref failed);
         }
+        if (h.Reader is not null) Attempt(h.Reader.Dispose, ref failed);
         if (h.BinaryStream is not null)
         {
             Attempt(h.BinaryStream.Flush, ref failed);
@@ -664,6 +727,22 @@ public static class StreamBuiltins
         }
         engine.Streams!.Remove(h);
         if (failed is not null && !force) throw failed;
+    }
+
+    private static void CloseConnections(StreamHandle h)
+    {
+        PrologRuntimeException? ignored = null;
+        if (h.Writer is not null)
+        {
+            Attempt(h.Writer.Flush, ref ignored);
+            Attempt(h.Writer.Dispose, ref ignored);
+        }
+        if (h.Reader is not null) Attempt(h.Reader.Dispose, ref ignored);
+        if (h.BinaryStream is not null)
+        {
+            Attempt(h.BinaryStream.Flush, ref ignored);
+            Attempt(h.BinaryStream.Dispose, ref ignored);
+        }
     }
 
     private static void Attempt(System.Action step, ref PrologRuntimeException? failed)
@@ -919,7 +998,7 @@ public static class StreamBuiltins
             throw new PrologRuntimeException("permission_error", "input,text_stream");
         CheckOutArgIsInByte(engine, regOut);
         CheckPastEof(engine, h);
-        int b = h.BinaryStream!.ReadByte();
+        int b = h.ReadByte();
         if (b < 0) h.PastEof = true;
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(b));
     }
@@ -930,15 +1009,9 @@ public static class StreamBuiltins
             throw new PrologRuntimeException("permission_error", "input,stream");
         if (!h.IsBinary)
             throw new PrologRuntimeException("permission_error", "input,text_stream");
-        var bs = h.BinaryStream!;
-        if (!bs.CanSeek)
-            throw new PrologRuntimeException("permission_error", "reposition,stream");
         CheckOutArgIsInByte(engine, regOut);
         CheckPastEof(engine, h);
-        long pos = bs.Position;
-        int b = bs.ReadByte();
-        bs.Position = pos;
-        return engine.UnifyRegisterWithCell(regOut, Cell.Int(b));
+        return engine.UnifyRegisterWithCell(regOut, Cell.Int(h.PeekByte()));
     }
 
     private static void WriteOneByte(
@@ -1485,7 +1558,7 @@ public static class StreamBuiltins
         // non-blocking Peek — report "not at end" conservatively.
         if (ReferenceEquals(h, engine.Streams!.UserInput)) return false;
         if (h.Reader is not null) return h.Reader.Peek() < 0;
-        return h.BinaryStream is { CanSeek: true } bs && bs.Position >= bs.Length;
+        return h.PeekByte() < 0;
     }
 
     // ---------- Helpers ----------
