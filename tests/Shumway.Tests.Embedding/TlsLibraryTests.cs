@@ -91,7 +91,7 @@ read_bytes(S, Bytes) :-
         return task.Result;
     }
 
-    private static T WithinSeconds<T>(int seconds, Func<T> work) => Finished(Task.Run(work), seconds);
+    private static T WithinSeconds<T>(int seconds, Func<T> work) => Finished(OwnThread.Run(work), seconds);
 
     private static void Joined(Task task) => Assert.True(task.Wait(TimeSpan.FromSeconds(10)), "it hung");
 
@@ -102,7 +102,7 @@ read_bytes(S, Bytes) :-
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         int port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        Task done = Task.Run(() =>
+        Task done = OwnThread.Run(() =>
         {
             try
             {
@@ -343,7 +343,7 @@ read_bytes(S, Bytes) :-
     // ---------- as a server
 
     private (int Port, Task<int> Reply) TlsClientOf(int port, byte send)
-        => (port, Task.Run(() =>
+        => (port, OwnThread.Run(() =>
         {
             using var client = new TcpClient();
             client.Connect(IPAddress.Loopback, port);

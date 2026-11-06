@@ -31,7 +31,7 @@ pair(A, P, B) :-
 
     private static T WithinSeconds<T>(int seconds, Func<T> work)
     {
-        var task = Task.Run(work);
+        var task = OwnThread.Run(work);
         Assert.True(task.Wait(TimeSpan.FromSeconds(seconds)), "it hung");
         return task.Result;
     }
@@ -204,6 +204,17 @@ pair(A, P, B) :-
             udp_send(B, x, '127.0.0.1':P, []),
             udp_receive(A, x, _, [as(atom), timeout(5)]),
             udp_close(A), udp_close(B).")).Success);
+    }
+
+    [Fact]
+    public void AReceive_WithTheTokenAlreadyCancelled_IsCancelled()
+    {
+        var e = Engine();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var ex = Assert.ThrowsAny<AggregateException>(() => WithinSeconds(20, () => e.QueryAll(@"
+            udp_socket(A), udp_bind(A, '127.0.0.1':_), udp_receive(A, _, _, []).", cts.Token).ToList()));
+        Assert.IsAssignableFrom<OperationCanceledException>(ex.InnerException);
     }
 
     [Fact]

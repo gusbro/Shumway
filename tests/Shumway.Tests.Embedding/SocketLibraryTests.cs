@@ -42,7 +42,7 @@ all_codes(S, Cs) :-
 
     private static T WithinSeconds<T>(int seconds, Func<T> work)
     {
-        return Finished(Task.Run(work), seconds);
+        return Finished(OwnThread.Run(work), seconds);
     }
 
     private static T Finished<T>(Task<T> task, int seconds)
@@ -774,7 +774,7 @@ all_codes(S, Cs) :-
         try
         {
             int port = ((IPEndPoint)listener.LocalEndpoint).Port;
-            var server = Task.Run(() =>
+            var server = OwnThread.Run(() =>
             {
                 using TcpClient c = listener.AcceptTcpClient();
                 NetworkStream s = c.GetStream();

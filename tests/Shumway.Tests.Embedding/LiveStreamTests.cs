@@ -107,7 +107,7 @@ public sealed class LiveStreamTests : IDisposable
         return got.Take(have).ToArray();
     }
 
-    private static T WithinSeconds<T>(int seconds, Func<T> work) => Finished(Task.Run(work), seconds);
+    private static T WithinSeconds<T>(int seconds, Func<T> work) => Finished(OwnThread.Run(work), seconds);
 
     private static T Finished<T>(Task<T> task, int seconds = 60)
     {
@@ -218,7 +218,7 @@ public sealed class LiveStreamTests : IDisposable
     {
         string s = Reading();
         Send(0xF0, 0x9D);
-        var read = Task.Run(() => _engine.Query($"get_code({s}, C)."));
+        var read = OwnThread.Run(() => _engine.Query($"get_code({s}, C)."));
         Thread.Sleep(100);
         Assert.False(read.IsCompleted);
         Send(0x84, 0x9E);
@@ -233,7 +233,7 @@ public sealed class LiveStreamTests : IDisposable
         string s = Reading();
         Send(0x61);
         Assert.True(_engine.Query($"get_char({s}, a).").Success);
-        var peek = Task.Run(() => _engine.Query($"peek_char({s}, C)."));
+        var peek = OwnThread.Run(() => _engine.Query($"peek_char({s}, C)."));
         Thread.Sleep(150);
         Assert.False(peek.IsCompleted);
         Send(0x62);
@@ -259,7 +259,7 @@ public sealed class LiveStreamTests : IDisposable
         string s = Reading();
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
         var ex = Assert.ThrowsAny<AggregateException>(() =>
-            Finished(Task.Run(() => _engine.QueryAll($"get_char({s}, _).", cts.Token).ToList())));
+            Finished(OwnThread.Run(() => _engine.QueryAll($"get_char({s}, _).", cts.Token).ToList())));
         Assert.IsAssignableFrom<OperationCanceledException>(ex.InnerException);
     }
 

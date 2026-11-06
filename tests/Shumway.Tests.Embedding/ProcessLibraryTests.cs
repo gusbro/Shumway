@@ -66,7 +66,7 @@ text_of(S, Atom) :- all_codes(S, Cs), atom_codes(Atom, Cs).
 
     private static T WithinSeconds<T>(int seconds, Func<T> work)
     {
-        var task = Task.Run(work);
+        var task = OwnThread.Run(work);
         Assert.True(task.Wait(TimeSpan.FromSeconds(seconds)), "it hung");
         return task.Result;
     }
