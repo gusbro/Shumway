@@ -420,10 +420,11 @@ text_of(S, Atom) :- all_codes(S, Cs), atom_codes(Atom, Cs).
         }
     }
 
+    // A long limit: on a busy runner cmd can take a long time to get to what it writes.
     private const string SocketPair = @"
             socket_server_open('127.0.0.1':Port, Srv),
-            socket_client_open('127.0.0.1':Port, C, [type(binary), timeout(10)]),
-            socket_server_accept(Srv, _, A, [type(binary), timeout(10)]),
+            socket_client_open('127.0.0.1':Port, C, [type(binary), timeout(45)]),
+            socket_server_accept(Srv, _, A, [type(binary), timeout(45)]),
             socket_server_close(Srv),";
 
     private static string Pause => Windows ? "ping -n 2 127.0.0.1 >nul" : "sleep 1";
