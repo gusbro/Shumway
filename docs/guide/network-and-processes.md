@@ -128,7 +128,7 @@ A read, an accept or a wait for a process takes as long as the other end takes.
 Cancelling the query interrupts it, and so does `time_out/3`. Whatever would have
 come is not lost: the next read gets it.
 
-A host program should leave threads free in the .NET thread pool: on .NET 5 and later a
+A host program should leave threads free in the .NET thread pool: on .NET 10 a
 socket's reads, writes and connections complete through it, so with all its threads
 taken they wait, and a `timeout/1` can run out. Pipes do not depend on it.
 

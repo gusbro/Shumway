@@ -9,7 +9,7 @@ namespace Shumway.Tests.Embedding;
 /// run out before the work began.</summary>
 internal static class OwnThread
 {
-    // On .NET 5 and later what a socket completes reaches the program through the pool, so with
+    // On .NET 10 what a socket completes reaches the program through the pool, so with
     // its threads taken a connect runs out of time. A test process holds many of them at once.
     static OwnThread()
     {
