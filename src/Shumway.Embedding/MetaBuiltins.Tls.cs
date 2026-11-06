@@ -246,6 +246,7 @@ public static partial class MetaBuiltins
         Stream connection = old.LiveConnection.Detach();
         SslStream tls = over(connection);
         int timeout = old.LiveConnection.TimeoutMs;
+        int bufferSize = old.LiveConnection.BufferSize;
         string? alias = old.Alias;
         registry.Remove(old);
         try { registry.Wait(handshake(tls), timeout, "tls"); }
@@ -255,7 +256,7 @@ public static partial class MetaBuiltins
             throw;
         }
         StreamHandle handle = StreamBuiltins.OpenLiveStream(registry, tls, "readwrite", old.IsBinary,
-            old.NamedEncoding, alias, old.EofAction, translateNewlines: false);
+            old.NamedEncoding, alias, old.EofAction, translateNewlines: false, bufferSize, asynchronous: true);
         handle.Socket = old.Socket;
         handle.LiveConnection!.TimeoutMs = timeout;
         return engine.UnifyRegisterWithCell(2, StreamBuiltins.MakeStreamTerm(engine, handle));

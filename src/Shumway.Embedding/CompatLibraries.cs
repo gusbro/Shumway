@@ -213,7 +213,7 @@ internal static class CompatLibraries
         '$socket_call'(Goal, Predicate) :-
             catch(Goal, error(Error, _), throw(error(Error, Predicate))).
 
-        %! socket_client_open(+Address, -Stream, +Options) | Sockets | Connects to Address and opens one stream for both directions. Address is Host:Port, inet(Host, Port), Port or unix(Path). Options: type, encoding, eof_action, alias, timeout, nodelay, keepalive.
+        %! socket_client_open(+Address, -Stream, +Options) | Sockets | Connects to Address and opens one stream for both directions. Address is Host:Port, inet(Host, Port), Port or unix(Path). Options: type, encoding, eof_action, alias, buffer_size, timeout, nodelay, keepalive.
         socket_client_open(Address, Stream, Options) :-
             '$socket_call'('$socket_client_open'(Address, Stream, Options), socket_client_open/3).
 

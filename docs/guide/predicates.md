@@ -558,7 +558,7 @@ Load with `:- use_module(library(sockets)).`
 | --- | --- | --- |
 | `current_host(?Host)` | library | The name of this machine. |
 | `current_hostname(?Host)` | library | The same as current_host/1. |
-| `socket_client_open(+Address, -Stream, +Options)` | library | Connects to Address and opens one stream for both directions. Address is Host:Port, inet(Host, Port), Port or unix(Path). Options: type, encoding, eof_action, alias, timeout, nodelay, keepalive. |
+| `socket_client_open(+Address, -Stream, +Options)` | library | Connects to Address and opens one stream for both directions. Address is Host:Port, inet(Host, Port), Port or unix(Path). Options: type, encoding, eof_action, alias, buffer_size, timeout, nodelay, keepalive. |
 | `socket_select(+Servers, -ServersReady, +Inputs, -InputsReady, +Outputs, -OutputsReady, +Timeout)` | library | Waits until a server has a connection or a stream can be read or written without waiting. Each entry may be Term-Entry. Timeout is in seconds, or off to wait for as long as it takes. |
 | `socket_server_accept(+ServerSocket, -Client, -Stream, +Options)` | library | Waits for a connection and opens one stream for both directions. Client is the address it came from. Options as for socket_client_open/3. |
 | `socket_server_close(+ServerSocket)` | library | Stops listening. |

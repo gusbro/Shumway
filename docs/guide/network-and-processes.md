@@ -38,9 +38,10 @@ close(S),
 socket_server_close(Server).
 ```
 
-One stream goes both ways. Bytes go out as they are written. Text goes out when
-`flush_output/1` or `close/1` asks, or when a buffer of about 1 KB fills, so a short
-message needs a flush before the program waits for its answer.
+One stream goes both ways. What a program writes, text or bytes, goes out when
+`flush_output/1` or `close/1` asks, when the buffer fills, or when a read on the same
+stream is about to wait. So asking and then reading the answer needs no flush. A program
+that only writes short messages does need one.
 
 ### Addresses
 
@@ -78,6 +79,7 @@ integer.
 | `encoding(Name)` | Asks for text in that encoding. See below |
 | `eof_action(Action)` | As in `open/4`. The default is `error` |
 | `alias(Name)` | As in `open/4` |
+| `buffer_size(N)` | The bytes it holds before sending them, 4096 by default. A text stream can hold up to 128 characters more. With 0 each write goes out at once, at the cost of a send for each byte or character |
 | `timeout(Seconds)` | How long to connect, accept, read or write before `timeout_error` |
 | `nodelay(Boolean)`, `keepalive(Boolean)` | The TCP settings of those names |
 
@@ -226,7 +228,7 @@ the system's form, or a list of those to join into one argument.
 | `std` | Shares the standard stream of this process. The default |
 | `null` | Discards the output, and reads as empty |
 | `file(Name)` | Reads from or writes to a file |
-| `pipe(S)`, `pipe(S, Options)` | A new stream to talk to it, text by default. Options: `type/1`, `encoding/1`, `alias/1`, `eof_action/1` |
+| `pipe(S)`, `pipe(S, Options)` | A new stream to talk to it, text by default. Options: `type/1`, `encoding/1`, `buffer_size/1`, `alias/1`, `eof_action/1` |
 | `stream(S)` | A stream the program already has: a file, a pipe or a socket |
 
 Without `process/1` or `wait/1` nothing asks about the process again, and no reference

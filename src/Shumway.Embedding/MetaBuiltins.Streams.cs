@@ -51,7 +51,7 @@ public static partial class MetaBuiltins
     /// second argument outside this set is domain_error(stream_property).</summary>
     private static readonly HashSet<string> KnownStreamProperties = new()
     {
-        "file_name", "mode", "alias", "input", "output", "end_of_stream",
+        "file_name", "mode", "alias", "input", "output", "end_of_stream", "buffer_size",
         "position", "type", "reposition", "eof_action", "encoding", "bom",
     };
 
@@ -126,6 +126,8 @@ public static partial class MetaBuiltins
             if (Want("bom") && h.HadBom is bool hb)
                 pairs.Add((h, new CompoundTerm("bom",
                     new Term[] { new AtomTerm(hb ? "true" : "false") })));
+            if (h.LiveConnection is { } live && Want("buffer_size"))
+                pairs.Add((h, new CompoundTerm("buffer_size", new Term[] { new IntTerm(live.BufferSize) })));
             if (h.IsReader && Want("input"))
                 pairs.Add((h, new AtomTerm("input")));
             if (h.IsWriter && Want("output"))

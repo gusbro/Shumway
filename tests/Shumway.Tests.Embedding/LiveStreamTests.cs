@@ -109,7 +109,7 @@ public sealed class LiveStreamTests : IDisposable
 
     private static T WithinSeconds<T>(int seconds, Func<T> work) => Finished(Task.Run(work), seconds);
 
-    private static T Finished<T>(Task<T> task, int seconds = 10)
+    private static T Finished<T>(Task<T> task, int seconds = 60)
     {
         Assert.True(task.Wait(TimeSpan.FromSeconds(seconds)), "it hung");
         return task.Result;

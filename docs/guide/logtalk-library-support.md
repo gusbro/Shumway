@@ -26,13 +26,11 @@ beyond the classic data-structure set.
   but the sweep ran before them, so they count as not applicable (the sockets/HTTP
   service stack, and `memcached`, `gravatar`, `open_ai`, `open_id`, `rest`, `s3`). With a
   `shumway` branch in `socket.lgt` and `process.lgt` and the adapter's `sockets` feature
-  on, in a clone (2026-11), these pass: `process` 14 with 1 skipped, `sockets` 8, `mqtt`
-  179, `amqp` 143 with 45 skipped, `rest` 66, `http_server_core` 38, `open_id` 33, `smtp`
-  23, `open_ai` 18, `http_process_transport` 17 (with `ncat` on the path), `http_client_core`
-  12, `stomp` 11 with 13 skipped, `gravatar` 8, and `redis` 55 against a real server. The
-  skipped tests of `amqp` and `stomp`, and all of `memcached`, need a server that was not
-  running. `s3` writes `BasePath == '/'`, which
-  [the reader refuses](user-guide.md#operator-atoms-as-operands).
+  on, in a clone (2026-11), these pass: `process` 13 with 1 skipped, `sockets` 8, `mqtt`
+  179, `rest` 66, `s3` 49, `http_server_core` 38, `open_id` 33, `smtp` 23, `open_ai` 18,
+  `http_process_transport` 17 (with `ncat` on the path), `http_client_core` 12, `gravatar`
+  8, `http_socket_transport` 1, and against real servers `amqp` 188, `redis` 55 and `stomp`
+  24. `memcached` was not run: it needs a server that was not there.
 - **`git` and `linda` declare themselves not applicable**: they need external binaries
   or threads. A couple remain genuinely too slow to score
   (`isolation_forest_anomaly_detector`, `simulated_annealing`: 30+ minutes even alone).

@@ -185,14 +185,14 @@ public static class StreamBuiltins
     }
 
     /// <summary>A text writer in the encoding, which raises for what a narrow one cannot hold.</summary>
-    public static StreamWriter TextWriterOver(Stream stream, string encodingName, bool leaveOpen = false)
+    public static StreamWriter TextWriterOver(Stream stream, string encodingName, bool leaveOpen = false, int chars = 1024)
     {
         System.Text.Encoding enc = TextEncodings.ByName(encodingName)!;
         StreamWriter w = encodingName switch
         {
-            "iso_latin_1" => new NarrowStreamWriter(stream, enc, '\u00FF', leaveOpen),
-            "ascii" => new NarrowStreamWriter(stream, enc, '\u007F', leaveOpen),
-            _ => new StreamWriter(stream, enc, 1024, leaveOpen),
+            "iso_latin_1" => new NarrowStreamWriter(stream, enc, '\u00FF', leaveOpen, chars),
+            "ascii" => new NarrowStreamWriter(stream, enc, '\u007F', leaveOpen, chars),
+            _ => new StreamWriter(stream, enc, chars, leaveOpen),
         };
         w.NewLine = "\n";
         return w;
@@ -210,11 +210,15 @@ public static class StreamBuiltins
     /// <param name="alias">The alias asked for, if any.</param>
     /// <param name="eofAction">The end of stream action asked for, if any.</param>
     /// <param name="translateNewlines">Whether CR-LF reads as a newline (ADR-045).</param>
+    // What a live stream's writer holds on top of the stream's own buffer. The least it takes.
+    private const int LiveWriterChars = 128;
+
     public static StreamHandle OpenLiveStream(
         StreamRegistry registry, Stream connection, string mode, bool binary,
-        string? encodingName, string? alias, string? eofAction, bool translateNewlines)
+        string? encodingName, string? alias, string? eofAction, bool translateNewlines,
+        int bufferSize = LiveStream.DefaultBufferSize, bool asynchronous = false)
     {
-        var live = new LiveStream(connection, registry);
+        var live = new LiveStream(connection, registry, bufferSize, asynchronous);
         bool reads = mode is "read" or "readwrite", writes = mode is "write" or "readwrite";
         int id = registry.NextId();
         StreamHandle handle;
@@ -229,7 +233,13 @@ public static class StreamBuiltins
                 ? new PositionTrackingReader(
                     new StrictTextReader(live, effective, tolerant: encodingName is null), translateNewlines)
                 : null;
-            StreamWriter? writer = writes ? TextWriterOver(live, effective) : null;
+            StreamWriter? writer = writes ? TextWriterOver(live, effective, chars: LiveWriterChars) : null;
+            if (writer is not null)
+            {
+                // AutoFlush flushes the stream below too, so it cannot be how text reaches it.
+                if (bufferSize == 0) writer.AutoFlush = true;
+                if (reads) live.BeforeWait = writer.Flush;
+            }
             handle = reader is not null && writer is not null
                 ? new StreamHandle(id, reader, writer, mode, alias: alias) { BlocksOnRead = true }
                 : reader is not null
@@ -709,6 +719,7 @@ public static class StreamBuiltins
         if (h.TryCloseAfterCopies(() => CloseConnections(h)))
         {
             if (h.Writer is not null) Attempt(h.Writer.Flush, ref failed);
+            else if (h.BinaryStream is not null) Attempt(h.BinaryStream.Flush, ref failed);
             engine.Streams!.Remove(h);
             if (failed is not null && !force) throw failed;
             return;

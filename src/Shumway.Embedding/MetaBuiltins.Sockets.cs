@@ -81,6 +81,8 @@ public static partial class MetaBuiltins
         }
     }
 
+    private const int LargestBuffer = 1 << 30;
+
     private sealed class SocketOptions
     {
         public bool Binary = true;
@@ -92,6 +94,7 @@ public static partial class MetaBuiltins
         public bool? NoDelay;
         public bool? KeepAlive;
         public int Backlog = 128;
+        public int BufferSize = LiveStream.DefaultBufferSize;
         public bool ReuseAddress;
         public bool Loopback;
         public bool NumericNodename;
@@ -169,6 +172,11 @@ public static partial class MetaBuiltins
                         throw new ShumwayPrologException(IsoError.DomainError("socket_option", option));
                     break;
                 case "timeout" when !server: o.TimeoutMs = SecondsToMs(v, option); break;
+                case "buffer_size" when !server:
+                    if (v is VarTerm) throw new ShumwayPrologException(IsoError.InstantiationError());
+                    o.BufferSize = v is IntTerm { Value: >= 0 and <= LargestBuffer } size ? (int)size.Value
+                        : throw new ShumwayPrologException(IsoError.DomainError("socket_option", option));
+                    break;
                 case "nodelay" when !server: o.NoDelay = BoolOption(v, option); break;
                 case "keepalive" when !server: o.KeepAlive = BoolOption(v, option); break;
                 default:
@@ -320,7 +328,7 @@ public static partial class MetaBuiltins
         // the platform of either end.
         StreamHandle handle = StreamBuiltins.OpenLiveStream(engine.Streams!,
             new NetworkStream(socket, ownsSocket: true), "readwrite", o.Binary,
-            o.Encoding, o.Alias, o.EofAction, translateNewlines: false);
+            o.Encoding, o.Alias, o.EofAction, translateNewlines: false, o.BufferSize, asynchronous: true);
         handle.Socket = socket;
         handle.PeerHost = peerHost;
         handle.LiveConnection!.TimeoutMs = o.TimeoutMs;
@@ -473,7 +481,11 @@ public static partial class MetaBuiltins
         };
         Socket socket = h.Socket ?? throw new ShumwayPrologException(
             IsoError.DomainError("socket_stream", MaterializeRegister(engine, 0)));
-        if (direction != System.Net.Sockets.SocketShutdown.Receive) h.Writer?.Flush();
+        if (direction != System.Net.Sockets.SocketShutdown.Receive)
+        {
+            if (h.Writer is not null) h.Writer.Flush();
+            else h.BinaryStream?.Flush();
+        }
         try { socket.Shutdown(direction); }
         catch (SocketException ex) { throw new PrologRuntimeException("system_error", ex.Message); }
         return true;

@@ -53,6 +53,7 @@ public static partial class MetaBuiltins
         public string? Encoding;
         public string? Alias;
         public string? EofAction;
+        public int BufferSize = LiveStream.DefaultBufferSize;
     }
 
     private static string ProcessText(Term term, Term whole)
@@ -194,6 +195,9 @@ public static partial class MetaBuiltins
                     break;
                 case CompoundTerm { Functor: "eof_action", Args: [AtomTerm { Name: "error" or "eof_code" or "reset" } e] }:
                     s.EofAction = e.Name;
+                    break;
+                case CompoundTerm { Functor: "buffer_size", Args: [IntTerm { Value: >= 0 and <= LargestBuffer } size] }:
+                    s.BufferSize = (int)size.Value;
                     break;
                 default:
                     throw new ShumwayPrologException(IsoError.DomainError("process_stream_option", option));
@@ -400,7 +404,7 @@ public static partial class MetaBuiltins
             default:
                 StreamHandle handle = StreamBuiltins.OpenLiveStream(engine.Streams!, pipe,
                     writes ? "write" : "read", spec.Binary, spec.Encoding, spec.Alias, spec.EofAction,
-                    PositionTrackingReader.TranslateNewlinesByDefault);
+                    PositionTrackingReader.TranslateNewlinesByDefault, spec.BufferSize);
                 return StreamBuiltins.MakeStreamTerm(engine, handle);
         }
     }

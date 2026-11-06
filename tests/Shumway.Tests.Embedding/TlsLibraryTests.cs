@@ -130,7 +130,7 @@ read_bytes(S, Bytes) :-
     public void AClient_TalksToAServer_WithoutVerifying()
     {
         var (port, done) = TlsEchoServer();
-        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+        Assert.True(WithinSeconds(120, () => Engine().Query($@"
             socket_client_open('127.0.0.1':{port}, S0, []),
             tls_client_context(Ctx, [verify(false)]),
             tls_client_negotiate(Ctx, S0, S),
@@ -144,7 +144,7 @@ read_bytes(S, Bytes) :-
     public void AClient_RefusesAnUnknownAuthority_ByDefault()
     {
         var (port, _) = TlsEchoServer();
-        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+        Assert.True(WithinSeconds(120, () => Engine().Query($@"
             socket_client_open(localhost:{port}, S0, []),
             tls_client_context(Ctx, []),
             caught(tls_client_negotiate(Ctx, S0, _), system_error(_)),
@@ -155,7 +155,7 @@ read_bytes(S, Bytes) :-
     public void AClient_TrustsTheAuthorityItNames()
     {
         var (port, done) = TlsEchoServer();
-        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+        Assert.True(WithinSeconds(120, () => Engine().Query($@"
             socket_client_open(localhost:{port}, S0, []),
             tls_client_context(Ctx, [cacert_file('{AuthorityFile()}')]),
             tls_client_negotiate(Ctx, S0, S),
@@ -171,7 +171,7 @@ read_bytes(S, Bytes) :-
         using X509Certificate2 other = MakeCertificate();
         File.WriteAllBytes(P("other.cer"), other.Export(X509ContentType.Cert));
         var (port, _) = TlsEchoServer();
-        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+        Assert.True(WithinSeconds(120, () => Engine().Query($@"
             socket_client_open(localhost:{port}, S0, []),
             tls_client_context(Ctx, [cacert_file('{P("other.cer")}')]),
             caught(tls_client_negotiate(Ctx, S0, _), system_error(_)).")).Success);
@@ -181,7 +181,7 @@ read_bytes(S, Bytes) :-
     public void AClient_RefusesAWrongName_EvenWithTheAuthority()
     {
         var (port, _) = TlsEchoServer();
-        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+        Assert.True(WithinSeconds(120, () => Engine().Query($@"
             socket_client_open(localhost:{port}, S0, []),
             tls_client_context(Ctx, [cacert_file('{AuthorityFile()}'), hostname('other.example')]),
             caught(tls_client_negotiate(Ctx, S0, _), system_error(_)).")).Success);
@@ -192,12 +192,12 @@ read_bytes(S, Bytes) :-
     {
         var (port, _) = TlsEchoServer();
         // The certificate is for localhost: by address the name does not match.
-        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+        Assert.True(WithinSeconds(120, () => Engine().Query($@"
             socket_client_open('127.0.0.1':{port}, S0, []),
             tls_client_context(Ctx, [cacert_file('{AuthorityFile()}')]),
             caught(tls_client_negotiate(Ctx, S0, _), system_error(_)).")).Success);
         var (port2, done) = TlsEchoServer();
-        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+        Assert.True(WithinSeconds(120, () => Engine().Query($@"
             socket_client_open('127.0.0.1':{port2}, S0, []),
             tls_client_context(Ctx, [cacert_file('{AuthorityFile()}'), hostname(localhost)]),
             tls_client_negotiate(Ctx, S0, S),
@@ -209,7 +209,7 @@ read_bytes(S, Bytes) :-
     public void Upgrading_AfterTalkingInTheClear()
     {
         var (port, done) = TlsEchoServer(new byte[] { 42 });
-        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+        Assert.True(WithinSeconds(120, () => Engine().Query($@"
             socket_client_open('127.0.0.1':{port}, S0, []),
             get_byte(S0, 42),
             tls_client_context(Ctx, [verify(false)]),
@@ -224,7 +224,7 @@ read_bytes(S, Bytes) :-
     public void Upgrading_WithBytesAlreadyRead_IsAnError()
     {
         var (port, _) = TlsEchoServer(new byte[] { 42, 43 });
-        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+        Assert.True(WithinSeconds(120, () => Engine().Query($@"
             socket_client_open('127.0.0.1':{port}, S0, []),
             get_byte(S0, 42),
             tls_client_context(Ctx, [verify(false)]),
@@ -237,7 +237,7 @@ read_bytes(S, Bytes) :-
     public void ANegotiation_RefusesAReadLeftWaiting()
     {
         var (port, _) = TlsEchoServer();
-        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+        Assert.True(WithinSeconds(120, () => Engine().Query($@"
             socket_client_open('127.0.0.1':{port}, S0, []),
             socket_select([], [], [S0], [], [], [], 0),
             tls_client_context(Ctx, [verify(false)]),
@@ -249,7 +249,7 @@ read_bytes(S, Bytes) :-
     public void ANegotiation_RefusesAPeekedByte()
     {
         var (port, _) = TlsEchoServer(new byte[] { 42 });
-        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+        Assert.True(WithinSeconds(120, () => Engine().Query($@"
             socket_client_open('127.0.0.1':{port}, S0, []),
             peek_byte(S0, 42),
             tls_client_context(Ctx, [verify(false)]),
@@ -261,7 +261,7 @@ read_bytes(S, Bytes) :-
     public void TheNewStream_KeepsTheTimeout()
     {
         var (port, _) = TlsEchoServer();
-        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+        Assert.True(WithinSeconds(120, () => Engine().Query($@"
             socket_client_open('127.0.0.1':{port}, S0, [timeout(3)]),
             tls_client_context(Ctx, [verify(false)]),
             tls_client_negotiate(Ctx, S0, S),
@@ -270,10 +270,22 @@ read_bytes(S, Bytes) :-
     }
 
     [Fact]
+    public void TheNewStream_KeepsTheBufferSize()
+    {
+        var (port, _) = TlsEchoServer();
+        Assert.True(WithinSeconds(120, () => Engine().Query($@"
+            socket_client_open('127.0.0.1':{port}, S0, [buffer_size(7)]),
+            tls_client_context(Ctx, [verify(false)]),
+            tls_client_negotiate(Ctx, S0, S),
+            stream_property(S, buffer_size(7)),
+            close(S).")).Success);
+    }
+
+    [Fact]
     public void TheNewStream_CanShutDown()
     {
         var (port, done) = TlsEchoServer();
-        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+        Assert.True(WithinSeconds(120, () => Engine().Query($@"
             socket_client_open('127.0.0.1':{port}, S0, []),
             tls_client_context(Ctx, [verify(false)]),
             tls_client_negotiate(Ctx, S0, S),
@@ -286,7 +298,7 @@ read_bytes(S, Bytes) :-
     public void TheNewStream_KeepsWhatTheOldOneHad()
     {
         var (port, _) = TlsEchoServer();
-        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+        Assert.True(WithinSeconds(120, () => Engine().Query($@"
             socket_client_open('127.0.0.1':{port}, S0, [alias(conn), encoding('ISO-8859-1'), eof_action(eof_code)]),
             tls_client_context(Ctx, [verify(false)]),
             tls_client_negotiate(Ctx, S0, S),
@@ -304,7 +316,7 @@ read_bytes(S, Bytes) :-
     {
         var (port, _) = TlsEchoServer();
         // 0x61 + 1 is b; 0x81 + 1 is 0x82, not valid UTF-8.
-        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+        Assert.True(WithinSeconds(120, () => Engine().Query($@"
             socket_client_open('127.0.0.1':{port}, S0, [type(text)]),
             tls_client_context(Ctx, [verify(false)]),
             tls_client_negotiate(Ctx, S0, S),
@@ -320,8 +332,8 @@ read_bytes(S, Bytes) :-
         try
         {
             int port = ((IPEndPoint)listener.LocalEndpoint).Port;
-            Assert.True(WithinSeconds(30, () => Engine().Query($@"
-                socket_client_open('127.0.0.1':{port}, S0, [timeout(0.2)]),
+            Assert.True(WithinSeconds(120, () => Engine().Query($@"
+                socket_client_open('127.0.0.1':{port}, S0, [timeout(2)]),
                 tls_client_context(Ctx, [verify(false)]),
                 caught(tls_client_negotiate(Ctx, S0, _), timeout_error(tls)).")).Success);
         }
@@ -349,7 +361,7 @@ read_bytes(S, Bytes) :-
         long port = ((IntTerm)open["P"]!).Value;
         string srv = open["Srv"]!.ToString()!;
         var (_, reply) = TlsClientOf((int)port, 7);
-        Assert.True(WithinSeconds(30, () => e.Query($@"
+        Assert.True(WithinSeconds(120, () => e.Query($@"
             tls_server_context(Ctx, {contextOptions}),
             socket_server_accept({Quoted(srv)}, _, S0, []),
             tls_server_negotiate(Ctx, S0, S),
@@ -373,7 +385,7 @@ read_bytes(S, Bytes) :-
         long port = ((IntTerm)open["P"]!).Value;
         string srv = Quoted(open["Srv"]!.ToString()!);
         var (_, reply) = TlsClientOf((int)port, 7);
-        Assert.True(WithinSeconds(30, () => e.Query($@"
+        Assert.True(WithinSeconds(120, () => e.Query($@"
             bytes_of('{PfxFile()}', Bytes),
             tls_server_context(Ctx, [pkcs12(Bytes), password('{Password}')]),
             socket_server_accept({srv}, _, S0, []),

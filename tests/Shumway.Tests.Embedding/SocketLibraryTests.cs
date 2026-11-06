@@ -27,6 +27,10 @@ pair(Options, C, A) :-
     socket_server_close(Srv).
 
 caught(Goal, Error) :- catch((Goal, fail), error(Error, _), true).
+
+all_codes(S, Cs) :-
+    get_code(S, C),
+    ( C =:= -1 -> Cs = [] ; Cs = [C|T], all_codes(S, T) ).
 ";
 
     private static PrologEngine Engine()
@@ -110,37 +114,153 @@ caught(Goal, Error) :- catch((Goal, fail), error(Error, _), true).
             close(C), close(A).")).Success);
     }
 
+    private const string Text = "type(text)";
+    private const string Bytes = "type(binary)";
+    private const string PutText = "put_char(C, a)";
+    private const string PutByte = "put_byte(C, 97)";
+    private const string GetText = "get_char(A, a)";
+    private const string GetByte = "get_byte(A, 97)";
+
+    [Theory]
+    [InlineData(Text, PutText, GetText)]
+    [InlineData(Bytes, PutByte, GetByte)]
+    public void AShortWrite_WaitsForAFlush(string type, string put, string get)
+    {
+        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+            pair([{type}, timeout(5)], C, A),
+            {put},
+            socket_select([], [], [A], [], [], [], 0.2),
+            flush_output(C),
+            {get},
+            close(C), close(A).")).Success);
+    }
+
+    [Theory]
+    [InlineData(Text, PutText, GetText)]
+    [InlineData(Bytes, PutByte, GetByte)]
+    public void Closing_SendsWhatTheStreamHolds(string type, string put, string get)
+    {
+        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+            pair([{type}, timeout(5)], C, A),
+            {put},
+            close(C),
+            {get},
+            close(A).")).Success);
+    }
+
+    [Theory]
+    [InlineData(Text, PutText, GetText)]
+    [InlineData(Bytes, PutByte, GetByte)]
+    public void ALongWrite_GoesOutWithoutAFlush(string type, string put, string get)
+    {
+        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+            pair([{type}, timeout(5)], C, A),
+            forall(between(1, 5000, _), {put}),
+            {get},
+            close(C), close(A).")).Success);
+    }
+
+    [Theory]
+    [InlineData(Text, PutText, GetText)]
+    [InlineData(Bytes, PutByte, GetByte)]
+    public void ABufferOfNothing_SendsAtOnce(string type, string put, string get)
+    {
+        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+            pair([{type}, buffer_size(0), timeout(5)], C, A),
+            {put},
+            {get},
+            close(C), close(A).")).Success);
+    }
+
+    [Theory]
+    [InlineData(Text, PutText, "forall(between(1, 200, _), put_char(C, a))", GetText)]
+    [InlineData(Bytes, PutByte, PutByte, GetByte)]
+    public void ABuffer_SendsWhenItFills(string type, string put, string fill, string get)
+    {
+        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+            pair([{type}, buffer_size(10), timeout(5)], C, A),
+            forall(between(1, 9, _), {put}),
+            socket_select([], [], [A], [], [], [], 0.2),
+            {fill},
+            {get},
+            close(C), close(A).")).Success);
+    }
+
+    [Theory]
+    [InlineData(Text, PutText)]
+    [InlineData(Bytes, PutByte)]
+    public void ALargerBuffer_HoldsMore(string type, string put)
+    {
+        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+            pair([{type}, buffer_size(100000), timeout(5)], C, A),
+            forall(between(1, 5000, _), {put}),
+            socket_select([], [], [A], [], [], [], 0.2),
+            stream_property(C, buffer_size(100000)),
+            close(C), close(A).")).Success);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(10)]
+    [InlineData(200)]
+    [InlineData(4096)]
+    public void AText_ArrivesWhole_WhateverTheBuffer(int size)
+    {
+        Assert.True(WithinSeconds(30, () => Engine().Query($@"
+            pair([type(text), buffer_size({size}), timeout(5)], C, A),
+            findall(X, (between(1, 1000, I), X is 97 + I mod 26), Codes),
+            atom_codes(Text, Codes),
+            write(C, Text),
+            close(C),
+            all_codes(A, Codes),
+            close(A).")).Success);
+    }
+
     [Fact]
-    public void Bytes_GoOutAsTheyAreWritten()
+    public void TheBufferSize_IsAProperty()
+    {
+        Assert.True(WithinSeconds(30, () => Engine().Query(@"
+            pair([], C, A),
+            stream_property(C, buffer_size(4096)),
+            close(C), close(A).")).Success);
+    }
+
+    [Fact]
+    public void ASelectAboutToWait_SendsWhatTheStreamHolds()
     {
         Assert.True(WithinSeconds(30, () => Engine().Query(@"
             pair([timeout(5)], C, A),
             put_byte(C, 97),
+            socket_select([], [], [C], [], [], [], 0.1),
             get_byte(A, 97),
             close(C), close(A).")).Success);
     }
 
-    [Fact]
-    public void AShortText_WaitsForAFlush()
+    [Theory]
+    [InlineData(Text, "put_char(S, a)", "get_char(S, b)")]
+    [InlineData(Bytes, "put_byte(S, 97)", "get_byte(S, 98)")]
+    public void AReadAboutToWait_SendsWhatTheStreamHolds(string type, string put, string get)
     {
-        Assert.True(WithinSeconds(30, () => Engine().Query(@"
-            pair([type(text), timeout(5)], C, A),
-            put_char(C, x),
-            socket_select([], [], [A], [], [], [], 0.2),
-            flush_output(C),
-            get_char(A, x),
-            close(C), close(A).")).Success);
-    }
-
-    [Fact]
-    public void ALongText_GoesOutWithoutAFlush()
-    {
-        Assert.True(WithinSeconds(30, () => Engine().Query(@"
-            pair([type(text), timeout(5)], C, A),
-            length(L, 5000), maplist(=(x), L), atom_chars(Text, L),
-            write(C, Text),
-            get_char(A, x),
-            close(C), close(A).")).Success);
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        try
+        {
+            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            var server = Task.Factory.StartNew(() =>
+            {
+                using TcpClient c = listener.AcceptTcpClient();
+                NetworkStream s = c.GetStream();
+                int b = s.ReadByte();
+                s.WriteByte((byte)(b + 1));
+            }, TaskCreationOptions.LongRunning);
+            Assert.True(WithinSeconds(30, () => Engine().Query($@"
+                socket_client_open('127.0.0.1':{port}, S, [{type}, timeout(5)]),
+                {put},
+                {get},
+                close(S).")).Success);
+            WithinSeconds(10, () => { server.GetAwaiter().GetResult(); return true; });
+        }
+        finally { listener.Stop(); }
     }
 
     [Fact]
@@ -396,6 +516,10 @@ caught(Goal, Error) :- catch((Goal, fail), error(Error, _), true).
     [InlineData(@"caught(socket_client_open(localhost:80, _, [_]), instantiation_error)")]
     [InlineData(@"caught(socket_server_open(1, _, [type(text)]), domain_error(socket_option, type(text)))")]
     [InlineData(@"caught(socket_server_open(1, _, [backlog(0)]), domain_error(socket_option, backlog(0)))")]
+    [InlineData(@"caught(socket_server_open(1, _, [buffer_size(1)]), domain_error(socket_option, buffer_size(1)))")]
+    [InlineData(@"caught(socket_client_open(1, _, [buffer_size(-1)]), domain_error(socket_option, buffer_size(-1)))")]
+    [InlineData(@"caught(socket_client_open(1, _, [buffer_size(a)]), domain_error(socket_option, buffer_size(a)))")]
+    [InlineData(@"caught(socket_client_open(1, _, [buffer_size(_)]), instantiation_error)")]
     [InlineData(@"caught(socket_server_accept(_, _, _, []), instantiation_error)")]
     [InlineData(@"caught(socket_server_accept(foo, _, _, []), domain_error(server_socket, foo))")]
     [InlineData(@"caught(socket_server_close('$socket'(999)), existence_error(server_socket, '$socket'(999)))")]

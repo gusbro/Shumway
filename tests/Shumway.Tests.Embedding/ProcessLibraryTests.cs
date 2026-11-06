@@ -211,9 +211,11 @@ text_of(S, Atom) :- all_codes(S, Cs), atom_codes(Atom, Cs).
     [Fact]
     public void Null_DoesNotStallAProgramThatWritesALot()
     {
-        string loop = Windows ? "for /L %i in (1,1,3000) do @echo 0123456789012345678901234567890123456789" : "i=0; while [ $i -lt 3000 ]; do echo 0123456789012345678901234567890123456789; i=$((i+1)); done";
+        // More than a pipe holds, on each system: cmd writes a line at a time, and on a
+        // busy machine can take a minute over a few thousand.
+        string loop = Windows ? "for /L %i in (1,1,500) do @echo 0123456789012345678901234567890123456789" : "i=0; while [ $i -lt 3000 ]; do echo 0123456789012345678901234567890123456789; i=$((i+1)); done";
         var e = Engine();
-        var started = Q(e, $"run('{loop}', [stdout(null), process(P)]), process_id(P, Pid).");
+        var started = Q(e, $"run('{loop}', [stdin(null), stdout(null), stderr(null), process(P)]), process_id(P, Pid).");
         long process = ((IntTerm)((CompoundTerm)started["P"]!).Args[0]).Value;
         var clock = Stopwatch.StartNew();
         string status = Q(e, $"process_wait('$process'({process}), Status, [timeout(45)]).")["Status"]!.ToString()!;
@@ -355,11 +357,50 @@ text_of(S, Atom) :- all_codes(S, Cs), atom_codes(Atom, Cs).
     [Fact]
     public void AFileOutput_DoesNotDependOnThePool()
     {
-        var e = Engine();
-        Solution? sol = null;
-        var query = new Thread(() => sol = e.Query($@"
+        var sol = WithThePoolBusy(Engine(), $@"
             run('{Print("hello.")}', [stdout(file('{P("out.txt")}')), process(C)]),
-            process_wait(C, exit(0))."));
+            process_wait(C, exit(0)).");
+        Assert.True(sol.Success);
+        Assert.StartsWith("hello.", File.ReadAllText(P("out.txt")));
+    }
+
+    [Fact]
+    public void APipe_DoesNotDependOnThePool()
+    {
+        string cat = Windows ? "sort" : "cat";
+        var sol = WithThePoolBusy(Engine(), $@"
+            run('{cat}', [stdin(pipe(I)), stdout(pipe(O)), process(C)]),
+            write(I, 'hello.'), nl(I),
+            close(I),
+            read_term(O, T, []),
+            close(O),
+            process_wait(C, exit(0)).");
+        Assert.True(sol.Success);
+        Assert.Equal("hello", ((AtomTerm)sol["T"]!).Name);
+    }
+
+    [Theory]
+    [InlineData("[type(binary), buffer_size(0)]", 0, "put_byte(I, 97), put_byte(I, 46), put_byte(I, 10)")]
+    [InlineData("[buffer_size(2)]", 2, "put_char(I, a), put_char(I, '.'), nl(I)")]
+    public void APipe_TakesABufferSize(string options, int size, string put)
+    {
+        string cat = Windows ? "sort" : "cat";
+        var sol = Q(Engine(), $@"
+            run('{cat}', [stdin(pipe(I, {options})), stdout(pipe(O)), process(C)]),
+            stream_property(I, buffer_size({size})),
+            {put},
+            close(I),
+            read_term(O, T, []),
+            close(O),
+            process_wait(C, exit(0)).");
+        Assert.Equal("a", ((AtomTerm)sol["T"]!).Name);
+    }
+
+    /// <summary>Runs a query with every thread the pool may have taken, on a thread of its own.</summary>
+    private static Solution WithThePoolBusy(PrologEngine e, string goal)
+    {
+        Solution? sol = null;
+        var query = new Thread(() => sol = e.Query(goal));
         ThreadPool.GetMinThreads(out int workers, out _);
         ThreadPool.GetMaxThreads(out int maxWorkers, out int maxIo);
         // Not disposed: what is still queued when the test ends waits on it later.
@@ -370,14 +411,51 @@ text_of(S, Atom) :- all_codes(S, Cs), atom_codes(Atom, Cs).
             for (int i = 0; i < workers; i++) ThreadPool.QueueUserWorkItem(_ => release.Wait());
             query.Start();
             Assert.True(query.Join(TimeSpan.FromSeconds(30)), "it hung");
-            Assert.True(sol!.Success);
-            Assert.StartsWith("hello.", File.ReadAllText(P("out.txt")));
+            return sol!;
         }
         finally
         {
             release.Set();
             ThreadPool.SetMaxThreads(maxWorkers, maxIo);
         }
+    }
+
+    private const string SocketPair = @"
+            socket_server_open('127.0.0.1':Port, Srv),
+            socket_client_open('127.0.0.1':Port, C, [type(binary), timeout(10)]),
+            socket_server_accept(Srv, _, A, [type(binary), timeout(10)]),
+            socket_server_close(Srv),";
+
+    private static string Pause => Windows ? "ping -n 2 127.0.0.1 >nul" : "sleep 1";
+
+    [Fact]
+    public void WhatTheProgramHeld_GoesBeforeWhatAChildSends()
+    {
+        string then = Windows ? "& echo x" : "; echo x";
+        Assert.True(Q(Engine(), $@"
+            {SocketPair}
+            run('{Pause} {then}', [stdin(null), stdout(stream(C)), stderr(null), process(P)]),
+            put_byte(C, 97),
+            get_byte(A, 97),
+            get_byte(A, 120),
+            process_wait(P, exit(0)),
+            close(C), close(A).").Success);
+    }
+
+    [Fact]
+    public void ClosingAByteStream_ThatAChildStillWrites_SendsWhatItHeld()
+    {
+        // Read while the child lives: the stream closes for real only when it ends.
+        string longer = Windows ? "ping -n 30 127.0.0.1 >nul" : "sleep 30";
+        Assert.True(Q(Engine(), $@"
+            {SocketPair}
+            run('{longer}', [stdin(null), stdout(stream(C)), stderr(null), process(P)]),
+            put_byte(C, 97),
+            close(C),
+            get_byte(A, 97),
+            process_group_kill(P),
+            process_wait(P, _),
+            close(A).").Success);
     }
 
     private sealed class SlowSink : Stream
@@ -490,6 +568,8 @@ text_of(S, Atom) :- all_codes(S, Cs), atom_codes(Atom, Cs).
     }
 
     [Theory]
+    [InlineData(@"sys_shell(x, [E, A]), caught(process_create(E, A, [stdin(pipe(_, [buffer_size(-1)]))]), domain_error(process_stream_option, buffer_size(-1)))")]
+    [InlineData(@"sys_shell(x, [E, A]), caught(process_create(E, A, [stdin(pipe(_, [buffer_size(a)]))]), domain_error(process_stream_option, buffer_size(a)))")]
     [InlineData(@"sys_shell(x, [E, A]), caught(process_create(E, A, [stdout(stream(_))]), instantiation_error)")]
     [InlineData(@"sys_shell(x, [E, A]), caught(process_create(E, A, [stdout(stream(user_input))]), permission_error(output, stream, user_input))")]
     [InlineData(@"sys_shell(x, [E, A]), caught(process_create(E, A, [stdin(stream(user_output))]), permission_error(input, stream, user_output))")]
