@@ -27,6 +27,7 @@ public sealed class CatchFrameLifetimeTests
         p4(N) :- ( N =:= 0 -> true ; catch(throw(x), x, true), M is N-1, p4(M) ).
         p5(N) :- ( N =:= 0 -> true ; catch(catch(true, _, true), _, true), M is N-1, p5(M) ).
         p7(N) :- ( N =:= 0 -> true ; catch(R = ok, R, true), M is N-1, p7(M) ).
+        p8(N) :- ( N =:= 0 -> true ; member(_, [a,b]), catch(member(_, [a,b]), _, true), !, M is N-1, p8(M) ).
 
         st(T, C) :- statistics(trail_stack, [T, _]), statistics(cstr_stack, [C, _]).
         grow(P, N, DT, DC) :-
@@ -67,6 +68,7 @@ public sealed class CatchFrameLifetimeTests
     [InlineData("p4", false)] [InlineData("p4", true)]
     [InlineData("p5", false)] [InlineData("p5", true)]
     [InlineData("p7", false)] [InlineData("p7", true)]
+    [InlineData("p8", false)] [InlineData("p8", true)]
     public void ALoopOfCatches_LeavesNoTrailBehind(string p, bool compiled)
     {
         var (t1, c1, t2, c2) = Growth(Engine(compiled), p);
@@ -156,5 +158,47 @@ public sealed class CatchFrameLifetimeTests
         var sw = System.Diagnostics.Stopwatch.StartNew();
         Assert.True(e.Query("deepd(40000).").Success);
         Assert.True(sw.Elapsed.TotalSeconds < 8, $"deepd(40000) took {sw.Elapsed.TotalSeconds:F1} s");
+    }
+
+    // A cut frees the address of the choice point a frame saw, and a younger one takes it.
+    // Comparing addresses makes that one look older than the frame, so giving the frame
+    // back lowered the trail below what the choice point saved.
+    [Theory]
+    [InlineData(@"
+        member(_, [1, 2]),
+        catch(member(_, [1, 2]), _, true),
+        !,
+        member(X, [1, 2]),
+        catch(true, _, true),
+        X == 2")]
+    [InlineData(@"
+        member(_, [1, 2]),
+        catch(member(_, [1, 2]), _, true),
+        !,
+        member(X, [1, 2]),
+        catch(member(_, [1, 2]), _, true),
+        catch(true, _, true),
+        !,
+        X == 1")]
+    [InlineData(@"
+        member(_, [1, 2]),
+        catch(member(_, [1, 2]), _, true),
+        !,
+        member(X, [1, 2]),
+        catch(throw(a), a, true),
+        X == 2")]
+    [InlineData(@"
+        member(_, [1, 2]),
+        catch(member(_, [1, 2]), _, true),
+        !,
+        member(X, [1, 2]),
+        catch((catch(member(_, [1, 2]), _, true), throw(a)), a, true),
+        catch(true, _, true),
+        X == 2")]
+    public void AYoungerChoicePoint_AtTheAddressOfACutOne_KeepsItsTrail(string body)
+    {
+        var e = new PrologEngine();
+        e.ConsultString($"t :- {body}.");
+        Assert.True(e.Query("t.").Success);
     }
 }
