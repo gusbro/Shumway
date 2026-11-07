@@ -364,6 +364,26 @@ on the other systems too, and there a global dynamic is wrong.
   on SICStus and SWI (Scryer rejects the form). Built so: the body of a
   head-qualified clause is stored qualified with `S`, as ADR-055 stores a
   consulted one.
+- Multifile, the base case on the three systems: `m` and `n` each
+  declaring `p/1` `:- multifile` and `:- dynamic` with a fact of their own
+  hold two predicates, and the global module holds none (`p(X)` there is an
+  existence error). Built so; the declaration is recorded under the
+  module's own predicate, where it used to leave an empty global `p/1`
+  behind, as a `:- discontiguous` one did. Fed from four sources, measured
+  on the same systems: `m`'s own `assertz(p(..))`, `assertz(m:p(..))` from
+  another module and a bare `assertz(p(..))` from a module that imports
+  `p/1` from `m` all add to `m`'s predicate on SICStus and SWI, and so does
+  a clause `m:p(..)` under `:- multifile(m:p/1)` in a plain file; the plain
+  file's own `p/1` is the global one. Scryer refuses the qualified clause
+  head and fails the importer's bare assert. On the engine before this
+  amendment every source fed one global `p/1`. What the declaration
+  changes, measured on SICStus and SWI: with it, a second file's `m:p(..)`
+  clauses join `m`'s predicate and a reload of that file replaces only what
+  it gave; without it, the second file redefines `m:p/1`, with a warning,
+  static or dynamic. Built so for a static predicate (ADR-055 point 6); for
+  a dynamic one the second file's clauses join it, as an assert would, and
+  a reload still withdraws that file's own clauses, which it did not before
+  this amendment was built.
 - A qualified `retract/1` gave its first solution only, on the old engine
   too: the enumeration re-reads its pattern from the register on every
   resume, qualifiers and all, and the unpeeled pattern unified with no
@@ -409,7 +429,8 @@ private, the three spellings of an asserted rule, `assertz(z:q(1))` with
 `current_module(z)` and the reflection of `z`, an exported dynamic shared
 with its importer, a static `f/1` beside `user`'s dynamic `f/1`, `user:`
 from a module, the engine's hook facts, the withdrawn ADR-056 point 3,
-`nd:reconsult(File)` and `consult(File)` from a module, and the legacy world
+`nd:reconsult(File)` and `consult(File)` from a module, a multifile dynamic
+fed from four sources, and the legacy world
 unchanged: a plain file, a `:- module(Name)` module and a `:- module/2` file
 under `arity_compat`. `QualifiedDatabaseTests` and `QualifiedReflectionTests`
 pin the qualified spellings; the tests that pinned the global model now

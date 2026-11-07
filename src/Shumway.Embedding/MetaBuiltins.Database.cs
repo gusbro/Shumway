@@ -127,8 +127,11 @@ public static partial class MetaBuiltins
             }
         }
         // `:- multifile PI` is a property of the predicate, whichever module
-        // declared it — the clauses accumulate across files.
-        if (props.Count > 0 && host.IsMultifileFunctor(fid))
+        // declared it — the clauses accumulate across files. The predicate is
+        // the module's own in the modern world, the bare one otherwise.
+        int declared = module is null ? fid
+            : host.DatabaseFunctorFor(importedFrom ?? module, fid, create: false);
+        if (props.Count > 0 && host.IsMultifileFunctor(declared))
             props.Add(new AtomTerm("multifile"));
         // Defined by a grammar rule: the property that says so.
         if (props.Count > 0 && host.IsNonTerminalFunctor(fid))

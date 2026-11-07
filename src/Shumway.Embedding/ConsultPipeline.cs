@@ -812,7 +812,8 @@ internal sealed class ConsultPipeline
     /// the slot, or at <paramref name="insertAt"/> when that is not -1.
     /// Returns the position it landed at.</summary>
     private int StoreDynamicClause(Clause c, int fid, string moduleName, bool isMultifile,
-        Func<ModuleRewrite.Context> multifileCtx, int insertAt, bool ownsDynamics = false)
+        Func<ModuleRewrite.Context> multifileCtx, int insertAt, bool ownsDynamics = false,
+        bool foreign = false)
     {
         // A predicate of a module that owns its dynamics compiles every clause
         // in the module's context at query setup, so none is rewritten here.
@@ -850,7 +851,10 @@ internal sealed class ConsultPipeline
         // another module would hijack the context.
         if (moduleName != PrologEngine.DefaultModuleName && !isMultifile)
             E._dynamicSeedModule[fid] = moduleName;
-        if (isMultifile && _multifileSource is { } source)
+        // What this source gave another module's dynamic predicate (ADR-055
+        // point 6) is withdrawn when the source is loaded again, as a
+        // multifile contribution is; the module's own clauses stay.
+        if ((isMultifile || foreign) && _multifileSource is { } source)
         {
             if (!E._multifileClauses.TryGetValue(source, out var given))
                 E._multifileClauses[source] = given = new List<(int, Clause)>();
@@ -1260,6 +1264,38 @@ internal sealed class ConsultPipeline
         return (moduleName, heads);
     }
 
+    /// <summary>Records what this consult's <c>:- discontiguous</c> and
+    /// <c>:- multifile</c> directives declared, under the predicate each
+    /// names: a modern module's own <c>M$p</c>, the bare functor in the legacy
+    /// world, the qualifying module's for <c>:- multifile(M:p/N)</c>. A
+    /// declared predicate exists with no clauses, so a call to it fails.</summary>
+    private void CommitDeclarations(ModuleManifest manifest, string moduleName, bool ownsDynamics,
+        HashSet<int>? pendingDiscontiguous, List<(string Owner, int Key)>? pendingMultifileKeys)
+    {
+        HashSet<int>? discontiguous = pendingDiscontiguous;
+        if (discontiguous is not null && ownsDynamics)
+        {
+            discontiguous = new HashSet<int>();
+            foreach (int fid in pendingDiscontiguous!)
+                discontiguous.Add(PrologEngine.IsGlobalHookFunctor(fid)
+                    ? fid : PrologEngine.MangleFunctor(moduleName, fid));
+        }
+        if (discontiguous is not null) manifest.DiscontiguousFunctors.UnionWith(discontiguous);
+        HashSet<int>? multifile = null;
+        if (pendingMultifileKeys is not null)
+        {
+            multifile = new HashSet<int>();
+            foreach (var (owner, key) in pendingMultifileKeys)
+            {
+                multifile.Add(key);
+                var target = owner == moduleName || !E._modules.TryGetValue(owner, out var other)
+                    ? manifest : other;
+                target.MultifileFunctors.Add(key);
+            }
+        }
+        E.RecordDeclaredEmpty(discontiguous, multifile);
+    }
+
     /// <summary>abolishes the named functor in the given
     /// module: drops every matching clause from the module manifest
     /// (and removes the functor from any companion sets:
@@ -1284,12 +1320,15 @@ internal sealed class ConsultPipeline
             if (kept < manifest.Clauses.Count)
                 manifest.Clauses.RemoveRange(kept, manifest.Clauses.Count - kept);
             manifest.PublicFunctors.Remove(fid);
-            manifest.DiscontiguousFunctors.Remove(fid);
-            manifest.MultifileFunctors.Remove(fid);
             manifest.ModeDeclarations.Remove(fid);
         }
 
         int key = E.ModuleOwnsDynamics(moduleName) ? PrologEngine.MangleFunctor(moduleName, fid) : fid;
+        if (manifest is not null)
+        {
+            manifest.DiscontiguousFunctors.Remove(key);
+            manifest.MultifileFunctors.Remove(key);
+        }
         if (E._dynStore.IsDynamic(key) || E._dynStore.HasClauses(key))
             E.AbolishDynamic(key);
 
@@ -1512,6 +1551,7 @@ internal sealed class ConsultPipeline
         Dictionary<Clause, (int Key, string Target)>? foreignDynamic = null;
         HashSet<int>? pendingDiscontiguous = null;
         HashSet<int>? pendingMultifile = null;
+        List<(string Owner, int Key)>? pendingMultifileKeys = null;
         HashSet<int>? tabledFunctors = null;
         Dictionary<int, List<Shumway.Compiler.Modes.ModeDeclaration>>? pendingModes = null;
         List<Term>? initializationGoals = null;
@@ -1943,6 +1983,10 @@ internal sealed class ConsultPipeline
                     E._dynStore.MarkDynamic(key);
                     if (!E._dynStore.HasClauses(key))
                         E._dynStore[key] = new List<Clause>();
+                    // What the declaration names, for the owner's manifest: the
+                    // module's own predicate in the modern world, so the bare
+                    // name stays undefined in the global module.
+                    (pendingMultifileKeys ??= new()).Add((qm ?? moduleName, key));
                 }
             }
             else if (body is CompoundTerm { Functor: "meta_predicate", Args.Length: 1 } metaDir)
@@ -2292,7 +2336,8 @@ internal sealed class ConsultPipeline
                     {
                         bool isMultifile = pendingMultifile?.Contains(fid) == true;
                         int at = StoreDynamicClause(c, key, owner, isMultifile,
-                            MultifileCtx, insertAt: -1, ownsDynamics: key != fid);
+                            MultifileCtx, insertAt: -1, ownsDynamics: key != fid,
+                            foreign: owner != moduleName);
                         // In-file goal_expansion applies to this clause too —
                         // recorded for the post-commit re-expansion pass, with
                         // the position hooks are numbered against (the count of
@@ -2487,9 +2532,7 @@ internal sealed class ConsultPipeline
                 foreach (var (fid, src) in pendingImports) manifest.Imports[fid] = src;
             if (pendingImportedModules is not null)
                 manifest.ImportedModules.AddRange(pendingImportedModules);
-            if (pendingDiscontiguous is not null) manifest.DiscontiguousFunctors.UnionWith(pendingDiscontiguous);
-            if (pendingMultifile is not null) manifest.MultifileFunctors.UnionWith(pendingMultifile);
-            E.RecordDeclaredEmpty(pendingDiscontiguous, pendingMultifile);
+            CommitDeclarations(manifest, moduleName, ownsDynamics, pendingDiscontiguous, pendingMultifileKeys);
             if (pendingModes is not null)
                 foreach (var (fid, modes) in pendingModes) manifest.ModeDeclarations[fid] = modes;
             E._modules[moduleName] = manifest;
@@ -2551,9 +2594,7 @@ internal sealed class ConsultPipeline
             if (pendingImportedModules is not null)
                 foreach (string m in pendingImportedModules)
                     if (!existing.ImportedModules.Contains(m)) existing.ImportedModules.Add(m);
-            if (pendingDiscontiguous is not null) existing.DiscontiguousFunctors.UnionWith(pendingDiscontiguous);
-            if (pendingMultifile is not null) existing.MultifileFunctors.UnionWith(pendingMultifile);
-            E.RecordDeclaredEmpty(pendingDiscontiguous, pendingMultifile);
+            CommitDeclarations(existing, moduleName, ownsDynamics, pendingDiscontiguous, pendingMultifileKeys);
             if (pendingModes is not null)
                 foreach (var (fid, modes) in pendingModes)
                 {

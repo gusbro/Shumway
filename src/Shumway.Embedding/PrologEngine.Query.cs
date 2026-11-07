@@ -2624,8 +2624,8 @@ public sealed partial class PrologEngine
                     // independently; the linker concatenates them as if
                     // they came from one source.
                     bool bothMultifile =
-                        _modules[other].MultifileFunctors.Contains(fid)
-                        && manifest.MultifileFunctors.Contains(fid);
+                        DeclaresMultifile(_modules[other], other, fid)
+                        && DeclaresMultifile(manifest, name, fid);
                     if (bothMultifile) continue;
 
                     var (atomId, arity) = FunctorTable.Lookup(fid);
@@ -2640,6 +2640,11 @@ public sealed partial class PrologEngine
             }
         }
     }
+
+    // A modern module records the declaration under its own predicate.
+    private static bool DeclaresMultifile(ModuleManifest m, string module, int fid)
+        => m.MultifileFunctors.Contains(fid)
+           || (m.OwnsDynamics && m.MultifileFunctors.Contains(MangleFunctor(module, fid)));
 
     private static Solution BuildSolution(
         List<string> varNames, int[] varHeapIndices, Activation engine,

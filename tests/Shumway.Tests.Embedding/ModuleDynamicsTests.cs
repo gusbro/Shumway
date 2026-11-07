@@ -384,6 +384,157 @@ public sealed class ModuleDynamicsTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
+    /// <summary>The base case: two modules each declaring <c>p/1</c>
+    /// <c>:- multifile</c> and <c>:- dynamic</c> with a fact of their own
+    /// hold two predicates, and the global module holds none (SICStus, SWI,
+    /// Scryer). The declaration names the module's own predicate, so it
+    /// leaves no empty <c>p/1</c> behind in the global module, nor does a
+    /// <c>:- discontiguous</c> one.</summary>
+    [Fact]
+    public void TwoModulesDeclaringTheSameMultifile_HoldTwoPredicates()
+    {
+        var e = new PrologEngine();
+        e.ConsultString("""
+            :- module(mf2_m, []).
+            :- multifile(p/1).
+            :- dynamic(p/1).
+            :- discontiguous(d/1).
+            p(m_static).
+            d(1).
+            """);
+        e.ConsultString("""
+            :- module(mf2_n, []).
+            :- multifile(p/1).
+            :- dynamic(p/1).
+            p(n_static).
+            """);
+        Succeeds(e, "findall(X, mf2_m:p(X), L), L == [m_static].");
+        Succeeds(e, "findall(X, mf2_n:p(X), L), L == [n_static].");
+        Succeeds(e, "mf2_m:d(X), X == 1.");
+        RaisesExistence(e, "p(_)", "p/1");
+        RaisesExistence(e, "d(_)", "d/1");
+        Fails(e, "current_predicate(p/1).");
+        Fails(e, "predicate_property(p(_), multifile).");
+        Succeeds(e, "predicate_property(mf2_m:p(_), multifile).");
+        Succeeds(e, "predicate_property(mf2_m:p(_), dynamic).");
+        Succeeds(e, "current_predicate(mf2_m:p/1), current_predicate(mf2_n:p/1).");
+    }
+
+    /// <summary>What the declaration changes: with it, a second source adds
+    /// its clauses to the module's predicate and a reload of that source
+    /// replaces only what it gave (SICStus, SWI, and so here); without it, a
+    /// second source's clauses for a static predicate redefine it, with a
+    /// warning (ADR-055 point 6), while for a dynamic one they join it as an
+    /// assert would, and a reload still withdraws that source's own.</summary>
+    [Fact]
+    public void WithoutMultifile_ASecondSourceRedefinesAStatic_AndFeedsADynamicOnce()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "shumway_mdyn_mf3_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string P(string name) => Path.Combine(dir, name).Replace('\\', '/');
+            File.WriteAllText(P("mf3_s.pl"), """
+                :- module(mf3_s, []).
+                p(m_static).
+                """);
+            File.WriteAllText(P("mf3_d.pl"), """
+                :- module(mf3_d, []).
+                :- dynamic(p/1).
+                p(m_static).
+                """);
+            File.WriteAllText(P("mf3_w.pl"), """
+                :- module(mf3_w, []).
+                :- multifile(p/1).
+                p(m_static).
+                """);
+            File.WriteAllText(P("mf3_gs.pl"), "mf3_s:p(g_static).\n");
+            File.WriteAllText(P("mf3_gd.pl"), "mf3_d:p(g_static).\n");
+            File.WriteAllText(P("mf3_gw.pl"), ":- multifile(mf3_w:p/1).\nmf3_w:p(g_static).\n");
+            var e = new PrologEngine();
+            foreach (string f in new[] { "mf3_s.pl", "mf3_d.pl", "mf3_w.pl" }) e.ConsultFile(P(f));
+            // Each load is a query of its own: a static change a consult makes
+            // inside a query is seen by the next one.
+            // Static, undeclared: the later source redefines.
+            Succeeds(e, $"consult('{P("mf3_gs.pl")}').");
+            Succeeds(e, "findall(X, mf3_s:p(X), L), L == [g_static].");
+            Succeeds(e, $"reconsult('{P("mf3_gs.pl")}').");
+            Succeeds(e, "findall(X, mf3_s:p(X), L), L == [g_static].");
+            // Dynamic, undeclared: the clause joins; a reload gives it once.
+            Succeeds(e, $"consult('{P("mf3_gd.pl")}').");
+            Succeeds(e, "findall(X, mf3_d:p(X), L), L == [m_static, g_static].");
+            Succeeds(e, $"reconsult('{P("mf3_gd.pl")}').");
+            Succeeds(e, "findall(X, mf3_d:p(X), L), L == [m_static, g_static].");
+            // Multifile: the same, declared.
+            Succeeds(e, $"consult('{P("mf3_gw.pl")}').");
+            Succeeds(e, "findall(X, mf3_w:p(X), L), L == [m_static, g_static].");
+            Succeeds(e, $"reconsult('{P("mf3_gw.pl")}').");
+            Succeeds(e, "findall(X, mf3_w:p(X), L), L == [m_static, g_static].");
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>A multifile dynamic's clauses belong to the module that
+    /// names them (SICStus, SWI): the module's own text, a qualified head
+    /// in another file, a qualified assert from another module, and a bare
+    /// assert from a module that imports it. Another module's own
+    /// <c>:- multifile p/1</c> is a different predicate, and a plain file's
+    /// <c>p/1</c> is the global one.</summary>
+    [Fact]
+    public void AMultifileDynamic_BelongsToTheModuleThatNamesIt()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "shumway_mdyn_mf_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string P(string name) => Path.Combine(dir, name).Replace('\\', '/');
+            File.WriteAllText(P("mf_m.pl"), """
+                :- module(mf_m, [p/1, add_here/1]).
+                :- multifile(p/1).
+                :- dynamic(p/1).
+                p(m_static).
+                add_here(X) :- assertz(p(X)).
+                """);
+            File.WriteAllText(P("mf_n.pl"), """
+                :- module(mf_n, [add_n/1, add_m/1, n_sees/1]).
+                :- multifile(p/1).
+                :- dynamic(p/1).
+                p(n_static).
+                add_n(X) :- assertz(p(X)).
+                add_m(X) :- assertz(mf_m:p(X)).
+                n_sees(L) :- findall(X, p(X), L).
+                """);
+            File.WriteAllText(P("mf_i.pl"), $"""
+                :- module(mf_i, [add_i/1, i_sees/1]).
+                :- use_module('{P("mf_m.pl")}').
+                add_i(X) :- assertz(p(X)).
+                i_sees(L) :- findall(X, p(X), L).
+                """);
+            File.WriteAllText(P("mf_g.pl"), """
+                :- multifile(mf_m:p/1).
+                mf_m:p(g_static).
+                """);
+            // Loaded without importing anything into user, which has its own p/1.
+            File.WriteAllText(P("mf_drv.pl"), $"""
+                :- use_module('{P("mf_m.pl")}', []).
+                :- use_module('{P("mf_n.pl")}', []).
+                :- use_module('{P("mf_i.pl")}', []).
+                :- dynamic(p/1).
+                p(f_static).
+                """);
+            var e = new PrologEngine();
+            e.ConsultFile(P("mf_drv.pl"));
+            Succeeds(e, $"consult('{P("mf_g.pl")}').");
+            Succeeds(e, "mf_m:add_here(m_added), mf_n:add_n(n_added), mf_n:add_m(via_n), mf_i:add_i(i_added), assertz(p(user_added)).");
+            Succeeds(e, "findall(X, mf_m:p(X), L), L == [m_static, g_static, m_added, via_n, i_added].");
+            Succeeds(e, "mf_n:n_sees(L), L == [n_static, n_added].");
+            Succeeds(e, "findall(X, mf_n:p(X), L), L == [n_static, n_added].");
+            Succeeds(e, "mf_i:i_sees(L), L == [m_static, g_static, m_added, via_n, i_added].");
+            Succeeds(e, "findall(X, p(X), L), L == [f_static, user_added].");
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
     [Fact]
     public void TheLegacyWorldIsUnchanged()
     {
