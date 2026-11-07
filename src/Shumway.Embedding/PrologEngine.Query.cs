@@ -664,7 +664,7 @@ public sealed partial class PrologEngine
         RewriteDynamicPredicate(int fid, List<Clause> clauses, ModuleRewrite.Context fidCtx,
             Shumway.Compiler.Modes.ModeTable modeTable)
     {
-        var transformed = ClausePipeline.Apply(clauses, modeTable, inlineIte: EnableInlineIte, helperIdProvider: NextMetaHelperId, dcgFailFast: !_flags.DebugCodegen);
+        var transformed = TransformClauses(clauses, fidCtx.ModuleName, EnableInlineIte);
         var rewritten = new List<Clause>(transformed.Count);
         foreach (var clause in transformed)
             rewritten.Add(ModuleRewrite.Rewrite(clause, fidCtx));
@@ -939,10 +939,11 @@ public sealed partial class PrologEngine
         }
         else
         {
-            // the derivation is being regenerated: MetaTransform
-            // helper names ('$disj_N', '$catchgoal_N', ...) come from the
-            // global NextMetaHelperId counter, so the fresh ASTs reference
-            // fresh helper ids. Any compiled artifact from the previous
+            // the derivation is being regenerated: a clause whose transform
+            // TransformClauses does not hand back from its memo (changed,
+            // under new modes, under debug codegen) takes fresh MetaTransform
+            // helper names ('$disj_N', '$catchgoal_N', ...) from the engine's
+            // NextMetaHelperId counter. Any compiled artifact from the previous
             // derivation still calls the old helper ids — helpers that no
             // longer exist in the new clause set, so the link bakes an
             // undefined sentinel and the call raises existence_error
@@ -1038,7 +1039,9 @@ public sealed partial class PrologEngine
                 var unfolded = (_flags.DebugCodegen && !opaqueModule)
                     ? manifest.Clauses
                     : MetaWrapperUnfold.Apply(manifest.Clauses);
-                var transformed = ClausePipeline.Apply(unfolded, modeTable, inlineIte: EnableInlineIte, helperIdProvider: NextMetaHelperId, dcgFailFast: !_flags.DebugCodegen);
+                var usedTransforms = new HashSet<string>();
+                var transformed = TransformClauses(unfolded, name, EnableInlineIte, usedTransforms);
+                PruneRuleTransforms(name, usedTransforms);
 
                 var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
                 // fold in the bare local fids contributed by a
