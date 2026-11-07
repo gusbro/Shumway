@@ -64,6 +64,12 @@ public sealed class ModuleManifest
     /// modules.</summary>
     public bool IsExportQualified { get; set; }
 
+    /// <summary>ADR-038 (amendment): the module's dynamic predicates are its
+    /// own, kept in the store under <c>Name$p</c> as its statics are. True
+    /// for an export-qualified module compiled with <c>arity_compat</c> off;
+    /// every other module keeps its dynamics in the global store.</summary>
+    public bool OwnsDynamics { get; set; }
+
     /// <summary>ADR-038 — the importable surface of an export-qualified module:
     /// the bare <c>Name/Arity</c> functor ids listed in <c>:- module(Name,
     /// [Exports])</c> (∪ any <c>:- public</c> in that module). An importer of

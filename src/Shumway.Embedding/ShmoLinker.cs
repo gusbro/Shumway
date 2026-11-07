@@ -218,6 +218,10 @@ public static class ShmoLinker
                 }
                 else if (d.Visibility == PredicateVisibility.Dynamic)
                 {
+                    // ADR-038 (amendment): a module of the modern world owns
+                    // its dynamics; they are its own definitions, reached
+                    // qualified, not entries of the global namespace.
+                    if (obj.IsExportQualified && !obj.ArityCompat) continue;
                     if (!globalDynamic.TryGetValue(d.Indicator, out var list))
                     {
                         list = new List<string>();

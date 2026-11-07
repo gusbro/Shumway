@@ -20,10 +20,14 @@ public sealed partial class PrologEngine
     /// head's functor id (the caller needs it for the
     /// incremental dispatch update; returning it avoids a second
     /// extraction's string intern).</summary>
-    internal int Assertz(Clause clause)
+    internal int Assertz(Clause clause) => Assertz(clause, ExtractHeadFunctorId(clause));
+
+    /// <summary>As <see cref="Assertz(Clause)"/>, under the store key
+    /// <paramref name="fid"/>: a modern module's predicate keeps its bare
+    /// head and is keyed by its mangled name (ADR-038, amendment).</summary>
+    internal int Assertz(Clause clause, int fid)
     {
         clause = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(clause);
-        int fid = ExtractHeadFunctorId(clause);
         EnsureDynamic(fid);
         _dynStore.AppendClause(fid, clause);
         InvalidateDynamicCache(fid);
@@ -32,10 +36,11 @@ public sealed partial class PrologEngine
 
     /// <summary>Adds <paramref name="clause"/> at the front of its predicate's
     /// dynamic clause list. Returns the head's functor id.</summary>
-    internal int Asserta(Clause clause)
+    internal int Asserta(Clause clause) => Asserta(clause, ExtractHeadFunctorId(clause));
+
+    internal int Asserta(Clause clause, int fid)
     {
         clause = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(clause);
-        int fid = ExtractHeadFunctorId(clause);
         EnsureDynamic(fid);
         _dynStore.PrependClause(fid, clause);
         InvalidateDynamicCache(fid);
@@ -1732,8 +1737,8 @@ public sealed partial class PrologEngine
         var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
         if (_precompiledModuleLocals.TryGetValue(moduleName, out var bundleLocals))
             locals.UnionWith(bundleLocals);
-        var ctx = new ModuleRewrite.Context(moduleName, locals, _dynStore.Functors, manifest.Imports)
-        { MetaArgSpec = MetaArgSpec };
+        var ctx = NewRewriteContext(moduleName, locals, manifest.Imports, manifest.OwnsDynamics,
+            qualifiedResolver: true);
         var rewritten = new List<Clause>(transformed.Count);
         foreach (var c in transformed)
             rewritten.Add(ModuleRewrite.Rewrite(c, ctx));
@@ -2144,9 +2149,10 @@ public sealed partial class PrologEngine
     /// predicate with a real dynamic trampoline; a first-time assertz
     /// at runtime then has somewhere to put the new clause and
     /// subsequent calls dispatch to it.</summary>
-    internal void CollectImplicitDynamics(IEnumerable<Clause> clauses, HashSet<int> publicsInSameConsult)
+    internal void CollectImplicitDynamics(IEnumerable<Clause> clauses, HashSet<int> publicsInSameConsult,
+        string? ownerModule)
     {
-        var seen = new HashSet<int>();
+        var seen = new HashSet<(string? Module, int Fid)>();
         foreach (var c in clauses)
         {
             Term body = c.Kind == ClauseKind.Rule
@@ -2155,8 +2161,20 @@ public sealed partial class PrologEngine
             if (body is null) continue;
             ScanForAssertHeads(body, seen);
         }
-        foreach (int fid in seen)
+        foreach (var (module, bare) in seen)
         {
+            // The key the assert will use: a module that owns its dynamics
+            // keys its own (ADR-038, amendment). A module named in the assert
+            // that is not loaded yet is created by the assert itself.
+            int fid = bare;
+            if (module is null)
+            {
+                if (ownerModule is not null) fid = MangleFunctor(ownerModule, bare);
+            }
+            else if (!_modules.TryGetValue(module, out var named)) continue;
+            else if (named.Imports.TryGetValue(bare, out string? src))
+                fid = ModuleOwnsDynamics(src) ? MangleFunctor(src, bare) : bare;
+            else if (named.OwnsDynamics) fid = MangleFunctor(module, bare);
             if (_dynStore.IsDynamic(fid)) continue;
             // A builtin, static clauses, or a precompiled predicate (the
             // baked prelude's false/0 and catch/3): the assert must refuse it.
@@ -2164,8 +2182,8 @@ public sealed partial class PrologEngine
             // Also skip if the same consult is about to define this
             // functor as a public (static) predicate — caught by
             // looking at publics + the about-to-be-added clauses.
-            if (publicsInSameConsult.Contains(fid)) continue;
-            if (ClausesDefineFunctor(clauses, fid)) continue;
+            if (publicsInSameConsult.Contains(bare)) continue;
+            if (ClausesDefineFunctor(clauses, bare)) continue;
             _dynStore.MarkDynamic(fid);
             // …but only the linker needs to know yet. The predicate is not in
             // the database until something declares or asserts it, so it stays
@@ -2177,11 +2195,12 @@ public sealed partial class PrologEngine
         }
     }
 
-    /// <summary>Collects the heads a clause body asserts. Iterative: the body
+    /// <summary>Collects the heads a clause body asserts, with the module a
+    /// qualified one names (null when unqualified). Iterative: the body
     /// it scans is whatever the program wrote, and a frame per conjunct
     /// overflowed the C# stack around a few thousand goals -- which kills the
     /// process, mid-consult, with nothing to report.</summary>
-    private static void ScanForAssertHeads(Term goal, HashSet<int> sink)
+    private static void ScanForAssertHeads(Term goal, HashSet<(string? Module, int Fid)> sink)
     {
         var pending = new List<Term>(32) { goal };
         while (pending.Count > 0)
@@ -2193,15 +2212,22 @@ public sealed partial class PrologEngine
                 && c.Args.Length == 1)
             {
                 Term arg = c.Args[0];
+                string? module = null;
+                // M:Clause, (M:Head :- Body) and M:(Head :- Body): the
+                // innermost module names the head's.
+                while (arg is CompoundTerm { Functor: ":", Args: [AtomTerm qm, var inner] })
+                { module = qm.Name; arg = inner; }
                 // The clause form (Head :- Body) — peel to Head.
                 if (arg is CompoundTerm cl && cl.Functor == ":-" && cl.Args.Length == 2)
                     arg = cl.Args[0];
+                while (arg is CompoundTerm { Functor: ":", Args: [AtomTerm hm, var hinner] })
+                { module = hm.Name; arg = hinner; }
                 if (arg is AtomTerm a)
-                    sink.Add(FunctorTable.Intern(
-                        AtomTable.Intern(a.Name, permanent: true).Id, 0));
+                    sink.Add((module, FunctorTable.Intern(
+                        AtomTable.Intern(a.Name, permanent: true).Id, 0)));
                 else if (arg is CompoundTerm cc)
-                    sink.Add(FunctorTable.Intern(
-                        AtomTable.Intern(cc.Functor, permanent: true).Id, cc.Args.Length));
+                    sink.Add((module, FunctorTable.Intern(
+                        AtomTable.Intern(cc.Functor, permanent: true).Id, cc.Args.Length)));
                 continue;
             }
             // Down through control constructs and any compound — a nested
@@ -2238,8 +2264,23 @@ public sealed partial class PrologEngine
 
     private bool HasStaticClauses(int fid)
     {
+        // A modern module's predicate is keyed by its mangled name; the
+        // module's static clauses carry the bare head (ADR-038, amendment).
+        if (TryDemangleModule(fid, out string module, out int bare) && _modules[module].OwnsDynamics)
+        {
+            foreach (var c in _modules[module].InspectableClauses)
+                if (TryExtractDefinedHead(c, out string n, out int a)
+                    && FunctorTable.Intern(AtomTable.Intern(n, permanent: true).Id, a) == bare)
+                    return true;
+            return false;
+        }
         foreach (var manifest in _modules.Values)
         {
+            // A global dynamic of the name cannot take over a modern module's
+            // own predicate, which it reaches under its mangled name; it does
+            // take over a legacy module's, whose calls skip the mangle for a
+            // dynamic (ADR-056 point 3, kept for the legacy world).
+            if (manifest.OwnsDynamics) continue;
             foreach (var c in manifest.InspectableClauses)
             {
                 if (TryExtractDefinedHead(c, out string n, out int a))
@@ -2334,7 +2375,10 @@ public sealed partial class PrologEngine
             if (_assertDynCtx is null || !ReferenceEquals(_assertDynCtx.Imports, userImports))
                 _assertDynCtx = new ModuleRewrite.Context(
                     DefaultModuleName, new HashSet<int>(), _dynStore.Functors, userImports);
-            toCompile = ModuleRewrite.Rewrite(transformed[0], _assertDynCtx);
+            // A modern module's predicate compiles in the module's context,
+            // where its clauses reach the module's private predicates.
+            var ctx = OwnedDynamicContextFor(functorId) ?? _assertDynCtx;
+            toCompile = ModuleRewrite.Rewrite(transformed[0], ctx);
             // the helpers used to be dropped here, leaving the
             // asserted clause's body calling a '$catchgoal_N' that nothing
             // defines until the next query setup regenerates it from the
@@ -2345,7 +2389,7 @@ public sealed partial class PrologEngine
             // asserted clause's call sites against the address map.
             if (transformed.Count > 1)
             {
-                LinkRuntimeAssertHelpers(engine, transformed);
+                LinkRuntimeAssertHelpers(engine, transformed, ctx);
                 // The next setup derives these helpers again from the store
                 // (they are not stored), which takes a fresh product.
                 _programStamp++;
@@ -2372,7 +2416,7 @@ public sealed partial class PrologEngine
     /// the next query setup regenerates them from the original clause,
     /// exactly like the setup path always has.</summary>
     private void LinkRuntimeAssertHelpers(
-        Activation engine, IReadOnlyList<Clause> transformed)
+        Activation engine, IReadOnlyList<Clause> transformed, ModuleRewrite.Context ctx)
     {
         if (engine.CurrentProgram is null
             || engine.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap)
@@ -2382,7 +2426,7 @@ public sealed partial class PrologEngine
         List<int>? order = null;
         for (int i = 1; i < transformed.Count; i++)
         {
-            var rewritten = ModuleRewrite.Rewrite(transformed[i], _assertDynCtx!);
+            var rewritten = ModuleRewrite.Rewrite(transformed[i], ctx);
             int fid = HeadFunctorIdOf(rewritten);
             groups ??= new Dictionary<int, List<Clause>>();
             order ??= new List<int>();

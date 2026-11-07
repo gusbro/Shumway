@@ -5,6 +5,10 @@
 Accepted (2026-09-26). Extends [ADR-008](008-module-visibility.md) and
 [ADR-038](038-library-loading.md).
 
+Amended 2026-11-06 (built 2026-11-07): point 4 holds for the legacy world
+only. A dynamic or multifile predicate of an export-qualified module is that
+module's own, and a qualified head keeps its module (ADR-038, amendment).
+
 ## Context
 
 A source file may define a clause for a predicate of another module by

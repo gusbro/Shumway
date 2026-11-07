@@ -306,12 +306,22 @@ public static partial class MetaBuiltins
     /// (read clauses from current input until end_of_file), or a list of
     /// specifications — the Edinburgh <c>[file1, file2]</c> shape, which the
     /// prelude also makes callable as a goal.</summary>
-    private static void ConsultSpec(PrologEngine host, Activation engine, Term spec)
+    private static void ConsultSpec(PrologEngine host, Activation engine, Term spec,
+        string? intoModule = null)
     {
         switch (spec)
         {
             case Shumway.Compiler.Ast.VarTerm:
                 throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+            // M:File loads a file without a module directive into M
+            // (ADR-038 amendment point 8); the innermost module wins.
+            case Shumway.Compiler.Ast.CompoundTerm { Functor: ":", Args: [Shumway.Compiler.Ast.AtomTerm m, var inner] }:
+                ConsultSpec(host, engine, inner, m.Name == PrologEngine.DefaultModuleName ? null : m.Name);
+                return;
+            case Shumway.Compiler.Ast.CompoundTerm { Functor: ":", Args: [Shumway.Compiler.Ast.VarTerm, _] }:
+                throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+            case Shumway.Compiler.Ast.CompoundTerm { Functor: ":", Args: [var badModule, _] }:
+                throw new Shumway.Core.PrologRuntimeException("type_error", "atom", (object)badModule);
             case Shumway.Compiler.Ast.AtomTerm { Name: "[]" }:
                 return;   // the end of a file list
             case Shumway.Compiler.Ast.AtomTerm { Name: "user" }:
@@ -326,12 +336,12 @@ public static partial class MetaBuiltins
                         (object)new Shumway.Compiler.Ast.AtomTerm(a.Name));
                 // Runtime consult: thread the live engine so source-declared dynamic
                 // clauses become visible to a later call in the same query.
-                host.ConsultFileLive(path, engine);
+                host.ConsultFileLive(path, engine, intoModule);
                 return;
             }
             case Shumway.Compiler.Ast.CompoundTerm { Functor: ".", Args: [var f, var fs] }:
-                ConsultSpec(host, engine, f);
-                ConsultSpec(host, engine, fs);
+                ConsultSpec(host, engine, f, intoModule);
+                ConsultSpec(host, engine, fs, intoModule);
                 return;
             default:
                 throw new Shumway.Core.PrologRuntimeException("type_error", "atom",
@@ -407,14 +417,7 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "ensure_loaded/1 requires the engine to be hosted by a PrologEngine.");
 
-        Cell cell = MaterializeRegisterAsCell(engine, 0);
-        if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
-            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
-        if (cell.Tag != Tag.Atom)
-            throw new Shumway.Core.PrologRuntimeException(
-                "type_error", "atom", engine, cell);
-
-        string given = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
+        string given = FileSpecAtom(engine, MaterializeRegister(engine, 0), out string? intoModule);
         string path = given;
         // A relative name resolves against the directory of the file being
         // loaded, as `:- include/1` does — `:- ensure_loaded(file_1)` inside
@@ -441,8 +444,8 @@ public static partial class MetaBuiltins
         // not append to it — otherwise the stale clauses stay and the file is
         // effectively loaded twice, which is the one thing this predicate
         // exists to prevent.
-        if (host.WasConsulted(path)) host.ReconsultFileLive(path, engine);
-        else host.ConsultFileLive(path, engine);
+        if (host.WasConsulted(path)) host.ReconsultFileLive(path, engine, intoModule);
+        else host.ConsultFileLive(path, engine, intoModule);
         return true;
     }
 
@@ -695,14 +698,7 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "reconsult/1 requires the engine to be hosted by a PrologEngine.");
 
-        Cell cell = MaterializeRegisterAsCell(engine, 0);
-        if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
-            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
-        if (cell.Tag != Tag.Atom)
-            throw new Shumway.Core.PrologRuntimeException(
-                "type_error", "atom", engine, cell);
-
-        string given = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
+        string given = FileSpecAtom(engine, MaterializeRegister(engine, 0), out string? intoModule);
         string path = ConsultPipeline.ResolveSourcePath(given);   // SWI-style: reconsult(algo) → algo.pl
         if (!System.IO.File.Exists(path))
             throw new Shumway.Core.PrologRuntimeException(
@@ -710,8 +706,33 @@ public static partial class MetaBuiltins
                 (object)new Shumway.Compiler.Ast.AtomTerm(given));
 
         // Runtime reconsult: the rest of this query sees the file, as with consult/1.
-        host.ReconsultFileLive(path, engine);
+        host.ReconsultFileLive(path, engine, intoModule);
         return true;
+    }
+
+    /// <summary>The file atom of a load specification, with the module an
+    /// <c>M:File</c> names (null for none or for the global module): a file
+    /// without a module directive loads into it (ADR-038 amendment point 8).
+    /// The ISO errors for a bad specification.</summary>
+    private static string FileSpecAtom(Activation engine, Term spec, out string? intoModule)
+    {
+        intoModule = null;
+        while (spec is CompoundTerm { Functor: ":", Args: [var m, var inner] })
+        {
+            switch (m)
+            {
+                case AtomTerm ma: intoModule = ma.Name == PrologEngine.DefaultModuleName ? null : ma.Name; break;
+                case VarTerm: throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+                default: throw new Shumway.Core.PrologRuntimeException("type_error", "atom", (object)m);
+            }
+            spec = inner;
+        }
+        return spec switch
+        {
+            AtomTerm a => a.Name,
+            VarTerm => throw new Shumway.Core.PrologRuntimeException("instantiation_error"),
+            _ => throw new Shumway.Core.PrologRuntimeException("type_error", "atom", (object)spec),
+        };
     }
 
     // ============================================================================
@@ -814,7 +835,7 @@ public static partial class MetaBuiltins
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException("clause/3: PrologEngine host required.");
         int headHeap = engine.MaterializeRegisterForTrace(0);
-        int fid = ReadPatternHeadFunctorId(engine, ref headHeap);
+        int fid = ReadPatternHeadFunctorId(engine, host, ref headHeap);
         IReadOnlyList<Clause> clauses = host.DynamicClausesFor(fid);
         Term list = new AtomTerm("[]");
         for (int i = clauses.Count - 1; i >= 0; i--)
@@ -891,12 +912,22 @@ public static partial class MetaBuiltins
     private static (int Fid, Clause Clause) AssertCore(
         Activation engine, PrologEngine host, bool prepend)
     {
-        Clause? clause = TryImageFact(engine, host);
+        Clause? clause = TryImageFact(engine, host, out int fid);
         if (clause is null)
         {
             Term clauseTerm = MaterializeClauseRegister(engine, 0);
-            clauseTerm = StripAssertQualifiers(clauseTerm);
+            clauseTerm = SplitAssertQualifiers(clauseTerm, out string? context, out string? headModule);
             ValidateAssertClause(clauseTerm, engine);
+            // ADR-038 (amendment): the clause is its head's module's, under
+            // that module's key. Its body runs where it was asserted from:
+            // the head's module, unless the head alone was qualified, when
+            // the body keeps the asserting context (SICStus).
+            fid = host.DatabaseFunctorFor(headModule, HeadFunctorIdOfTerm(clauseTerm));
+            string bodyContext = context ?? PrologEngine.DefaultModuleName;
+            if (bodyContext != (headModule ?? PrologEngine.DefaultModuleName)
+                && clauseTerm is CompoundTerm { Functor: ":-", Args: [var h, var b] } rule)
+                clauseTerm = new CompoundTerm(":-", new[] { h, host.QualifyBodyIn(b, bodyContext) })
+                    { Position = rule.Position };
             clause = Shumway.Compiler.Ast.Clause.From(clauseTerm);
         }
         // Before the database changes: a clause whose code cannot be placed
@@ -905,10 +936,8 @@ public static partial class MetaBuiltins
         if (engine.CodeRoom < PrologEngine.AssertCodeHeadroom
             && !host.HasFreeCodeChunk(engine, PrologEngine.AssertCodeHeadroom))
             throw new Shumway.Core.PrologRuntimeException("resource_error", "code_space");
-        // Asserta/Assertz extract the head functor id anyway —
-        // take it from the return instead of re-extracting (a second
-        // string intern per assert).
-        int fid = prepend ? host.Asserta(clause) : host.Assertz(clause);
+        if (prepend) host.Asserta(clause, fid);
+        else host.Assertz(clause, fid);
         // ADR-015 incremental dispatch — the canonical path:
         //   assertz → append a chunk and patch the tail's <next>.
         //   asserta → append a chunk, patch the trampoline's execute,
@@ -942,7 +971,7 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "'$retractall_modifiable'/1: PrologEngine host required.");
         int headHeap = engine.MaterializeRegisterForTrace(0);
-        int fid = ReadPatternHeadFunctorId(engine, ref headHeap);
+        int fid = ReadPatternHeadFunctorId(engine, host, ref headHeap);
         return host.IsRetractAllModifiable(fid);
     }
 
@@ -960,7 +989,7 @@ public static partial class MetaBuiltins
         // wasted: the heap representation already has the functor id
         // sitting one slot inside the STR.
         int patternHeap = engine.MaterializeRegisterForTrace(0);
-        int patternFid = ReadPatternHeadFunctorId(engine, ref patternHeap);
+        int patternFid = ReadPatternHeadFunctorId(engine, host, ref patternHeap);
 
         // ISO §7.12.2.h — retracting from a static
         // predicate is permission_error(modify, static_procedure, _),
@@ -1082,26 +1111,33 @@ public static partial class MetaBuiltins
     /// Nested qualifiers peel through (innermost wins, vacuously — they all
     /// drop). A variable module is an instantiation_error, a non-atom a
     /// type_error(atom) — checked before the drop.</summary>
-    private static Term StripAssertQualifiers(Term t)
+    /// <summary>The clause without its qualifiers, with the module they name
+    /// (innermost wins): <paramref name="context"/> from the chain around the
+    /// whole clause, <paramref name="headModule"/> from the chain on the head
+    /// of a rule when it has one, else the same. Null when unqualified.</summary>
+    private static Term SplitAssertQualifiers(Term t, out string? context, out string? headModule)
     {
-        t = StripColonChain(t);
+        t = StripColonChain(t, out context);
+        headModule = context;
         if (t is CompoundTerm { Functor: ":-", Args.Length: 2 } rule
             && rule.Args[0] is CompoundTerm { Functor: ":", Args.Length: 2 })
         {
-            Term head = StripColonChain(rule.Args[0]);
+            Term head = StripColonChain(rule.Args[0], out string? hm);
+            if (hm is not null) headModule = hm;
             t = new CompoundTerm(":-", new[] { head, rule.Args[1] })
                 { Position = rule.Position };
         }
         return t;
     }
 
-    private static Term StripColonChain(Term t)
+    private static Term StripColonChain(Term t, out string? module)
     {
+        module = null;
         while (t is CompoundTerm { Functor: ":", Args.Length: 2 } q)
         {
             switch (q.Args[0])
             {
-                case AtomTerm: break;
+                case AtomTerm m: module = m.Name; break;
                 case VarTerm:
                     throw new Shumway.Core.PrologRuntimeException("instantiation_error");
                 default:
@@ -1110,6 +1146,19 @@ public static partial class MetaBuiltins
             t = q.Args[1];
         }
         return t;
+    }
+
+    private static int HeadFunctorIdOfTerm(Term clauseTerm)
+    {
+        Term head = clauseTerm is CompoundTerm { Functor: ":-", Args.Length: 2 } rule
+            ? rule.Args[0] : clauseTerm;
+        return head switch
+        {
+            AtomTerm a => FunctorTable.Intern(AtomTable.Intern(a.Name, permanent: true).Id, 0),
+            CompoundTerm c => FunctorTable.Intern(
+                AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length),
+            _ => throw new ShumwayPrologException(IsoError.TypeError("callable", head)),
+        };
     }
 
     private static readonly int _colonFunctorAtomId =
@@ -1159,8 +1208,29 @@ public static partial class MetaBuiltins
         return DynFirstArgKey.OfCall(engine, first);
     }
 
-    private static int ReadPatternHeadFunctorId(Activation engine, ref int patternHeap)
+    /// <summary>The store key the pattern names, with any <c>Module:</c>
+    /// qualifier chain peeled in place (ADR-038, amendment: the module names
+    /// the predicate's store key, the global one in the legacy world).
+    /// <paramref name="patternHeap"/> moves to the inner subterm itself, so
+    /// the caller's variables keep their identity; a rule pattern whose head
+    /// is qualified, <c>(M:H :- B)</c>, is rebuilt as <c>(H :- B)</c> over
+    /// the same cells.</summary>
+    private static int ReadPatternHeadFunctorId(Activation engine, PrologEngine host, ref int patternHeap)
     {
+        Cell head = PeelPatternQualifiers(engine, ref patternHeap, out string? module);
+        return host.DatabaseFunctorFor(module, ReadFunctorIdFromCell(engine, head));
+    }
+
+    /// <summary>Peels the <c>Module:</c> chain off the pattern, and off the
+    /// head of a rule pattern, which is rebuilt without it; moves
+    /// <paramref name="patternHeap"/> to the inner term and returns the head
+    /// cell, with the innermost module (null for none). A retract enumeration
+    /// peels again on every resume: the pattern is re-read from the register,
+    /// where it still carries its qualifiers, and unpeeled it unified with no
+    /// clause, so a qualified retract gave its first solution only.</summary>
+    private static Cell PeelPatternQualifiers(Activation engine, ref int patternHeap, out string? module)
+    {
+        module = null;
         int idx = engine.Deref(patternHeap);
         Cell c = engine.GetHeap(idx);
         while (c.Tag == Tag.Str)
@@ -1168,16 +1238,10 @@ public static partial class MetaBuiltins
             int sa = c.AsHeapIndex;
             Cell f = engine.GetHeap(sa);
             if (f.Tag != Tag.Functor) break;
-            int fid = f.AsFunctorId;
-            var (atomId, arity) = FunctorTable.Lookup(fid);
+            var (atomId, arity) = FunctorTable.Lookup(f.AsFunctorId);
             if (arity == 2 && atomId == _colonFunctorAtomId)
             {
-                int mIdx = engine.Deref(sa + 1);
-                Cell mc = engine.GetHeap(mIdx);
-                if (mc.Tag == Tag.Ref || mc.Tag == Tag.AttVar)
-                    throw new Shumway.Core.PrologRuntimeException("instantiation_error");
-                if (mc.Tag != Tag.Atom)
-                    throw new Shumway.Core.PrologRuntimeException("type_error", "atom");
+                module = ReadQualifierModule(engine, sa);
                 patternHeap = idx = engine.Deref(sa + 2);
                 c = engine.GetHeap(idx);
                 continue;
@@ -1187,11 +1251,46 @@ public static partial class MetaBuiltins
                 // retract((Head :- Body)) — descend into the Head slot.
                 int headIdx = engine.Deref(sa + 1);
                 Cell hc = engine.GetHeap(headIdx);
-                return ReadFunctorIdFromCell(engine, hc);
+                string? headModule = null;
+                while (hc.Tag == Tag.Str
+                       && engine.GetHeap(hc.AsHeapIndex) is { Tag: Tag.Functor } hf
+                       && FunctorTable.Lookup(hf.AsFunctorId) is (var ha, 2) && ha == _colonFunctorAtomId)
+                {
+                    headModule = ReadQualifierModule(engine, hc.AsHeapIndex);
+                    headIdx = engine.Deref(hc.AsHeapIndex + 2);
+                    hc = engine.GetHeap(headIdx);
+                }
+                if (headModule is not null)
+                {
+                    module = headModule;
+                    // The pattern's home is a cell holding the structure, as
+                    // the callers read it; the body slot is copied as it is,
+                    // so an unbound body stays the caller's variable.
+                    int s = engine.AllocateHeap(4);
+                    engine.SetHeap(s, Cell.Str(s + 1));
+                    engine.SetHeap(s + 1, Cell.Functor(_ruleFunctorId));
+                    engine.SetHeap(s + 2, hc);
+                    engine.SetHeap(s + 3, engine.GetHeap(sa + 2));
+                    patternHeap = s;
+                }
+                return hc;
             }
-            return fid;
+            return c;
         }
-        return ReadFunctorIdFromCell(engine, c);
+        return c;
+    }
+
+    /// <summary>The module atom of a <c>:</c>/2 structure at
+    /// <paramref name="structureAddr"/>, validated as the builtins do.</summary>
+    private static string ReadQualifierModule(Activation engine, int structureAddr)
+    {
+        int mIdx = engine.Deref(structureAddr + 1);
+        Cell mc = engine.GetHeap(mIdx);
+        if (mc.Tag == Tag.Ref || mc.Tag == Tag.AttVar)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (mc.Tag != Tag.Atom)
+            throw new Shumway.Core.PrologRuntimeException("type_error", "atom");
+        return AtomTable.GetById(mc.AsAtomId)?.Name ?? "";
     }
 
     private static int ReadFunctorIdFromCell(Activation engine, Cell c)
@@ -1222,8 +1321,9 @@ public static partial class MetaBuiltins
     /// construct, too wide an arity), a term an image cannot carry, and an
     /// engine compiling for the debugger or with deterministic modes declared,
     /// whose clause compiler specialises the fact.</summary>
-    private static Clause? TryImageFact(Activation engine, PrologEngine host)
+    private static Clause? TryImageFact(Activation engine, PrologEngine host, out int storeFid)
     {
+        storeFid = -1;
         var flags = host.Flags;
         if (!flags.ImageFacts || flags.EmitDebugInfo || flags.DebugCodegen) return null;
         Cell c = engine.GetRegister(0);
@@ -1233,15 +1333,31 @@ public static partial class MetaBuiltins
         if (f.Tag != Tag.Functor) return null;
         int fid = f.AsFunctorId;
         var (atomId, arity) = FunctorTable.Lookup(fid);
+        // Module:Fact names the store; the image is the fact's own (a
+        // module that owns its dynamics keeps bare heads under its key).
+        string? module = null;
+        while (arity == 2 && atomId == _colonAtomId)
+        {
+            Cell m = engine.GetHeap(engine.Deref(c.AsHeapIndex + 1));
+            if (m.Tag != Tag.Atom) return null;
+            module = AtomTable.GetById(m.AsAtomId)?.Name;
+            c = engine.GetHeap(engine.Deref(c.AsHeapIndex + 2));
+            if (c.Tag != Tag.Str) return null;
+            f = engine.GetHeap(c.AsHeapIndex);
+            if (f.Tag != Tag.Functor) return null;
+            fid = f.AsFunctorId;
+            (atomId, arity) = FunctorTable.Lookup(fid);
+        }
         if (arity > Shumway.Core.RuntimeCaps.MaxProcedureArity) return null;
-        if (atomId == _ruleFunctorAtomId || atomId == _colonAtomId) return null;
+        if (atomId == _ruleFunctorAtomId) return null;
         if (arity == 2 && AtomTable.GetById(atomId)?.Name is "," or ";" or "->" or "*->" or "-->")
             return null;
         if (host.Modes.AllModesDeterministic(fid)) return null;
         var image = Shumway.Core.TermImageCopier.FromHeap(engine, c);
         if (image is null) return null;
         host.ImageFactsAsserted++;
-        return new Clause(image, fid);
+        storeFid = host.DatabaseFunctorFor(module, fid);
+        return new Clause(image, storeFid);
     }
 
     /// <summary>The candidate's term on the heap for the trial unification:
@@ -1501,6 +1617,7 @@ public static partial class MetaBuiltins
             // resume would dangle after a mid-enumeration collection moved
             // the pattern cell.
             int patternHeap = engine.MaterializeRegisterForTrace(0);
+            PeelPatternQualifiers(engine, ref patternHeap, out _);
             RetractTrace.StepEntry(engine, isResume: true, _start);
 
             // Re-read each time: a mutation between resumes can have copied
@@ -1985,14 +2102,15 @@ public static partial class MetaBuiltins
     }
 
     /// <summary><c>'$wake_hook_goal'(+Module, +AttrVal, +Other, -HookGoal,
-    /// -Goals, -Proxy)</c> — ADR-049 driver support. <c>Proxy</c> is the
+    /// -Goals, -Proxy, -GoalsModule)</c> — ADR-049 driver support. <c>Proxy</c> is the
     /// variable a /3 hook receives (<c>[]</c> for a /4 hook), which
     /// <c>'$wake_settle'/2</c> binds once the hook accepts. Resolves the module's
     /// <c>verify_attributes</c> hook (its own /3 first, then /4 with the
     /// bare fallback, per ADR-040) and builds the hook invocation the driver
     /// then runs through <c>call/1</c>; <c>Goals</c> is the fresh variable
-    /// the hook binds to its returned goal list. Fails for a hookless
-    /// module — the driver treats that as "nothing to run".
+    /// the hook binds to its returned goal list, and <c>GoalsModule</c> the
+    /// module they run in (<see cref="Activation.HookGoalsModule"/>). Fails for
+    /// a hookless module — the driver treats that as "nothing to run".
     ///
     /// <para>The /3 shape hands the hook a fresh attributed variable
     /// carrying the value the module had on the now-bound one (snapshotted
@@ -2050,7 +2168,9 @@ public static partial class MetaBuiltins
         }
         return engine.UnifyRegisterWithCell(3, hookGoal)
             && engine.UnifyRegisterWithHeapAt(4, goalsVar)
-            && engine.UnifyRegisterWithCell(5, proxyCell);
+            && engine.UnifyRegisterWithCell(5, proxyCell)
+            && engine.UnifyRegisterWithCell(6,
+                Cell.Atom(engine.HookGoalsModule(v3 >= 0 ? v3 : v4, moduleId)));
     }
 
     /// <summary><c>'$wake_settle'(+Proxy, +Other)</c> — binds a

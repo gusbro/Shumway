@@ -358,13 +358,19 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
             && ReferenceEquals(cached.Template, template))
             return cached.Spec;
         int[]? spec;
+        // A `:` argument of the system's own predicate, a builtin or the
+        // prelude's, stays bare where bare names the global store.
+        bool system = Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _)
+            || _preludeFunctors.Contains(fid)
+            || (_metaPredicateDeclarers.TryGetValue(fid, out var declaredBy)
+                && declaredBy.Contains(Prelude.ModuleName));
         if (localModule is not null)
             spec = template is not null
                    && _metaPredicateDeclarers.TryGetValue(fid, out var declarers)
                    && declarers.Contains(localModule)
-                ? ModuleRewrite.MetaArgSpecOfTemplate(template)
+                ? ModuleRewrite.MetaArgSpecOfTemplate(template, system)
                 : null;
-        else spec = template is not null ? ModuleRewrite.MetaArgSpecOfTemplate(template) : null;
+        else spec = template is not null ? ModuleRewrite.MetaArgSpecOfTemplate(template, system) : null;
         _metaArgSpecCache[key] = (template, spec);
         return spec;
     }

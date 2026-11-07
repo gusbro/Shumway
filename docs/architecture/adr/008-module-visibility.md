@@ -4,6 +4,11 @@
 
 Accepted ([Phase 1](../../history/phase-1-closure.md)).
 
+"Dynamic predicates respect visibility" below was not built: a dynamic
+predicate is global, in a `:- module(Name)` module too, and `:- public` only
+declares it. The amendment of 2026-11-06 to [ADR-038](038-library-loading.md)
+makes it hold for an export-qualified module (`:- module/2`).
+
 ## Context
 
 Prolog systems differ significantly in how they handle modules and visibility:

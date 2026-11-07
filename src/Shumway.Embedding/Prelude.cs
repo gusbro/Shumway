@@ -115,6 +115,26 @@ internal static class Prelude
         :- meta_predicate(call(4, *, *, *, *)).
         :- meta_predicate(call(5, *, *, *, *, *)).
         :- meta_predicate(call(6, *, *, *, *, *, *)).
+        % ADR-038 (amendment): the predicate argument of a database builtin
+        % is a meta-argument. It names a predicate of the module it is
+        % written in, and a goal meta-called with a module passes it on.
+        :- meta_predicate(assert(:)).
+        :- meta_predicate(asserta(:)).
+        :- meta_predicate(assertz(:)).
+        :- meta_predicate(asserta(:, *)).
+        :- meta_predicate(assertz(:, *)).
+        :- meta_predicate(retract(:)).
+        :- meta_predicate(retractall(:)).
+        :- meta_predicate(abolish(:)).
+        :- meta_predicate(clause(:, *)).
+        :- meta_predicate(clause(:, *, *)).
+        :- meta_predicate(predicate_property(:, *)).
+        :- meta_predicate(listing(:)).
+        % A load names the module a file without a module directive loads
+        % into: M:consult(File) and consult(M:File) alike (point 8).
+        :- meta_predicate(consult(:)).
+        :- meta_predicate(reconsult(:)).
+        :- meta_predicate(ensure_loaded(:)).
         :- meta_predicate(call(7, *, *, *, *, *, *, *)).
         :- meta_predicate(call_nth(0, *)).
         :- meta_predicate(setup_call_cleanup(0, 0, 0)).
@@ -321,16 +341,17 @@ internal static class Prelude
         % twice. The GOALS it returned run free: they are where a frozen
         % user goal lives, and their alternatives are the point of ADR-049.
         '$wake_one'('$wake'(M, AttrVal, Other)) :-
-            ( '$wake_hook_goal'(M, AttrVal, Other, HookGoal, Goals, Proxy) ->
+            ( '$wake_hook_goal'(M, AttrVal, Other, HookGoal, Goals, Proxy, GM) ->
                 '$wake_call'(HookGoal), !,
                 '$wake_settle'(Proxy, Other),
-                '$wake_goals'(Goals, M)
+                '$wake_goals'(Goals, GM)
             ; true ).   % hookless module: the bind already happened
         % A hook's Goals may come back unbound (none) or as a proper list.
-        % They run in the attribute's module, which may name its own
-        % private predicates in them (ADR-056). Tagged '$mqual', not M:G:
-        % the wasm tier resolves the tag in place, and a ':'/2 goal leaves
-        % the module on every wakeup.
+        % They run in the hook's module: the attribute's own when the hook
+        % is that module's, which may name its own private predicates in
+        % them (ADR-056), the global module for the shared /4 hook. Tagged
+        % '$mqual', not M:G: the wasm tier resolves the tag in place, and a
+        % ':'/2 goal leaves the module on every wakeup.
         '$wake_goals'(Gs, _) :- var(Gs), !.
         '$wake_goals'([], _).
         '$wake_goals'([G|Gs], M) :- '$wake_call'('$mqual'(M, G)), '$wake_goals'(Gs, M).
@@ -2115,8 +2136,9 @@ internal static class Prelude
         % on a STATIC one it raises permission_error. '$retractall_modifiable'
         % succeeds only for a dynamic predicate, so the retract loop runs just
         % then; undefined makes it fail into the `true` arm.
-        % The qualified form peels first: dynamics are flat-global, so M: on
-        % a database operation validates the module slot and drops.
+        % The qualified form keeps its module: the predicate is M's own in
+        % the modern world, the global one in the legacy world (ADR-038,
+        % amendment); the module slot is validated first.
         retractall(H0) :-
             nonvar(H0), H0 = ':'(_, _), !,
             '$strip_module'(H0, M, H),
@@ -2124,11 +2146,16 @@ internal static class Prelude
             ;   \+ atom(M) -> throw(error(type_error(atom, M), _))
             ;   true
             ),
-            retractall(H).
+            '$retractall_in'(M, H).
         retractall(Head) :-
             ( '$retractall_modifiable'(Head)
             -> ( retract(Head), fail ; true ),
                ( retract((Head :- _)), fail ; true )
+            ; true ).
+        '$retractall_in'(M, Head) :-
+            ( '$retractall_modifiable'(M:Head)
+            -> ( retract(M:Head), fail ; true ),
+               ( retract(M:(Head :- _)), fail ; true )
             ; true ).
 
         %! listing | Database | Lists the clauses of every user-defined predicate, consulted or asserted, never builtins or library predicates.

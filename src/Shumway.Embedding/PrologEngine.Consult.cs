@@ -14,15 +14,15 @@ public sealed partial class PrologEngine
     /// anything else consults source.</summary>
     public void ConsultFile(string path) => HostChange(() => Consults.ConsultFile(path));
 
-    internal void ConsultFileLive(string path, Shumway.Core.Activation liveEngine)
-        => Consults.ConsultFileLive(path, liveEngine);
+    internal void ConsultFileLive(string path, Shumway.Core.Activation liveEngine, string? intoModule = null)
+        => Consults.ConsultFileLive(path, liveEngine, intoModule);
 
     /// <summary>Classical reconsult: abolishes the predicates the file
     /// defines, then consults it.</summary>
     public void ReconsultFile(string path) => HostChange(() => Consults.ReconsultFile(path));
 
-    internal void ReconsultFileLive(string path, Shumway.Core.Activation liveEngine)
-        => Consults.ReconsultFileLive(path, liveEngine);
+    internal void ReconsultFileLive(string path, Shumway.Core.Activation liveEngine, string? intoModule = null)
+        => Consults.ReconsultFileLive(path, liveEngine, intoModule);
 
     /// <summary>Consults Prolog source text into this engine.</summary>
     public void ConsultString(string source) => HostChange(() => Consults.ConsultString(source));

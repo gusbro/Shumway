@@ -1417,6 +1417,7 @@ public sealed partial class IlPromotionStore
                     // Self-evict: one redirect, then the ordinary machinery
                     // re-warms — a permanently-redirecting delegate would be
                     // pure overhead on every call.
+                    Activation.CountSnapshotSelfEviction();
                     EvictDelegate(fid);
                     engine.SetPc(addr);
                     engine.IlTailCallPending = true;

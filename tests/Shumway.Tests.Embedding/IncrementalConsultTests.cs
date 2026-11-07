@@ -252,7 +252,8 @@ public class IncrementalConsultTests
             :- initialization((gen(C), assertz(C))).
             gen(fact(generated)).
             """);
-        Assert.True(e.Query("fact(generated).").Success);
+        // What the goal asserts is genlib's own (ADR-038, amendment).
+        Assert.True(e.Query("genlib:fact(generated).").Success);
     }
 
     [Fact]

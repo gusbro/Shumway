@@ -296,9 +296,12 @@ public sealed partial class Activation
     {
         _goalHasMetaArgs = false;
         if (MetaArgSpecOf is not { } specOf) return;
+        if (moduleAtomId == PreludeModuleAtomId) return;
         // user's predicates are global, so its goals need no module; wrapped,
-        // call(',', fail, 3) reported (user:fail, user:3) as its culprit.
-        if (moduleAtomId == PreludeModuleAtomId || moduleAtomId == UserModuleAtomId) return;
+        // call(',', fail, 3) reported (user:fail, user:3) as its culprit. A
+        // `:` argument of a predicate the program defines is the exception:
+        // the callee reads it in the caller's module, wherever it lives.
+        bool inUser = moduleAtomId == UserModuleAtomId;
         // The module's own predicate of that name is what the goal reaches.
         string? local = CurrentFunctorAddresses is { } addresses
             && addresses.TryGetValue(ModuleQualify.Mangle(moduleAtomId, atomId, totalArity), out _)
@@ -309,7 +312,9 @@ public sealed partial class Activation
         _goalHasMetaArgs = true;
         for (int i = 0; i < totalArity; i++)
         {
-            if (spec[i] < 0) continue;
+            int code = spec[i];
+            if (code == -1) continue;
+            if (inUser && code != ModuleQualify.ColonArg) continue;
             Cell c = GetRegister(i);
             Cell d = c.Tag == Tag.Ref ? GetHeap(Deref(c.AsHeapIndex)) : c;
             if (d.Tag == Tag.Str)

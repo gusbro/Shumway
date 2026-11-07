@@ -460,7 +460,7 @@ public sealed partial class IlPredicateCompiler
         Row(EngineWakeBoundaryCallMethod, MachineRegs.All, MachineRegs.All);
         Row(EngineWakeBoundaryProceedMethod, MachineRegs.All, MachineRegs.All);
         Row(EngineWakeBoundaryAtMethod, MachineRegs.All, MachineRegs.All);
-        Row(IlExecuteHelperResolveMethod, MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop, MachineRegs.None);
+        Row(IlExecuteHelperResolveMethod, MachineRegs.All, MachineRegs.All);
         Row(IlGetPstrLiteralHelperMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.TrailArray);
         Row(IlGetPstrHelperMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.TrailArray);
         Row(IlIndexedDispatchResolveByFidMethod, MachineRegs.All, MachineRegs.All);

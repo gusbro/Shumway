@@ -1227,9 +1227,13 @@ public static partial class MetaBuiltins
         Term headPattern = MaterializeRegister(engine, 1);
         int fid = ExtractCallableFunctorId(headPattern, "clause/2");
 
+        // The store key M names for the predicate (ADR-038, amendment):
+        // the global one in the legacy world, M's own or its import's
+        // source otherwise.
         var candidates = new List<Clause>();
-        if (host.IsDynamic(fid))
-            candidates.AddRange(host.DynamicClausesFor(fid));
+        int key = host.DatabaseFunctorFor(mod.Name, fid, create: false);
+        if (host.IsDynamic(key))
+            candidates.AddRange(host.DynamicClausesFor(key));
         else if (host.ModuleDefinesFunctor(mod.Name, fid))
             candidates.AddRange(host.StaticClausesInModule(mod.Name, fid));
         else if (host.ModuleImportSource(mod.Name, fid) is { } src)
@@ -1499,7 +1503,7 @@ public static partial class MetaBuiltins
                 "abolish/1 requires a PrologEngine host.");
 
         Term spec = MaterializeRegister(engine, 0);
-        spec = StripPiQualifiers(spec);
+        spec = StripPiQualifiers(spec, out string? module);
         if (spec is VarTerm)
             throw new ShumwayPrologException(IsoError.InstantiationError());
         if (spec is CompoundTerm c && c.Functor == "/" && c.Args.Length == 2)
@@ -1534,6 +1538,10 @@ public static partial class MetaBuiltins
                     IsoError.RepresentationError("max_procedure_arity"));
             int fid = FunctorTable.Intern(
                 AtomTable.Intern(name.Name, permanent: true).Id, (int)arity.Value);
+            // The store key the module names (ADR-038, amendment); a module
+            // nothing defined has nothing to abolish.
+            fid = host.DatabaseFunctorFor(module, fid, create: false);
+            if (fid < 0) return true;
             // Dynamic → abolish; builtin/static → permission_error (thrown
             // by the check); undefined → succeed silently (§8.9.4.1).
             if (host.IsAbolishModifiable(fid))
@@ -1547,25 +1555,28 @@ public static partial class MetaBuiltins
 
     /// <summary>Peels <c>Module:</c> qualifiers off a predicate-indicator
     /// argument (abolish/1): both <c>m:(N/A)</c> — the whole — and
-    /// <c>(m:N)/A</c>, the operator parse of <c>m:N/A</c>. Dynamics are
-    /// flat-global, so the qualifier validates and drops.</summary>
-    private static Term StripPiQualifiers(Term spec)
+    /// <c>(m:N)/A</c>, the operator parse of <c>m:N/A</c>. The innermost
+    /// module is returned; the qualifier validates and drops.</summary>
+    private static Term StripPiQualifiers(Term spec, out string? module)
     {
-        spec = StripPiColonChain(spec);
+        spec = StripPiColonChain(spec, out module);
         if (spec is CompoundTerm { Functor: "/", Args.Length: 2 } slash
             && slash.Args[0] is CompoundTerm { Functor: ":", Args.Length: 2 })
         {
-            Term name = StripPiColonChain(slash.Args[0]);
+            Term name = StripPiColonChain(slash.Args[0], out string? inner);
+            if (inner is not null) module = inner;
             spec = new CompoundTerm("/", new[] { name, slash.Args[1] })
                 { Position = slash.Position };
         }
         return spec;
     }
 
-    private static Term StripPiColonChain(Term t)
+    private static Term StripPiColonChain(Term t, out string? module)
     {
+        module = null;
         while (t is CompoundTerm { Functor: ":", Args.Length: 2 } q)
         {
+            if (q.Args[0] is AtomTerm qm) module = qm.Name;
             switch (q.Args[0])
             {
                 case AtomTerm: break;
