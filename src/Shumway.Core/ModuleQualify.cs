@@ -11,6 +11,15 @@ namespace Shumway.Core;
 /// hot.</para></summary>
 public static class ModuleQualify
 {
+    /// <summary>The codes of a meta-argument spec beside 0 to 9 (a goal or
+    /// closure taking that many arguments) and -1 (data): a <c>:</c>
+    /// argument, a term the callee reads in the caller's module, which every
+    /// caller qualifies; and the same on a builtin, which the global module
+    /// and a legacy module leave bare, since bare already names the global
+    /// store there (ADR-038, amendment).</summary>
+    public const int ColonArg = -2;
+    public const int ColonBuiltinArg = -3;
+
     /// <summary>Memoised because the computation builds a string and interns
     /// it: two table reads, a concatenation, a hash over the result, and a
     /// functor intern -- on a path measured at 2,728 calls in one clpfd solve
@@ -39,4 +48,29 @@ public static class ModuleQualify
         Memo[key] = (module, name, functor);
         return functor;
     }
+
+    /// <summary>The inverse of <see cref="Mangle"/> by shape alone: the module
+    /// and the bare functor of a <c>module$name</c> functor, or false for a
+    /// name with no separator. A name starting with <c>$</c> is an engine
+    /// name, not a qualified one. Whether the prefix is a module is for the
+    /// caller to check: a user predicate may be called <c>'a$b'</c>.</summary>
+    public static bool TryDemangle(int functorId, out int moduleAtomId, out int bareFunctorId)
+    {
+        moduleAtomId = -1;
+        bareFunctorId = functorId;
+        var (atomId, arity) = FunctorTable.Lookup(functorId);
+        string? name = AtomTable.GetById(atomId)?.Name;
+        if (name is null) return false;
+        int dollar = name.IndexOf('$');
+        if (dollar <= 0 || dollar == name.Length - 1) return false;
+        moduleAtomId = AtomTable.Intern(name.Substring(0, dollar), permanent: true).Id;
+        bareFunctorId = FunctorTable.Intern(
+            AtomTable.Intern(name.Substring(dollar + 1), permanent: true).Id, arity);
+        return true;
+    }
+
+    /// <summary>The functor a diagnostic names: a module's own predicate
+    /// by its bare name, as the program wrote it.</summary>
+    public static int DisplayFunctor(int functorId)
+        => TryDemangle(functorId, out _, out int bare) ? bare : functorId;
 }

@@ -31,11 +31,10 @@ public class ExpandedDynamicClausesTests
         var e = new PrologEngine();
         e.ConsultString(ModuleText);
         Succeeds(e, "findall(X, clause(mx:gen(X), true), L), L == [a, b, c].");
-        Succeeds(e, "findall(X, clause(gen(X), true), L), L == [a, b, c].");
         Succeeds(e, "findall(X, mx:gen(X), L), L == [a, b, c].");
         Succeeds(e, "retract(mx:gen(a)).");
         Succeeds(e, "\\+ mx:gen(a).");
-        Succeeds(e, "retract(gen(b)).");
+        Succeeds(e, "retract(mx:gen(b)).");
         Succeeds(e, "findall(X, mx:gen(X), L), L == [c].");
         Succeeds(e, "assertz(mx:gen(z)), findall(X, clause(mx:gen(X), true), L), L == [c, z].");
     }

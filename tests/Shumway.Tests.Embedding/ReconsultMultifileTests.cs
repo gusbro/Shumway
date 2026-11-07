@@ -89,7 +89,9 @@ public sealed class ReconsultMultifileTests : IDisposable
     [Fact]
     public void AModuleFileLoadedAgainTakesBackWhatItGave()
     {
-        Write("m.pl", ":- module(m, []).\n" + Decl + "t(m1).\n:- multifile user:h/1.\nuser:h(m1).\n");
+        // A module's own t/1 would be its own (ADR-038, amendment): the
+        // global predicate is named user:t/1.
+        Write("m.pl", ":- module(m, []).\n:- multifile user:t/1.\n:- dynamic user:t/1.\nuser:t(m1).\n:- multifile user:h/1.\nuser:h(m1).\n");
         var e = new PrologEngine();
         e.ConsultFile(PathOf("b.pl"));
         e.ConsultFile(PathOf("m.pl"));

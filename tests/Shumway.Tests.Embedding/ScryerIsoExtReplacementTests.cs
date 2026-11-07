@@ -69,6 +69,7 @@ public sealed class ScryerIsoExtReplacementTests : IDisposable
         // with_note/2 calls setup_call_cleanup from inside iso_ext: with the
         // definition dropped before locals are computed, that body call
         // compiles bare and reaches the builtin.
-        Assert.True(_e.Query("with_note(Y = 3, done), Y == 3, note(done).").Success);
+        // The note is iso_ext's own: the module asserted it (ADR-038, amendment).
+        Assert.True(_e.Query("with_note(Y = 3, done), Y == 3, iso_ext:note(done).").Success);
     }
 }

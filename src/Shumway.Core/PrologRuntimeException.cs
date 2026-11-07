@@ -103,7 +103,10 @@ public sealed class PrologRuntimeException : Exception
     /// missing predicate is reported identically however it is reached.</summary>
     public static PrologRuntimeException UndefinedProcedure(int functorId)
     {
-        var (atomId, arity) = FunctorTable.Lookup(functorId);
+        // A module's own predicate is named as the program wrote it, without
+        // the module: an unresolved call compiled in a module carries its
+        // mangled name (ADR-038, amendment).
+        var (atomId, arity) = FunctorTable.Lookup(ModuleQualify.DisplayFunctor(functorId));
         return new PrologRuntimeException("existence_error",
             (AtomTable.GetById(atomId)?.Name ?? "?") + "/" + arity)
         { Origin = ErrorOrigin.Outside };

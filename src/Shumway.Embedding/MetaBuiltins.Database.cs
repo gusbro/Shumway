@@ -98,7 +98,8 @@ public static partial class MetaBuiltins
         {
             props = new List<Term>
             {
-                new AtomTerm(host.IsDynamic(fid) ? "dynamic" : "static"),
+                new AtomTerm(host.IsDynamic(host.DatabaseFunctorFor(module, fid, create: false))
+                    ? "dynamic" : "static"),
                 new AtomTerm("defined"),
             };
         }
@@ -111,7 +112,8 @@ public static partial class MetaBuiltins
                 importedFrom = src;
                 props = new List<Term>
                 {
-                    new AtomTerm(host.IsDynamic(fid) ? "dynamic" : "static"),
+                    new AtomTerm(host.IsDynamic(host.DatabaseFunctorFor(src, fid, create: false))
+                        ? "dynamic" : "static"),
                     new AtomTerm("defined"),
                 };
             }

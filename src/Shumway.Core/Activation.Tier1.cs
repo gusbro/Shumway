@@ -208,6 +208,15 @@ public sealed partial class Activation
         return addrs.ContainsKey(VerifyAttributesFunctorId) ? VerifyAttributesFunctorId : -1;
     }
 
+    /// <summary>The module the goals a hook returns run in: the attribute's
+    /// module when the hook is that module's own (<c>Module$verify_attributes</c>),
+    /// the global module when it is the bare shared hook, whose goals are the
+    /// global module's (ADR-038, amendment: the attribute's name alone does
+    /// not make a module).</summary>
+    public int HookGoalsModule(int hookFunctorId, int moduleId)
+        => hookFunctorId == BareVerify3FunctorId || hookFunctorId == VerifyAttributesFunctorId
+            ? UserModuleAtomId : moduleId;
+
     private IReadOnlyDictionary<int, int>? _attrHookScanFor;
     private bool _hasAnyAttrHook;
 
@@ -517,6 +526,14 @@ public sealed partial class Activation
     /// into this activation on demand. Returns the linked address, or -1. Consulted
     /// by the dispatchers right before raising existence_error.</summary>
     public Func<int, int>? ResolveLateHelper { get; set; }
+
+    /// <summary>ADR-038 (amendment): a call compiled in an export-qualified
+    /// module to a name the compile could not resolve carries the module's
+    /// mangled name; when the address map does not hold it, the host resolves
+    /// it in the module's context, its imports and then the global view. Returns
+    /// the linked address or resume marker, or -1. Consulted by the dispatchers
+    /// before <see cref="ResolveLateHelper"/>.</summary>
+    public Func<int, int>? ResolveModuleFallback { get; set; }
 
     /// <summary>jit_compile/1's control over Tier-1 promotion, supplied by the
     /// host because the promotion store lives above this assembly. The
@@ -1512,6 +1529,38 @@ public sealed partial class Activation
         CountBuiltinCpPush();
         PushIlChoicePoint(del, nextCursor: 0, arity: arity, onPrune: onPrune);
     }
+
+    /// <summary>ADR-038 (amendment) point 7, diagnostic, process-wide: the
+    /// dispatches of a call site the link left unresolved and the run time
+    /// resolved, by what answered. The address map held the predicate (one
+    /// asserted since the site was linked, which the next setup links
+    /// directly), or the module's imports or the global view did.</summary>
+    public static long DiagUnresolvedSiteDispatches;
+    public static long DiagModuleFallbackResolutions;
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    public static void CountUnresolvedSiteDispatch() => DiagUnresolvedSiteDispatches++;
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    public static void CountModuleFallbackResolution() => DiagModuleFallbackResolutions++;
+
+    /// <summary>Diagnostics: forward calls from compiled code (a resume marker
+    /// at cursor 0) that found no delegate for the callee and went by its
+    /// address, and the functor of the last one; and the self-evictions of a
+    /// dynamic snapshot whose mutation stamp moved.</summary>
+    public static long DiagMarkerForwardsByAddress;
+    public static int DiagMarkerForwardLastFunctor = -1;
+    public static long DiagSnapshotSelfEvictions;
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    public static void CountMarkerForwardByAddress(int functorId)
+    {
+        DiagMarkerForwardsByAddress++;
+        DiagMarkerForwardLastFunctor = functorId;
+    }
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    public static void CountSnapshotSelfEviction() => DiagSnapshotSelfEvictions++;
 
     /// <summary>Choice points pushed by builtins, process-wide: one per
     /// enumeration for a builtin retried in place, one per solution for the

@@ -1695,7 +1695,13 @@ internal sealed class BundleLoader
 
         // ADR-038 — reconstruct the export-qualification + import table so runtime
         // variable-meta-call resolution matches what the source consult produced.
-        if (entry.IsExportQualified) manifest.IsExportQualified = true;
+        if (entry.IsExportQualified)
+        {
+            manifest.IsExportQualified = true;
+            // ADR-038 (amendment): the world the module was compiled in. An
+            // Arity bundle set the flag before any entry loaded.
+            manifest.OwnsDynamics = !E._flags.ArityCompat;
+        }
         foreach (var ex in entry.Exports)
             manifest.ExportFunctors.Add(Shumway.Core.FunctorTable.Intern(
                 Shumway.Core.AtomTable.Intern(ex.Name, permanent: true).Id, ex.Arity));
@@ -1737,16 +1743,21 @@ internal sealed class BundleLoader
             else if (d.Visibility == PredicateVisibility.Dynamic)
             {
                 manifest.DynamicFunctors.Add(fid);
-                E._dynStore.MarkDynamic(fid);
+                // The object names the predicate bare; a module that owns its
+                // dynamics keys it by its name (ADR-038, amendment), as the
+                // consult that compiled the object did.
+                int key = manifest.OwnsDynamics
+                    ? PrologEngine.MangleFunctor(entry.ModuleName, fid) : fid;
+                E._dynStore.MarkDynamic(key);
                 // The declaring module, as a consult records it: compiling a
                 // library over this bundle must not declare or seed the
                 // bundle's dynamics in its own object (ADR-038 §4). First
                 // declarer wins.
-                if (!E._dynamicDeclaringModule.ContainsKey(fid))
-                    E._dynamicDeclaringModule[fid] = string.IsNullOrEmpty(entry.ModuleName)
+                if (!E._dynamicDeclaringModule.ContainsKey(key))
+                    E._dynamicDeclaringModule[key] = string.IsNullOrEmpty(entry.ModuleName)
                         ? PrologEngine.DefaultModuleName : entry.ModuleName;
-                if (!E._dynStore.HasClauses(fid))
-                    E._dynStore[fid] = new List<Clause>();
+                if (!E._dynStore.HasClauses(key))
+                    E._dynStore[key] = new List<Clause>();
             }
             // An expansion hook is global, as the consult that compiled this
             // module made it (see the shipped clauses below).
@@ -1806,6 +1817,12 @@ internal sealed class BundleLoader
             int fid = Shumway.Core.FunctorTable.Intern(
                 Shumway.Core.AtomTable.Intern(seed.Indicator.Name, permanent: true).Id,
                 seed.Indicator.Arity);
+            // A module that owns its dynamics keys them by its name; the seed
+            // names the predicate bare (ADR-038, amendment). Its multifile
+            // predicate is its own too: what other sources gave it is in the
+            // seed, each clause's body qualified with its source.
+            if (manifest.OwnsDynamics)
+                fid = PrologEngine.MangleFunctor(entry.ModuleName, fid);
             // Mirror the live consult exactly: it records the heads of
             // clauses in the source, so a `:- dynamic` prelude predicate
             // joins only when it ships initial clauses. '$wfs_active' (no

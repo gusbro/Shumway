@@ -4,7 +4,7 @@
 
 Shipped ([Phase 36](../../history/phase-36-closure.md)).
 
-Amended 2026-11-06 (accepted, not built yet): a dynamic predicate of an
+Amended 2026-11-06 (accepted; built 2026-11-07): a dynamic predicate of an
 export-qualified module belongs to that module (the amendment at the end).
 
 ## Implementation status
@@ -210,9 +210,8 @@ installs first.
 
 ## Amendment (2026-11-06): a dynamic predicate belongs to its module
 
-Accepted 2026-11-06; not built yet. The reference docs (`invariants.md`, the
-user guide) still describe the global model and change with the
-implementation.
+Accepted 2026-11-06, built 2026-11-07 (`invariants.md` and the user guide
+describe the built model).
 
 ### Context
 
@@ -287,19 +286,29 @@ on the other systems too, and there a global dynamic is wrong.
    resolving on every call is expensive, the site links lazily: the first
    call that finds the predicate binds the site to it, and the site stays
    bound, as a link-time resolution would have left it.
-8. **A consult qualified with a module loads into it**: `nd:reconsult(File)`
-   and `nd:consult(File)` define `nd`'s predicates (SICStus). Today they load
-   into `user`.
+8. **A consult qualified with a module loads into it**: `nd:reconsult(File)`,
+   `nd:consult(File)` and `consult(nd:File)` define `nd`'s predicates, a
+   module created of the modern world when nothing defined it; and so does
+   `consult(File)` called from `nd`'s own code, since `consult/1`,
+   `reconsult/1` and `ensure_loaded/1` take their file as a `:` argument
+   (SICStus and SWI; Scryer loads into `user`). A file with its own
+   `:- module` directive loads as that module wherever it is called from.
+   They used to load into `user`.
 9. **Hooks.** The expansion hooks keep the path of ADR-055 point 7. The dynamic
    facts the engine reads, `file_search_path/2`, `library_directory/1`,
    `portray/1` and the attribute hooks, are predicates of `user`: a module adds
    to them as `user:file_search_path(...)`, the spelling the three systems
    take; its bare `assertz(file_search_path(...))` defines its own.
-10. **Separate compilation and the tiers.** A module's dynamic travels under
-    its name `M$p` in the dynamic seeds of its object, as a declared dynamic
-    does today; the linker and `LoadBundle` see one more mangled name. The
-    Tier-1 and wasm forms of a dynamic (ADR-023, ADR-054) are untouched: a
-    name changes, not a mechanism.
+10. **Separate compilation and the tiers.** A module's object names its
+    dynamic predicates bare, as it names its locals, in its definitions and
+    its dynamic seeds; its bytecode calls them `M$p`, and the load keys the
+    seeds `M$p` again for an export-qualified entry compiled with
+    `arity_compat` off. The linker keeps such a predicate out of the global
+    dynamic namespace: it is the module's own definition. A file compiled
+    alone, with no engine to ask what the global namespace holds, resolves
+    its declared dynamics as its own and leaves every other unknown name
+    bare, for the linker. The Tier-1 and wasm forms of a dynamic (ADR-023,
+    ADR-054) are untouched: a name changes, not a mechanism.
 
 ### What this amends
 
@@ -328,30 +337,82 @@ on the other systems too, and there a global dynamic is wrong.
 - Logtalk's `named_databases` example and the four tests of #214 work with
   no change to the example.
 - `current_predicate(M:PI)`, `clause(M:H, B)` and `predicate_property(M:H, P)`
-  keep their meaning, `M`'s own definitions, and gain the dynamics.
+  keep their meaning, `M`'s own definitions, and gain the dynamics. Asked
+  about a module nothing defined, they fail without creating it; the
+  database builtins create it.
+- A goal a module meta-calls at run time (`G = p(X), call(G)`) still falls
+  through to the global namespace when the module has no `p/1`, `user`'s
+  predicates and the global dynamics included, as ADR-056 point 5 has it
+  for `user`'s closures; the module's compiled calls do not. The asymmetry
+  predates this amendment for statics and stays: `user` passes no module
+  with its closures, so a library's `call(G)` must reach `user`'s predicates
+  bare.
+- The goals a `verify_attributes` hook returns run in the attribute's
+  module only when the hook is that module's own; the shared
+  `verify_attributes/4` hook's goals run in `user`, as the attribute's name
+  alone does not make a module.
+- A `:` argument of a predicate the program declares is qualified by every
+  caller, `user` included (SICStus): `keep(T) :- assertz(T)` under
+  `:- meta_predicate keep(:)` receives `user:t(1)` from the top level. On a
+  builtin or a prelude predicate the global module and a legacy module
+  leave it bare, since bare already names the global store there.
 
-### Open before implementing
+### Measured while building
 
-- `assertz(M:(H :- B))` from a source `S`: whether `B` runs in `M` or in `S`
-  was not measured.
-- The cost of point 7 at a call site that resolves only at run time, measured
-  on both tiers with the deterministic metric before implementing. The lazy
-  link of point 7 is the answer if it is expensive; what it must keep is the
-  logical update view and the live address of a dynamic, which a bound site
-  reaches through its address as a compiled call does today.
+- `assertz(M:(H :- B))` from a source `S`: `B` runs in `M` on the three
+  systems. `assertz((M:H :- B))`, the head alone qualified, runs `B` in `S`
+  on SICStus and SWI (Scryer rejects the form). Built so: the body of a
+  head-qualified clause is stored qualified with `S`, as ADR-055 stores a
+  consulted one.
+- A qualified `retract/1` gave its first solution only, on the old engine
+  too: the enumeration re-reads its pattern from the register on every
+  resume, qualifiers and all, and the unpeeled pattern unified with no
+  clause. It peels on every resume now.
+- The cost of point 7, instrumented: two diagnostic counters on the
+  activation count the dispatches of a site the link left unresolved, by
+  what answered them (the address map, or the module's imports and the
+  global view), and `ModuleDynamicsCostTests` pins them. A literal
+  `assertz(p(..))` in the module's text makes `p` a dynamic at consult (the
+  `implicit_dynamic` scan), so its sites link at setup and resolve nothing
+  at run time, as a declared dynamic's do. Only a predicate the module
+  neither declares nor names, asserted into it from outside in the query
+  that calls it, is resolved per dispatch: every interpreter dispatch of
+  that query goes through the address map, and the next query's setup links
+  the site directly, with no resolution left. A name a later load makes
+  public is answered by the global view until the module is transformed
+  again, which the next setup does. Timed with the processor capped, three
+  million calls per arm, three runs, the loop calling that predicate against
+  the same loop over a declared dynamic asserted in the same query: on
+  Tier-0 the two arms are equal within the spread in the asserting query and
+  in the next, with identical inferences and heap cells. On Tier-1 the arm
+  over the asserted predicate runs slower in both queries, and the global
+  module shows the same numbers for the same shape: a loop promoted in the
+  query whose assert created its callee keeps one interpreter dispatch per
+  call for the rest of the process, while a loop promoted over a declared
+  dynamic, or in a later query, runs entirely in IL. That is the tier's
+  behaviour for a predicate created mid-query, not the amendment's cost:
+  the tier promotes a dynamic mutated in the running query at the next
+  setup only, on the engine before this amendment as on the one after it,
+  and the test pins the equality between the module's case and the global
+  module's. The lazy link is not needed.
 
 ### Tests
 
-The measured table, on both tiers: `a` asserts `b(1)` and `c` calls `b(X)`
-(existence error), `a:b(X)` from `c` and `user`, `c` asserts `b(2)` (two
-predicates), `retract`, `retractall` and `abolish` in `a` leave `c`'s alone,
-a term passed plain and through a `:- meta_predicate p(:)`, `call/1` on an
-assert, a call before the first assert, `assertz(z:q(1))` and
-`current_module(z)`, `assertz(user:g(1))`, an exported dynamic imported and
-asserted from the importer, a static `f/1` beside `user`'s dynamic `f/1`, a
-rule asserted in a module calling its private, `nd:reconsult(File)`,
-`current_predicate(nd:F/A)` after `assertz(nd:a(1))`, and the legacy world
+`ModuleDynamicsTests`, the measured table on both tiers: `a` asserts `b(1)`
+and `c` calls `b(X)` (existence error), `a:b(X)` from `c` and `user`, `c`
+asserts `b(2)` (two predicates), `retract`, `retractall` and `abolish` in
+`a` leave `c`'s alone, a term passed plain and through a
+`:- meta_predicate p(:)`, `call/1` on an assert and `maplist(assertz, L)`,
+a meta-call of the module's own dynamic, a call before the first assert
+(and under `unknown=fail`), a rule asserted in a module calling its
+private, the three spellings of an asserted rule, `assertz(z:q(1))` with
+`current_module(z)` and the reflection of `z`, an exported dynamic shared
+with its importer, a static `f/1` beside `user`'s dynamic `f/1`, `user:`
+from a module, the engine's hook facts, the withdrawn ADR-056 point 3,
+`nd:reconsult(File)` and `consult(File)` from a module, and the legacy world
 unchanged: a plain file, a `:- module(Name)` module and a `:- module/2` file
-under `arity_compat`. Red counter-proofs: the global store for a modern
+under `arity_compat`. `QualifiedDatabaseTests` and `QualifiedReflectionTests`
+pin the qualified spellings; the tests that pinned the global model now
+write `m:` or `user:`. Red counter-proofs: the global store for a modern
 module's dynamic fails the two-predicates test; compiling an asserted clause
 in `user`'s context fails the private-helper test.

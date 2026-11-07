@@ -20,7 +20,8 @@ public class ExpansionHooksTests
             :- prolog_load_context(module, X), assertz(loaded_module(X)).
             dummy.
             """);
-        Assert.Equal("m1", Assert.IsType<AtomTerm>(e.Query("loaded_module(X).")["X"]).Name);
+        // Asserted by a directive of m1, the fact is m1's own (ADR-038, amendment).
+        Assert.Equal("m1", Assert.IsType<AtomTerm>(e.Query("m1:loaded_module(X).")["X"]).Name);
     }
 
     [Fact]
@@ -46,8 +47,9 @@ public class ExpansionHooksTests
             :- module(clientmod, []).
             mark(here).
             """);
+        // The directive runs in clientmod, so what it asserts is clientmod's own.
         Assert.Equal("clientmod",
-            Assert.IsType<AtomTerm>(e.Query("loaded_from(X).")["X"]).Name);
+            Assert.IsType<AtomTerm>(e.Query("clientmod:loaded_from(X).")["X"]).Name);
     }
 
     [Fact]

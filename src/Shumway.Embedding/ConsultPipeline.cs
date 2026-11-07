@@ -49,7 +49,13 @@ internal sealed class ConsultPipeline
     // double the file's clauses).
 
 
-    public void ConsultFile(string path)
+    public void ConsultFile(string path) => ConsultFile(path, intoModule: null);
+
+    /// <summary>As <see cref="ConsultFile(string)"/>; with
+    /// <paramref name="intoModule"/>, a file without a module directive loads
+    /// into that module (<c>M:consult(File)</c>, ADR-038 amendment point 8),
+    /// which is created, of the modern world, when nothing defined it.</summary>
+    internal void ConsultFile(string path, string? intoModule)
     {
         ArgumentNullException.ThrowIfNull(path);
         path = ResolveSourcePath(path);
@@ -58,7 +64,7 @@ internal sealed class ConsultPipeline
             E.LoadBundle(path);
             return;
         }
-        try { LoadSourceFile(path, reconsult: false); }
+        try { LoadSourceFile(path, reconsult: false, intoModule); }
         catch (Shumway.Compiler.Parsing.ParseException ex) { throw AsSyntaxError(ex); }
     }
 
@@ -89,7 +95,7 @@ internal sealed class ConsultPipeline
     /// directory its relative paths resolve against, the name
     /// <c>prolog_load_context</c> reports, the debugger's file identity, and the
     /// record that it was loaded and when.</summary>
-    private void LoadSourceFile(string path, bool reconsult)
+    private void LoadSourceFile(string path, bool reconsult, string? intoModule = null)
     {
         E.NoteFileLoaded(path);
         // ISO include/1 — `:- include('lib/x.pl')` resolves relative to the
@@ -132,7 +138,9 @@ internal sealed class ConsultPipeline
             ConsultStringInner(
                 Shumway.Core.TextFile.ReadAllText(path, E._flags.DefaultTextEncoding),
                 recordInHistory: true,
-                               reconsult: reconsult);
+                moduleNameFallback: intoModule,
+                reconsult: reconsult,
+                intoModule: intoModule is not null);
         }
         finally
         {
@@ -309,7 +317,7 @@ internal sealed class ConsultPipeline
     /// through the control constructs (the cut left as it is) and into the
     /// goal arguments of the meta-predicates. A builtin is global and is not
     /// qualified itself; a goal already qualified keeps its own module.</summary>
-    private Term QualifyBody(Term body, string module)
+    internal Term QualifyBody(Term body, string module)
         => Shumway.Compiler.Parsing.GoalTreeRewrite.Apply(body,
             c => c.Args.Length == 2 && c.Functor is "," or ";" or "->" or "*->",
             g => QualifyGoal(g, module));
@@ -730,7 +738,11 @@ internal sealed class ConsultPipeline
             if (dcgT.Count == 1 && dcgT[0].Kind != ClauseKind.DcgRule) routed = dcgT[0];
         }
         if (!PrologEngine.TryExtractHead(routed, out string n, out int a)) return false;
-        int fid = FunctorTable.Intern(AtomTable.Intern(n, permanent: true).Id, a);
+        int bare = FunctorTable.Intern(AtomTable.Intern(n, permanent: true).Id, a);
+        // The store key, as the main loop computes it: the module's own name
+        // when it owns its dynamics (the manifest is committed by now).
+        bool owns = E.ModuleOwnsDynamics(moduleName) && !PrologEngine.IsGlobalHookFunctor(bare);
+        int fid = owns ? PrologEngine.MangleFunctor(moduleName, bare) : bare;
         if (!E._dynStore.IsDynamic(fid)) return false;
         // The first clause the main loop stored from a later line marks the
         // place; the ones after it move up by one.
@@ -739,8 +751,9 @@ internal sealed class ConsultPipeline
             foreach (var (rf, slotIdx, pos) in routedList)
                 if (rf == fid && pos > local && (insertAt < 0 || slotIdx < insertAt))
                     insertAt = slotIdx;
-        bool isMultifile = pendingMultifile?.Contains(fid) == true;
-        int at = StoreDynamicClause(routed, fid, moduleName, isMultifile, multifileCtx, insertAt);
+        bool isMultifile = pendingMultifile?.Contains(bare) == true;
+        int at = StoreDynamicClause(routed, fid, moduleName, isMultifile, multifileCtx, insertAt,
+            ownsDynamics: owns);
         if (insertAt >= 0 && _dynRoutedThisConsult is { } shifted)
             for (int i = 0; i < shifted.Count; i++)
             {
@@ -750,15 +763,60 @@ internal sealed class ConsultPipeline
         return true;
     }
 
+    /// <summary>The indicators of a <c>dynamic</c> or <c>multifile</c>
+    /// directive with the module each one is qualified with, or null for a
+    /// bare one: a single indicator, a list or a conjunction of them, under
+    /// an <c>as</c> decoration or not. <c>:- dynamic(user:dq/1)</c> in a
+    /// module declares the global module's predicate (ADR-038, amendment).</summary>
+    private static List<(string? Module, string Name, int Arity)> ReadQualifiedSpecs(
+        Term arg, string directive)
+    {
+        var result = new List<(string?, string, int)>();
+        var pending = new Stack<Term>();
+        pending.Push(arg);
+        while (pending.Count > 0)
+        {
+            Term t = pending.Pop();
+            while (t is CompoundTerm { Functor: "as", Args: [var decorated, _] }) t = decorated;
+            if (t is CompoundTerm { Functor: ",", Args: [var left, var right] })
+            {
+                pending.Push(right);
+                pending.Push(left);
+                continue;
+            }
+            if (t is CompoundTerm { Functor: ".", Args: [var head, var tail] })
+            {
+                pending.Push(tail);
+                pending.Push(head);
+                continue;
+            }
+            if (t is AtomTerm { Name: "[]" }) continue;
+            string? module = t switch
+            {
+                CompoundTerm { Functor: ":", Args: [AtomTerm m, CompoundTerm { Functor: "/", Args.Length: 2 }] } => m.Name,
+                CompoundTerm { Functor: "/", Args: [CompoundTerm { Functor: ":", Args: [AtomTerm m2, _] }, _] } => m2.Name,
+                _ => null,
+            };
+            if (!TryReadFunctorSpec(t, out var spec))
+                throw new InvalidOperationException(
+                    $"Malformed :- {directive} directive (expected Name/Arity, a list of them, "
+                    + "or a comma-separated sequence).");
+            result.Add((module, spec.Name, spec.Arity));
+        }
+        return result;
+    }
+
     /// <summary>A clause of a dynamic predicate enters the dynamic store, where
     /// assert, retract and clause/2 all find it, whichever way the consult met
     /// it: read from the source, or produced by term_expansion. At the end of
     /// the slot, or at <paramref name="insertAt"/> when that is not -1.
     /// Returns the position it landed at.</summary>
     private int StoreDynamicClause(Clause c, int fid, string moduleName, bool isMultifile,
-        Func<ModuleRewrite.Context> multifileCtx, int insertAt)
+        Func<ModuleRewrite.Context> multifileCtx, int insertAt, bool ownsDynamics = false)
     {
-        if (isMultifile && moduleName != PrologEngine.DefaultModuleName)
+        // A predicate of a module that owns its dynamics compiles every clause
+        // in the module's context at query setup, so none is rewritten here.
+        if (isMultifile && moduleName != PrologEngine.DefaultModuleName && !ownsDynamics)
             c = ModuleRewrite.Rewrite(c, multifileCtx());
         // §7.6.2: a source-declared clause for a dynamic predicate enters the
         // database in its converted form, exactly as an assertz'd one does.
@@ -1065,7 +1123,7 @@ internal sealed class ConsultPipeline
     /// source-declared dynamic clauses land in the live dispatch too (a later
     /// call in the same query sees them, matching a runtime <c>assertz</c> and
     /// the ISO logical update view). Save/restore keeps nested consults sound.</summary>
-    internal void ConsultFileLive(string path, Activation liveEngine)
+    internal void ConsultFileLive(string path, Activation liveEngine, string? intoModule = null)
     {
         // A .shum bundle load has no runtime dynamic-clause routing to patch.
         if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
@@ -1075,14 +1133,14 @@ internal sealed class ConsultPipeline
         }
         var prev = E._liveConsultEngine;
         E._liveConsultEngine = liveEngine;
-        try { ConsultFile(path); }
+        try { ConsultFile(path, intoModule); }
         finally { E._liveConsultEngine = prev; }
     }
 
-    /// <summary>Runtime <c>reconsult/1</c>: <see cref="ReconsultFile"/> made
+    /// <summary>Runtime <c>reconsult/1</c>: <see cref="ReconsultFile(string)"/> made
     /// visible to the rest of the query that called it, as
     /// <see cref="ConsultFileLive"/> does for <c>consult/1</c>.</summary>
-    internal void ReconsultFileLive(string path, Activation liveEngine)
+    internal void ReconsultFileLive(string path, Activation liveEngine, string? intoModule = null)
     {
         if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
         {
@@ -1091,7 +1149,7 @@ internal sealed class ConsultPipeline
         }
         var prev = E._liveConsultEngine;
         E._liveConsultEngine = liveEngine;
-        try { ReconsultFile(path); }
+        try { ReconsultFile(path, intoModule); }
         finally { E._liveConsultEngine = prev; }
     }
 
@@ -1120,7 +1178,9 @@ internal sealed class ConsultPipeline
     /// store this method edits is the source-of-truth that the next
     /// query recompiles from. This matches the SWI / GProlog
     /// edit-reload workflow.</para></summary>
-    public void ReconsultFile(string path)
+    public void ReconsultFile(string path) => ReconsultFile(path, intoModule: null);
+
+    internal void ReconsultFile(string path, string? intoModule)
     {
         ArgumentNullException.ThrowIfNull(path);
         path = ResolveSourcePath(path);
@@ -1154,7 +1214,7 @@ internal sealed class ConsultPipeline
             // Through the same path as ConsultFile, not ReconsultString: a file
             // reloaded as bare text would lose the directory its own relative
             // includes and use_module targets resolve against.
-            LoadSourceFile(path, reconsult: true);
+            LoadSourceFile(path, reconsult: true, intoModule);
         }
     }
 
@@ -1229,8 +1289,9 @@ internal sealed class ConsultPipeline
             manifest.ModeDeclarations.Remove(fid);
         }
 
-        if (E._dynStore.IsDynamic(fid) || E._dynStore.HasClauses(fid))
-            E.AbolishDynamic(fid);
+        int key = E.ModuleOwnsDynamics(moduleName) ? PrologEngine.MangleFunctor(moduleName, fid) : fid;
+        if (E._dynStore.IsDynamic(key) || E._dynStore.HasClauses(key))
+            E.AbolishDynamic(key);
 
         // The trimmed manifest is caught by the per-module transform cache's
         // fingerprint at the next product build (the regenerating module
@@ -1260,7 +1321,7 @@ internal sealed class ConsultPipeline
 
     internal void ConsultStringInner(string source, bool recordInHistory,
         string? moduleNameFallback = null, bool reconsult = false,
-        bool librarySource = false)
+        bool librarySource = false, bool intoModule = false)
     {
         // A dialect shim / compat library consult: its predicates are library
         // surface, not the user's program — record their functors like the
@@ -1293,7 +1354,7 @@ internal sealed class ConsultPipeline
             string? prevMultifileSource = _multifileSource;
             try
             {
-                ConsultStringLocked(source, recordInHistory, moduleNameFallback, reconsult);
+                ConsultStringLocked(source, recordInHistory, moduleNameFallback, reconsult, intoModule);
             }
             finally
             {
@@ -1316,7 +1377,7 @@ internal sealed class ConsultPipeline
     private string? _multifileSource;
 
     private void ConsultStringLocked(string source, bool recordInHistory,
-        string? moduleNameFallback, bool reconsult)
+        string? moduleNameFallback, bool reconsult, bool intoModule = false)
     {
         // Save-state record every user-visible consult so
         // SaveState can serialize it. The prelude (auto-loaded by the
@@ -1433,14 +1494,22 @@ internal sealed class ConsultPipeline
         // contributes nothing to the bare-global namespace. `pendingImports` maps
         // each imported bare functor id → the export-qualified module providing it.
         bool isExportQualified = false;
+        // ADR-038 (amendment): the world the module's clauses compile in,
+        // fixed here. Modern (its dynamics its own) for an export-qualified
+        // module with arity_compat off, and for a file loaded into a module
+        // by M:consult(File); legacy for everything else.
+        bool ownsDynamics = intoModule && !E._flags.ArityCompat;
+        if (intoModule && !E._modules.ContainsKey(moduleName)) E.CreateModuleByName(moduleName);
         var exports = new HashSet<int>();
         Dictionary<int, string>? pendingImports = null;
         List<string>? pendingImportedModules = null;
         var clauses = new List<Clause>();
         // ADR-055: the clauses this source defines for another module
         // (`M:Head :- Body`), static ones, by target. They join M's manifest
-        // at the commit; a dynamic one joins `clauses`, bound for the store.
+        // at the commit; a dynamic one joins `clauses`, bound for the store
+        // under its target's key.
         List<(string Target, Clause Clause)>? foreignStatic = null;
+        Dictionary<Clause, (int Key, string Target)>? foreignDynamic = null;
         HashSet<int>? pendingDiscontiguous = null;
         HashSet<int>? pendingMultifile = null;
         HashSet<int>? tabledFunctors = null;
@@ -1703,14 +1772,24 @@ internal sealed class ConsultPipeline
                         foreach (var fc in PrepareForeignClauses(local, moduleName))
                         {
                             CheckProcedureArity(fc);
-                            // A dynamic predicate is global (ADR-008): the
-                            // clause takes the ordinary road to the store.
-                            if (PrologEngine.TryExtractHead(fc, out string fn, out int fa)
-                                && E._dynStore.IsDynamic(FunctorTable.Intern(
-                                    AtomTable.Intern(fn, permanent: true).Id, fa)))
-                                clauses.Add(fc);
-                            else
-                                (foreignStatic ??= new()).Add((target, fc));
+                            // A clause of a dynamic predicate takes the ordinary
+                            // road to the store, under the target's key: the
+                            // global one in the legacy world, the target's own
+                            // when it owns its dynamics (ADR-038, amendment).
+                            if (PrologEngine.TryExtractHead(fc, out string fn, out int fa))
+                            {
+                                int ffid = FunctorTable.Intern(
+                                    AtomTable.Intern(fn, permanent: true).Id, fa);
+                                int fkey = E.ModuleOwnsDynamics(target)
+                                    ? PrologEngine.MangleFunctor(target, ffid) : ffid;
+                                if (E._dynStore.IsDynamic(fkey))
+                                {
+                                    (foreignDynamic ??= new())[fc] = (fkey, target);
+                                    clauses.Add(fc);
+                                    continue;
+                                }
+                            }
+                            (foreignStatic ??= new()).Add((target, fc));
                         }
                         continue;
                     }
@@ -1750,6 +1829,7 @@ internal sealed class ConsultPipeline
                 if (moduleExports != null)
                 {
                     isExportQualified = true;
+                    ownsDynamics = !E._flags.ArityCompat;
                     foreach (var (n, a) in moduleExports)
                         exports.Add(FunctorTable.Intern(
                             AtomTable.Intern(n, permanent: true).Id, a));
@@ -1774,11 +1854,12 @@ internal sealed class ConsultPipeline
                     target.Add(FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a));
             }
-            else if (TryReadDynamicDirective(body, out var dynamicSpecs))
+            else if (TryReadDynamicDirective(body, out _))
             {
-                // Dynamic functors are tracked engine-wide so assertz / retract
-                // hit a single store regardless of which module declared them.
-                foreach (var (n, a) in dynamicSpecs)
+                // The store is engine-wide; a module that owns its dynamics
+                // keys its own by its name, and a qualified indicator names
+                // another module's.
+                foreach (var (qm, n, a) in ReadQualifiedSpecs(((CompoundTerm)body).Args[0], "dynamic"))
                 {
                     int fid = FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a);
@@ -1792,17 +1873,19 @@ internal sealed class ConsultPipeline
                         DeclareHook(fid);
                         continue;
                     }
-                    E._dynStore.MarkDynamic(fid);
-                    // Remember the declaring module (the store is flat-global,
-                    // but separate compilation seeds each dynamic from its
-                    // declaring module's .shmo exactly once). First declarer wins.
-                    if (!E._dynamicDeclaringModule.ContainsKey(fid))
-                        E._dynamicDeclaringModule[fid] =
+                    int key = qm is not null ? E.DatabaseFunctorFor(qm, fid)
+                        : ownsDynamics ? PrologEngine.MangleFunctor(moduleName, fid) : fid;
+                    E._dynStore.MarkDynamic(key);
+                    // Remember the declaring module (separate compilation seeds
+                    // each dynamic from its declaring module's .shmo exactly
+                    // once). First declarer wins.
+                    if (!E._dynamicDeclaringModule.ContainsKey(key))
+                        E._dynamicDeclaringModule[key] =
                             E._currentLoadModule ?? PrologEngine.DefaultModuleName;
                     // Reserve an entry so retract on a never-asserted dynamic
                     // predicate fails cleanly instead of throwing.
-                    if (!E._dynStore.HasClauses(fid))
-                        E._dynStore[fid] = new List<Clause>();
+                    if (!E._dynStore.HasClauses(key))
+                        E._dynStore[key] = new List<Clause>();
                 }
             }
             else if (TryReadFunctorIndicatorDirective(body, "native", out var nativeSpecs))
@@ -1826,10 +1909,10 @@ internal sealed class ConsultPipeline
                     pendingDiscontiguous.Add(FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a));
             }
-            else if (TryReadFunctorIndicatorDirective(body, "multifile", out var multiSpecs))
+            else if (TryReadFunctorIndicatorDirective(body, "multifile", out _))
             {
                 pendingMultifile ??= new HashSet<int>();
-                foreach (var (n, a) in multiSpecs)
+                foreach (var (qm, n, a) in ReadQualifiedSpecs(((CompoundTerm)body).Args[0], "multifile"))
                 {
                     int fid = FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a);
@@ -1855,9 +1938,11 @@ internal sealed class ConsultPipeline
                     // dynamic + reserve an empty clause slot. (Logtalk's compiler
                     // declares its hook predicates `:- multifile` and calls them
                     // before any clause is added, relying on failure.)
-                    E._dynStore.MarkDynamic(fid);
-                    if (!E._dynStore.HasClauses(fid))
-                        E._dynStore[fid] = new List<Clause>();
+                    int key = qm is not null ? E.DatabaseFunctorFor(qm, fid)
+                        : ownsDynamics ? PrologEngine.MangleFunctor(moduleName, fid) : fid;
+                    E._dynStore.MarkDynamic(key);
+                    if (!E._dynStore.HasClauses(key))
+                        E._dynStore[key] = new List<Clause>();
                 }
             }
             else if (body is CompoundTerm { Functor: "meta_predicate", Args.Length: 1 } metaDir)
@@ -2122,12 +2207,10 @@ internal sealed class ConsultPipeline
             // the pass-through default context for the fid (no seed module).
             ModuleRewrite.Context? multifileCtx = null;
             ModuleRewrite.Context MultifileCtx()
-                => multifileCtx ??= new ModuleRewrite.Context(
+                => multifileCtx ??= E.NewRewriteContext(
                     moduleName,
                     ComputeConsultLocalFunctors(clauses, publics),
-                    E._dynStore.Functors,
-                    ConsultImports())
-                { MetaArgSpec = E.MetaArgSpec };
+                    ConsultImports(), ownsDynamics);
 
             // Reconsult: the predicates this source defines are replaced, not
             // extended. Done here rather than by scanning the text first,
@@ -2159,9 +2242,10 @@ internal sealed class ConsultPipeline
                     // its own clauses as static. Only the clauses go — including
                     // whatever was asserted since the last load, which is what
                     // reloading a file means.
-                    bool wasDynamic = E._dynStore.IsDynamic(fid);
+                    int key = ownsDynamics ? PrologEngine.MangleFunctor(moduleName, fid) : fid;
+                    bool wasDynamic = E._dynStore.IsDynamic(key);
                     AbolishPredicateInModule(moduleName, fid);
-                    if (wasDynamic) E._dynStore.MarkDynamic(fid);
+                    if (wasDynamic) E._dynStore.MarkDynamic(key);
                 }
             }
 
@@ -2193,17 +2277,28 @@ internal sealed class ConsultPipeline
                         E._dynStore.UnmarkDynamic(fid);
                         E._dynStore.RemoveSlot(fid);
                     }
-                    if (E._dynStore.IsDynamic(fid))
+                    // The store key: another module's for a clause written
+                    // `M:Head`, this module's own name when it owns its
+                    // dynamics, the bare functor otherwise.
+                    string owner = moduleName;
+                    int key;
+                    if (foreignDynamic is not null && foreignDynamic.TryGetValue(c0, out var foreign))
+                        (key, owner) = foreign;
+                    else
+                        key = ownsDynamics && !PrologEngine.IsGlobalHookFunctor(fid)
+                            ? PrologEngine.MangleFunctor(moduleName, fid)
+                            : fid;
+                    if (E._dynStore.IsDynamic(key))
                     {
                         bool isMultifile = pendingMultifile?.Contains(fid) == true;
-                        int at = StoreDynamicClause(c, fid, moduleName, isMultifile,
-                            MultifileCtx, insertAt: -1);
+                        int at = StoreDynamicClause(c, key, owner, isMultifile,
+                            MultifileCtx, insertAt: -1, ownsDynamics: key != fid);
                         // In-file goal_expansion applies to this clause too —
                         // recorded for the post-commit re-expansion pass, with
                         // the position hooks are numbered against (the count of
                         // kept clauses before it, since guard indices are
                         // assigned over the final kept list).
-                        (_dynRoutedThisConsult ??= new()).Add((fid, at, keptClauses.Count));
+                        (_dynRoutedThisConsult ??= new()).Add((key, at, keptClauses.Count));
                         // Mid-query consult (consult/1 from a live query): the
                         // clause is already in E._dynStore.Slots (above), so
                         // clause/2 — which reads the live store — sees it in the
@@ -2322,7 +2417,7 @@ internal sealed class ConsultPipeline
         // call, but the assertz itself no longer raises permission
         // _error.
         if (E._flags.ImplicitDynamic)
-            E.CollectImplicitDynamics(clauses, publics);
+            E.CollectImplicitDynamics(clauses, publics, ownsDynamics ? moduleName : null);
 
         // ADR-035 — the predicates the `:- disable_debug.` regions covered. The
         // module name is only settled now (the `:- module` directive may sit
@@ -2361,7 +2456,7 @@ internal sealed class ConsultPipeline
         ModuleManifest committedManifest;
         int consultBaseOffset;
 
-        if (moduleDirectiveSeen || moduleName != PrologEngine.DefaultModuleName)
+        if (moduleDirectiveSeen || (moduleName != PrologEngine.DefaultModuleName && !intoModule))
         {
             // Explicit module (or a per-file fallback module
             // from a source-carrying bundle entry): replace any previous
@@ -2386,6 +2481,7 @@ internal sealed class ConsultPipeline
             // ADR-038 — export-qualified module: record the importable surface and
             // this consult's imports.
             manifest.IsExportQualified = isExportQualified;
+            manifest.OwnsDynamics = ownsDynamics;
             manifest.ExportFunctors.UnionWith(exports);
             if (pendingImports is not null)
                 foreach (var (fid, src) in pendingImports) manifest.Imports[fid] = src;
@@ -2430,8 +2526,9 @@ internal sealed class ConsultPipeline
         {
             // Default user module: append. Multiple unrelated consults share
             // a single rolling 'user' module — matches the historic behaviour
-            // from before the module system landed.
-            var existing = E._modules[PrologEngine.DefaultModuleName];
+            // from before the module system landed. A file loaded into a
+            // module by M:consult(File) appends to that module the same way.
+            var existing = E._modules[moduleName];
             // ADR-055: a predicate a module gave user through user:Head is
             // redefined by this source defining it.
             if (E._foreignClauses.Count > 0)
@@ -2589,10 +2686,9 @@ internal sealed class ConsultPipeline
             ReExpandInFileHooks(committedManifest, consultBaseOffset, clauses.Count,
                 pendingDiscontiguous, firstHookIndex, inFileGoalHooks,
                 moduleName, pendingMultifile,
-                () => new ModuleRewrite.Context(moduleName,
-                    ComputeConsultLocalFunctors(clauses, publics), E._dynStore.Functors,
-                    ConsultImports())
-                { MetaArgSpec = E.MetaArgSpec });
+                () => E.NewRewriteContext(moduleName,
+                    ComputeConsultLocalFunctors(clauses, publics),
+                    ConsultImports(), ownsDynamics));
 
         // ISO §7.4.2 general goal directives run now, after the batch commit
         // and in source order — before initialization/1 (§7.4.2.7), which ISO

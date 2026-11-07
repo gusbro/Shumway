@@ -127,7 +127,7 @@ public sealed class ModulePrivatePredicateTests
     }
 
     [Fact]
-    public void DynamicsDeclaredInAModuleStayGlobal()
+    public void DynamicsDeclaredInAModuleAreItsOwn()
     {
         var e = new PrologEngine();
         e.ConsultString("""
@@ -135,23 +135,23 @@ public sealed class ModulePrivatePredicateTests
             :- dynamic(f_d/1).
             f_s(ok).
             """);
-        // ADR-008: a dynamic predicate is global, so it is callable bare and
-        // an empty one fails rather than raising.
-        Assert.False(e.Query("f_d(_).").Success);
-        Succeeds(e, "assertz(f_d(9)), f_d(9).");
+        // ADR-038 (amendment): the module's dynamic is as private as its
+        // static; qualified, an empty one fails rather than raising.
+        RaisesExistence(e, "f_d(_)", "f_d/1");
+        Assert.False(e.Query("mpp_f:f_d(_).").Success);
+        Succeeds(e, "assertz(mpp_f:f_d(9)), mpp_f:f_d(9).");
         RaisesExistence(e, "f_s(ok)", "f_s/1");
     }
 
     [Fact]
-    public void ThePrivatesNameCannotBecomeAGlobalDynamic()
+    public void ThePrivatesNameCanBecomeAGlobalDynamic()
     {
-        // Dynamics are global, so a bare dynamic a_local/1 would take the
-        // name from the module's own clauses. assertz refuses it as it
-        // refuses any static procedure.
+        // The module's own a_local/1 is reached under its mangled name, so a
+        // global dynamic of that name cannot take it over (ADR-038,
+        // amendment: ADR-056 point 3 withdrawn).
         var e = new PrologEngine();
         e.ConsultString(ModA);
-        Succeeds(e,
-            "catch((assertz(a_local(99)), fail), error(permission_error(modify, static_procedure, _), _), true).");
+        Succeeds(e, "assertz(a_local(99)), a_local(X), X == 99.");
         Succeeds(e, "a_probe(L), L == [1, 2].");
     }
 
@@ -307,7 +307,7 @@ public sealed class ModulePrivatePredicateTests
             verify_attributes(_, Value, [note(Value)]).
             note(V) :- assertz(hk_seen(V)).
             """);
-        Succeeds(e, "watch(X), X = 5, hk_seen(5).");
+        Succeeds(e, "watch(X), X = 5, mpp_hk:hk_seen(5).");
     }
 
     [Fact]

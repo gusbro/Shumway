@@ -218,7 +218,9 @@ public sealed class DynamicIlPromotionTests
             mc(green).
             mcs(L) :- findall(X, mc(X), L).
             """);
-        int fid = Fid("mc", 1);
+        // The module's dynamic is its own, under its mangled name (ADR-038,
+        // amendment); user reaches it through the import of the export.
+        int fid = Fid("mdi$mc", 1);
         for (int i = 0; i < 5; i++)
             Assert.True(e.Query("mc(green).").Success);
         Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");

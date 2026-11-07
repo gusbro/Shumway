@@ -3,25 +3,27 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>Stage 3 of the M:P story — the database side. Dynamics are
-/// flat-global (invariant), so a <c>Module:</c> qualifier on
-/// assert/retract/retractall/abolish validates and drops: every module
-/// reaches the one shared store. Assert accepts the qualifier around the
-/// whole clause, around a rule, and around a rule's head; retract peels the
-/// pattern on the heap so the caller's variables keep binding (a copy would
-/// silently stop); abolish takes both indicator spellings. Errors pinned:
-/// variable module → instantiation_error, non-atom → type_error(atom).</summary>
+/// <summary>The database side of <c>M:P</c>. A <c>Module:</c> qualifier on
+/// assert/retract/retractall/abolish names the module whose predicate the
+/// operation reaches (ADR-038, amendment): <c>user:</c> the global store, a
+/// module of the modern world its own, a module nothing defined yet is
+/// created. Assert accepts the qualifier around the whole clause, around a
+/// rule, and around a rule's head; retract peels the pattern on the heap so
+/// the caller's variables keep binding (a copy would silently stop); abolish
+/// takes both indicator spellings. Errors pinned: variable module →
+/// instantiation_error, non-atom → type_error(atom).</summary>
 public sealed class QualifiedDatabaseTests
 {
     [Fact]
-    public void QualifiedAssert_LandsInTheOneFlatStore()
+    public void QualifiedAssert_NamesTheModulesStore()
     {
         var e = new PrologEngine();
         Assert.True(e.Query("assertz(qd_a:f(1)).").Success);
         Assert.True(e.Query("assertz(user:f(2)).").Success);
-        Assert.True(e.Query("asserta(other:f(0)).").Success);
-        // One store, whatever the qualifier said — and asserta prepended.
-        Assert.True(e.Query("findall(X, f(X), [0, 1, 2]).").Success);
+        Assert.True(e.Query("asserta(qd_a:f(0)).").Success);
+        // user: is the global store; qd_a's is its own, and asserta prepended.
+        Assert.True(e.Query("findall(X, f(X), [2]).").Success);
+        Assert.True(e.Query("findall(X, qd_a:f(X), [0, 1]).").Success);
     }
 
     [Fact]
@@ -30,8 +32,10 @@ public sealed class QualifiedDatabaseTests
         var e = new PrologEngine();
         Assert.True(e.Query("assertz(m:(r1(X) :- X > 0)).").Success);
         Assert.True(e.Query("assertz((m:r2(X) :- X > 0)).").Success);
+        // Nested qualification: the innermost module is the clause's.
         Assert.True(e.Query("assertz(m1:m2:(r3(X) :- X > 0)).").Success);
-        Assert.True(e.Query("r1(5), r2(5), r3(5).").Success);
+        Assert.True(e.Query("m:r1(5), m:r2(5), m2:r3(5).").Success);
+        Assert.True(e.Query("catch(r1(5), error(existence_error(procedure, r1/1), _), true).").Success);
     }
 
     [Fact]
@@ -41,10 +45,24 @@ public sealed class QualifiedDatabaseTests
         e.ConsultString(":- dynamic(qd_r/1).\nqd_r(10).\nqd_r(20).\n");
         // The heap-level peel keeps the pattern's variables the caller's own:
         // X must come back bound.
-        var sol = e.Query("retract(qd_r:qd_r(X)).");
+        var sol = e.Query("retract(user:qd_r(X)).");
         Assert.True(sol.Success);
         Assert.Equal("10", sol["X"]!.ToString());
         Assert.True(e.Query("findall(X, qd_r(X), [20]).").Success);
+    }
+
+    [Fact]
+    public void QualifiedRetract_IsResatisfiable()
+    {
+        // The enumeration re-reads the pattern on every resume, qualifiers
+        // and all; it used to stop after the first solution.
+        var e = new PrologEngine();
+        Assert.True(e.Query("assertz(f(1)), assertz(f(2)), assertz(f(3)), "
+            + "findall(X, retract(user:f(X)), L), L == [1, 2, 3], \\+ f(_).").Success);
+        Assert.True(e.Query("Db = qd_b, assertz(Db:d(1)), assertz(Db:d(2)), assertz(Db:d(3)), "
+            + "bagof(X, retract(Db:d(X)), L), L == [1, 2, 3], \\+ Db:d(_).").Success);
+        Assert.True(e.Query("assertz(qd_b:(r(1) :- true)), assertz(qd_b:(r(2) :- true)), "
+            + "findall(X, retract((qd_b:r(X) :- true)), L), L == [1, 2].").Success);
     }
 
     [Fact]
@@ -53,15 +71,20 @@ public sealed class QualifiedDatabaseTests
         var e = new PrologEngine();
         Assert.True(e.Query("assertz(m:(qd_w(X) :- X > 3)).").Success);
         Assert.True(e.Query("retract(m:(qd_w(Y) :- B)), B == (Y > 3).").Success);
-        Assert.False(e.Query("qd_w(9).").Success);
+        Assert.False(e.Query("m:qd_w(9).").Success);
+        // The head-qualified spelling of the pattern reaches the same clause.
+        Assert.True(e.Query("assertz(m:(qd_w(X) :- X > 3)), retract((m:qd_w(_) :- _)), \\+ m:qd_w(9).").Success);
     }
 
     [Fact]
-    public void QualifiedRetractall_PeelsAndSweeps()
+    public void QualifiedRetractall_SweepsTheModulesStore()
     {
         var e = new PrologEngine();
         e.ConsultString(":- dynamic(qd_s/1).\nqd_s(1).\nqd_s(2).\n");
+        // Another module's store is another predicate: the global one stays.
         Assert.True(e.Query("retractall(anything:qd_s(_)).").Success);
+        Assert.True(e.Query("findall(X, qd_s(X), [1, 2]).").Success);
+        Assert.True(e.Query("retractall(user:qd_s(_)).").Success);
         Assert.False(e.Query("qd_s(_).").Success);
     }
 
@@ -72,11 +95,13 @@ public sealed class QualifiedDatabaseTests
         // After abolish the predicate is undefined — a new call raises
         // existence_error (§8.9.4), it does not quietly fail.
         Assert.True(e.Query(
-            "assertz(qd_k(1)), abolish(m:qd_k/1), "
+            "assertz(qd_k(1)), abolish(user:qd_k/1), "
             + "catch(qd_k(_), error(existence_error(procedure, qd_k/1), _), true).").Success);
         Assert.True(e.Query(
-            "assertz(qd_j(1)), abolish(m:(qd_j/1)), "
+            "assertz(qd_j(1)), abolish(user:(qd_j/1)), "
             + "catch(qd_j(_), error(existence_error(procedure, qd_j/1), _), true).").Success);
+        // Another module's indicator abolishes nothing of the global store.
+        Assert.True(e.Query("assertz(qd_i(1)), abolish(m:qd_i/1), qd_i(1).").Success);
     }
 
     [Fact]

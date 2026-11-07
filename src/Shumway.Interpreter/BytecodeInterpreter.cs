@@ -647,6 +647,7 @@ public sealed partial class BytecodeInterpreter
                             // 283k boundary re-entries per browser bench
                             // run). OnDispatch is one cached probe on a path
                             // that already probed the address map.
+                            Activation.CountMarkerForwardByAddress(functorId);
                             if (Tier1Dispatcher?.OnDispatch(addr) is { } fwd)
                             {
                                 _engine.MaybeCollectHeapAtDispatch(addr);
