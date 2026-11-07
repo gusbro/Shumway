@@ -1289,7 +1289,7 @@ public static partial class MetaBuiltins
         if (mc.Tag == Tag.Ref || mc.Tag == Tag.AttVar)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
         if (mc.Tag != Tag.Atom)
-            throw new Shumway.Core.PrologRuntimeException("type_error", "atom");
+            throw new Shumway.Core.PrologRuntimeException("type_error", "atom", engine, mc);
         return AtomTable.GetById(mc.AsAtomId)?.Name ?? "";
     }
 

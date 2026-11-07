@@ -527,15 +527,19 @@ internal static class Prelude
         % variables are the caller's. The qualified form resolves the head
         % from M's viewpoint: a dynamic is flat-global (the qualifier peels),
         % M's own definition reads M's clauses only, an import reads its
-        % source's; anything else fails.
+        % source's; anything else fails. Its head and body are checked as
+        % the unqualified form's are (ISO 8.8.1.3), before the enumerator.
         clause(H0, B) :-
             nonvar(H0), H0 = ':'(_, _), !,
             '$strip_module'(H0, M, H),
             (   var(M) -> throw(error(instantiation_error, _))
             ;   \+ atom(M) -> throw(error(type_error(atom, M), _))
+            ;   var(H) -> throw(error(instantiation_error, _))
+            ;   \+ callable(H) -> throw(error(type_error(callable, H), _))
+            ;   nonvar(B), \+ callable(B) ->
+                    throw(error(type_error(callable, B), _))
             ;   true
             ),
-            nonvar(H),
             '$module_clause_enum'(M, H, H-B).
         clause(H, B) :-
             (   var(H) -> throw(error(instantiation_error, _))
@@ -588,9 +592,15 @@ internal static class Prelude
             ).
 
         % Peels module qualifications to the INNERMOST pair: M1:M2:X is
-        % M2's X (the SWI reading). Shared by every M:X-aware builtin.
+        % M2's X (the SWI reading). Shared by every M:X-aware builtin. An
+        % outer qualifier must be an atom, as call/1 demands of each layer;
+        % the innermost is the caller's to check, with its own error.
         '$strip_module'(':'(M0, R), M, I) :-
-            (   nonvar(R), R = ':'(_, _) -> '$strip_module'(R, M, I)
+            (   nonvar(R), R = ':'(_, _) ->
+                (   var(M0) -> throw(error(instantiation_error, _))
+                ;   \+ atom(M0) -> throw(error(type_error(atom, M0), _))
+                ;   '$strip_module'(R, M, I)
+                )
             ;   M = M0, I = R
             ).
 

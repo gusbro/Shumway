@@ -59,10 +59,48 @@ public sealed class QualifiedReflectionTests
     public void QualifiedClause_ModuleErrors()
     {
         var e = new PrologEngine();
+        e.ConsultString(":- dynamic(qr_q/1).\nqr_q(1).\n");
+        // The qualifier: unbound, not an atom; and every layer of a nested
+        // one, from the outside in, as call/1 checks them (the engine's
+        // type_error(atom, M), not type_error(module, M)).
         Assert.True(e.Query(
             "catch(clause(1:foo(_), _), error(type_error(atom, 1), _), true).").Success);
         Assert.True(e.Query(
             "catch(clause(M:foo(_), _), error(instantiation_error, _), true).").Success);
+        Assert.True(e.Query(
+            "catch(clause(a:1:qr_q(_), _), error(type_error(atom, 1), _), true).").Success);
+        Assert.True(e.Query(
+            "catch(clause(1:a:qr_q(_), _), error(type_error(atom, 1), _), true).").Success);
+        Assert.True(e.Query(
+            "catch(clause(_:a:qr_q(_), _), error(instantiation_error, _), true).").Success);
+        // The head and the body, as the unqualified form checks them
+        // (ISO 8.8.1.3): neither fails quietly.
+        Assert.True(e.Query(
+            "catch(clause(user:_, _), error(instantiation_error, _), true).").Success);
+        Assert.True(e.Query(
+            "catch(clause(user:1, _), error(type_error(callable, 1), _), true).").Success);
+        Assert.True(e.Query(
+            "catch(clause(user:qr_q(_), 1), error(type_error(callable, 1), _), true).").Success);
+        // A well-formed nested qualifier reads the innermost module's.
+        Assert.True(e.Query("clause(a:user:qr_q(X), true), X == 1.").Success);
+        // And the engine goes on after each error, enumerating.
+        Assert.True(e.Query("findall(X, clause(user:qr_q(X), true), [1]).").Success);
+    }
+
+    [Fact]
+    public void QualifiedRetractAndAssert_NameTheCulprit()
+    {
+        // The database builtins read the qualifier on their own path; a
+        // non-atom one is reported with the term itself, not an unbound one.
+        var e = new PrologEngine();
+        e.ConsultString(":- dynamic(qr_r/1).\nqr_r(1).\n");
+        Assert.True(e.Query(
+            "catch(retract(1:qr_r(_)), error(type_error(atom, 1), _), true).").Success);
+        Assert.True(e.Query(
+            "catch(assertz(1:qr_r(2)), error(type_error(atom, 1), _), true).").Success);
+        Assert.True(e.Query(
+            "catch(retract(_:qr_r(_)), error(instantiation_error, _), true).").Success);
+        Assert.True(e.Query("findall(X, qr_r(X), [1]).").Success);
     }
 
     // --- predicate_property(M:H, P) ----------------------------------------
