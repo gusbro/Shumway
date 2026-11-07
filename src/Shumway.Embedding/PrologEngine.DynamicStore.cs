@@ -2499,15 +2499,6 @@ public sealed partial class PrologEngine
         }
         else
         {
-            // Apply the same transforms the setup path runs — dynamic
-            // clauses share a flat module rewrite context. The first
-            // transformed clause is the asserted one; any MetaTransform
-            // helper clauses (a body catch/3 → '$catchgoal_N'/'$catchrec_N',
-            // a nested control construct → '$disj_N', ...) follow it. The
-            // setup path keys the same memo, so its re-derivation of the
-            // predicate takes these helpers too.
-            var transformed = TransformClauses(new[] { newClause }, DefaultModuleName, inlineIte: false);
-            if (transformed.Count == 0) return null;
             var userImports = ImportsOf(DefaultModuleName);
             if (_assertDynCtx is null || !ReferenceEquals(_assertDynCtx.Imports, userImports))
                 _assertDynCtx = new ModuleRewrite.Context(
@@ -2515,6 +2506,14 @@ public sealed partial class PrologEngine
             // A modern module's predicate compiles in the module's context,
             // where its clauses reach the module's private predicates.
             var ctx = OwnedDynamicContextFor(functorId) ?? _assertDynCtx;
+            // Apply the same transforms the setup path runs. The first
+            // transformed clause is the asserted one; any MetaTransform
+            // helper clauses (a body catch/3 → '$catchgoal_N'/'$catchrec_N',
+            // a nested control construct → '$disj_N', ...) follow it. The
+            // setup path keys the same memo under the owner's name, so its
+            // re-derivation of the predicate takes these helpers too.
+            var transformed = TransformClauses(new[] { newClause }, ctx.ModuleName, inlineIte: false);
+            if (transformed.Count == 0) return null;
             toCompile = ModuleRewrite.Rewrite(transformed[0], ctx);
             // the helpers used to be dropped here, leaving the
             // asserted clause's body calling a '$catchgoal_N' that nothing

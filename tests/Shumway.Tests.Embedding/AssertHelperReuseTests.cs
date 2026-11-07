@@ -99,6 +99,37 @@ public sealed class AssertHelperReuseTests
     }
 
     [Fact]
+    public void AModulesOwnDynamic_TakesTheHelpersItsSetupDerivationTakes()
+    {
+        // A dynamic a module names (ADR-038, amendment) compiles in the
+        // module's context, and the setup derives it under the module's
+        // name: the assert's memo is keyed the same way, or every setup
+        // after an assert minted the helpers again.
+        var e = new PrologEngine { Out = new StringWriter() };
+        e.ConsultString(":- module(ahr_m, [go/2]).\n:- dynamic(rule/2).\ngo(X, L) :- rule(X, L).\n");
+        const string rule =
+            "assertz(ahr_m:(rule(X, L) :- ( X > 0 -> S = pos ; S = neg ), \\+ S == none,"
+            + " findall(Z, (member(Z, [1, 2, 3]), Z >= X), L)))";
+        // The assert takes the rule's helpers; the first setup after it,
+        // deriving the predicate under the module's name, finds them.
+        Assert.True(e.Query($"{rule}.").Success);
+        var before = Counts(e);
+        Assert.True(e.Query("go(2, L), L == [2, 3].").Success);
+        AssertBounded(before, e);
+        Assert.True(e.Query("retract(ahr_m:(rule(_, _) :- _)).").Success);
+
+        for (int round = 0; round < 20; round++)
+        {
+            Assert.True(e.Query($"{rule}.").Success);
+            Assert.True(e.Query("go(2, L), L == [2, 3].").Success);
+            Assert.True(e.Query("go(-1, L), L == [1, 2, 3].").Success);
+            Assert.True(e.Query("retract(ahr_m:(rule(_, _) :- _)).").Success);
+        }
+
+        AssertBounded(before, e);
+    }
+
+    [Fact]
     public void ARuleAssertedBesideAVariantSharesItsHelpers()
     {
         var e = Engine();
