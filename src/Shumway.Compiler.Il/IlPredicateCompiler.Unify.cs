@@ -87,7 +87,6 @@ public sealed partial class IlPredicateCompiler
         EmitStoreEngineField(emit, EngBindingTrailTop);
         emit.MarkLabel(done);
     }
-    private static readonly FieldInfo EngCellsAllocated = EngineField(nameof(Activation._cellsAllocated));
     private static readonly FieldInfo EngWriteMode = EngineField(nameof(Activation._writeMode));
     private static readonly FieldInfo EngUnifyPointer = EngineField(nameof(Activation._unifyPointer));
     private static readonly FieldInfo EngReservedWrite = EngineField(nameof(Activation._reservedWrite));
@@ -454,12 +453,6 @@ public sealed partial class IlPredicateCompiler
             emit.LoadConstant(2);
             emit.Add();
             EmitStoreEngineField(emit, EngHeapTop);
-            emit.LoadArgument(0);
-            emit.LoadArgument(0);
-            emit.LoadField(EngCellsAllocated);
-            emit.LoadConstant(2L);
-            emit.Add();
-            emit.StoreField(EngCellsAllocated);
             if (window == ListWindow.VarXVarX)
                 EmitHeapCell(emit, heap, p, 0, () => EmitRefBitsOf(emit, p, 0));
             else

@@ -782,12 +782,6 @@ public sealed partial class IlPredicateCompiler
         emit.LoadConstant(1);
         emit.Add();
         EmitStoreEngineField(emit, EngHeapTop);
-        emit.LoadArgument(0);
-        emit.LoadArgument(0);
-        emit.LoadField(EngCellsAllocated);
-        emit.LoadConstant(1L);
-        emit.Add();
-        emit.StoreField(EngCellsAllocated);
         emit.LoadLocal(idx);
         return true;
     }
