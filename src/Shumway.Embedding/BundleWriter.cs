@@ -569,6 +569,12 @@ public static class BundleWriter
         // Stage-9d analysis↔compile consistency requirement).
         var savedScope = Shumway.Compiler.Il.IlPredicateCompiler.RegionMemberScopeFids;
         Shumway.Compiler.Il.IlPredicateCompiler.RegionMemberScopeFids = emitOnly;
+        // A root alone as a region of one is the persisted build's own choice
+        // (off: the tail costs a bundle more than its utilities gain), decided
+        // here so the prune analysis and the emit see the same regions.
+        var savedOneMember = Shumway.Compiler.Il.IlPredicateCompiler.OneMemberRegionsOverride;
+        Shumway.Compiler.Il.IlPredicateCompiler.OneMemberRegionsOverride =
+            Shumway.Compiler.Il.IlPredicateCompiler.OneMemberRegionsPersisted;
         if (regionPruneSeeds is not null && predicates.Count > 0)
         {
             var byName = new Dictionary<(string, int), int>();
@@ -685,6 +691,7 @@ public static class BundleWriter
             Shumway.Compiler.Il.IlPredicateCompiler.RegionCompileOverride = savedRegionCompile;
             Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids = savedForcedRoots;
             Shumway.Compiler.Il.IlPredicateCompiler.RegionMemberScopeFids = savedScope;
+            Shumway.Compiler.Il.IlPredicateCompiler.OneMemberRegionsOverride = savedOneMember;
             Shumway.Compiler.Il.IlPredicateCompiler.EndNativeInline(prevInline);
         }
         // Stash the patch table the LoadBundle path needs to

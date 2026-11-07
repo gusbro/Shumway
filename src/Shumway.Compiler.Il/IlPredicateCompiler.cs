@@ -811,7 +811,7 @@ public sealed partial class IlPredicateCompiler
             }
             // Explain why a predicate with a local closure didn't become a region —
             // the coverage gaps (a backtrackable-builtin member, etc.).
-            DiagShape("1", region.MemberCount >= 2, () =>
+            DiagShape("1", region.MemberCount >= 2 || predicate.ClauseCount > 1, () =>
                 $"[region-skip] root fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity}"
                 + $" members={region.MemberCount}: {why}");
         }

@@ -240,7 +240,10 @@ third past the cap, loses 5% cut; sendmore's hold a single member each
 past the cap, which no cut mends). The budget never leaves a root alone
 either: a root alone is a method, not a region, and it takes the first
 callee the budget refused, two members past the cap beating two methods
-and a trampoline between them. The Van Roy programs keep their regions
+and a trampoline between them. (Since the ADR-057 amendment of 2026-11 a
+multi-clause root alone is a region of one member; the rule above still
+holds, two members in one method beating two methods, and a root alone
+past the JIT's limits is given up for its own method.) The Van Roy programs keep their regions
 to the member; Blint's and the puzzles' are cut.
 
 A site the emitter can avoid is one fewer for the JIT to decide and to
