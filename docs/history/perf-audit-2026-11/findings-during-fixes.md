@@ -8,11 +8,25 @@ Reviewed on 2026-11-07, when the branch's fixes were brought to `main` one
 by one (branch `perf-audit-review`): item 1 reproduces on Windows too once
 the run is made to bind the prelude's compiled code early
 (`DOTNET_TieredCompilation=0`); its cause is traced below and fixed on
-`main` apart from this branch. Item 2 had been fixed on `main` by then,
-through the catch-frame work of PR #213, and the qualified `clause/2`
-checks were there too, so the branch's commit for it was not brought over.
-The test-environment notes describe the cloud container the branch was
-built in; the repository's own gate, run here, saw none of them.
+`main` apart from this branch. Item 2's crash had been fixed on `main` by
+then, through the catch-frame work of PR #213, by another mechanism (a
+finished frame is not given back while a younger choice point saved a
+trail top above its records); the checks the branch added to the
+qualified `clause/2`, and the culprit `retract/1` and `assertz/1` name,
+were not on `main` and are brought here (clause/2, retract/1 and
+assertz/1 on a qualified goal report what the plain forms do). Of the
+test-environment notes, two of the failures reported on clean `main` in
+the Linux container reproduce under WSL on `main` here as well:
+`DebugSiteTableTests.AFileIsIdentifiedByItsName_NotByThePathItWasReachedThrough`
+(the file key is taken with `Path.GetFileName`, which does not split a
+Windows path on Linux) and
+`StreamNewlineTests.Consult_AndRead_AgreeOnACrLfSource` (consult reads
+the CR-LF source whole, `open/3` + `read/2` on Linux does not translate
+the CR-LF, and the continuation escape before it leaves the quoted atom
+unterminated); the other three pass there, and the wasm phase gate is a
+wall-clock test. The order and
+load sensitivities listed are the cloud run's plain `dotnet test`, which
+the repository's gate does not do.
 
 ## Pre-existing bugs
 
@@ -126,6 +140,14 @@ built in; the repository's own gate, run here, saw none of them.
    `assertz/1` report `type_error(atom, _)` with an unbound culprit for
    `1:q(_)` (a C# path of its own); a `$`-helper's name reaches error
    contexts (`$clause_enum/2`, `$module_clause_enum/3`).
+
+   **Review.** The crash is gone on `main` since PR #213 (`t5` and the
+   `clause/2` goals run on both tiers, checked with the prelude compiled
+   and interpreted). The head and body checks of the qualified `clause/2`,
+   the per-layer check of `'$strip_module'` and the culprit of `retract/1`
+   and `assertz/1` were still missing and are brought in this branch, with
+   the branch's tests. The `$`-helper names in error contexts stay as
+   noted.
 
 3. **`AssertHelperReuseTests` (added on this branch, item W5) were
    order-dependent.** They passed alone and failed 1–3 tests when run together
