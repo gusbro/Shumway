@@ -461,7 +461,8 @@ public static class ShmoCompiler
             isExportQualified: isExportQualified, exports: exportSet,
             imports: importEntries, libraryDeps: libraryDeps,
             metaArgSpec: (fid, local) => fileMetaTemplates.TryGetValue(fid, out Term? t)
-                ? ModuleRewrite.MetaArgSpecOfTemplate(t)
+                ? ModuleRewrite.MetaArgSpecOfTemplate(t,
+                    system: Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _))
                 : ModuleRewrite.DefaultMetaArgSpec(fid, local));
     }
 
@@ -497,7 +498,9 @@ public static class ShmoCompiler
         IReadOnlyList<ShmoLibraryDep>? libraryDeps = null,
         string? dialect = null,
         Func<int, string?, int[]?>? metaArgSpec = null,
-        Func<string, string, int, string?>? qualifiedResolver = null)
+        Func<string, string, int, string?>? qualifiedResolver = null,
+        Func<int, bool>? isVisibleGlobal = null,
+        Func<string, bool>? sourceOwnsDynamics = null)
     {
         // A clause for a predicate the prelude declares dynamic is a dynamic
         // clause here too (what the live consult does through its store),
@@ -822,11 +825,19 @@ public static class ShmoCompiler
                 importFidMap[Shumway.Core.FunctorTable.Intern(
                     Shumway.Core.AtomTable.Intern(imp.Pred.Name, permanent: true).Id,
                     imp.Pred.Arity)] = imp.Source;
+        // ADR-038 (amendment): an export-qualified module compiled with
+        // arity_compat off owns its dynamics, named Module$p in the bytecode
+        // and keyed so in the store when the object loads; the object itself
+        // names them bare, as it names the module's locals.
         var rewriteCtx = new ModuleRewrite.Context(
             moduleName, localFids, dynamicFids, importFidMap)
         {
             MetaArgSpec = metaArgSpec ?? ModuleRewrite.DefaultMetaArgSpec,
             QualifiedStaticResolver = qualifiedResolver,
+            OwnsDynamics = isExportQualified && !arityCompat,
+            IsOwnDynamic = dynamicFids.Contains,
+            IsVisibleGlobal = isVisibleGlobal,
+            SourceOwnsDynamics = sourceOwnsDynamics,
         };
         var rewritten = new List<Clause>(staticClauses.Count);
         foreach (var clause in staticClauses)

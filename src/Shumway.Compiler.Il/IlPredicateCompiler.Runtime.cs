@@ -110,8 +110,6 @@ public sealed partial class IlPredicateCompiler
                 throw new InvalidOperationException(
                     "IL Execute: engine has no CurrentFunctorAddresses set. "
                     + "The embedding layer must populate it at query setup.");
-            if (!map.TryGetValue(functorId, out int address))
-                throw PrologRuntimeException.UndefinedProcedure(functorId);
             // The address may be a CallTarget.ForUndefined
             // sentinel left by the linker (the IL caller's static
             // rewrite baked a direct Call/Execute against an
@@ -119,8 +117,15 @@ public sealed partial class IlPredicateCompiler
             // promote may since have materialised a trampoline.
             // Re-look-up the live entry; if it's still unresolved,
             // raise existence_error.
-            if (Shumway.Core.CallTarget.IsUnresolved(address))
+            if (!map.TryGetValue(functorId, out int address)
+                || Shumway.Core.CallTarget.IsUnresolved(address))
+            {
+                // ADR-038 (amendment): a module's own name the compile could
+                // not place, resolved in the module's context now.
+                int inModule = engine.ResolveModuleFallback?.Invoke(functorId) ?? -1;
+                if (inModule >= 0) return inModule;
                 throw PrologRuntimeException.UndefinedProcedure(functorId);
+            }
             return address;
         }
     }

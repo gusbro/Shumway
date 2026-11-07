@@ -973,9 +973,10 @@ The linker performs three checks:
 2. **Reachability walk.** Starting from the entry points and every
    module's `:- ensure_linked` indicators, the linker follows the call
    graph. Each edge resolves against, in order:
-   - Module-local definitions (any visibility).
-   - The flat global namespace (`:- public` ∪ `:- dynamic` across all
-     loaded `.shmo`s).
+   - Module-local definitions (any visibility; an export-qualified
+     module's dynamics are among them).
+   - The flat global namespace (`:- public` and the `:- dynamic` of legacy
+     modules across all loaded `.shmo`s).
    - The builtin registry.
    - The always-loaded prelude (`member/2`, `length/2`,
      `current_predicate/1`, etc.).
@@ -1214,7 +1215,7 @@ link-time meaning:
 | `:- public [a/1, b/2].` | List form of the above. |
 | `:- use_module(library(X)).` | Loads library `X` (baked-in, or `X.pl`/`X.shum` on the library search path) and imports its whole export surface. |
 | `:- use_module(library(X), [a/1]).` | As above but imports only the listed indicators, `Name/Arity` or `Name//Arity`; an `op/3` element adds nothing, since the module's operators come with any import. Importing a non-exported name is an error, and so is a list that is not a list of indicators. |
-| `:- dynamic Name/N.` | The predicate is modifiable at runtime (`assertz`, `retract`). Also contributes to the global namespace, so other modules can call it. Even with zero clauses, the indicator counts as defined. |
+| `:- dynamic Name/N.` | The predicate is modifiable at runtime (`assertz`, `retract`). In a legacy module it is global, so other modules call it bare; in an export-qualified module it is the module's own, reached from outside as `Name:pred(X)`. Even with zero clauses, the indicator counts as defined. |
 | `:- ensure_linked Name/N.` | Tells the linker to treat this predicate as a **reachability root**. Use it when the predicate is called only via runtime meta-call (`call/1` with a constructed goal): the static call graph won't see the edge, and without this hint the linker would drop the predicate as unreachable. |
 | `:- ensure_linked [a/1, b/2].` | List form of the above. |
 
@@ -1610,22 +1611,28 @@ order; the **first match wins**:
    export-qualified `:- module/2`** (their clauses can be asserted from
    anywhere).
 4. **M's own predicates** (anything *defined in the same file*, exported
-   or not) resolve module-locally. Locals shadow everything: imports,
-   other modules' publics, the prelude, **and C# builtins** (a file that
-   defines `length/2` calls its own `length/2`; other modules are
-   unaffected).
+   or not, and in an export-qualified module its dynamic predicates too,
+   declared or asserted into it) resolve module-locally. Locals shadow
+   everything: imports, other modules' publics, the prelude, **and C#
+   builtins** (a file that defines `length/2` calls its own `length/2`;
+   other modules are unaffected).
 5. **M's import table**: entries added by `use_module/1,2` (and, for
    `user`, by the auto-import of a directly consulted `:- module/2`
    file); resolve to the exporting module's definition.
    First-import-wins on name collisions between imports.
-6. Anything else is left as a **bare name** for stage 2.
+6. In a legacy module, anything else is left as a **bare name** for stage
+   2. In an export-qualified module, a name that is not a builtin, a
+   `:- public` predicate or the prelude's is the module's own, resolved
+   when it runs: a dynamic asserted into the module later is found, and
+   anything else is an existence error. A plain file's dynamic is reached
+   from such a module as `user:p(X)`.
 
 **Stage 2: binding bare names.**
 
 *Interactive / embedding* (at query setup, against everything consulted so
 far), a bare name binds to a **C# builtin** first; else the **global
-namespace** (legacy modules' `:- public` predicates, all dynamics, the
-prelude); else it stays unresolved and, if the call is reached, the
+namespace** (legacy modules' `:- public` predicates, the global dynamics,
+the prelude); else it stays unresolved and, if the call is reached, the
 `unknown` prolog_flag decides: `error` (default, ISO
 `existence_error(procedure, N/A)`), `fail`, or `warning`.
 
@@ -1656,8 +1663,8 @@ executable (bundles carry every module's import table):
    non-exported locals: `call(mymod:internal(X))` works, SWI-style) →
    **M's import table** → fall through.
 4. The **C# builtin** registry.
-5. The **global namespace**: `user`'s predicates, publics, dynamics, the
-   prelude.
+5. The **global namespace**: `user`'s predicates, publics, the global
+   dynamics, the prelude.
 6. Still nothing → the `unknown` flag, as above.
 
 An `M:Goal`, written in the code or built at run time, reaches `M`'s
@@ -1669,10 +1676,33 @@ predicates.
 A module's predicate that it does not export or declare public is private:
 from outside the module it is reached only as `m:p(X)`. A goal or closure a
 module passes to a meta-predicate (`maplist(check, L)`, `freeze(X, G)`)
-still runs in that module. Dynamics are always global. Builtins are shadowed only by a module that
+still runs in that module. Builtins are shadowed only by a module that
 *defines* the name itself. The prelude is always visible without imports.
 Consulting a `:- module/2` file directly auto-imports its exports into
 `user`; loading it as a `use_module` dependency does not.
+
+**Dynamic predicates and modules.** There are two worlds. In the legacy
+one, a plain file, a `:- module(Name)` module and anything compiled under
+`arity_compat`, every dynamic predicate is global: any module asserts,
+retracts and calls it bare. In the modern one, a `:- module/2` module owns
+its dynamic predicates as it owns its statics: what the module declares
+`:- dynamic` or asserts is its own, two modules with a `counter/1` each
+keep their own data, and from outside the module its `p/1` is reached as
+`m:p(X)`, `assertz(m:p(1))`, `retract(m:p(X))`, `clause(m:p(X), B)`,
+`current_predicate(m:p/1)`. The predicate argument of `assert`,
+`retract`, `retractall`, `abolish` and `clause` is a meta-argument: it
+names a predicate of the module the call is written in, so
+`keep(T) :- assertz(T)` in module `m` asserts `m`'s predicate, and with
+`:- meta_predicate keep(:)` the caller's; `G = assertz(p(1)), call(G)`
+asserts the module's too. `assertz(z:q(1))` creates the module `z`. An
+exported dynamic is one predicate, shared with its importers. A plain
+file's dynamic is reached from a modern module as `user:p(X)`, and the
+engine's hook facts (`file_search_path/2`, `library_directory/1`,
+`portray/1`) are the global module's: a module adds to them as
+`user:file_search_path(...)`. `m:consult(File)` and `consult(m:File)` load
+a file without a module directive into `m`, and so does `consult(File)`
+called from `m`'s own code. The same rules hold on the two reference
+systems for modules.
 
 Because top-level imports beat bare-global publics, loading two libraries
 with overlapping surfaces (say `clpfd` and `clpz`, which share `#=`, `in`,
@@ -1691,8 +1721,10 @@ call: `clpfd:sum(...)`.
   from another module won't resolve and the linker reports a
   `missing_predicate` (unless a different module also declares the
   predicate public/dynamic).
-- **Dynamic predicates may share the indicator across modules.** All
-  contribute to the same global dynamic store at runtime.
+- **A legacy module's dynamic predicates may share the indicator across
+  modules.** All contribute to the same global dynamic store at runtime.
+  An export-qualified module's dynamic predicate is its own, like a local,
+  and is linked under its mangled name.
 
 ---
 

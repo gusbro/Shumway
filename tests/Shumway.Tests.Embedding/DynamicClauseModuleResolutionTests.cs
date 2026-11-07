@@ -79,9 +79,11 @@ s(X) :- r(X).
         e.ConsultString(@"
 :- module(mfi, []).
 :- use_module(library(rlib)).
-:- multifile(hook/1).
-hook(X) :- r(X).
+:- multifile(user:hook/1).
+user:hook(X) :- r(X).
 ");
+        // The global predicate is named user:hook/1 (ADR-038, amendment); its
+        // body runs in the module that wrote it.
         Assert.True(e.Query("hook(X), X == c.").Success);
     }
 
@@ -91,13 +93,13 @@ hook(X) :- r(X).
         var e = NewEngine();
         e.ConsultString(@"
 :- module(mfm, []).
-:- multifile(hook/1).
-hook(all(L)) :- findall(X, q(X), L).
-hook(set(S)) :- setof(X-Y, Z^(q(X), w(Y, Z)), S).
-hook(clo(L)) :- findall(Y, call(w, Y, _), L).
-hook(rec(R)) :- catch(boom, _, q(R)).
-hook(neg) :- \+ q(zz).
-hook(agg(N)) :- aggregate_all(count, q(_), N).
+:- multifile(user:hook/1).
+user:hook(all(L)) :- findall(X, q(X), L).
+user:hook(set(S)) :- setof(X-Y, Z^(q(X), w(Y, Z)), S).
+user:hook(clo(L)) :- findall(Y, call(w, Y, _), L).
+user:hook(rec(R)) :- catch(boom, _, q(R)).
+user:hook(neg) :- \+ q(zz).
+user:hook(agg(N)) :- aggregate_all(count, q(_), N).
 q(b).
 w(1, a). w(2, b).
 boom :- throw(oops).

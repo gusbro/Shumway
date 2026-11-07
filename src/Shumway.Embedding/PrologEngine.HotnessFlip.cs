@@ -81,10 +81,11 @@ public sealed partial class PrologEngine
         var laid = new List<(int Fid, int OldAddr, int Index, int At, CompiledPredicate Pred, Linker.LinkResult Link)>(pending.Count);
         foreach (var (fid, oldAddr, index, clauses) in pending)
         {
+            var fidCtx = OwnedDynamicContextFor(fid) ?? ctx;
             if (!_dynamicRewriteCache.TryGetValue(fid, out var entry)
-                || !ReferenceEquals(entry.LocalsRef, ctx.LocalFunctors)
+                || !ReferenceEquals(entry.LocalsRef, fidCtx.LocalFunctors)
                 || entry.ModesVersion != Modes.Version)
-                entry = RewriteDynamicPredicate(fid, clauses, ctx, Modes);
+                entry = RewriteDynamicPredicate(fid, clauses, fidCtx, Modes);
             var module = new ModuleCompiler
             {
                 DebugFileId = _debugFileId,

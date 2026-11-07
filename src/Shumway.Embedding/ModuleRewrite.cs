@@ -64,6 +64,48 @@ public static class ModuleRewrite
         /// <c>meta_predicate</c>.</summary>
         public Dictionary<(int Fid, string? Local), int[]?>? MetaArgLookups { get; private set; }
 
+        /// <summary>ADR-038 (amendment): the module owns its dynamic predicates
+        /// and resolves every name it cannot place in itself: its own
+        /// predicates, static or dynamic, mangle; an import resolves to its
+        /// source; a builtin, a global hook and what <see cref="IsVisibleGlobal"/>
+        /// admits stay bare; anything else is the module's own, resolved when
+        /// it runs. Off for the legacy world, where a dynamic is global and an
+        /// unknown name stays bare.</summary>
+        public bool OwnsDynamics { get; init; }
+
+        /// <summary>What a module that owns its dynamics sees of the global
+        /// namespace bare: the prelude, the <c>:- public</c> predicates, the
+        /// global hooks. Null (nothing but builtins) for a compile without an
+        /// engine.</summary>
+        public Func<int, bool>? IsVisibleGlobal { get; init; }
+
+        /// <summary>Whether an import's source module owns its dynamics; a
+        /// global dynamic imported from a module that does not stays bare.
+        /// Null: every source does.</summary>
+        public Func<string, bool>? SourceOwnsDynamics { get; init; }
+
+        /// <summary>Whether a bare functor is a dynamic predicate the module
+        /// owns: declared, routed from its source or asserted into it. A
+        /// clause with such a head compiles under the module's name. For a
+        /// compile with no engine behind it (a file at a time), also the only
+        /// names it resolves as its own among those it cannot place.</summary>
+        public Func<int, bool>? IsOwnDynamic { get; init; }
+
+        /// <summary>The global-view lookups this rewrite made, so a cached
+        /// transform can be revalidated when a later load makes a name
+        /// public.</summary>
+        public Dictionary<int, bool>? GlobalLookups { get; private set; }
+
+        internal bool LookupVisibleGlobal(int fid)
+        {
+            if (IsVisibleGlobal is null) return false;
+            GlobalLookups ??= new Dictionary<int, bool>();
+            if (GlobalLookups.TryGetValue(fid, out bool memo)) return memo;
+            bool visible = IsVisibleGlobal(fid);
+            GlobalLookups[fid] = visible;
+            return visible;
+        }
+
         internal int[]? LookupMetaArgSpec(int fid, string? localModule)
         {
             MetaArgLookups ??= new Dictionary<(int, string?), int[]?>();
@@ -180,15 +222,18 @@ public static class ModuleRewrite
         {
             if (IsControlFlow(a.Name, 0)) return goal;
             // Local predicates shadow builtins (ADR-008). Check local first.
-            // Dynamic predicates live in a flat global namespace (their
-            // clauses can land from any module via assertz) so call sites
-            // skip the mangle just like the head does in MangleIfLocal.
+            // In the legacy world a dynamic predicate lives in the flat global
+            // namespace (its clauses can land from any module via assertz) so
+            // call sites skip the mangle just like the head does in
+            // MangleIfLocal.
             if (IsLocal(a.Name, 0, ctx) && !IsDynamic(a.Name, 0, ctx))
                 return new AtomTerm(MangledName(a.Name, ctx)) { Position = a.Position };
             // ADR-038 — imported name → Source$name (before the bare-global path).
-            if (!IsDynamic(a.Name, 0, ctx) && TryResolveImport(a.Name, 0, ctx, out string aSrc))
-                return new AtomTerm(ImportedName(aSrc, a.Name)) { Position = a.Position };
+            if (!IsDynamic(a.Name, 0, ctx) && TryResolveImportedName(a.Name, 0, ctx, out string aName))
+                return new AtomTerm(aName) { Position = a.Position };
             if (IsBuiltin(a.Name, 0)) return goal;
+            if (IsOwnUnknown(a.Name, 0, ctx))
+                return new AtomTerm(MangledName(a.Name, ctx)) { Position = a.Position };
             return goal;
         }
 
@@ -300,8 +345,8 @@ public static class ModuleRewrite
                     { Position = c.Position };
             // ADR-038 — imported name → Source$name (before the bare-global path).
             if (!IsDynamic(c.Functor, c.Args.Length, ctx)
-                && TryResolveImport(c.Functor, c.Args.Length, ctx, out string cSrc))
-                return new CompoundTerm(ImportedName(cSrc, c.Functor), c.Args)
+                && TryResolveImportedName(c.Functor, c.Args.Length, ctx, out string cName))
+                return new CompoundTerm(cName, c.Args)
                     { Position = c.Position };
             // The module-sensitive reflection builtins: the textual module is
             // their context, stamped at compile time exactly as $mqual stamps
@@ -344,10 +389,37 @@ public static class ModuleRewrite
                 }
             }
             if (IsBuiltin(c.Functor, c.Args.Length)) return c;
+            if (IsOwnUnknown(c.Functor, c.Args.Length, ctx))
+                return new CompoundTerm(MangledName(c.Functor, ctx), c.Args)
+                    { Position = c.Position };
             return c;
         }
 
         return goal;
+    }
+
+    /// <summary>ADR-038 (amendment): in a module that owns its dynamics, a
+    /// name that is not local, imported or a builtin is the module's own
+    /// unless the global view admits it bare: a global hook, an engine name
+    /// (one with a <c>$</c>, a helper or a name already mangled), or what
+    /// <see cref="Context.IsVisibleGlobal"/> says. The module's own resolves
+    /// when it runs: its dynamic asserted later, else its imports and the
+    /// global view again (point 7).</summary>
+    private static bool IsOwnUnknown(string name, int arity, Context ctx)
+    {
+        if (!ctx.OwnsDynamics) return false;
+        if (IsMangledName(name)) return false;
+        int fid = FunctorTable.Intern(AtomTable.Intern(name, permanent: true).Id, arity);
+        if (PrologEngine.IsGlobalHookFunctor(fid)) return false;
+        if (ctx.IsOwnDynamic?.Invoke(fid) == true) return true;
+        // A $-name that is not the module's dynamic is a helper the
+        // compiler made for a clause of its dynamic predicate (whose head
+        // stays bare: it is not local) or an engine predicate.
+        if (name.Length > 0 && name[0] == '$') return false;
+        // No engine to ask what the global namespace holds: every other name
+        // links by its bare spelling as before.
+        if (ctx.IsVisibleGlobal is null) return false;
+        return !ctx.LookupVisibleGlobal(fid);
     }
 
     /// <summary>Any module but the prelude, whose helpers resolve by their
@@ -393,7 +465,8 @@ public static class ModuleRewrite
         }
         if (IsControlFlow(name, arity) || IsDynamic(name, arity, ctx)) return arg;
         string? renamed = IsLocal(name, arity, ctx) ? MangledName(name, ctx)
-            : TryResolveImport(name, arity, ctx, out string src) ? ImportedName(src, name)
+            : TryResolveImportedName(name, arity, ctx, out string imported) ? imported
+            : !IsBuiltin(name, arity) && IsOwnUnknown(name, arity, ctx) ? MangledName(name, ctx)
             : null;
         if (renamed is null) return arg;
         return arg is CompoundTerm closure
@@ -427,10 +500,21 @@ public static class ModuleRewrite
         Term[]? args = null;
         for (int i = 0; i < spec.Length; i++)
         {
-            if (spec[i] < 0) continue;
+            int code = spec[i];
+            if (code == -1) continue;
             Term a = c.Args[i];
             if (a is CompoundTerm { Functor: ":" or MqualFunctor, Args.Length: 2 }) continue;
-            if (onlyWhereNeeded && !NeedsContext(a, spec[i], ctx)) continue;
+            // A `:` argument always takes the module; on a builtin only where
+            // bare does not already name the store the module uses: never
+            // for the global module, nor for a legacy module's own call. A
+            // written M:Goal qualifies with M whatever the clause's module.
+            if (code is ModuleQualify.ColonArg or ModuleQualify.ColonBuiltinArg)
+            {
+                if (code == ModuleQualify.ColonBuiltinArg
+                    && (module == PrologEngine.DefaultModuleName || (onlyWhereNeeded && !ctx.OwnsDynamics)))
+                    continue;
+            }
+            else if (onlyWhereNeeded && !NeedsContext(a, code, ctx)) continue;
             args ??= (Term[])c.Args.Clone();
             args[i] = new CompoundTerm(":", new[] { (Term)new AtomTerm(module), a })
                 { Position = a.Position };
@@ -480,7 +564,10 @@ public static class ModuleRewrite
         if (local && ctx.ModuleName != PrologEngine.DefaultModuleName) return true;
         if (TryResolveImport(name, arity, ctx, out _)) return true;
         int fid = FunctorTable.Intern(AtomTable.Intern(name, permanent: true).Id, arity);
-        return ctx.LookupMetaArgSpec(fid, local ? ctx.ModuleName : null) is not null;
+        if (ctx.LookupMetaArgSpec(fid, local ? ctx.ModuleName : null) is not null) return true;
+        // A name the module resolves in itself (ADR-038, amendment): a
+        // closure naming it takes the module.
+        return !IsBuiltin(name, arity) && IsOwnUnknown(name, arity, ctx);
     }
 
     /// <summary>ADR-056: <c>M:Goal</c> makes <c>M</c> the context of Goal's
@@ -499,7 +586,7 @@ public static class ModuleRewrite
     {
         if (localModule is not null) return null;
         return PreludeMetaTemplates.Value.TryGetValue(fid, out Term? template)
-            ? MetaArgSpecOfTemplate(template)
+            ? MetaArgSpecOfTemplate(template, system: true)
             : null;
     }
 
@@ -550,23 +637,29 @@ public static class ModuleRewrite
     }
 
     /// <summary>A <c>meta_predicate</c> template as a meta-argument spec:
-    /// 0 to 9 is a goal or closure taking that many extra arguments, and
-    /// <c>:</c> and <c>^</c> are module-sensitive; anything else is data.
-    /// Null when no argument is a meta-argument.</summary>
-    public static int[]? MetaArgSpecOfTemplate(Term template)
+    /// 0 to 9 is a goal or closure taking that many extra arguments, <c>^</c>
+    /// a goal under its quantifiers, <c>:</c> a term read in the caller's
+    /// module (<see cref="ModuleQualify.ColonArg"/>, or
+    /// <see cref="ModuleQualify.ColonBuiltinArg"/> when the predicate is the
+    /// system's, a builtin or the prelude's, for which bare already names
+    /// the global store); anything else is data. Null when no argument is a
+    /// meta-argument.</summary>
+    public static int[]? MetaArgSpecOfTemplate(Term template, bool system)
     {
         if (template is not CompoundTerm t) return null;
+        int colon = system ? ModuleQualify.ColonBuiltinArg : ModuleQualify.ColonArg;
         int[]? spec = null;
         for (int i = 0; i < t.Args.Length; i++)
         {
             int extra = t.Args[i] switch
             {
                 IntTerm { Value: >= 0 and <= 9 } n => (int)n.Value,
-                AtomTerm { Name: ":" or "^" } => 0,
+                AtomTerm { Name: "^" } => 0,
+                AtomTerm { Name: ":" } => colon,
                 AtomTerm { Name: "//" } => 2,   // a grammar body, run on two lists
                 _ => -1,
             };
-            if (extra < 0) continue;
+            if (extra == -1) continue;
             if (spec is null)
             {
                 spec = new int[t.Args.Length];
@@ -617,8 +710,13 @@ public static class ModuleRewrite
     private static readonly int[] Pos01 = { 0, 1 };
     private static readonly int[] Pos02 = { 0, 2 };
 
+    /// <summary>A global dynamic predicate, which the legacy world reaches
+    /// bare from any module. A module that owns its dynamics sees none bare:
+    /// its own mangle like its statics, and the global view admits a public
+    /// one through <see cref="IsOwnUnknown"/>.</summary>
     private static bool IsDynamic(string name, int arity, Context ctx)
     {
+        if (ctx.OwnsDynamics) return false;
         int functorId = FunctorTable.Intern(
             AtomTable.Intern(name, permanent: true).Id, arity);
         return ctx.DynamicFunctors.Contains(functorId);
@@ -628,12 +726,26 @@ public static class ModuleRewrite
     {
         int functorId = FunctorTable.Intern(
             AtomTable.Intern(name, permanent: true).Id, arity);
-        // Dynamic predicates live in a global namespace (their clauses get
-        // appended at runtime via assertz from any module), so we never mangle
-        // their callers.
-        if (ctx.DynamicFunctors.Contains(functorId)) return null;
-        return ctx.LocalFunctors.Contains(functorId) ? build() : null;
+        // In the legacy world a dynamic predicate lives in the global
+        // namespace (its clauses get appended at runtime via assertz from any
+        // module), so its head and its callers are never mangled.
+        if (!ctx.OwnsDynamics && ctx.DynamicFunctors.Contains(functorId)) return null;
+        if (ctx.LocalFunctors.Contains(functorId)) return build();
+        // A clause of the module's own dynamic predicate, kept bare in the
+        // store, takes the module's name here. Any other non-local head is
+        // bare by design: a global hook, a public the module gave the global
+        // module, an entry the linker promoted.
+        if (ctx.OwnsDynamics && !IsMangledName(name) && !PrologEngine.IsGlobalHookFunctor(functorId)
+            && ctx.IsOwnDynamic?.Invoke(functorId) == true)
+            return build();
+        return null;
     }
+
+    /// <summary>A name already carrying a module (<c>src$helper</c>, a
+    /// clause pre-rewritten under another module's context) is left as it
+    /// is. A name that starts with <c>$</c> is a program's or a helper's and
+    /// is the module's own like any other.</summary>
+    internal static bool IsMangledName(string name) => name.IndexOf('$', 1) > 0;
 
     /// <summary>Per ADR-008 the resolution order at call sites is "local
     /// predicates of the module ▸ builtins ▸ publics of other modules". A
@@ -652,6 +764,29 @@ public static class ModuleRewrite
     // ADR-038 — the mangled name of an imported predicate in its source module.
     private static string ImportedName(string sourceModule, string name) =>
         sourceModule + "$" + name;
+
+    /// <summary>The name an imported predicate is called by: its source's
+    /// mangled name, or the bare name when the source does not own its
+    /// dynamics and the predicate is a global dynamic.</summary>
+    private static bool TryResolveImportedName(string name, int arity, Context ctx, out string resolved)
+    {
+        if (!TryResolveImport(name, arity, ctx, out string src))
+        {
+            resolved = "";
+            return false;
+        }
+        if (ctx.OwnsDynamics && ctx.SourceOwnsDynamics is { } owns && !owns(src))
+        {
+            int fid = FunctorTable.Intern(AtomTable.Intern(name, permanent: true).Id, arity);
+            if (ctx.DynamicFunctors.Contains(fid))
+            {
+                resolved = name;
+                return true;
+            }
+        }
+        resolved = ImportedName(src, name);
+        return true;
+    }
 
     // ADR-038 — resolve name/arity through the module's import table.
     private static bool TryResolveImport(string name, int arity, Context ctx, out string sourceModule)

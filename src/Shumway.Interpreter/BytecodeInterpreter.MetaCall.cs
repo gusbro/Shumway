@@ -980,7 +980,10 @@ public sealed partial class BytecodeInterpreter
                 && latest >= 0
                 && latest < prog.Length
                 && (Opcode)prog[latest] == Opcode.EnterDynamic)
+            {
+                Activation.CountUnresolvedSiteDispatch();
                 return latest;
+            }
             // a mid-query consult (consult/1 from a live query)
             // live-links static predicates into the running query's code
             // space; a call site compiled at this query's setup (before the
@@ -992,7 +995,10 @@ public sealed partial class BytecodeInterpreter
             // module-local collision.
             if (_engine.LiveConsultVisibleFids is { } visible
                 && visible.Contains(fid))
+            {
+                Activation.CountUnresolvedSiteDispatch();
                 return latest;
+            }
             // a --strip-wam predicate has no WAM address; its map entry is
             // a resume marker (a standalone delegate's (fid, 0), or a region member's
             // (rootFid, memberEntryCursor) alias). Accept it — the Call/Execute handler
@@ -1001,8 +1007,15 @@ public sealed partial class BytecodeInterpreter
             // layer (mangled for a local), so resolving that exact fid's own alias
             // grants nothing the link didn't already grant. Cold path — sentinels only.
             if (Activation.IsResumeMarker(latest))
+            {
+                Activation.CountUnresolvedSiteDispatch();
                 return latest;
+            }
         }
+        // ADR-038 (amendment): a module's own name the compile could not
+        // place, resolved in the module's context now.
+        int inModule = _engine.ResolveModuleFallback?.Invoke(fid) ?? -1;
+        if (inModule >= 0) return inModule;
         // Last chance: a runtime-assert MetaTransform helper linked by a
         // different activation — materialize it into this one on demand.
         int late = _engine.ResolveLateHelper?.Invoke(fid) ?? -1;

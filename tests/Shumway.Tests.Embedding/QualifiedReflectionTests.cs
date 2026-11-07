@@ -43,14 +43,16 @@ public sealed class QualifiedReflectionTests
     }
 
     [Fact]
-    public void QualifiedClause_DynamicIsFlatGlobal_QualifierPeels()
+    public void QualifiedClause_NamesTheModulesStore()
     {
         var e = new PrologEngine();
         e.ConsultString(":- dynamic(qr_d/1).");
         Assert.True(e.Query("assertz(qr_d(7)).").Success);
-        // Any module qualifier reaches the shared store — dynamics have no wall.
-        Assert.True(e.Query("clause(qr_s:qr_d(X), true), X == 7.").Success);
+        // user: is the global store; another module's is another predicate,
+        // and asking about it creates no module (ADR-038, amendment).
         Assert.True(e.Query("clause(user:qr_d(X), true), X == 7.").Success);
+        Assert.False(e.Query("clause(qr_s:qr_d(_), true).").Success);
+        Assert.False(e.Query("current_module(qr_s).").Success);
     }
 
     [Fact]

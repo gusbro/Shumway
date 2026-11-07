@@ -158,6 +158,11 @@ public static class ShmoViaConsult
         foreach (int fid in e._dynStore.Functors)
         {
             string? decl = e.DynamicDeclaringModule(fid);
+            // A predicate a modern module owns without having declared it
+            // (asserted into it) is the module's by its name (ADR-038, amendment).
+            if (decl is null && e.TryDemangleModule(fid, out string ownerByName, out _)
+                && e.ModuleOwnsDynamics(ownerByName))
+                decl = ownerByName;
             bool fromBundle = decl is not null && e._modulesFromBundles.Contains(decl);
             if (fromBundle) bundleDeclared.Add(fid);
             dynOwner[fid] = decl is { } d && !pre.Contains(d) && !fromBundle
@@ -230,7 +235,10 @@ public static class ShmoViaConsult
                         foreach (var c in dcls)
                             if (!e._clausesFromBundles!.Contains(c)) seeded.Add(c);
                     if (seeded.Count == 0 && bundleDeclared.Contains(fid)) continue;
-                    dynamicSet.Add(RefOf(fid));
+                    // The object names a modern module's own dynamic bare, as
+                    // it names the module's locals; the load keys it again.
+                    dynamicSet.Add(RefOf(
+                        e.TryDemangleModule(fid, out string om, out int bare) && om == name ? bare : fid));
                     raw.AddRange(seeded);
                 }
 
@@ -270,7 +278,9 @@ public static class ShmoViaConsult
                 // resolves it, against the same modules: compiled to ':'/2 it
                 // is a meta-call, and on the wasm tier an exit to the host
                 // (atts generates one per clause of a module's get_atts).
-                qualifiedResolver: e.ResolveQualifiedStatic);
+                qualifiedResolver: e.ResolveQualifiedStatic,
+                isVisibleGlobal: e.IsVisibleGlobalFunctor,
+                sourceOwnsDynamics: e.ModuleOwnsDynamics);
             if (res.Object is null)
             {
                 foreach (var err in localErrors)

@@ -694,6 +694,10 @@ public sealed partial class PrologEngine
         /// <summary>ADR-056: the meta-argument specs the transform looked up,
         /// revalidated per reuse like the qualified resolutions.</summary>
         public required Dictionary<(int Fid, string? Local), int[]?>? MetaArgLookups;
+        /// <summary>ADR-038 (amendment): the global-view lookups the transform
+        /// made for a module that owns its dynamics, revalidated like the
+        /// qualified resolutions.</summary>
+        public required Dictionary<int, bool>? GlobalLookups;
         public required List<Clause> Rewritten;
         public required HashSet<int> Locals;
         public required HashSet<int> HeadFids;

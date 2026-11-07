@@ -150,12 +150,17 @@ public sealed class ImageFactTests
         var e = Engine(0, images: true);
         Assert.True(e.Query("assertz(p(123456789012345678901234567890, big)).").Success);
         Assert.True(e.Query("X is 1 rdiv 3, assertz(p(X, rat)).").Success);
-        Assert.True(e.Query("assertz(m:p(mod, 1)), assertz((p(rule, Y) :- Y = r)).").Success);
+        Assert.True(e.Query("assertz((p(rule, Y) :- Y = r)).").Success);
         Assert.Equal(0, e.ImageFactsAsserted);
         foreach (var clause in e.DynamicClausesFor(Fid("p", 2))) Assert.Null(clause.HeadImage);
         Assert.True(e.Query("p(B, big), B =:= 123456789012345678901234567890, p(R, rat), R =:= 1 rdiv 3.").Success);
-        Assert.True(e.Query("p(mod, 1), p(rule, Z), Z == r.").Success);
+        Assert.True(e.Query("p(rule, Z), Z == r.").Success);
         Assert.True(e.Query("retract(p(123456789012345678901234567890, big)), \\+ p(_, big).").Success);
+        // A qualified fact is an image too, under its module's key (ADR-038,
+        // amendment): the module names the store, the image is the fact's.
+        Assert.True(e.Query("assertz(m:p(mod, 1)), m:p(mod, 1), \\+ p(mod, 1).").Success);
+        Assert.Equal(1, e.ImageFactsAsserted);
+        Assert.NotNull(Assert.Single(e.DynamicClausesFor(Fid("m$p", 2))).HeadImage);
     }
 
     [Fact]

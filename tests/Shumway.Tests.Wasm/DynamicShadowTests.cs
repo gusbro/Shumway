@@ -156,7 +156,9 @@ public sealed class DynamicShadowTests(ITestOutputHelper o)
         plain.ConsultString(ModuleCorpus);
         var (tiered, _) = TieredEngine.Build(ModuleCorpus);
         Agree(plain, tiered, "mrun(20).");
-        Assert.True(tiered.IlPromotion.Wasm!.HasShadow(Fid("md", 1)),
+        // The module's dynamic is its own, under its mangled name (ADR-038,
+        // amendment); user reaches it through the import of the export.
+        Assert.True(tiered.IlPromotion.Wasm!.HasShadow(Fid("mdyn$md", 1)),
             "a module's dynamic predicate was not promoted as a snapshot");
         Agree(plain, tiered, "mall(L), L == [1, 2, 3].");
         // A source clause retracted, and a call in the same query after it:
@@ -165,7 +167,7 @@ public sealed class DynamicShadowTests(ITestOutputHelper o)
         Agree(plain, tiered, "mall(L), L == [2, 3].");
         Agree(plain, tiered, "assertz(md(4)), mall(L), L == [2, 3, 4].");
         Agree(plain, tiered, "mrun(5), mall(L), L == [2, 3, 4].");
-        Assert.True(tiered.IlPromotion.Wasm!.HasShadow(Fid("md", 1)), "no re-promotion after the mutations");
+        Assert.True(tiered.IlPromotion.Wasm!.HasShadow(Fid("mdyn$md", 1)), "no re-promotion after the mutations");
     }
 
     [Fact]

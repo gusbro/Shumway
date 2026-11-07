@@ -716,7 +716,7 @@ public sealed partial class PrologEngine
     private bool RewriteDeferredDynamicPredicate(int fid)
     {
         if (!_dynStore.TryGetClauses(fid, out var clauses) || clauses.Count == 0) return false;
-        var ctx = new ModuleRewrite.Context(
+        var ctx = OwnedDynamicContextFor(fid) ?? new ModuleRewrite.Context(
             DefaultModuleName, _staticRewriteUserLocals ?? EmptyLocalsSentinel,
             _dynStore.Functors, ImportsOf(DefaultModuleName));
         RewriteDynamicPredicate(fid, clauses, ctx, Modes);
@@ -1012,7 +1012,8 @@ public sealed partial class PrologEngine
                     && mte.InlineIte == EnableInlineIte
                     && mte.BundleLocalsCount == bundleLocalsCount
                     && QualifiedResolutionsStillValid(mte.QualifiedResolutions)
-                    && MetaArgLookupsStillValid(mte.MetaArgLookups))
+                    && MetaArgLookupsStillValid(mte.MetaArgLookups)
+                    && GlobalLookupsStillValid(mte.GlobalLookups))
                 {
                     allRewritten.AddRange(mte.Rewritten);
                     if (name == DefaultModuleName) userLocalsCache = mte.Locals;
@@ -1049,8 +1050,8 @@ public sealed partial class PrologEngine
                 if (name == DefaultModuleName) userLocalsCache = locals;
                 moduleLocalsCache[name] = locals;
 
-                var ctx = new ModuleRewrite.Context(name, locals, _dynStore.Functors, manifest.Imports)
-                { QualifiedStaticResolver = ResolveQualifiedStatic, MetaArgSpec = MetaArgSpec };
+                var ctx = NewRewriteContext(name, locals, manifest.Imports,
+                    manifest.OwnsDynamics, qualifiedResolver: true);
                 // ADR-035 — a library's helpers are library code too. MetaTransform
                 // lowers control constructs into generated predicates ('$call_conj' and
                 // friends), which are not in manifest.Clauses and so cannot be marked at
@@ -1089,6 +1090,7 @@ public sealed partial class PrologEngine
                     BundleLocalsCount = bundleLocalsCount,
                     QualifiedResolutions = ctx.QualifiedResolutions,
                     MetaArgLookups = ctx.MetaArgLookups,
+                    GlobalLookups = ctx.GlobalLookups,
                     Rewritten = moduleRewritten,
                     Locals = locals,
                     HeadFids = moduleHeadFids,
@@ -1172,7 +1174,12 @@ public sealed partial class PrologEngine
             {
                 if (clauses.Count == 0) continue;
                 var fidCtx = dynCtx;
-                if (_dynamicSeedModule.TryGetValue(fid, out var seedModule))
+                // A modern module's predicate compiles in the module's own
+                // context (ADR-038, amendment); a legacy module's source
+                // clauses in their seed module's; the rest in user's.
+                if (OwnedDynamicContextFor(fid) is { } owned)
+                    fidCtx = owned;
+                else if (_dynamicSeedModule.TryGetValue(fid, out var seedModule))
                 {
                     namedDynCtx ??= new Dictionary<string, ModuleRewrite.Context>();
                     if (!namedDynCtx.TryGetValue(seedModule, out fidCtx))
@@ -1964,6 +1971,7 @@ public sealed partial class PrologEngine
         var mutableSwitchTables = mergedSwitchTables;
         engine.SwitchTables = mutableSwitchTables;
         engine.ResolveLateHelper = fid => TryMaterializeAssertHelper(engine, fid);
+        engine.ResolveModuleFallback = fid => ResolveModuleFallback(engine, fid);
         engine.MetaArgSpecOf = MetaArgSpec;
         engine.JitControl = IlPromotion.SetJitThreshold;
         engine.JitFormControl = IlPromotion.SetJitForm;
@@ -2456,6 +2464,17 @@ public sealed partial class PrologEngine
 
     /// <summary>True when every meta-argument spec a cached transform used
     /// is still what the engine would answer.</summary>
+    /// <summary>True when every global-view lookup a cached transform made
+    /// still answers the same: a later load that makes a name public
+    /// re-transforms the modules that resolved it as their own.</summary>
+    private bool GlobalLookupsStillValid(Dictionary<int, bool>? lookups)
+    {
+        if (lookups is null) return true;
+        foreach (var (fid, seen) in lookups)
+            if (IsVisibleGlobalFunctor(fid) != seen) return false;
+        return true;
+    }
+
     private bool MetaArgLookupsStillValid(Dictionary<(int Fid, string? Local), int[]?>? lookups)
     {
         if (lookups is null) return true;
@@ -2605,8 +2624,8 @@ public sealed partial class PrologEngine
                     // independently; the linker concatenates them as if
                     // they came from one source.
                     bool bothMultifile =
-                        _modules[other].MultifileFunctors.Contains(fid)
-                        && manifest.MultifileFunctors.Contains(fid);
+                        DeclaresMultifile(_modules[other], other, fid)
+                        && DeclaresMultifile(manifest, name, fid);
                     if (bothMultifile) continue;
 
                     var (atomId, arity) = FunctorTable.Lookup(fid);
@@ -2621,6 +2640,11 @@ public sealed partial class PrologEngine
             }
         }
     }
+
+    // A modern module records the declaration under its own predicate.
+    private static bool DeclaresMultifile(ModuleManifest m, string module, int fid)
+        => m.MultifileFunctors.Contains(fid)
+           || (m.OwnsDynamics && m.MultifileFunctors.Contains(MangleFunctor(module, fid)));
 
     private static Solution BuildSolution(
         List<string> varNames, int[] varHeapIndices, Activation engine,

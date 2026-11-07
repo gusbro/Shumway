@@ -85,6 +85,15 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
 - **Dynamic predicates** are declared with `:- dynamic foo/N` or auto-promoted
   on first assert when the `implicit_dynamic` flag is true (the default);
   auto-promotion never applies over existing static clauses or builtins.
+- **A dynamic predicate of an export-qualified module belongs to that
+  module** (`:- module/2`, compiled with `arity_compat` off): it is keyed
+  `Name$p` in the store as the module's statics are named, the module's own
+  assert, retract, abolish, clause and current_predicate act on it, and
+  another module or the global module reaches it only as `m:p(X)`. The
+  predicate argument of a database builtin is a meta-argument: it names a
+  predicate of the module it is written in. The legacy world, a plain file,
+  a `:- module(Name)` module and anything compiled under `arity_compat`,
+  keeps the global store. (ADR-038, amendment.)
 - **Public predicates are globally unique** (`ValidatePublicUniqueness`); two
   modules cannot both export the same bare-global `foo/N`. Export-qualified
   (`:- module/2`) modules coexist by construction.

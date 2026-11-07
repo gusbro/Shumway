@@ -6,6 +6,10 @@ Accepted (2026-09-26). Amends [ADR-008](008-module-visibility.md) and
 [ADR-038](038-library-loading.md). Withdraws the consult-direct fallback of
 commit 39a0f863 (August 2026).
 
+Amended 2026-11-06 (built 2026-11-07): points 2 and 6 hold for the legacy
+world only, and point 3 is withdrawn. A dynamic predicate of an
+export-qualified module is that module's own (ADR-038, amendment).
+
 ## Context
 
 A predicate that a `:- module` file does not export is private to that

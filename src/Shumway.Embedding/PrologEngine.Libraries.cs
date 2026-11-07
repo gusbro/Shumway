@@ -1128,6 +1128,10 @@ public sealed partial class PrologEngine
         while (true)
         {
             if (!_modules.TryGetValue(cur, out ModuleManifest? m)) return null;
+            // A module that owns its dynamics provides an exported dynamic
+            // itself (ADR-038, amendment: one predicate, shared with its
+            // importers); a legacy module's dynamic export is the global one.
+            if (m.OwnsDynamics && ModuleOwnsDynamicFunctor(cur, fid)) return cur;
             if (m.DynamicFunctors.Contains(fid)) return null;
             if (DefinedHeads(cur, m).Contains(fid)) return cur;
             if (!m.Imports.TryGetValue(fid, out string? next)) return null;
@@ -1346,7 +1350,12 @@ public sealed partial class PrologEngine
             }
             foreach (int fid in manifest.DynamicFunctors)
                 if (Fresh(fid)) yield return (mod, fid);
-            // Consult-path dynamics: the store is flat-global, but the
+            // A module that owns its dynamics defines what the store holds
+            // under its name, asserted or declared (ADR-038, amendment).
+            if (manifest.OwnsDynamics)
+                foreach (int fid in OwnDynamicFunctorsOf(mod))
+                    if (Fresh(fid)) yield return (mod, fid);
+            // Legacy consult-path dynamics: the store is flat-global, but the
             // declaring module is on record (first declarer wins) — a
             // `:- dynamic` in M's source counts as M defining it.
             foreach (var (fid, declarer) in _dynamicDeclaringModule)
@@ -1379,6 +1388,7 @@ public sealed partial class PrologEngine
     /// membership form of <see cref="DefinedModulePredicates"/>.</summary>
     internal bool ModuleDefinesFunctor(string module, int fid)
     {
+        if (ModuleOwnsDynamicFunctor(module, fid)) return true;
         foreach (var (_, f) in DefinedModulePredicates(module))
             if (f == fid) return true;
         return false;
@@ -1433,7 +1443,20 @@ public sealed partial class PrologEngine
         if (!_modules.TryGetValue(module, out ModuleManifest? m)) return null;
         int fid = Shumway.Core.FunctorTable.Intern(
             Shumway.Core.AtomTable.Intern(name, permanent: true).Id, arity);
-        if (_dynStore.IsDynamic(fid)) return name;   // dynamics are flat-global
+        if (m.OwnsDynamics)
+        {
+            // ADR-038 (amendment): the module's own, static or dynamic, then
+            // its imports, then what it sees of the global namespace; a name
+            // it cannot place is its own, resolved when it runs (point 7).
+            string own = module + "$" + name;
+            if (_dynStore.IsDynamic(MangleFunctor(module, fid))) return own;
+            if (GetModuleMangledSet(module, m).Contains(fid)) return own;
+            if (m.Imports.TryGetValue(fid, out string? isrc))
+                return ModuleOwnsDynamics(isrc) || !_dynStore.IsDynamic(fid) ? isrc + "$" + name : name;
+            if (ModuleRewrite.IsMangledName(name) || IsVisibleGlobalFunctor(fid)) return name;
+            return own;
+        }
+        if (_dynStore.IsDynamic(fid)) return name;   // a legacy module's dynamics are global
         if (GetModuleMangledSet(module, m).Contains(fid)) return module + "$" + name;
         if (m.Imports.TryGetValue(fid, out string? src)) return src + "$" + name;
         return name;
