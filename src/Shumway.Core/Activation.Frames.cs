@@ -480,6 +480,7 @@ public sealed partial class Activation
         if (CatchDiag)
             System.Console.Error.WriteLine($"[catch] reclaim idx={i} rec={rec} xTop={_extraTrailTop}");
         NeuterCatchRecord(rec);
+        PopReclaimedRecordsDownTo(rec);
         _catchFrames.RemoveAt(i);
         // What the guarded goal trailed only because the frame raised the
         // boundary is undone by nothing now: the trail keeps what a choice
@@ -510,7 +511,11 @@ public sealed partial class Activation
                 || !IsCatchRecord(f.DeactivateRecord, i, CatchTrailDeactivate)) return;
             if (CatchDiag)
                 System.Console.Error.WriteLine($"[catch] reclaim-dead idx={i} xTop={_extraTrailTop}");
-            // The later record first, so the trail can shrink past both.
+            // Neutered in place, never popped: a mark taken since the frame
+            // died may sit above them with no choice point to show it (a
+            // CP-free guard's marks live in IL locals, ADR-031), and a top
+            // below that mark makes its restore unwind past the end. The
+            // next compacting cut drops them (the watermark is lowered).
             NeuterCatchRecord(f.DeactivateRecord);
             NeuterCatchRecord(f.PushRecord);
             _catchFrames.RemoveAt(i);
@@ -524,11 +529,14 @@ public sealed partial class Activation
         && _extraTrail[rec].OldValue.Data == kind
         && _extraTrail[rec].HeapIdx == frame;
 
-    // A record of a frame that is gone. On top of the trail it goes, with
-    // any neutered records below it; elsewhere it stays as a record that
-    // undoes nothing, the entries after it being live, until a compaction.
-    // Not below the top the newest choice point saved: comparing addresses does
-    // not make it older than the frame, a cut can have freed the address.
+    // A record of a frame that is gone: it stays where it is, undoing nothing,
+    // until a compaction drops it or an unwind passes it. The trail shrinks
+    // only at a frame's deterministic exit, over its own records
+    // (PopReclaimedRecordsDownTo): every mark taken before the frame lies at or
+    // below its push record. A frame that died earlier may have records under a
+    // mark taken since, with no choice point to show it (a guard's marks in IL
+    // locals, ADR-031), and a top below that mark makes the restore unwind to a
+    // position that no longer exists.
     private void NeuterCatchRecord(int rec)
     {
         ExtraTrailEntry e = _extraTrail[rec];
@@ -541,8 +549,13 @@ public sealed partial class Activation
             _compactedExtra = rec;
             _compactedBinding = Math.Min(_compactedBinding, e.BindingTrailMarker);
         }
-        int floor = ExtraTopAtB();
-        while (_extraTrailTop > floor
+    }
+
+    // The reclaimed records on top of the trail, down to the frame's own push
+    // record and no further: what lies below it may be under a live mark.
+    private void PopReclaimedRecordsDownTo(int rec)
+    {
+        while (_extraTrailTop > rec
                && _extraTrail[_extraTrailTop - 1].Type == TrailType.CatchFrame
                && _extraTrail[_extraTrailTop - 1].OldValue.Data == CatchTrailReclaimed)
             _extraTrailTop--;

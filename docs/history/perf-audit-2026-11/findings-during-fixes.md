@@ -9,12 +9,13 @@ by one (branch `perf-audit-review`): item 1 reproduces on Windows too once
 the run is made to bind the prelude's compiled code early
 (`DOTNET_TieredCompilation=0`); its cause is traced below and fixed on
 `main` apart from this branch. Item 2's crash had been fixed on `main` by
-then, through the catch-frame work of PR #213, by another mechanism (a
-finished frame is not given back while a younger choice point saved a
-trail top above its records); the checks the branch added to the
-qualified `clause/2`, and the culprit `retract/1` and `assertz/1` name,
-were not on `main` and are brought here (clause/2, retract/1 and
-assertz/1 on a qualified goal report what the plain forms do). Of the
+then for the interpreted shape, through the catch-frame work of PR #213
+(a finished frame is not given back while a younger choice point saved a
+trail top above its records); the compiled shape still crashed, and the
+rest of the branch's fix is brought here, as are the checks the branch
+added to the qualified `clause/2` and the culprit `retract/1` and
+`assertz/1` name (clause/2, retract/1 and assertz/1 on a qualified goal
+report what the plain forms do). Of the
 test-environment notes, two of the failures reported on clean `main` in
 the Linux container reproduce under WSL on `main` here as well:
 `DebugSiteTableTests.AFileIsIdentifiedByItsName_NotByThePathItWasReachedThrough`
@@ -141,12 +142,18 @@ the repository's gate does not do.
    `1:q(_)` (a C# path of its own); a `$`-helper's name reaches error
    contexts (`$clause_enum/2`, `$module_clause_enum/3`).
 
-   **Review.** The crash is gone on `main` since PR #213 (`t5` and the
-   `clause/2` goals run on both tiers, checked with the prelude compiled
-   and interpreted). The head and body checks of the qualified `clause/2`,
-   the per-layer check of `'$strip_module'` and the culprit of `retract/1`
-   and `assertz/1` were still missing and are brought in this branch, with
-   the branch's tests. The `$`-helper names in error contexts stay as
+   **Review.** PR #213 fixed the choice-point half of this on `main`: a
+   dead frame is not given back while a younger choice point saved a trail
+   top above its records. The compiled half was still there: a CP-free
+   guard (ADR-031) holds its marks in IL locals and shows no choice point,
+   so `t5` with the prelude compiled synchronously still died with the
+   same exception. This branch brings the rest of the branch's fix (a dead
+   frame's records are neutered in place and never popped; the trail
+   shrinks only at a frame's deterministic exit over its own records) and
+   the five-shape test on both tiers. The head and body checks of the
+   qualified `clause/2`, the per-layer check of `'$strip_module'` and the
+   culprit of `retract/1` and `assertz/1` were missing too and are brought
+   with the branch's tests. The `$`-helper names in error contexts stay as
    noted.
 
 3. **`AssertHelperReuseTests` (added on this branch, item W5) were
