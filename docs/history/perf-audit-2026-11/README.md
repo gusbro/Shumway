@@ -94,3 +94,41 @@ C3/I6 (`_cellsAllocated` touched at 27 sites).
 4. I1 (one-member regions) then I2/I3 — biggest Tier-1 lever left.
 5. B3/B4/B10 as an "embedding throughput" arc, measured on the interop benchmark.
 6. W1, W2 codegen, verified with `shumway-disasm` instruction counts.
+
+## 7. Measured against `main` (review, 2026-11-07)
+
+The review branch (`perf-audit-review`, the items brought one by one) against
+`main` at 78fba0d1, both built Release, on the same notebook with the processor
+capped at 99% (no turbo) and the cap restored afterwards, in ABBA order so a
+drift favours neither side. Wall-clock numbers are the second run inside one
+process (the first run promotes); the deterministic metrics are the harness's
+cells per iteration and the interpreter's inference counts with the tier off.
+
+**The Van Roy suite is unchanged.** Cells per iteration are identical on all
+ten programs on both tiers, and the wall clock stays inside the suite's own
+noise: review/main between 0.95 and 1.07 on Tier-0 and 0.96 and 1.12 on
+Tier-1, with the two `main` rounds themselves up to 10% apart (nreverse on
+Tier-1: 146 and 180 ms). None of the items touches what these programs run.
+
+**The items, where the work went** (cpu ms, mean of six capped runs, and the
+interpreter's inferences for the same goal with the tier off):
+
+| Item | Goal | main | review | Ratio | Inferences main → review |
+|---|---|---|---|---|---|
+| B8 `length/2` | a 200,000-element proper list, 100 times | 864 | 482 | 1.8× | 401,108 → 400,908 |
+| B5 `predsort/3` | 3,000 pseudo-random integers | 2,506 | 271 | 9.3× | 17,764,468 → 224,157 |
+| B6 `atomic_list_concat/3` | join 4,000 numbers, split them back | 3,490 | 26 | 134× | 32,128,026 → 48,032 |
+| B1 `clause/2` | 3,000 keyed lookups in a 10,000-clause dynamic predicate | 1,086 | 104 | 10.4× | 60,006 → 60,006 |
+| C7 packed string | a 20,000-character string unified with a cons list, 300 times | 1,365 | 399 | 3.4× | 40,330 → 40,328 |
+| W5 asserted rules | 1,500 assert, call, retract rounds of a rule with control constructs | 549 | 507 | 1.1× | 28,506 → 28,506 |
+
+Two of these need a word. `predsort/3` on a *reversed* list is the old
+insertion sort's best case (one comparison per element, the new element always
+goes first), and there the merge sort is six times slower (250 against 40 ms
+for 6,000 elements); on a sorted list of 6,000 the insertion sort takes 10.6 s
+and on a random one 4.2 s, where the merge sort sorts 50,000 in 344 and
+312 ms. A sort is measured on random input. W5's gain is not time: it is the
+helper names, atoms and compiled helpers that an assert/retract cycle no
+longer mints per round (`AssertHelperReuseTests` pins the counts), which a
+run of 1,500 rounds does not show on a clock. B1 and C7 move no inference:
+their work was in C#, and the counts say the Prolog side is untouched.
