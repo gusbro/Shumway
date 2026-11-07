@@ -5,13 +5,14 @@ because they are outside the item being fixed. All reproduce on `main`
 (7536c3c) unless noted.
 
 Reviewed on 2026-11-07, when the branch's fixes were brought to `main` one
-by one (branch `perf-audit-review`): item 1 did not reproduce on Windows,
-with the deterministic script, on the branch's base, on `main` or on the
-review branch, under any promotion setting; item 2 had been fixed on `main`
-by then, through the catch-frame work of PR #213, and the qualified
-`clause/2` checks were there too, so the branch's commit for it was not
-brought over. The test-environment notes describe the cloud container the
-branch was built in; the repository's own gate, run here, saw none of them.
+by one (branch `perf-audit-review`): item 1 reproduces on Windows too once
+the run is made to bind the prelude's compiled code early
+(`DOTNET_TieredCompilation=0`); its cause is traced below and fixed on
+`main` apart from this branch. Item 2 had been fixed on `main` by then,
+through the catch-frame work of PR #213, and the qualified `clause/2`
+checks were there too, so the branch's commit for it was not brought over.
+The test-environment notes describe the cloud container the branch was
+built in; the repository's own gate, run here, saw none of them.
 
 ## Pre-existing bugs
 
@@ -74,6 +75,28 @@ branch was built in; the repository's own gate, run here, saw none of them.
    the `retract` (is it still on the CP stack when `findall` backtracks?)
    and the state the `[CATCH-RESUME]` path leaves behind (B, HB, trail
    tops, catch-frame stack) compared with a non-exception run.
+
+   **Traced (review, 2026-11-07).** Neither the logical update view nor the
+   exceptions: the cursor's choice point is cut. The goal reaches `call/1`
+   whole, so the prelude's `'$call_conj'/3` runs it piece by piece through
+   `'$call'/2`, carrying the enclosing call's cut barrier; the `->` is run by
+   `'$call_disj'/3`, whose first clause commits with a neck cut. The
+   interpreter enters a predicate reached that way with B0 = B, the level at
+   its entry; the compiled dispatcher (`IlMetaCallHelper.Dispatch`) set B0 to
+   the barrier it carried instead. Once `'$call_conj'/3` runs as the baked
+   prelude's IL, the neck cut of `'$call_disj'/3` cuts to the level of the
+   whole `call/1`, below the `clause/2` cursor pushed by the piece before it,
+   and the enumeration is gone: `[1]`. Nothing specific to `clause/2`:
+   `G =.. [',', member(X, [1,2,3]), (X == 1 -> true ; true)], findall(X, G, L)`
+   answers `[1]` the same way, and so does a user predicate with a neck cut
+   after `member/2`. The catch blocks and the quantities only decided
+   whether `'$call_conj'/3` had been bound yet: a bundle's compiled code is
+   taken after `PersistedThreshold` calls on the compile worker and installed
+   at a later safe point, so the probe's length against the worker's speed
+   (and the .NET JIT's, hence `DOTNET_TieredCompilation=0` making it fail
+   every run) decided which tier ran the conjunction. Fixed by setting B0 to
+   B at every dispatch of the compiled helper, as the interpreter does, and
+   pinned on both tiers by `MetaCallCalleeBarrierTests`.
 
 2. **Uncatchable crash on a non-atom module qualifier in `clause/2`.**
    `clause(1:q(_), _)` — and the next goal after
