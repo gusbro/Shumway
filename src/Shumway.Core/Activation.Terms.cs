@@ -2411,62 +2411,99 @@ public sealed partial class Activation
     }
 
     /// <summary>
-    /// Unifies two PSTRs. Compares the first <c>min(aLen, bLen)</c> code units pairwise;
-    /// on equal length, the stored tail values are unified directly. On a length mismatch,
-    /// the longer PSTR is sliced from the shorter's length onward (a virtual header is
-    /// materialised on the heap pointing at the same buffer) and that slice is unified
-    /// with the shorter PSTR's tail.
+    /// Unifies two PSTRs, segment by segment. Compares the first <c>min(aLen, bLen)</c>
+    /// code units pairwise; on equal length the two stored tails meet, on a length
+    /// mismatch the shorter's stored tail meets a virtual slice of the longer from the
+    /// shorter's length onward. Where both continue packed (a lazy-concatenation chain)
+    /// the loop goes on in place; anything else goes through one Unify, the slice
+    /// written to the heap only then.
+    ///
+    /// <para>A loop, not a recursion per segment: a chain is as long as the program
+    /// made it, and a C# frame per link was an uncatchable stack overflow.</para>
     /// </summary>
     private bool UnifyPstrPstr(int aAddr, int bAddr)
     {
         Cell aHdr = _heap[aAddr];
         Cell bHdr = _heap[bAddr];
-        int aLen = aHdr.AsPstrLength;
-        int bLen = bHdr.AsPstrLength;
-
-        // [a,b,c] and [97,98,99] are different lists. An empty segment carries
-        // no elements, so its presentation says nothing and must not decide.
-        if (aLen > 0 && bLen > 0 && aHdr.AsPstrKind != bHdr.AsPstrKind)
-            return false;
-
-        if (aLen > bLen)
+        // Two cyclic chains loop here without growing the C# stack, so past
+        // UnifySpineGuardLimit iterations the pair guard engages, as in
+        // UnifyLis: a revisited pair of segments is an equation already in
+        // the system — rational-tree true.
+        int spineIters = 0;
+        HashSet<long>? seen = null;
+        while (true)
         {
-            (aAddr, bAddr) = (bAddr, aAddr);
-            (aHdr, bHdr) = (bHdr, aHdr);
-            (aLen, bLen) = (bLen, aLen);
-        }
+            if (seen is not null)
+            {
+                if (!seen.Add((PstrPosition(aHdr) << 32) | PstrPosition(bHdr))) return true;
+            }
+            else if (++spineIters >= UnifySpineGuardLimit) seen = new HashSet<long>();
+            Profiler.Unify();   // the Unify per segment the recursion used to count
+            int aLen = aHdr.AsPstrLength;
+            int bLen = bHdr.AsPstrLength;
 
-        for (int i = 0; i < aLen; i++)
-        {
-            if (GetPstrCodeUnit(aHdr, i) != GetPstrCodeUnit(bHdr, i))
+            // [a,b,c] and [97,98,99] are different lists. An empty segment carries
+            // no elements, so its presentation says nothing and must not decide.
+            if (aLen > 0 && bLen > 0 && aHdr.AsPstrKind != bHdr.AsPstrKind)
                 return false;
+
+            if (aLen > bLen)
+            {
+                (aHdr, bHdr) = (bHdr, aHdr);
+                (aLen, bLen) = (bLen, aLen);
+            }
+
+            for (int i = 0; i < aLen; i++)
+            {
+                if (GetPstrCodeUnit(aHdr, i) != GetPstrCodeUnit(bHdr, i))
+                    return false;
+            }
+
+            int aTail = Deref(ComputePstrTailIndex(aHdr));
+            Cell aTailCell = _heap[aTail];
+
+            if (aLen == bLen)
+            {
+                int bTail = Deref(ComputePstrTailIndex(bHdr));
+                Cell bTailCell = _heap[bTail];
+                if (aTailCell.Tag == Tag.Pstr && aTailCell.AsPstrLength > 0
+                    && bTailCell.Tag == Tag.Pstr && bTailCell.AsPstrLength > 0)
+                {
+                    aHdr = aTailCell;
+                    bHdr = bTailCell;
+                    continue;
+                }
+                return Unify(aTail, bTail);
+            }
+
+            // A virtual slice of B from position aLen: the same buffer (no copy),
+            // B's tail position by layout.
+            int absoluteStart = bHdr.AsPstrOffset + aLen;
+            Cell slice = Cell.Pstr(bLen - aLen,
+                bHdr.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer,
+                absoluteStart % Cell.PstrCodeUnitsPerBuffer,
+                bHdr.AsPstrKind, bHdr.AsPstrIsAstral);
+            if (aTailCell.Tag == Tag.Pstr && aTailCell.AsPstrLength > 0)
+            {
+                aHdr = aTailCell;
+                bHdr = slice;
+                continue;
+            }
+            return Unify(aTail, MaterializeCell(slice));
         }
-
-        int aTailIdx = ComputePstrTailIndex(aHdr);
-
-        if (aLen == bLen)
-        {
-            int bTailIdx = ComputePstrTailIndex(bHdr);
-            return Unify(aTailIdx, bTailIdx);
-        }
-
-        // Build a virtual slice of B starting at position aLen. The slice points at the
-        // same buffer (no copy) and shares B's tail position by layout.
-        int absoluteStart = bHdr.AsPstrOffset + aLen;
-        int sliceBufferIdx = bHdr.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer;
-        int sliceOffset = absoluteStart % Cell.PstrCodeUnitsPerBuffer;
-        int sliceLength = bLen - aLen;
-
-        int sliceSlot = AllocateHeap(1);
-        _heap[sliceSlot] = Cell.Pstr(sliceLength, sliceBufferIdx, sliceOffset,
-            bHdr.AsPstrKind, bHdr.AsPstrIsAstral);
-        return Unify(aTailIdx, sliceSlot);
     }
 
     /// <summary>
-    /// Unifies a non-empty PSTR with a cons cell. Decomposes the first code unit as
-    /// <c>Int(cu)</c>, then recurses on the LIS tail with either the PSTR's stored tail
-    /// (length 1) or a virtual one-shorter PSTR slice.
+    /// Unifies a non-empty PSTR with a cons cell, walking the packed text and the
+    /// cons spine in lockstep: no C# frame and no heap cell per element. A cons head
+    /// that is a plain variable binds to the element outright (an atomic cell needs
+    /// no slot), a bound immediate compares, and an attributed variable or a packed
+    /// head takes the general path through one materialised element, since a wakeup
+    /// names the value by heap index. When the text runs out its stored tail meets
+    /// the rest of the cons list through one Unify, unless both go on (a chain
+    /// against more cons cells), which continues the loop; when the cons list runs
+    /// out first the remaining slice is written to the heap once and meets the cons
+    /// tail the same way.
     ///
     /// <para>Heads are code points: a supplementary character (above U+FFFF)
     /// is one element spanning two packed units, joined by
@@ -2474,32 +2511,75 @@ public sealed partial class Activation
     /// </summary>
     private bool UnifyPstrLis(int pstrAddr, int lisAddr)
     {
-        Cell pstrHdr = _heap[pstrAddr];
-        int length = pstrHdr.AsPstrLength;
-
-        int lisHeadIdx = _heap[lisAddr].AsHeapIndex;
-        int lisTailIdx = lisHeadIdx + 1;
-
-        int cp = PstrHeadCodePoint(pstrHdr, out int span);
-        int headSlot = AllocateHeap(1);
-        _heap[headSlot] = PstrHeadCell(pstrHdr.AsPstrKind, cp);
-        if (!Unify(headSlot, lisHeadIdx)) return false;
-
-        if (length == span)
+        Cell hdr = _heap[pstrAddr];
+        int headIdx = _heap[lisAddr].AsHeapIndex;
+        // A cyclic chain against a cyclic cons list loops here without growing
+        // the C# stack, so past UnifySpineGuardLimit iterations the pair guard
+        // engages, as in UnifyLis: a revisited (element, cons cell) pair is an
+        // equation already in the system — rational-tree true.
+        int spineIters = 0;
+        HashSet<long>? seen = null;
+        while (true)
         {
-            int origTailIdx = ComputePstrTailIndex(pstrHdr);
-            return Unify(origTailIdx, lisTailIdx);
+            if (seen is not null)
+            {
+                if (!seen.Add((PstrPosition(hdr) << 32) | (uint)headIdx)) return true;
+            }
+            else if (++spineIters >= UnifySpineGuardLimit) seen = new HashSet<long>();
+            Profiler.Unify();   // the Unify per element the recursion used to count
+            int cp = PstrHeadCodePoint(hdr, out int span);
+            Cell element = PstrHeadCell(hdr.AsPstrKind, cp);
+            int headAddr = Deref(headIdx);
+            Cell head = _heap[headAddr];
+            if (head.Tag == Tag.Ref)
+                Bind(headAddr, element);
+            else if (head.Tag == element.Tag)
+            {
+                if (head.Tag == Tag.Int ? head.AsInt != element.AsInt
+                                        : head.AsAtomId != element.AsAtomId)
+                    return false;
+            }
+            else if (head.Tag is Tag.AttVar or Tag.Pstr)
+            {
+                if (!Unify(MaterializeCell(element), headAddr)) return false;
+            }
+            else return false;
+
+            int consTail = Deref(headIdx + 1);
+            Cell consTailCell = _heap[consTail];
+            if (hdr.AsPstrLength == span)
+            {
+                int stored = Deref(ComputePstrTailIndex(hdr));
+                Cell storedCell = _heap[stored];
+                if (storedCell.Tag == Tag.Pstr && storedCell.AsPstrLength > 0
+                    && consTailCell.Tag == Tag.Lis)
+                {
+                    hdr = storedCell;
+                    headIdx = consTailCell.AsHeapIndex;
+                    continue;
+                }
+                return Unify(stored, consTail);
+            }
+
+            int absoluteStart = hdr.AsPstrOffset + span;
+            hdr = Cell.Pstr(hdr.AsPstrLength - span,
+                hdr.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer,
+                absoluteStart % Cell.PstrCodeUnitsPerBuffer,
+                hdr.AsPstrKind, hdr.AsPstrIsAstral);
+            if (consTailCell.Tag == Tag.Lis)
+            {
+                headIdx = consTailCell.AsHeapIndex;
+                continue;
+            }
+            return Unify(MaterializeCell(hdr), consTail);
         }
-
-        int absoluteStart = pstrHdr.AsPstrOffset + span;
-        int newBufferIdx = pstrHdr.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer;
-        int newOffset = absoluteStart % Cell.PstrCodeUnitsPerBuffer;
-
-        int sliceSlot = AllocateHeap(1);
-        _heap[sliceSlot] = Cell.Pstr(length - span, newBufferIdx, newOffset,
-            pstrHdr.AsPstrKind, pstrHdr.AsPstrIsAstral);
-        return Unify(sliceSlot, lisTailIdx);
     }
+
+    /// <summary>A packed element's identity for the spine guards: its code-unit
+    /// position in the heap. A buffer index is a heap index, so positions in
+    /// different segments never coincide; below 2^32, so two pack into a key.</summary>
+    private static long PstrPosition(Cell hdr)
+        => hdr.AsPstrBufferIndex * (long)Cell.PstrCodeUnitsPerBuffer + hdr.AsPstrOffset;
 
     /// <summary>Young-to-old binding of two unbound variables (ADR-004). The variable with the
     /// higher heap index is bound to a REF pointing at the older one, so the bound cell will
