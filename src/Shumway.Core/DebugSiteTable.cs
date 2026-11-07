@@ -89,20 +89,17 @@ public static class DebugSiteTable
 
     /// <summary>What identifies the file: its name, with the directory dropped and case
     /// ignored — the same identity a module has. A synthetic name (<c>&lt;string&gt;</c>) is
-    /// not a path and is its own key.</summary>
+    /// not a path and is its own key. Either separator ends the directory, on every
+    /// platform: a name arrives spelled the way its sender's paths look (ADR-044), and
+    /// <c>Path.GetFileName</c> on Linux left a Windows path whole.</summary>
     private static string Key(string name)
     {
         if (string.IsNullOrEmpty(name) || name[0] == '<') return name;
-        try
-        {
-            string file = System.IO.Path.GetFileName(name);
-            return file.Length == 0 ? name : file;
-        }
-        catch (Exception)
-        {
-            return name;   // not a path we can take apart: take it as given
-        }
+        int cut = name.LastIndexOfAny(Separators);
+        return cut < 0 || cut == name.Length - 1 ? name : name[(cut + 1)..];
     }
+
+    private static readonly char[] Separators = { '/', '\\' };
 
     public static string FileName(int fileId)
     {
