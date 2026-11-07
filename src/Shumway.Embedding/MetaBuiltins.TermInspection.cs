@@ -969,7 +969,7 @@ public static partial class MetaBuiltins
         Term headPattern = MaterializeRegister(engine, 0);
         int fid = ExtractCallableFunctorId(headPattern, "clause/2");
 
-        var statics = new List<Clause>(host.StaticClausesFor(fid));
+        IReadOnlyList<Clause> statics = host.StaticClausesFor(fid);
         // ISO §8.8.1.3: clause/2 reads public procedures only — dynamic, or
         // static and declared `:- public` (the ISO public-procedure notion);
         // any other static user predicate is private — permission_error,
@@ -991,18 +991,53 @@ public static partial class MetaBuiltins
                 })));
         }
 
-        var candidates = new List<Clause>();
-        candidates.AddRange(host.DynamicClausesFor(fid));
-        candidates.AddRange(statics);
-        // Drop the clauses whose head definitely cannot match the pattern, so
-        // the cursor enumerates solutions rather than the whole predicate —
+        // The candidates are the clauses whose head may match the pattern,
+        // the dynamic ones first, collected now: the logical update view is
+        // this copy, which a later assert or retract leaves alone. A clause
+        // whose head definitely cannot match is left out, so the cursor
+        // enumerates solutions rather than the whole predicate —
         // first-argument indexing's answer to the same question, at the AST
-        // level, or against the image of a fact asserted at run time (ADR-063).
-        // `clause(p(1), B)` over `p(1). p(2).` is then deterministic.
+        // level, or against the image of a fact asserted at run time
+        // (ADR-063). `clause(p(1), B)` over `p(1). p(2).` is then
+        // deterministic.
+        var candidates = new List<Clause>();
         int headHeap = engine.MaterializeRegisterForTrace(0);
-        candidates.RemoveAll(c => c.HeadImage is { } image
-            ? image.DefinitelyDiffers(engine, headHeap, 4)
-            : !HeadCanMatch(headPattern, ClauseHead(c)));
+        bool Excluded(Clause c)
+        {
+            host.ClauseCandidatesScanned++;
+            return c.HeadImage is { } image
+                ? image.DefinitelyDiffers(engine, headHeap, 4)
+                : !HeadCanMatch(headPattern, ClauseHead(c));
+        }
+        // The dynamic clauses come from the physical list, where retract/1's
+        // first-argument index answers which positions a keyed pattern can
+        // match at all: the rest of a large predicate is never looked at.
+        // The index says only what cannot match, the prefilter and the
+        // unification decide; a tombstone is a slot a retract emptied.
+        List<Clause> physical = host.PhysicalClausesFor(fid);
+        if (physical.Count > 0)
+        {
+            DynamicClauseIndex? index = null;
+            DynFirstArgKey key = default;
+            if (PatternFirstArgKey(engine, headHeap) is { } k)
+            {
+                key = k;
+                index = host.ClauseIndexFor(fid);
+            }
+            for (int i = 0; i < physical.Count; i++)
+            {
+                if (index is not null)
+                {
+                    i = index.FirstCandidateFrom(key, i);
+                    if (i < 0) break;
+                }
+                Clause c = physical[i];
+                if (ReferenceEquals(c, DynamicClauseStore.Tombstone)) continue;
+                if (!Excluded(c)) candidates.Add(c);
+            }
+        }
+        for (int i = 0; i < statics.Count; i++)
+            if (!Excluded(statics[i])) candidates.Add(statics[i]);
 
         int returnPc = engine.BuiltinReturnPc;
         // arity 2 (clause/2): save the arg registers across backtracks.

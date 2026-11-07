@@ -314,6 +314,17 @@ public sealed partial class PrologEngine
     /// prefilter could not rule out.</summary>
     internal long ClauseCandidatesTried;
 
+    /// <summary>Clauses clause/2 has looked at to choose its candidates —
+    /// the static ones from the functor index, the dynamic ones through the
+    /// first-argument index when the pattern keys one. A keyed lookup keeps
+    /// it near the number of candidates; a walk of the whole predicate, or
+    /// of the whole program, would not.</summary>
+    internal long ClauseCandidatesScanned;
+
+    /// <summary>Builds of the static clause index: one per program change
+    /// that a lookup follows, never one per lookup.</summary>
+    internal long StaticClauseIndexBuilds;
+
     /// <summary>The physical clause list, tombstones included — the retract
     /// path only. Everything else reads through the dense accessors, which
     /// compact first, so a tombstone cannot reach anything that shows a
@@ -995,26 +1006,48 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>Static clauses whose head functor matches
-    /// <paramref name="functorId"/>, across every loaded module. Used by
-    /// <c>clause/2</c> as the static half of the lookup; dynamic clauses
-    /// come from <see cref="DynamicClausesFor"/>.</summary>
-    internal IEnumerable<Clause> StaticClausesFor(int functorId)
+    /// <paramref name="functorId"/>, across every loaded module, in module
+    /// then clause order. Used by <c>clause/2</c> as the static half of the
+    /// lookup; dynamic clauses come from <see cref="DynamicClausesFor"/>.
+    /// One probe of <see cref="StaticClauseIndex"/>: the walk of every
+    /// clause of every module, interning each head, was paid per call.</summary>
+    internal IReadOnlyList<Clause> StaticClausesFor(int functorId)
+        => StaticClauseIndex().TryGetValue(functorId, out var clauses)
+            ? clauses
+            : Array.Empty<Clause>();
+
+    /// <summary>Every module's inspectable clauses by the head functor they
+    /// define — a grammar rule under its translated head, and translated,
+    /// so clause/2 on a non-terminal reads the body the predicate runs.
+    /// Built lazily, dropped by <see cref="DropStaticClauseCaches"/> and by a
+    /// derivation bump, so it is never older than the manifests.</summary>
+    private Dictionary<int, List<Clause>> StaticClauseIndex()
     {
+        if (_staticClausesByFid is { } cached && _staticClausesByFidGen == _derivationGen)
+            return cached;
+        StaticClauseIndexBuilds++;
+        var index = new Dictionary<int, List<Clause>>();
         foreach (var manifest in _modules.Values)
         {
             foreach (var c in manifest.InspectableClauses)
             {
-                // A grammar rule defines its translated head, and that is the
-                // clause it contributes: clause/2 on a non-terminal reads the
-                // same body the predicate runs.
-                if (TryExtractDefinedHead(c, out string n, out int a))
-                {
-                    int fid = FunctorTable.Intern(
-                        AtomTable.Intern(n, permanent: true).Id, a);
-                    if (fid == functorId) yield return TranslatedForListing(c);
-                }
+                if (!TryExtractDefinedHead(c, out string n, out int a)) continue;
+                int fid = FunctorTable.Intern(AtomTable.Intern(n, permanent: true).Id, a);
+                if (!index.TryGetValue(fid, out var list)) index[fid] = list = new List<Clause>();
+                list.Add(TranslatedForListing(c));
             }
         }
+        _staticClausesByFid = index;
+        _staticClausesByFidGen = _derivationGen;
+        return index;
+    }
+
+    /// <summary>Drops every cache built from the module manifests' clause
+    /// lists. Called wherever those lists change.</summary>
+    internal void DropStaticClauseCaches()
+    {
+        _staticHeadFunctorsCache = null;
+        _staticClausesByFid = null;
     }
 
     /// <summary>A grammar rule in the form it defines. Falls back to the rule
