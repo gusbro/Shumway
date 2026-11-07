@@ -199,9 +199,10 @@ public sealed partial class IlPredicateCompiler
         /// <para>Side effects when returning a non-negative address:
         /// the X registers hold the dispatched goal's arguments
         /// (goal args + appended call/N extra args), and
-        /// <c>engine.B0</c> is set to <paramref name="cutBarrier"/> so
-        /// a neck_cut at the callee entry commits to the call's
-        /// barrier rather than the IL caller's.</para>
+        /// <c>engine.B0</c> is the choice-point level at the callee's entry,
+        /// as the interpreter's JumpToUserGoal sets it. <paramref
+        /// name="cutBarrier"/> is only what a bare <c>!</c> goal cuts to and
+        /// what X2 carries to the <c>$call_*</c> helpers.</para>
         /// </summary>
         public static int Dispatch(
             Activation engine, int callArity, int cutBarrier, bool convertBody)
@@ -324,10 +325,10 @@ public sealed partial class IlPredicateCompiler
                         return InvokeBuiltinGoal(engine, route.Arg);
                     case MetaRouteKind.BarrierHelperJump:
                         engine.SetRegister(2, Cell.Int(cutBarrier));
-                        engine.SetB0(cutBarrier);
+                        engine.SetB0(engine.B);
                         return route.Arg;
                     case MetaRouteKind.Jump:
-                        engine.SetB0(cutBarrier);
+                        engine.SetB0(engine.B);
                         return route.Arg;
                 }
             }
@@ -401,7 +402,7 @@ public sealed partial class IlPredicateCompiler
                 int mangledFid = ModuleQualify.Mangle(resolutionModule, atomId, totalArity);
                 if (addresses.TryGetValue(mangledFid, out int mangledAddr))
                 {
-                    engine.SetB0(cutBarrier);
+                    engine.SetB0(engine.B);
                     return mangledAddr;
                 }
                 // ADR-038 — the module's import table (Source$name) before bare.
@@ -411,7 +412,7 @@ public sealed partial class IlPredicateCompiler
                         ((long)resolutionModule << 32) | (uint)functorId, out int importedFid)
                     && addresses.TryGetValue(importedFid, out int importedAddr))
                 {
-                    engine.SetB0(cutBarrier);
+                    engine.SetB0(engine.B);
                     return importedAddr;
                 }
             }
@@ -443,11 +444,13 @@ public sealed partial class IlPredicateCompiler
                 return InvokeBuiltinGoal(engine, builtinId);
             }
 
-            // User predicate. Set the cut barrier the call's `!` will
-            // commit to, then return the dispatch address — the IL
-            // caller threads Cp = resume_marker, Pc = target,
+            // User predicate: B0 is the level at its entry, as a Call sets it,
+            // never cutBarrier. A '$call'/2 piece of a conjunction carries a
+            // barrier below B once an earlier piece left choice points, and the
+            // callee's neck cut would prune them (clause/2 kept one solution).
+            // The IL caller then threads Cp = resume_marker, Pc = target,
             // IlTailCallPending = true.
-            engine.SetB0(cutBarrier);
+            engine.SetB0(engine.B);
             if (addresses is null
                 || !addresses.TryGetValue(functorId, out int address))
             {
