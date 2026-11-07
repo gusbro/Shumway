@@ -4,6 +4,9 @@
 
 Shipped ([Phase 36](../../history/phase-36-closure.md)).
 
+Amended 2026-11-06 (accepted, not built yet): a dynamic predicate of an
+export-qualified module belongs to that module (the amendment at the end).
+
 ## Implementation status
 
 All four components are implemented and tested:
@@ -204,3 +207,151 @@ installs first.
   to everything, prelude included). Rejected for now: a much larger rework touching
   the prelude and every public; the scoped model gets per-module isolation for the
   libraries that need it while leaving the working bare-global core alone.
+
+## Amendment (2026-11-06): a dynamic predicate belongs to its module
+
+Accepted 2026-11-06; not built yet. The reference docs (`invariants.md`, the
+user guide) still describe the global model and change with the
+implementation.
+
+### Context
+
+Section 1 left dynamic predicates in the bare-global namespace: `assertz(a(1))`
+from any module lands in one shared `a/1`, and a module's `:- dynamic counter/1`
+is the same predicate as every other module's. Issue #214 found the visible end
+of it: `assertz(nd:a(1))` drops `nd`, and `current_predicate(nd:F/A)` finds
+nothing. Measured against the systems whose module model this ADR follows
+(SICStus and Scryer; SWI agrees on every point below, except that its modules
+also see `user`'s predicates bare):
+
+- Two export-qualified modules that each keep a private `counter/1` share its
+  clauses, with no warning. The others keep two predicates.
+- A plain file's dynamic `f/1` takes over a module's static `f(mine)` of that
+  name: both sides then see `[mine, global]`. The others see `[mine]` in the
+  module and `[global]` in `user`.
+- A rule asserted inside `n` that calls `n`'s private `helper/1` raises an
+  existence error, because an asserted clause compiles in `user`'s context.
+  The others run it in `n`.
+- `abolish(nd:a/1)` also removes `ot`'s `a/1`.
+
+Shumway has two worlds. The legacy one, an Arity program in files with
+`:- public`, compiled under `arity_compat`, has no static clauses in the Arity
+sense: every fact a program asserts is global, and programs rely on it. The
+modern one, `:- module(Name, [Exports])`, is where a program is written to run
+on the other systems too, and there a global dynamic is wrong.
+
+### Decision
+
+1. **The world of a clause is fixed where it is compiled.** A clause of an
+   export-qualified module compiled with the `arity_compat` flag off is modern.
+   Everything else is legacy: a file without a module directive, a
+   `:- module(Name)` module, and any clause compiled with `arity_compat` on,
+   `:- module/2` or not. The legacy world is unchanged: its dynamics are the
+   global ones, `assertz` from anywhere reaches them, and `:- public` is what
+   makes one visible to the modern world.
+2. **In the modern world a dynamic predicate is the module's own**, named
+   `M$p` as its statics are. `:- dynamic p/N`, `:- multifile p/N` (a dynamic
+   here, ADR-055) and an `assertz` of an undeclared `p` (`implicit_dynamic`)
+   in `M` define `M$p`. `assert/1`, `asserta/1`, `assertz/1`, `retract/1`,
+   `retractall/1`, `abolish/1`, `clause/2`, `dynamic/1`, `current_predicate/1`
+   and `predicate_property/2` act on `M`'s own predicate when called from
+   `M`'s clauses, and the clauses of `M$p` compile in `M`'s context: a rule
+   asserted in `n` calls `n`'s `helper/1`.
+3. **The predicate argument of a database builtin is a meta-argument**
+   (ADR-056 point 5): it carries the module of the clause it was written in.
+   A term handed to a module's predicate that asserts it is asserted in that
+   module; one handed through a declared `:- meta_predicate p(:)` is asserted
+   in the caller's; `G = assertz(t(1)), call(G)` in `M` asserts `M`'s `t/1`.
+   `M:Term` names the module outright and `user:Term` the global one.
+   `assertz(z:q(1))` with no module `z` creates it, as a qualified clause head
+   does (ADR-055 point 1), and `current_module(z)` then holds.
+4. **A qualified head keeps its module.** `M:Head :- Body` for a dynamic or
+   multifile predicate of an export-qualified `M` is a clause of `M$Head`;
+   ADR-055 point 4 no longer strips the qualifier, and the body still runs in
+   the source module (ADR-055 point 2). Another source contributes to a
+   module's multifile predicate by naming it, `solver:step(...) --> ...`, as
+   it does today.
+5. **An exported dynamic is one predicate.** `:- dynamic e/1` exported by `a`
+   and imported by `c` is `a$e` in both: `c`'s `assertz(e(2))` adds to it
+   (SICStus; Scryer keeps them apart).
+6. **What the modern world sees of the global namespace is section 1, step 3**:
+   the prelude, `:- public` predicates, dynamic or not, and builtins. A plain
+   file's dynamic that is not public is reached as `user:p(X)`, a legacy
+   module's as `user:p(X)` or `L:p(X)`. A bare call to one from a module is an
+   existence error, as in SICStus and Scryer; today's read of it is withdrawn.
+   Under `unknown=fail`, which an Arity bundle sets, that call fails instead.
+7. **A call `M`'s compile cannot resolve** (no local, no import, no global yet)
+   resolves when it runs, in `M`'s context, as a `$mqual` goal does today:
+   `M`'s own, a dynamic asserted later included, then its imports, then step 3.
+   The cost of that resolution is measured before the shape is chosen. If
+   resolving on every call is expensive, the site links lazily: the first
+   call that finds the predicate binds the site to it, and the site stays
+   bound, as a link-time resolution would have left it.
+8. **A consult qualified with a module loads into it**: `nd:reconsult(File)`
+   and `nd:consult(File)` define `nd`'s predicates (SICStus). Today they load
+   into `user`.
+9. **Hooks.** The expansion hooks keep the path of ADR-055 point 7. The dynamic
+   facts the engine reads, `file_search_path/2`, `library_directory/1`,
+   `portray/1` and the attribute hooks, are predicates of `user`: a module adds
+   to them as `user:file_search_path(...)`, the spelling the three systems
+   take; its bare `assertz(file_search_path(...))` defines its own.
+10. **Separate compilation and the tiers.** A module's dynamic travels under
+    its name `M$p` in the dynamic seeds of its object, as a declared dynamic
+    does today; the linker and `LoadBundle` see one more mangled name. The
+    Tier-1 and wasm forms of a dynamic (ADR-023, ADR-054) are untouched: a
+    name changes, not a mechanism.
+
+### What this amends
+
+- ADR-008, "Dynamic predicates respect visibility": true for the modern world
+  from here. It was never built for the legacy one, where a dynamic is global
+  and `:- public` only declares it.
+- ADR-055 point 4 holds for the legacy world only.
+- ADR-056 point 2 ("dynamic predicates stay global") and point 6 hold for the
+  legacy world only. Point 3 is withdrawn: with `M`'s `priv/1` named `M$priv`,
+  a global `priv/1` cannot take it over, so `assertz(priv(1))` from `user`
+  defines `user`'s own, as in SICStus and Scryer, instead of raising
+  `permission_error`.
+
+### Consequences
+
+- A modern program that reads a plain file's dynamic bare gets an existence
+  error and writes `user:`, the spelling that works on the three systems. A
+  census with a temporary probe (every call and database operation of an
+  export-qualified module, checked against what is dynamic in the engine)
+  over the engine's own libraries, the Scryer, Trealla and SWI library trees,
+  four Logtalk test sets and the Embedding tests found no library that reads
+  one; every hit was the module's own multifile or local predicate. Six tests
+  pin the global model (a module asserts, `user` reads bare) and change to
+  `m:`. The census loads the libraries without running them, and cannot
+  attribute an `assertz(T)` whose `T` is a variable.
+- Logtalk's `named_databases` example and the four tests of #214 work with
+  no change to the example.
+- `current_predicate(M:PI)`, `clause(M:H, B)` and `predicate_property(M:H, P)`
+  keep their meaning, `M`'s own definitions, and gain the dynamics.
+
+### Open before implementing
+
+- `assertz(M:(H :- B))` from a source `S`: whether `B` runs in `M` or in `S`
+  was not measured.
+- The cost of point 7 at a call site that resolves only at run time, measured
+  on both tiers with the deterministic metric before implementing. The lazy
+  link of point 7 is the answer if it is expensive; what it must keep is the
+  logical update view and the live address of a dynamic, which a bound site
+  reaches through its address as a compiled call does today.
+
+### Tests
+
+The measured table, on both tiers: `a` asserts `b(1)` and `c` calls `b(X)`
+(existence error), `a:b(X)` from `c` and `user`, `c` asserts `b(2)` (two
+predicates), `retract`, `retractall` and `abolish` in `a` leave `c`'s alone,
+a term passed plain and through a `:- meta_predicate p(:)`, `call/1` on an
+assert, a call before the first assert, `assertz(z:q(1))` and
+`current_module(z)`, `assertz(user:g(1))`, an exported dynamic imported and
+asserted from the importer, a static `f/1` beside `user`'s dynamic `f/1`, a
+rule asserted in a module calling its private, `nd:reconsult(File)`,
+`current_predicate(nd:F/A)` after `assertz(nd:a(1))`, and the legacy world
+unchanged: a plain file, a `:- module(Name)` module and a `:- module/2` file
+under `arity_compat`. Red counter-proofs: the global store for a modern
+module's dynamic fails the two-predicates test; compiling an asserted clause
+in `user`'s context fails the private-helper test.
