@@ -21,8 +21,11 @@ public class AtomicListConcatLinearTests
         // per element; now the result is the only new atom. Measured as the
         // difference between a 2,000-element join and a 20-element one in
         // the same engine, after a first join has paid whatever a first
-        // call interns; the atom GC can only lower a count in between.
+        // call interns; the atom GC can only lower a count in between. The
+        // join is C# on either tier, and the compile worker interns helper
+        // names meanwhile, so the tier stays off for the count.
         var e = new PrologEngine();
+        e.IlPromotion.Threshold = 0;
         long Interned(int n, string join) => e.Query(
             $"numlist(1, {n}, L), statistics(atoms, [A0, _]), {join}, "
             + "statistics(atoms, [A1, _]), D is A1 - A0.").Get<long>("D");

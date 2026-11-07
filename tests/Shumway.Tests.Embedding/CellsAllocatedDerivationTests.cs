@@ -16,7 +16,8 @@ namespace Shumway.Tests.Embedding;
 /// same programs before the derivation, pinned on both tiers: a lowering site
 /// that forgets to account shows as a lower count. A change that means to add
 /// or remove heap allocations updates them, as it would a <c>--alloc</c>
-/// baseline.</summary>
+/// baseline (the wakeups row moved by eight with the module-owned dynamics,
+/// PR #215, which the per-allocation counter on that main confirmed).</summary>
 public sealed class CellsAllocatedDerivationTests
 {
     static CellsAllocatedDerivationTests()
@@ -109,7 +110,7 @@ public sealed class CellsAllocatedDerivationTests
         gc 120005 120005
         autogc 2400061 2400061
         asserts 20619 20619
-        wakeups 565 571
+        wakeups 573 579
         trials 104 104
         bigs 13 13
         midquery 8622 8622
