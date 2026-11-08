@@ -673,6 +673,7 @@ public sealed partial class PrologEngine
             headFids.Add(HeadFunctorIdOf(c));
         var entry = (rewritten, headFids, (object)fidCtx.LocalFunctors, modeTable.Version);
         _dynamicRewriteCache[fid] = entry;
+        _dynamicHelperContext[fid] = (headFids, (object)fidCtx.LocalFunctors, modeTable.Version);
         return entry;
     }
 
@@ -1204,11 +1205,21 @@ public sealed partial class PrologEngine
                 {
                     if (entry.Clauses is not null)
                     {
-                        // Stale context: the re-transform below mints fresh
-                        // helper ids, so the compiled entry (which calls the
-                        // old ones) must go with it.
+                        // Stale context: the compiled entry goes with it.
                         DropDynamicPredicateCacheEntry(fid);
                     }
+                    // And the compiles of the rules' helpers, when the
+                    // context changed since they were compiled. A helper keeps
+                    // its name across derivations (TransformClauses memo), but
+                    // its body is rewritten against each derivation's context:
+                    // a callee undefined at the last one is a module's own
+                    // predicate now, and the old compile still called the
+                    // bare name. Recorded apart from the entry, which a
+                    // mutation drops before this comparison can be made.
+                    if (_dynamicHelperContext.TryGetValue(fid, out var helpersUnder)
+                        && (!ReferenceEquals(helpersUnder.LocalsRef, fidCtx.LocalFunctors)
+                            || helpersUnder.ModesVersion != modeTable.Version))
+                        DropStaleDynamicHelpers(helpersUnder.HeadFids, fid);
                     entry = RewriteDynamicPredicate(fid, clauses, fidCtx, modeTable);
                 }
                 allRewritten.AddRange(entry.Clauses);
