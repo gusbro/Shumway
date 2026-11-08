@@ -34,6 +34,13 @@ plumbing, …). It can also be loaded explicitly with
 `use_module(library(swi))`. `:- autoload(Lib, Imports)` is honoured as an
 eager `use_module` with its import list.
 
+The shim also maps SWI's attribute hook. Shumway's own is
+`verify_attributes/4` (one per attribute module); once the shim is loaded, a
+module that defines `attr_unify_hook(AttValue, Other)`, in its own file or
+with an `M:attr_unify_hook(...)` head from another, gets a
+`verify_attributes/4` that calls it after the binding, as SWI does. A goal
+that fails in it undoes the binding.
+
 ## Writing code against these libraries
 
 **`double_quotes` is `chars` by default** (ADR-047), which is what most

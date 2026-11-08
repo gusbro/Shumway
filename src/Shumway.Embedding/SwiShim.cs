@@ -18,6 +18,68 @@ internal static class SwiShim
     /// to (and the auto-load consults).</summary>
     public const string LibraryName = "swi";
 
+    /// <summary>SWI's attribute hook, <c>attr_unify_hook(AttValue, Other)</c>,
+    /// over the engine's own (ADR-040): before the first clause of a module's
+    /// <c>attr_unify_hook/2</c> in a source, that module gets
+    /// <c>verify_attributes(M, V, O, [M:attr_unify_hook(V, O)])</c>, whose goal
+    /// runs after the binding as SWI calls its hook. The module is the clause's
+    /// own, or the one an <c>M:attr_unify_hook(...)</c> head names. The engine
+    /// itself knows only verify_attributes/4; this is the shim's mapping.</summary>
+    internal static void RegisterAttrUnifyHookBridge(PrologEngine engine)
+    {
+        var bridged = new System.Collections.Generic.HashSet<(long, string)>();
+        engine.RegisterTermExpansion(term => AttrUnifyHookBridge(engine, bridged, term));
+    }
+
+    private static System.Collections.Generic.IReadOnlyList<Shumway.Compiler.Ast.Term>? AttrUnifyHookBridge(
+        PrologEngine engine, System.Collections.Generic.HashSet<(long, string)> bridged,
+        Shumway.Compiler.Ast.Term term)
+    {
+        Shumway.Compiler.Ast.Term head =
+            term is Shumway.Compiler.Ast.CompoundTerm { Functor: ":-", Args.Length: 2 } rule ? rule.Args[0] : term;
+        string module;
+        bool qualified;
+        if (head is Shumway.Compiler.Ast.CompoundTerm
+            {
+                Functor: ":",
+                Args: [Shumway.Compiler.Ast.AtomTerm m,
+                       Shumway.Compiler.Ast.CompoundTerm { Functor: "attr_unify_hook", Args.Length: 2 }]
+            })
+        {
+            module = m.Name;
+            qualified = true;
+        }
+        else if (head is Shumway.Compiler.Ast.CompoundTerm { Functor: "attr_unify_hook", Args.Length: 2 })
+        {
+            module = engine._currentLoadModule ?? PrologEngine.DefaultModuleName;
+            qualified = false;
+        }
+        else return null;
+        // Once per module and source: a second clause, or this one when the
+        // expansion fixpoint sees it again, passes through unchanged.
+        if (!bridged.Add((engine._currentLoadSerial, module))) return null;
+
+        var moduleAtom = new Shumway.Compiler.Ast.AtomTerm(module);
+        var value = new Shumway.Compiler.Ast.VarTerm("AttValue");
+        var other = new Shumway.Compiler.Ast.VarTerm("Other");
+        var call = new Shumway.Compiler.Ast.CompoundTerm(":", new Shumway.Compiler.Ast.Term[]
+        {
+            moduleAtom,
+            new Shumway.Compiler.Ast.CompoundTerm("attr_unify_hook", new Shumway.Compiler.Ast.Term[] { value, other }),
+        });
+        var goals = new Shumway.Compiler.Ast.CompoundTerm(".", new Shumway.Compiler.Ast.Term[]
+        {
+            call, new Shumway.Compiler.Ast.AtomTerm("[]"),
+        });
+        Shumway.Compiler.Ast.Term bridge = new Shumway.Compiler.Ast.CompoundTerm("verify_attributes",
+            new Shumway.Compiler.Ast.Term[] { moduleAtom, value, other, goals })
+            { Position = term.Position };
+        if (qualified)
+            bridge = new Shumway.Compiler.Ast.CompoundTerm(":", new Shumway.Compiler.Ast.Term[] { moduleAtom, bridge })
+                { Position = term.Position };
+        return new[] { bridge, term };
+    }
+
     public const string Source = """
         % ----- destructive term modification (non-backtrackable) -----
         :- public nb_setarg/3.

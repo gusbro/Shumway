@@ -156,6 +156,15 @@ long-standing "CLP(R) and CLP(FD) cannot share an engine" restriction is
 not a real incompatibility). A single variable carrying attributes from two
 modules runs both modules' hooks in turn, as SWI/SICStus do.
 
+Another dialect's hook reaches the engine through its shim, as a mapping onto
+this one; the engine knows no other name. The SWI shim maps `attr_unify_hook/2`
+(2026-11-08): before the first clause of a module's `attr_unify_hook/2` in a
+source, its term expansion gives the module
+`verify_attributes(M, V, O, [M:attr_unify_hook(V, O)])`, whose goal runs after
+the binding, when SWI calls its hook. It is the module's own hook, never the
+bare-global fallback, which would answer for every hookless module and sit in
+front of a program's own global clauses.
+
 ### D3 — `double_quotes` (and other parse-time flags) scoped per library load
 
 Each dialect pack sets its parse flags (notably `double_quotes`) before consulting
