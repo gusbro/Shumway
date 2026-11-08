@@ -33,6 +33,10 @@ public sealed class InlineBarrierCallTests(ITestOutputHelper o)
         deep(X)  :- ( a(X), ( X > 1, ! ; true ) ; b(X) ).
         arrow(X) :- ( a(X) -> true ; X = none ).
         outer(X, Y) :- a(X), conj(Y).
+        nc(_) :- !.
+        nc(_) :- fail.
+        rtcut(X) :- G =.. [',', a(X), nc(X)], call(G).
+        rtarrow(X) :- G =.. [',', a(X), (X == 1 -> true ; true)], call(G).
         """;
 
     [Theory]
@@ -47,17 +51,30 @@ public sealed class InlineBarrierCallTests(ITestOutputHelper o)
     // And the cut inside conj/1 must not prune the caller's choice points:
     // outer/2 still has two solutions for X.
     [InlineData("outer(X, _)", "[1,2]")]
-    public void TheCutReachesExactlyAsFarAsItsCall(string goal, string _)
+    // A conjunction built at run time reaches '$call_conj'/3, which hands
+    // each piece to '$call'/2 with the call's barrier. The barrier is for a
+    // `!` piece; a predicate piece enters at B as of its dispatch, so its own
+    // neck cut (nc/1's, '$call_disj'/3's for the ->) leaves a/1's choice
+    // point alone. The compiled host dispatcher entered it at the carried
+    // barrier and answered [1]; the module's own '$call'/2 stores B.
+    [InlineData("rtcut(X)", "[1,2]")]
+    [InlineData("rtarrow(X)", "[1,2]")]
+    public void TheCutReachesExactlyAsFarAsItsCall(string goal, string expected)
     {
         var plain = new PrologEngine();
         plain.IlPromotion.Threshold = 0;
         plain.ConsultString(Corpus);
-        var (tiered, _2) = TieredEngine.Build(Corpus);
+        var (tiered, _) = TieredEngine.Build(Corpus);
 
         string q = $"findall(X, {goal}, L), with_output_to(atom(A), writeq(L)).";
         string want = plain.Query(q).Bindings["A"].ToString()!;
+        // Twice: the first run promotes what the goal reaches, the prelude's
+        // helpers included, and the second runs the whole of it on the tier.
+        string first = tiered.Query(q).Bindings["A"].ToString()!;
         string got = tiered.Query(q).Bindings["A"].ToString()!;
-        o.WriteLine($"{goal} -> {want}");
+        o.WriteLine($"{goal} -> {want} (tier: {first}, then {got})");
+        Assert.Equal(expected, want);
+        Assert.Equal(want, first);
         Assert.Equal(want, got);
     }
 

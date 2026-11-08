@@ -1471,8 +1471,8 @@ public static class WasmPredicateCompiler
             // own arity. Appended after the attribute probe's, same rule:
             // only at the end.
             new Local { Count = 3, Type = WebAssemblyValueType.Int32 },
-            // The cut barrier '$call'/2 carries, read out of X1 before the
-            // goal's arguments overwrite it. Appended last, same rule.
+            // Unused: '$call'/2's carried barrier was parked here before the
+            // callee stopped taking it. Kept so the indices after it stand.
             new Local { Count = 1, Type = WebAssemblyValueType.Int64 },
             // The meta-called goal's heap base and its functor cell, in that
             // order. Appended last, same rule.
@@ -5074,11 +5074,10 @@ public static class WasmPredicateCompiler
         /// place. The cut barrier is refreshed either way: a tail call still
         /// enters a new procedure, and a neck_cut there must see B as of this
         /// dispatch.</param>
-        /// <param name="barrierFromX1">'$call'/2: the barrier is
-        /// carried, in X1, rather than being B as of this dispatch. It is the
-        /// barrier the enclosing call established, so a cut inside the goal
-        /// commits no further than that call -- taking B here instead would let
-        /// it prune choice points the caller still owns.</param>
+        /// <param name="barrierFromX1">'$call'/2: X1 carries the barrier the
+        /// enclosing call established, which is what a `!` goal commits to and
+        /// no further. A predicate goal is still entered with B as of this
+        /// dispatch, as any call is; its own cuts reach its own level.</param>
         /// <summary>Stamps which guard sent a meta-call aside into DiagA, so
         /// a decline can be told apart from the other ways to reach the same
         /// deopt. The ABI keeps DiagA for exactly this.</summary>
@@ -5928,10 +5927,10 @@ public static class WasmPredicateCompiler
             // every branch target in it, and a wrong one there is a
             // hang, not a failed test.
             // X1 carries the barrier only until the goal's arguments are
-            // copied over the registers. Read it, check it and park it before
-            // that -- and the check has to happen here too, because a barrier
-            // this path cannot use sends the instruction back to the host,
-            // which re-reads '$call'(Goal, Barrier) out of X0 and X1. Doing
+            // copied over the registers. Check it before that -- and the
+            // check has to happen here too, because a barrier the `!` arm
+            // cannot use sends the instruction back to the host, which
+            // re-reads '$call'(Goal, Barrier) out of X0 and X1. Doing
             // either after the copy hands the host the GOAL'S arguments
             // instead: measured, X0 came back a plain Ref and the goal itself
             // turned up in X1.
@@ -5944,10 +5943,6 @@ public static class WasmPredicateCompiler
                 Op(new Int32NotEqual());
                 MetaGuard(12);
                 GoSlow();
-                Op(new LocalGet(LC0));
-                Op(new Int64Constant(Cell.PayloadMask));
-                Op(new Int64And());
-                Op(new LocalSet(LMetaBarrier));
             }
 
             void EmitMetaTail()
@@ -5957,17 +5952,14 @@ public static class WasmPredicateCompiler
                     EmitAllocateFrame(0, pc);
                     _metaFrameResume.Add(pc + 9);
                 }
-                if (barrierFromX1)
-                {
-                    // Already read, checked and parked by EmitReadBarrier,
-                    // back when X1 still held it.
-                    StoreSlot64(WasmAbi.CutBarrier,
-                                () => Op(new LocalGet(LMetaBarrier)));
-                }
-                else
-                {
-                    StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
-                }
+                // B as of this dispatch, for '$call'/2 too: the callee is
+                // entered as any call enters it, and its own cuts commit to
+                // its own level, as the host's dispatcher and every call site
+                // here have it. The barrier X1 carries is what a `!` goal
+                // cuts to (the arm above); handed to a predicate goal it would
+                // let the callee's neck cut prune the choice points of the
+                // conjunction's earlier pieces.
+                StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
                 if (!tail)
                 {
                     Op(new Int32Constant(_env.EncodeReturnMarker(selfFid, pc + 9)));
@@ -10895,7 +10887,7 @@ public static class WasmPredicateCompiler
         private const uint LMetaBase = 44;  // i32: the meta cache's base
         private const uint LMetaGuard = 45; // i32: the probe's bound
         private const uint LMetaArity = 46; // i32: the GOAL's arity, or -1
-        private const uint LMetaBarrier = 47;  // i64: '$call'/2's carried barrier
+        // 47: an i64 no longer written, kept so the indices after it stand.
         private const uint LGoalBase = 48;  // i32: the meta-called goal's heap index
         private const uint LGoalCell = 49;  // i64: that goal's functor cell
         private const uint LDomA = 50;      // i64: $dom_same's first cell
