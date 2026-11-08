@@ -289,7 +289,14 @@ public sealed partial class IlPredicateCompiler
                     is "," or ";" or "->" or "*->";
             if (convertBody && controlConstruct)
                 MetaBodyConvert.CheckControlGoalFromRegisters(engine, atomId);
-            if (resolutionModule >= 0 && !controlConstruct)
+            // A construct's two goals take the module each, as the bytecode
+            // twin does; a predicate's meta-arguments by its declaration.
+            if (resolutionModule >= 0 && controlConstruct)
+            {
+                if (resolutionModule != PreludeModuleAtomId)
+                    MetaBodyConvert.DistributeModuleIntoRegisters(engine, resolutionModule);
+            }
+            else if (resolutionModule >= 0)
                 engine.QualifyMetaArgRegisters(resolutionModule, atomId, totalArity);
 
             // shared meta-call route cache (see MetaRoute.cs).

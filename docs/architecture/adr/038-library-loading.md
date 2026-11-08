@@ -498,7 +498,9 @@ written for the other world.
    rule the compiler applies to `user`'s text: a `:` argument of a builtin
    stays bare there, where bare already names the global store. A control
    construct is checked before its arguments take a module, so the culprit
-   of `call(',', fail, 3)` stays what the program wrote. A goal that reaches
+   of `call(',', fail, 3)` stays what the program wrote; handed to `call/N`
+   as an atom with its goals appended (`call(;, P, Q)`), its goals take the
+   module each, as the compound form's do. A goal that reaches
    the dispatcher with no module at all (a closure's argument, a goal built
    as data) is `user`'s, and resolves a top-level import before the
    bare-global namespace, as `user`'s text does; so does a goal the prelude
@@ -534,4 +536,5 @@ untagged goal (`CoroutiningTests`, `FrozenVariableGoalTests`,
 `DifResidualProjectionTests`); `clpr` (`Clpr*Tests`, `ClpCoexistenceTests`);
 and `clpfd`, whose reified comparisons handed to `reif` as data are point
 6's qualified goal (`ReifTests.ClpfdReifiedComparisons`, the `Clpfd*` and
-`Fd*` classes, the operator tests).
+`Fd*` classes, the operator tests). `ControlConstructAppendedGoalsTests`
+pins `call(;, P, Q)` in a module on both tiers.

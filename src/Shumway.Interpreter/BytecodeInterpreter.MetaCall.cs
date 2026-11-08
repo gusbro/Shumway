@@ -603,7 +603,16 @@ public sealed partial class BytecodeInterpreter
         if (convertBody && controlConstruct)
             Shumway.Core.MetaBodyConvert.CheckControlGoalFromRegisters(
                 _engine, atomId);
-        if (resolutionModule >= 0 && !controlConstruct)
+        // A construct's two goals take the module each (call(;, P, Q) in m
+        // runs m's P and Q), as the compound form's do in PrepareMqualGoal;
+        // a predicate's meta-arguments take it by its declaration.
+        if (resolutionModule >= 0 && controlConstruct)
+        {
+            if (resolutionModule != PreludeModuleAtomId)
+                Shumway.Core.MetaBodyConvert.DistributeModuleIntoRegisters(
+                    _engine, resolutionModule);
+        }
+        else if (resolutionModule >= 0)
             _engine.QualifyMetaArgRegisters(resolutionModule, atomId, totalArity);
 
         // route cache. A repeat goal functor skips the intern,

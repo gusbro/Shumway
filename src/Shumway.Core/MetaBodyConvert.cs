@@ -339,6 +339,17 @@ public static class MetaBodyConvert
         Activation engine, Cell ctor, int module, bool arg0Goal, bool arg1Goal)
         => Distribute(engine, ctor, module, arg0Goal, arg1Goal, 0);
 
+    /// <summary>The register form of <see cref="DistributeModule"/>: a control
+    /// construct that reached <c>call/N</c> as an atom with its two goals
+    /// appended (<c>call(;, P, Q)</c>) holds them in X0 and X1, and each takes
+    /// the module as the compound form's arguments do. The prelude declares no
+    /// meta-arguments for the constructs, so nothing else tags them.</summary>
+    public static void DistributeModuleIntoRegisters(Activation engine, int module)
+    {
+        engine.SetRegister(0, TagGoal(engine, module, engine.GetRegister(0), 0));
+        engine.SetRegister(1, TagGoal(engine, module, engine.GetRegister(1), 0));
+    }
+
     private static Cell Distribute(
         Activation engine, Cell ctor, int module, bool arg0Goal, bool arg1Goal, int depth)
     {
