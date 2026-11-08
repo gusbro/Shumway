@@ -1384,6 +1384,13 @@ public sealed partial class PrologEngine
             if (_precompiledModuleLocals.TryGetValue(mod, out var bundleLocals))
                 foreach (int fid in bundleLocals)
                     if (Fresh(fid)) yield return (mod, fid);
+            // user's view is the global namespace: a bare-global module's
+            // publics (a bundle's program lives in a module named after its
+            // file) are user's as much as a consulted clause, and user:foo(1)
+            // as a goal reaches them already. The prelude's are the system's.
+            if (mod == DefaultModuleName)
+                foreach (int fid in AllStaticAndDynamicFunctors())
+                    if (!IsPreludeFunctor(fid) && Fresh(fid)) yield return (mod, fid);
         }
     }
 

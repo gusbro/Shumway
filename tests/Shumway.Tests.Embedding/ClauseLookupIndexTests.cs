@@ -152,6 +152,18 @@ public sealed class ClauseLookupIndexTests
         Assert.True(Holds(e, query));
     }
 
+    /// <summary>The qualified form filters heads as the bare one does: a
+    /// module's own dynamic read by a keyed head leaves no choice point.</summary>
+    [Fact]
+    public void AQualifiedLookupFiltersHeadsLikeTheBareOne()
+    {
+        var e = Engine();
+        e.ConsultString(":- module(cli_dyn, []).\n:- dynamic(dd/1).\ndd(1).\ndd(2).\ndd(3).\n");
+        Assert.True(Holds(e,
+            "setup_call_cleanup(true, clause(cli_dyn:dd(2), B), Done = yes), B == true, nonvar(Done)."));
+        Assert.True(Holds(e, "findall(X, clause(cli_dyn:dd(X), true), L), L == [1, 2, 3]."));
+    }
+
     [Fact]
     public void AnSwiModuleReadsItsOwnStaticClauses()
     {

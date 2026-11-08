@@ -489,7 +489,12 @@ written for the other world.
    construct.
 5. **`predicate_property/2` on a bare head answers from `user`'s viewpoint**:
    a top-level import is found, with `imported_from(Name)`, as it is on the
-   reference systems.
+   reference systems. The other way round, `user`'s qualified view is the
+   global namespace: `current_predicate(user:PI)`, `clause(user:H, B)` and
+   `listing(user:Spec)` see a bare-global module's publics (a bundle's
+   program lives in a module named after its file) as the goal `user:H`
+   reaches them already. The qualified `clause/2` filters the heads that
+   cannot match as the bare form does, so it is as deterministic.
 6. **A goal from `user` carries `user`.** A goal meta-called with a module
    context passes that module to its meta-arguments (ADR-056); `user`'s
    goals passed bare, since `user`'s predicates were global. A bare name in
@@ -537,4 +542,8 @@ untagged goal (`CoroutiningTests`, `FrozenVariableGoalTests`,
 and `clpfd`, whose reified comparisons handed to `reif` as data are point
 6's qualified goal (`ReifTests.ClpfdReifiedComparisons`, the `Clpfd*` and
 `Fd*` classes, the operator tests). `ControlConstructAppendedGoalsTests`
-pins `call(;, P, Q)` in a module on both tiers.
+pins `call(;, P, Q)` in a module on both tiers;
+`BundleClauseTermsTests.ReleaseBundle_UserQualifiedView_MatchesTheConsult`,
+`ClauseLookupIndexTests.AQualifiedLookupFiltersHeadsLikeTheBareOne` and
+`EnumerationDeterminismConformance.ClauseFiltersHeadsThatCannotMatch`
+pin `user`'s qualified view and the qualified `clause/2`'s determinism.
