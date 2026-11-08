@@ -1089,6 +1089,7 @@ internal sealed class ConsultPipeline
         // debug-compiled program stepped into permutation/2 with the prelude's
         // recompiled sites attributed to the user's own file.
         foreach (int fid in module.PublicFunctors) AddSpecOf(specs, fid);
+        foreach (int fid in module.ExportFunctors) AddSpecOf(specs, fid);
         foreach (int fid in module.DynamicFunctors) AddSpecOf(specs, fid);
         if (E._precompiledModuleLocals.TryGetValue(moduleName, out var locals))
             foreach (int fid in locals) AddSpecOf(specs, fid);

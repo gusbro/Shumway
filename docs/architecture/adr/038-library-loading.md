@@ -494,12 +494,16 @@ written for the other world.
    context passes that module to its meta-arguments (ADR-056); `user`'s
    goals passed bare, since `user`'s predicates were global. A bare name in
    `user` now means a top-level import first, which the callee's module
-   cannot see, so `user`'s goals are qualified like any module's. A control
+   cannot see, so `user`'s goals are qualified like any module's, with the
+   rule the compiler applies to `user`'s text: a `:` argument of a builtin
+   stays bare there, where bare already names the global store. A control
    construct is checked before its arguments take a module, so the culprit
    of `call(',', fail, 3)` stays what the program wrote. A goal that reaches
    the dispatcher with no module at all (a closure's argument, a goal built
    as data) is `user`'s, and resolves a top-level import before the
-   bare-global namespace, as `user`'s text does.
+   bare-global namespace, as `user`'s text does; so does a goal the prelude
+   meta-calls and does not define, such as the goals a blackboard entry
+   re-runs, which `copy_term/3` handed back as the program's.
 7. **The legacy world is untouched.** `:- module(Name)` and `:- public` stay
    for the programs written that way; nothing about them changes because the
    engine's libraries stopped using them.

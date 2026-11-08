@@ -310,10 +310,16 @@ public sealed partial class Activation
         int[]? spec = specOf(FunctorTable.Intern(atomId, totalArity), local);
         if (spec is null || spec.Length != totalArity) return;
         _goalHasMetaArgs = true;
+        bool inUser = moduleAtomId == UserModuleAtomId;
         for (int i = 0; i < totalArity; i++)
         {
             int code = spec[i];
             if (code == -1) continue;
+            // As the compile-time twin (ModuleRewrite.QualifyMetaArgs): a `:`
+            // argument of a builtin stays bare in user, where bare already
+            // names the global store. Wrapped, clause(user:p(1), B) takes the
+            // qualified path, which enumerates where the bare one indexes.
+            if (inUser && code == ModuleQualify.ColonBuiltinArg) continue;
             Cell c = GetRegister(i);
             Cell d = c.Tag == Tag.Ref ? GetHeap(Deref(c.AsHeapIndex)) : c;
             if (d.Tag == Tag.Str)

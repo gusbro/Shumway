@@ -27,8 +27,10 @@ public sealed class EngineLibraryCompiledCodeTests : IDisposable
         var e = new PrologEngine { Out = new StringWriter(), Warnings = warnings };
         e.UseClpfd();
         e.UseCoroutining();
-        Assert.True(e.IlPromotion.IsPromoted(Fid("#=", 2)), "#=/2 has no compiled code");
-        Assert.True(e.IlPromotion.IsPromoted(Fid("dif", 2)), "dif/2 has no compiled code");
+        // The libraries are export-qualified modules: their predicates live
+        // under the module's name.
+        Assert.True(e.IlPromotion.IsPromoted(Fid("clpfd$#=", 2)), "#=/2 has no compiled code");
+        Assert.True(e.IlPromotion.IsPromoted(Fid("coroutining$dif", 2)), "dif/2 has no compiled code");
         Assert.Equal("", warnings.ToString());
         Assert.True(e.Query("X #= 3 + 4, X == 7, dif(Y, a), Y = b.").Success);
     }

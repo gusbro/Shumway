@@ -190,6 +190,8 @@ public sealed partial class IlPredicateCompiler
             FunctorTable.Intern(AtomTable.Intern(":", permanent: true).Id, 2);
         private static readonly int UserModuleAtomId =
             AtomTable.Intern("user", permanent: true).Id;
+        private static readonly int PreludeModuleAtomId =
+            AtomTable.Intern("$prelude", permanent: true).Id;
 
         /// <summary>Dispatches <c>call/N</c> with <paramref name="callArity"/>
         /// extra-arg count and the supplied cut barrier. Returns the
@@ -420,8 +422,10 @@ public sealed partial class IlPredicateCompiler
                 }
             }
             // An untagged goal is user's: a top-level import before the
-            // bare-global namespace, as the interpreter's twin.
-            if (resolutionModule < 0 && addresses is not null
+            // bare-global namespace, as the interpreter's twin; so is a goal
+            // the prelude meta-calls and does not define.
+            if ((resolutionModule < 0 || resolutionModule == PreludeModuleAtomId)
+                && addresses is not null
                 && engine.CurrentImportMap is { } userImports
                 && userImports.TryGetValue(
                     ((long)UserModuleAtomId << 32) | (uint)functorId, out int userImportedFid)

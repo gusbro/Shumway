@@ -34,7 +34,7 @@
                   op(720, yfx, #/\), op(740, yfx, #\/), op(760, yfx, #<==>),
                   op(760, yfx, #==>), op(760, yfx, #<==), op(760, yfx, #<=>),
                   op(760, yfx, #=>), op(760, yfx, #<=), op(720, yfx, ##),
-                  op(150, fx, @)]).
+                  op(710, fy, #\), op(150, fx, @)]).
 
 :- op(450, xfx, ..).
 :- op(700, xfx, #=).
@@ -65,7 +65,7 @@
 % uses GProlog's fd_* primitives, which map onto the SWI/SICStus-style
 % clpfd above. Aliases so those programs run unchanged.
 
-% the prefix-negation operator is declared after the public block:
+% the prefix-negation operator is declared after the module header:
 % once `#\` is a prefix operator, the quoted atom in `'#\\'/1`
 % above would be misparsed as an operator awaiting an argument.
 :- op(710, fy, #\).

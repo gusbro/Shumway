@@ -761,8 +761,11 @@ public sealed partial class BytecodeInterpreter
         // An untagged goal is user's (a goal built as data, a closure's
         // argument): what its bare name means there is a top-level import
         // first (an engine library's export, ADR-038 second amendment), then
-        // the bare-global namespace, as user's own text resolves.
-        if (resolutionModule < 0 && addresses is not null
+        // the bare-global namespace, as user's own text resolves. A goal the
+        // prelude meta-calls and does not define is the program's as well
+        // (the goals a blackboard entry re-runs are copy_term/3's).
+        if ((resolutionModule < 0 || resolutionModule == PreludeModuleAtomId)
+            && addresses is not null
             && _engine.CurrentImportMap is { } userImports
             && userImports.TryGetValue(
                 ((long)UserModuleAtomId << 32) | (uint)functorId, out int userImportedFid)
@@ -770,6 +773,10 @@ public sealed partial class BytecodeInterpreter
         {
             if (routeCacheable)
                 cache[routeKey] = new Shumway.Core.MetaRoute(Shumway.Core.MetaRouteKind.Jump, userImportedAddr);
+            else
+                _engine.PublishMetaResolution(
+                    addresses, resolutionModule, observedGoalKey, extraCount,
+                    userImportedFid, observedAtomGoal, -1);
             return JumpToUserGoal(code, pc, userImportedAddr);
         }
 
@@ -904,6 +911,8 @@ public sealed partial class BytecodeInterpreter
     /// helper runs them) and -1 is returned.</summary>
     private static readonly int UserModuleAtomId =
         AtomTable.Intern("user", permanent: true).Id;
+    private static readonly int PreludeModuleAtomId =
+        AtomTable.Intern("$prelude", permanent: true).Id;
 
     private int PrepareMqualGoal(ref Cell goal, bool controlConstructs)
     {

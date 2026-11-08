@@ -35,7 +35,11 @@ public class TierOffHoldsBundleModulesTests
         return bundle;
     }
 
-    private const string Goal = "freeze(X, Y = done), dif(A, B), A = 1, X = go, Y == done.";
+    // The library is an export-qualified module and this bundle of it is
+    // loaded as a library, so nothing imports its exports into user: the
+    // goal names them by their module.
+    private const string Goal =
+        "coroutining:freeze(X, Y = done), coroutining:dif(A, B), A = 1, X = go, Y == done.";
 
     [Fact]
     public void ALibraryLoadedWhileTheTierIsOffWaitsForItToBeOn()
