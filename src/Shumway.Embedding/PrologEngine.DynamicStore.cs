@@ -2640,6 +2640,31 @@ public sealed partial class PrologEngine
     private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>
         _runtimeAssertHelperPreds = new();
 
+    /// <summary>The head fids a dynamic predicate's last derivation produced
+    /// (its own and its rule helpers') and the context it was rewritten under.
+    /// Kept apart from <see cref="_dynamicRewriteCache"/>, whose entry a
+    /// mutation drops: the next setup compares the context the helpers were
+    /// compiled under with the one it rewrites them under.</summary>
+    private readonly Dictionary<int, (List<int> HeadFids, object LocalsRef, int ModesVersion)>
+        _dynamicHelperContext = new();
+
+    /// <summary>Forgets the compiles of a dynamic predicate's rule helpers
+    /// when its derivation is redone under a new context: the static cache's
+    /// entry and the registry's. The helper keeps its name (TransformClauses
+    /// memoizes the transform), but its rewritten body can change with the
+    /// context, as when a callee undefined at the last derivation is a
+    /// module's own predicate now; the next compile registers the fresh
+    /// one.</summary>
+    private void DropStaleDynamicHelpers(IReadOnlyList<int> headFids, int dynamicFid)
+    {
+        List<int>? helpers = null;
+        foreach (int fid in headFids)
+            if (fid != dynamicFid) (helpers ??= new List<int>()).Add(fid);
+        if (helpers is null) return;
+        DropStaticCompiledFids(helpers);
+        foreach (int fid in helpers) _runtimeAssertHelperPreds.Remove(fid);
+    }
+
     /// <summary>Whether a functor names a MetaTransform helper
     /// (<c>[mod$]$disj_N</c> family) — the registry filter for
     /// <see cref="RegisterLateHelpers"/>.</summary>
