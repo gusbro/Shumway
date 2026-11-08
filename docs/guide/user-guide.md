@@ -334,12 +334,16 @@ engine.UseCoroutining();  // module 'coroutining': freeze/2, dif/2
 engine.UseReif();         // module 'reif': if_/3 and reified conditions
 ```
 
-All of them can be enabled on one engine (the `verify_attributes/4`
-hooks are `:- multifile`, dispatched by the attribute module); keep each
+All of them can be enabled on one engine (each library owns its
+`verify_attributes/4` hook, dispatched by the attribute module); keep each
 variable's constraints within one library: mixed clpfd+clpr constraints
 on the same variable are not supported. From Prolog source, the same
 libraries load with `:- use_module(library(clpfd))` /
-`library(clpr)` / `library(coroutining)` / `library(reif)`.
+`library(clpr)` / `library(coroutining)` / `library(reif)`. Each is a
+module with an export list: the import brings its predicates and, for
+`clpfd`, its operators, and `clpfd:sum(...)` names the library's predicate
+whatever the program defines under that name. The libraries' internal
+predicates are their own and are not callable from outside.
 
 The integers of `clpfd` are those from -576460752303423488 to
 576460752303423487, and `inf` and `sup` stand for a side with no bound. An
@@ -980,10 +984,11 @@ The linker performs three checks:
    - The builtin registry.
    - The always-loaded prelude (`member/2`, `length/2`,
      `current_predicate/1`, etc.).
-   - The public predicates of the engine's own libraries a module imports
-     (`clpfd`, `clpr`, `coroutining`, `reif`). Their code is not linked in:
-     the bundle names them, and loading it loads each from its own baked
-     bundle first.
+   - The exports of the engine's own libraries a module imports (`clpfd`,
+     `clpr`, `coroutining`, `reif`), under the library's name as the
+     importer's compiled calls spell them. Their code is not linked in: the
+     bundle names them, and loading it loads each from its own baked bundle
+     first, importing its exports into `user`.
 3. **Missing predicates.** Anything unresolved is emitted as
    `missing_predicate` (error, or warning under `--allow-undefined`).
 4. **Dead-code elimination.** Modules no root reached are dropped from
@@ -1606,10 +1611,10 @@ order; the **first match wins**:
    goal argument of a meta-predicate (`findall/3`, `call/N`, …): is
    tagged with *M* and deferred to stage 3, which resolves it with *M*'s
    context when it runs.
-3. A predicate declared **`:- dynamic`** is referenced bare: dynamic
-   predicates live in one flat global namespace, **even inside an
-   export-qualified `:- module/2`** (their clauses can be asserted from
-   anywhere).
+3. A predicate declared **`:- dynamic`** in a plain file or a legacy module
+   is referenced bare: those dynamics live in one flat global namespace
+   (their clauses can be asserted from anywhere). An export-qualified
+   module's dynamic is the module's own, item 4.
 4. **M's own predicates** (anything *defined in the same file*, exported
    or not, and in an export-qualified module its dynamic predicates too,
    declared or asserted into it) resolve module-locally. Locals shadow
@@ -1704,14 +1709,14 @@ a file without a module directive into `m`, and so does `consult(File)`
 called from `m`'s own code. The same rules hold on the two reference
 systems for modules.
 
-Because top-level imports beat bare-global publics, loading two libraries
-with overlapping surfaces (say `clpfd` and `clpz`, which share `#=`, `in`,
-…) silently reroutes the bare names to the imported one. The engine warns
-on stderr (aggregated per module, in either load order) when an import
-hides an already-loaded module's publics, when a module's publics land
-under an existing import, or when two imports collide (first import wins;
-the prelude is exempt). To reach the shadowed side explicitly, qualify the
-call: `clpfd:sum(...)`.
+The engine's own libraries are modules with export lists, so loading two
+libraries with overlapping surfaces (say `clpfd` and `clpz`, which share
+`#=`, `in`, …) is two imports that collide: the first import wins the bare
+name, and the engine warns on stderr (aggregated per module, in either load
+order), as it does when an import hides a legacy module's publics or a
+legacy module's publics land under an existing import (the prelude is
+exempt). To reach the other side explicitly, qualify the call:
+`clpfd:sum(...)`.
 
 ### Invariants the linker enforces
 

@@ -490,7 +490,17 @@ written for the other world.
 5. **`predicate_property/2` on a bare head answers from `user`'s viewpoint**:
    a top-level import is found, with `imported_from(Name)`, as it is on the
    reference systems.
-6. **The legacy world is untouched.** `:- module(Name)` and `:- public` stay
+6. **A goal from `user` carries `user`.** A goal meta-called with a module
+   context passes that module to its meta-arguments (ADR-056); `user`'s
+   goals passed bare, since `user`'s predicates were global. A bare name in
+   `user` now means a top-level import first, which the callee's module
+   cannot see, so `user`'s goals are qualified like any module's. A control
+   construct is checked before its arguments take a module, so the culprit
+   of `call(',', fail, 3)` stays what the program wrote. A goal that reaches
+   the dispatcher with no module at all (a closure's argument, a goal built
+   as data) is `user`'s, and resolves a top-level import before the
+   bare-global namespace, as `user`'s text does.
+7. **The legacy world is untouched.** `:- module(Name)` and `:- public` stay
    for the programs written that way; nothing about them changes because the
    engine's libraries stopped using them.
 
@@ -511,7 +521,13 @@ written for the other world.
 
 ### Tests
 
-The library test classes run as before on the modern form; the pilot was
-`reif`, whose `;/3` and `','/3` are what point 4 is for
+The library test classes run as before on the modern form, library by
+library: `reif` first, whose `;/3` and `','/3` are what point 4 is for
 (`ReifTests`, `MetaPredicatePropertyTests`, `MidQueryLibraryLoadTests`,
-`EngineLibraryLinkTests`).
+`EngineLibraryLinkTests`); `coroutining`, whose projection is point 2 and
+whose `maplist(call, Goals)` over `copy_term/3`'s goals is point 6's
+untagged goal (`CoroutiningTests`, `FrozenVariableGoalTests`,
+`DifResidualProjectionTests`); `clpr` (`Clpr*Tests`, `ClpCoexistenceTests`);
+and `clpfd`, whose reified comparisons handed to `reif` as data are point
+6's qualified goal (`ReifTests.ClpfdReifiedComparisons`, the `Clpfd*` and
+`Fd*` classes, the operator tests).
