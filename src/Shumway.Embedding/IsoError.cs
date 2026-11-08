@@ -128,11 +128,14 @@ public static class IsoError
         => engine is not null && Indicator(engine.CurrentBuiltinId) is { } pi ? pi : OpenContext;
 
     /// <summary><c>Name/Arity</c> of the builtin with registry id
-    /// <paramref name="builtinId"/>, or null for none (-1).</summary>
+    /// <paramref name="builtinId"/>, or null for none (-1) and for a
+    /// <c>$</c>-named helper: that one backs a prelude predicate the program
+    /// called, and its name is nothing a program can act on.</summary>
     private static Term? Indicator(int builtinId)
     {
         if (builtinId < 0) return null;
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        if (entry.Name.StartsWith('$')) return null;
         return new CompoundTerm("/", new Term[] { new AtomTerm(entry.Name), new IntTerm(entry.Arity) });
     }
 

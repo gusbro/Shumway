@@ -139,6 +139,12 @@ public sealed class ClauseLookupIndexTests
     [InlineData("findall(X-B, clause(pq(X), B), L), L == [1-true, 2-(pq(1), !)].")]
     [InlineData("findall(X-B, clause(user:pq(X), B), L), L == [1-true, 2-(pq(1), !)].")]
     [InlineData("\\+ clause(other:pq(_), _).")]
+    // The enumerator behind clause/2 is a $-named helper; a ball it raises
+    // must not name it, the program called clause/2.
+    [InlineData("catch(clause(q(_), _), error(permission_error(access, private_procedure, q/1), C), true),"
+                + " \\+ ( C = N/_, atom(N), sub_atom(N, 0, 1, _, '$') ).")]
+    [InlineData("catch(clause(user:q(_), _), error(permission_error(access, private_procedure, q/1), C), true),"
+                + " \\+ ( C = N/_, atom(N), sub_atom(N, 0, 1, _, '$') ).")]
     public void PrivacyAndErrorsAreAsBefore(string query)
     {
         var e = Engine();

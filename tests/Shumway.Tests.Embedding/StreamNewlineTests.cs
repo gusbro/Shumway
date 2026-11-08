@@ -72,7 +72,11 @@ public sealed class StreamNewlineTests
         // that legally spans lines is the continuation escape. What this pins
         // is that the two load routes agree on one file: consult/1 slurps it
         // with File.ReadAllText while open/3 + read/2 goes through a stream
-        // handle, and those must not diverge.
+        // handle, and those must not diverge. On Windows both see `\n` and
+        // read `ab`. Elsewhere the stream keeps the CR (ADR-045: the
+        // translation is Windows-only, as the reference's is), so the escape
+        // is followed by a CR and the quoted atom never ends: a syntax error
+        // the consult, which reads the file whole, does not raise.
         string p = Path.Combine(Path.GetTempPath(),
             "shumway_nl_" + Guid.NewGuid().ToString("N") + ".pl");
         File.WriteAllBytes(p, "spans('a\\\r\nb').\r\n"u8.ToArray());
@@ -82,14 +86,21 @@ public sealed class StreamNewlineTests
             e.ConsultFile(p);
             var consulted = e.Query("spans(A).");
             Assert.True(consulted.Success);
-
-            var streamed = e.Query(
-                $"open('{Quoted(p)}', read, S), read(S, T), close(S), arg(1, T, B).");
-            Assert.True(streamed.Success);
-
             Assert.Equal("ab", ((AtomTerm)consulted["A"]!).Name);
-            Assert.Equal(((AtomTerm)streamed["B"]!).Name,
-                         ((AtomTerm)consulted["A"]!).Name);
+
+            if (OperatingSystem.IsWindows())
+            {
+                var streamed = e.Query(
+                    $"open('{Quoted(p)}', read, S), read(S, T), close(S), arg(1, T, B).");
+                Assert.True(streamed.Success);
+                Assert.Equal("ab", ((AtomTerm)streamed["B"]!).Name);
+            }
+            else
+            {
+                Assert.True(e.Query(
+                    $"open('{Quoted(p)}', read, S), "
+                    + "catch(read(S, _), error(syntax_error(_), _), R = raised), close(S), R == raised.").Success);
+            }
         }
         finally { File.Delete(p); }
     }
