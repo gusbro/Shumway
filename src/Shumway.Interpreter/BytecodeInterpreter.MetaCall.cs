@@ -590,7 +590,20 @@ public sealed partial class BytecodeInterpreter
             _engine.SetRegister(i, _engine.GetHeap(argBase + i));
         for (int i = 0; i < extraCount; i++)
             _engine.SetRegister(goalArity + i, extra[i]);
-        if (resolutionModule >= 0)
+        // §7.8.3: a control construct's arguments must convert to a body
+        // before any of it runs — call((fail, 3)) and call(',', fail, 3)
+        // are both type_error(callable, (fail,3)), and `fail` must not
+        // execute first. Checked before the arguments take a module (the
+        // culprit is what the program wrote) and before the route cache, so
+        // the cached path is covered too. Only at the boundary: a '$call'/2
+        // sub-dispatch runs a piece of a body the boundary already checked
+        // and converted whole, and re-walking the rest of it at every piece
+        // made call/1 of an n-goal conjunction quadratic.
+        bool controlConstruct = IsControlConstruct(atomId, totalArity);
+        if (convertBody && controlConstruct)
+            Shumway.Core.MetaBodyConvert.CheckControlGoalFromRegisters(
+                _engine, atomId);
+        if (resolutionModule >= 0 && !controlConstruct)
             _engine.QualifyMetaArgRegisters(resolutionModule, atomId, totalArity);
 
         // route cache. A repeat goal functor skips the intern,
@@ -607,17 +620,6 @@ public sealed partial class BytecodeInterpreter
         // A module-tagged goal bypasses the route cache: its resolution depends
         // on the module too, and the tagged path is the (uncommon) variable
         // meta-call, not the hot direct-call path.
-        // §7.8.3: a control construct's arguments must convert to a body
-        // before any of it runs — call((fail, 3)) and call(',', fail, 3)
-        // are both type_error(callable, (fail,3)), and `fail` must not
-        // execute first. Checked here (not after the route cache) so the
-        // cached path is covered too. Only at the boundary: a '$call'/2
-        // sub-dispatch runs a piece of a body the boundary already checked
-        // and converted whole, and re-walking the rest of it at every piece
-        // made call/1 of an n-goal conjunction quadratic.
-        if (convertBody && IsControlConstruct(atomId, totalArity))
-            Shumway.Core.MetaBodyConvert.CheckControlGoalFromRegisters(
-                _engine, atomId);
         bool routeCacheable = resolutionModule < 0 && (uint)totalArity <= 0xFFFF;   // key packs arity in 16 bits
         long routeKey = ((long)atomId << 16) | (uint)totalArity;
         if (routeCacheable && cache.TryGetValue(routeKey, out var route))

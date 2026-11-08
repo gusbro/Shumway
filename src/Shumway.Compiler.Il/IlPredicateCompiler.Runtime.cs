@@ -278,16 +278,17 @@ public sealed partial class IlPredicateCompiler
                 engine.SetRegister(i, engine.GetHeap(argBase + i));
             for (int i = 0; i < extraCount; i++)
                 engine.SetRegister(goalArity + i, extra[i]);
-            if (resolutionModule >= 0)
-                engine.QualifyMetaArgRegisters(resolutionModule, atomId, totalArity);
-
             // §7.8.3 — a control construct's arguments must convert
             // before any of it runs. Same spot as the bytecode twin:
-            // ahead of the route cache, so the cached path is covered;
-            // and, as there, only at the boundary.
-            if (convertBody && totalArity == 2 && AtomTable.GetById(atomId)?.Name
-                    is "," or ";" or "->" or "*->")
+            // before the arguments take a module and ahead of the route
+            // cache, so the cached path is covered; and, as there, only at
+            // the boundary.
+            bool controlConstruct = totalArity == 2 && AtomTable.GetById(atomId)?.Name
+                    is "," or ";" or "->" or "*->";
+            if (convertBody && controlConstruct)
                 MetaBodyConvert.CheckControlGoalFromRegisters(engine, atomId);
+            if (resolutionModule >= 0 && !controlConstruct)
+                engine.QualifyMetaArgRegisters(resolutionModule, atomId, totalArity);
 
             // shared meta-call route cache (see MetaRoute.cs).
             // Same cache the bytecode interpreter's DispatchCall fills; each

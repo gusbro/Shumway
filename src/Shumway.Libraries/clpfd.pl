@@ -17,7 +17,24 @@
 % and a dynamic hook can never be promoted. A variable carrying BOTH clpfd and
 % clpr attributes is not supported.
 
-:- module(clpfd).
+:- module(clpfd, [(#=)/2, (#\=)/2, (#<)/2, (#>)/2, (#=<)/2, (#>=)/2,
+                  (#=)/3, (#\=)/3, (#<)/3, (#>)/3, (#=<)/3, (#>=)/3,
+                  clpfd_t/2, (in)/2, (ins)/2, sum/3, scalar_product/4,
+                  label/1, labeling/2, indomain/1, all_different/1, all_distinct/1,
+                  fd_var/1, element/3, global_cardinality/2, circuit/1, tuples_in/2,
+                  cumulative/1, cumulative/2, fd_inf/2, fd_sup/2, fd_size/2, fd_dom/2,
+                  (#<==>)/2, (#==>)/2, (#<==)/2, (#/\)/2, (#\/)/2, (#\)/1,
+                  fd_domain/3, fd_labeling/1, fd_labeling/2, fd_labelingff/1,
+                  fd_all_different/1, fd_set_vector_max/1, fd_atmost/3, fd_atleast/3,
+                  fd_exactly/3, fd_only_one/1, fd_at_most_one/1,
+                  (#<=>)/2, (#=>)/2, (#<=)/2, (##)/2,
+                  op(450, xfx, ..), op(700, xfx, #=), op(700, xfx, #\=),
+                  op(700, xfx, #<), op(700, xfx, #>), op(700, xfx, #=<),
+                  op(700, xfx, #>=), op(700, xfx, in), op(700, xfx, ins),
+                  op(720, yfx, #/\), op(740, yfx, #\/), op(760, yfx, #<==>),
+                  op(760, yfx, #==>), op(760, yfx, #<==), op(760, yfx, #<=>),
+                  op(760, yfx, #=>), op(760, yfx, #<=), op(720, yfx, ##),
+                  op(150, fx, @)]).
 
 :- op(450, xfx, ..).
 :- op(700, xfx, #=).
@@ -43,90 +60,10 @@
 % Tighter than every arithmetic operator, so `2 * @L #= @M - 1` reads as meant.
 :- op(150, fx, @).
 
-:- public ('#=')/2.
-:- public ('#\\=')/2.
-:- public ('#<')/2.
-:- public ('#>')/2.
-:- public ('#=<')/2.
-:- public ('#>=')/2.
-:- public ('#=')/3.
-:- public ('#\\=')/3.
-:- public ('#<')/3.
-:- public ('#>')/3.
-:- public ('#=<')/3.
-:- public ('#>=')/3.
-:- public clpfd_t/2.
-:- public ('in')/2.
-:- public ('ins')/2.
-:- public '$fd_lt'/2.
-:- public '$fd_le'/2.
-:- public '$fd_neq'/2.
-:- public '$fd_plus'/3.
-:- public '$fd_times'/3.
-:- public '$fd_min'/3.
-:- public '$fd_max'/3.
-:- public '$fd_abs'/2.
-:- public '$fd_divop'/4.
-:- public '$fd_linear'/4.
-:- public '$fd_neq_lin'/3.
-:- public '$fd_absdiff_neq'/3.
-:- public '$fix'/1.
-:- public '$fd_alldiff_view'/1.
-:- public '$fd_set'/3.
-:- public '$fd_length'/2.
-:- public '$fd_spine'/3.
-:- public '$fd_reif'/4.
-:- public '$fd_bool'/4.
-:- public '$fd_alldiff'/1.
-:- public sum/3.
-:- public scalar_product/4.
-:- public clpfd_attr_goals/3.
-:- public label/1.
-:- public labeling/2.
-:- public indomain/1.
-:- public all_different/1.
-:- public all_distinct/1.
-:- public fd_var/1.
-:- public element/3.
-:- public global_cardinality/2.
-:- public circuit/1.
-:- public tuples_in/2.
-:- public '$fd_element'/3.
-:- public '$fd_gcc'/3.
-:- public '$fd_circuit'/1.
-:- public '$fd_tuple'/2.
-:- public cumulative/1.
-:- public cumulative/2.
-:- public '$fd_cumulative'/3.
-:- public fd_inf/2.
-:- public fd_sup/2.
-:- public fd_size/2.
-:- public fd_dom/2.
-:- public ('#<==>')/2.
-:- public ('#==>')/2.
-:- public ('#<==')/2.
-:- public ('#/\\')/2.
-:- public ('#\\/')/2.
-:- public ('#\\')/1.
 
 % GNU-Prolog FD compatibility shim: the ExamplesFD corpus
 % uses GProlog's fd_* primitives, which map onto the SWI/SICStus-style
 % clpfd above. Aliases so those programs run unchanged.
-:- public fd_domain/3.
-:- public fd_labeling/1.
-:- public fd_labeling/2.
-:- public fd_labelingff/1.
-:- public fd_all_different/1.
-:- public fd_set_vector_max/1.
-:- public fd_atmost/3.
-:- public fd_atleast/3.
-:- public fd_exactly/3.
-:- public fd_only_one/1.
-:- public fd_at_most_one/1.
-:- public ('#<=>')/2.
-:- public ('#=>')/2.
-:- public ('#<=')/2.
-:- public ('##')/2.
 
 % the prefix-negation operator is declared after the public block:
 % once `#\` is a prefix operator, the quoted atom in `'#\\'/1`
@@ -292,9 +229,9 @@ verify_attributes(clpfd, spine(Len, Off), Value, Goals) :-
     Goals = ['$fd_spine'(Value, Len, Off)].
 
 % ===== projection: a constrained variable prints as `V in Dom` =====
-% attribute_goals/4 is dynamic (pre-declared by the prelude); a
-% dynamic clause's body is not module-mangled, so it delegates to
-% the public clpfd_attr_goals/3, whose body resolves clpfd locals.
+% attribute_goals/4 is this module's own hook, read as
+% clpfd:attribute_goals(...) by the projection (ADR-038, second
+% amendment), as the engine reads verify_attributes/4 (ADR-040).
 %
 % We emit the domain (`V in L..H`) plus each suspended propagator
 % translated to its user-facing form (`X #< Y`, `A + B #= C`, ...).
