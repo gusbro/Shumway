@@ -469,11 +469,13 @@ written for the other world.
    imports the exports where the directive stands, the goal form and the
    host's `UseName()` into `user`, as for any module; `Name:Goal` is the
    library's own predicate.
-2. **The hooks the engine reads keep their place.** `verify_attributes/4`
-   is the module's own already (ADR-040) and stays bare. `attribute_goals/4`
-   is `user`'s dynamic, and a library adds to it as `user:attribute_goals(...)`
-   (first amendment, point 9); the same for `portray/1` were a library ever to
-   define it.
+2. **The attribute hooks are the module's own.** `verify_attributes/4` is
+   already (ADR-040), and `attribute_goals/4` joins it: the projection reads
+   `M:attribute_goals(M, Attr, Var, Goals)`, the module's own clause first and
+   `user`'s dynamic predicate, the legacy form, when the module has none. A
+   library's bare `attribute_goals(M, ...)` clause is then its own, as its
+   `verify_attributes/4` is, and nothing of it reaches `user`. The engine's
+   other hook facts stay `user`'s (first amendment, point 9).
 3. **A baked library is loaded as the module it is.** The bundle carries the
    export list, the exported operators and the import table as any
    export-qualified bundle does (section 4 and the first amendment, point

@@ -188,6 +188,8 @@ public sealed partial class IlPredicateCompiler
         // $mqual; unwrapped so call(M:G, Extra) extends G, not the ':' functor.
         private static readonly int ColonFid =
             FunctorTable.Intern(AtomTable.Intern(":", permanent: true).Id, 2);
+        private static readonly int UserModuleAtomId =
+            AtomTable.Intern("user", permanent: true).Id;
 
         /// <summary>Dispatches <c>call/N</c> with <paramref name="callArity"/>
         /// extra-arg count and the supplied cut barrier. Returns the
@@ -415,6 +417,19 @@ public sealed partial class IlPredicateCompiler
                     engine.SetB0(engine.B);
                     return importedAddr;
                 }
+            }
+            // An untagged goal is user's: a top-level import before the
+            // bare-global namespace, as the interpreter's twin.
+            if (resolutionModule < 0 && addresses is not null
+                && engine.CurrentImportMap is { } userImports
+                && userImports.TryGetValue(
+                    ((long)UserModuleAtomId << 32) | (uint)functorId, out int userImportedFid)
+                && addresses.TryGetValue(userImportedFid, out int userImportedAddr))
+            {
+                if (routeCacheable)
+                    cache[routeKey] = new MetaRoute(MetaRouteKind.Jump, userImportedAddr);
+                engine.SetB0(engine.B);
+                return userImportedAddr;
             }
 
             // Builtin-as-goal. The recursion case (call(call(...))) is

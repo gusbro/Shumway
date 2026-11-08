@@ -1077,9 +1077,13 @@ internal static class Prelude
             ( var(V) -> del_attr(V, M) ; true ),
             '$attr_strip'(R).
 
+        % The hook is read as the attribute module's own first (ADR-038,
+        % second amendment: an engine library owns its attribute_goals/4 as
+        % it owns verify_attributes/4), then as the global dynamic a legacy
+        % module or a program adds clauses to.
         '$attr_goals_of'([], []).
         '$attr_goals_of'([ag(M, A, V)|Rest], Goals) :-
-            ( attribute_goals(M, A, V, G) -> true
+            ( M:attribute_goals(M, A, V, G) -> true
             ; '$module_attr_goals'(M, V, G) -> true
             ; G = []
             ),

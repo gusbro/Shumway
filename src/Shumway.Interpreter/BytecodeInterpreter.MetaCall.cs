@@ -756,6 +756,20 @@ public sealed partial class BytecodeInterpreter
                 return JumpToUserGoal(code, pc, importedAddr);
             }
         }
+        // An untagged goal is user's (a goal built as data, a closure's
+        // argument): what its bare name means there is a top-level import
+        // first (an engine library's export, ADR-038 second amendment), then
+        // the bare-global namespace, as user's own text resolves.
+        if (resolutionModule < 0 && addresses is not null
+            && _engine.CurrentImportMap is { } userImports
+            && userImports.TryGetValue(
+                ((long)UserModuleAtomId << 32) | (uint)functorId, out int userImportedFid)
+            && addresses.TryGetValue(userImportedFid, out int userImportedAddr))
+        {
+            if (routeCacheable)
+                cache[routeKey] = new Shumway.Core.MetaRoute(Shumway.Core.MetaRouteKind.Jump, userImportedAddr);
+            return JumpToUserGoal(code, pc, userImportedAddr);
+        }
 
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int builtinId))
         {
@@ -886,6 +900,9 @@ public sealed partial class BytecodeInterpreter
     /// real goal is a control construct, the module is distributed into its goal
     /// sub-args (so they keep resolving in that module once the <c>$call_*</c>
     /// helper runs them) and -1 is returned.</summary>
+    private static readonly int UserModuleAtomId =
+        AtomTable.Intern("user", permanent: true).Id;
+
     private int PrepareMqualGoal(ref Cell goal, bool controlConstructs)
     {
         int module = -1;
