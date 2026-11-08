@@ -60,6 +60,7 @@ public sealed partial class IlPredicateCompiler
     private static readonly FieldInfo EngB0 = EngineField(nameof(Activation._b0));
     private static readonly FieldInfo EngHb = EngineField(nameof(Activation._hb));
     private static readonly FieldInfo EngHeapTop = EngineField(nameof(Activation._heapTop));
+    private static readonly FieldInfo EngCellsReclaimed = EngineField(nameof(Activation._cellsReclaimed));
     private static readonly FieldInfo EngBindingTrailTop = EngineField(nameof(Activation._bindingTrailTop));
     private static readonly FieldInfo EngExtraTrailTop = EngineField(nameof(Activation._extraTrailTop));
     private static readonly FieldInfo EngViewGen = EngineField(nameof(Activation._currentViewGen));
@@ -565,6 +566,17 @@ public sealed partial class IlPredicateCompiler
         EmitHelperCall(emit, EngineUnwindTrailsMethod);
         emit.MarkLabel(unwound);
 
+        // The span the restore drops stays in CellsAllocated: credited before
+        // the top moves, as every lowering of the heap top credits it.
+        emit.LoadArgument(0);
+        emit.LoadArgument(0);
+        emit.LoadField(EngCellsReclaimed);
+        EmitLoadEngineField(emit, EngHeapTop);
+        EmitLoadCtlInt(emit, l, CtlHeapTop);
+        emit.Subtract();
+        emit.Convert<long>();
+        emit.Add();
+        emit.StoreField(EngCellsReclaimed);
         emit.LoadArgument(0);
         EmitLoadCtlInt(emit, l, CtlHeapTop);
         EmitStoreEngineField(emit, EngHeapTop);

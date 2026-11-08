@@ -19,16 +19,19 @@ public sealed class RelinkMovesPromotedCodeTests
     [Fact]
     public void AConsultThatMovesPromotedCode_LeavesItRunnable()
     {
-        // The findall leaves a helper the next link drops, so clpfd, loaded
-        // after it and promoted by the first constraint, slides down.
+        // A module loaded again replaces its previous load: the findall's
+        // helper and q/1 go, the next link closes the hole, and clpfd, loaded
+        // after the module and promoted by the first constraint, slides down.
+        // (Consulting another file would not do: a rule derived again takes
+        // the helpers its earlier variant took, so nothing goes.)
         var (e, members, _) = TieredEngine.BuildWithWorld(
-            "d(L) :- findall(Y, q(Y), L).\nq(1).\n", wasmThreshold: 1);
+            ":- module(rmpc_w, [d/1]).\nd(L) :- findall(Y, q(Y), L).\nq(1).\n", wasmThreshold: 1);
         e.ConsultString(":- use_module(library(clpfd)).\n");
         Assert.True(e.Query("X #> 3, X #< 7.").Success);
         Assert.NotEmpty(members);                       // clpfd was promoted
         int deadBefore = e.StaticDeadRegions.Count;
 
-        e.ConsultString("r(1).\n");
+        e.ConsultString(":- module(rmpc_w, [d/1]).\nd([1]).\n");
         Assert.True(e.Query("true.").Success);
         Assert.True(e.StaticDeadRegions.Count > deadBefore,
             "the consult no longer moves code, so this test proves nothing");

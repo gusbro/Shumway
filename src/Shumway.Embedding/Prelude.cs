@@ -527,15 +527,19 @@ internal static class Prelude
         % variables are the caller's. The qualified form resolves the head
         % from M's viewpoint: a dynamic is flat-global (the qualifier peels),
         % M's own definition reads M's clauses only, an import reads its
-        % source's; anything else fails.
+        % source's; anything else fails. Its head and body are checked as
+        % the unqualified form's are (ISO 8.8.1.3), before the enumerator.
         clause(H0, B) :-
             nonvar(H0), H0 = ':'(_, _), !,
             '$strip_module'(H0, M, H),
             (   var(M) -> throw(error(instantiation_error, _))
             ;   \+ atom(M) -> throw(error(type_error(atom, M), _))
+            ;   var(H) -> throw(error(instantiation_error, _))
+            ;   \+ callable(H) -> throw(error(type_error(callable, H), _))
+            ;   nonvar(B), \+ callable(B) ->
+                    throw(error(type_error(callable, B), _))
             ;   true
             ),
-            nonvar(H),
             '$module_clause_enum'(M, H, H-B).
         clause(H, B) :-
             (   var(H) -> throw(error(instantiation_error, _))
@@ -588,9 +592,15 @@ internal static class Prelude
             ).
 
         % Peels module qualifications to the INNERMOST pair: M1:M2:X is
-        % M2's X (the SWI reading). Shared by every M:X-aware builtin.
+        % M2's X (the SWI reading). Shared by every M:X-aware builtin. An
+        % outer qualifier must be an atom, as call/1 demands of each layer;
+        % the innermost is the caller's to check, with its own error.
         '$strip_module'(':'(M0, R), M, I) :-
-            (   nonvar(R), R = ':'(_, _) -> '$strip_module'(R, M, I)
+            (   nonvar(R), R = ':'(_, _) ->
+                (   var(M0) -> throw(error(instantiation_error, _))
+                ;   \+ atom(M0) -> throw(error(type_error(atom, M0), _))
+                ;   '$strip_module'(R, M, I)
+                )
             ;   M = M0, I = R
             ).
 
@@ -631,11 +641,14 @@ internal static class Prelude
             throw(error(type_error(predicate_indicator, Spec), _)).
 
         %! length(?List, ?Length) | Lists | engine | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. A cyclic list with the length unconstrained raises resource_error(finite_memory); against a concrete length it fails. A term that is not a partial list fails.
-        % Proper lists take the native '$list_length' fast path (cycle-safe:
-        % it fails a looping spine rather than spinning). A cyclic list has no
-        % finite length; what that MEANS depends on the second argument
-        % (issue #108, Neumerkel's length#26): with N unconstrained the
-        % classical definition loops forever, so the conforming shortcut is
+        % Proper lists take the native '$list_length' fast path, one spine
+        % walk (cycle-safe: it fails a looping spine rather than spinning).
+        % Only after it fails is the spine walked again to tell a cyclic
+        % list from a partial or improper one — the common call must not
+        % pay the cycle check up front. A cyclic list has no finite length;
+        % what that MEANS depends on the second argument (issue #108,
+        % Neumerkel's length#26): with N unconstrained the classical
+        % definition loops forever, so the conforming shortcut is
         % resource_error(finite_memory) — the same refusal length(L, L) gives,
         % because no amount of memory produces the answer. With N a concrete
         % integer the classical walk FAILS after N steps (uniform across
@@ -647,16 +660,16 @@ internal static class Prelude
             integer(N), N < 0, !,
             throw(error(domain_error(not_less_than_zero, N), length/2)).
         length(L, N) :-
+            nonvar(L), '$list_length'(L, M), !,
+            (   integer(N) -> N = M
+            ;   var(N) -> N = M
+            ;   throw(error(type_error(integer, N), length/2))
+            ).
+        length(L, N) :-
             nonvar(L), '$cyclic_spine'(L), !,
             (   integer(N) -> fail
             ;   var(N) ->
                 throw(error(resource_error(finite_memory), length/2))
-            ;   throw(error(type_error(integer, N), length/2))
-            ).
-        length(L, N) :-
-            nonvar(L), '$list_length'(L, M), !,
-            (   integer(N) -> N = M
-            ;   var(N) -> N = M
             ;   throw(error(type_error(integer, N), length/2))
             ).
         length(L, N) :- '$length_walk'(L, N, 0).
@@ -1552,19 +1565,38 @@ internal static class Prelude
         pairs_values(Pairs, Values) :- pairs_keys_values(Pairs, _, Values).
 
         %! predsort(:Pred, +List, -Sorted) | Lists | library | Sorts List by a three-way comparison predicate, dropping elements compared equal.
+        % A merge sort (O(n log n) comparator calls), the length-driven
+        % split of SWI's. The comparator is called as Pred(Ord, Later,
+        % Earlier) with the element that came later in List first, and an
+        % Ord other than < or = puts Later after Earlier: with = the earlier
+        % element is kept, and a comparator that answers nothing sensible
+        % leaves the list in its order (an insertion sort did the same, and
+        % a non-deterministic comparator is still backtracked into).
         predsort(P, List, Sorted) :-
             '$not_cyclic_list'(List, predsort/3),
-            '$predsort_all'(List, P, [], Sorted).
-        '$predsort_all'([], _, Acc, Acc).
-        '$predsort_all'([H|T], P, Acc, Sorted) :-
-            '$predsort_ins'(Acc, P, H, Acc1),
-            '$predsort_all'(T, P, Acc1, Sorted).
-        '$predsort_ins'([], _, X, [X]).
-        '$predsort_ins'([Y|Ys], P, X, Out) :-
-            call(P, Ord, X, Y),
-            ( Ord == ('<') -> Out = [X, Y|Ys]
-            ; Ord == ('=') -> Out = [Y|Ys]
-            ; Out = [Y|Out1], '$predsort_ins'(Ys, P, X, Out1)
+            length(List, N),
+            '$predsort'(N, P, List, _, Sorted).
+        '$predsort'(2, P, [X1, X2|L], L, R) :- !,
+            call(P, Ord, X2, X1),
+            (   Ord == (<) -> R = [X2, X1]
+            ;   Ord == (=) -> R = [X1]
+            ;   R = [X1, X2]
+            ).
+        '$predsort'(1, _, [X|L], L, [X]) :- !.
+        '$predsort'(0, _, L, L, []) :- !.
+        '$predsort'(N, P, L1, L3, R) :-
+            N1 is N // 2,
+            N2 is N - N1,
+            '$predsort'(N1, P, L1, L2, R1),
+            '$predsort'(N2, P, L2, L3, R2),
+            '$predmerge'(P, R1, R2, R).
+        '$predmerge'(_, [], R, R) :- !.
+        '$predmerge'(_, R, [], R) :- !.
+        '$predmerge'(P, [H1|T1], [H2|T2], Result) :-
+            call(P, Ord, H2, H1),
+            (   Ord == (<) -> Result = [H2|R], '$predmerge'(P, [H1|T1], T2, R)
+            ;   Ord == (=) -> Result = [H1|R], '$predmerge'(P, T1, T2, R)
+            ;   Result = [H1|R], '$predmerge'(P, T1, [H2|T2], R)
             ).
 
         %! sort(+Key, +Order, +List, -Sorted) | Lists | library | Sorts List by the given argument key (0 = whole term) and order (@<, @=<, @> or @>=).
@@ -1611,19 +1643,16 @@ internal static class Prelude
         '$atomic_to_atom'(X, A) :- atom_string(A, X).
 
         %! atomic_list_concat(+List, -Atom) | Atoms & strings | Concatenates a list of atomic terms into a single atom.
+        % The list is checked here (every error names the argument) and
+        % joined by the '$alc_join' builtin in one pass: one atom interned,
+        % not one per element.
         atomic_list_concat(List, Atom) :-
             '$alc_check_list'(List),
             (   var(Atom) -> true
             ;   atom(Atom) -> true
             ;   throw(error(type_error(atom, Atom), atomic_list_concat/2))
             ),
-            '$alc_concat'(List, Atom).
-
-        '$alc_concat'([], '').
-        '$alc_concat'([X|Xs], Atom) :-
-            '$atomic_to_atom'(X, AX),
-            '$alc_concat'(Xs, Rest),
-            atom_concat(AX, Rest, Atom).
+            '$alc_join'(List, '', Atom).
 
         %! atomic_concat(+Atomic1, +Atomic2, ?Atom) | Atoms & strings | Concatenates two atomic terms into an atom.
         atomic_concat(A, B, Atom) :-
@@ -1658,8 +1687,7 @@ internal static class Prelude
             ;   atom(Atom) -> true
             ;   throw(error(type_error(atom, Atom), atomic_list_concat/3))
             ),
-            '$atomic_to_atom'(Sep, SepAtom),
-            '$alc_join'(List, SepAtom, Atom).
+            '$alc_join'(List, Sep, Atom).
 
         '$alc_check_list'(L) :-
             (   var(L) -> throw(error(instantiation_error, atomic_list_concat/3))
@@ -1672,30 +1700,6 @@ internal static class Prelude
                 '$alc_check_list'(Xs)
             ;   throw(error(type_error(list, L), atomic_list_concat/3))
             ).
-
-        '$alc_join'([], _, '').
-        '$alc_join'([X], _, Atom) :- !, '$atomic_to_atom'(X, Atom).
-        '$alc_join'([X, Y|Xs], Sep, Atom) :-
-            '$atomic_to_atom'(X, AX),
-            '$alc_join'([Y|Xs], Sep, Rest),
-            atom_concat(AX, Sep, P),
-            atom_concat(P, Rest, Atom).
-
-        % split Atom at each occurrence of the separator Sep.
-        '$alc_split'(Atom, Sep, Parts) :-
-            ( '$alc_first_sep'(Atom, Sep, B, A) ->
-                sub_atom(Atom, 0, B, _, Head),
-                sub_atom(Atom, _, A, 0, Tail),
-                Parts = [Head|Rest],
-                '$alc_split'(Tail, Sep, Rest)
-            ; Parts = [Atom]
-            ).
-        % Before / After of the leftmost occurrence of Sep in Atom.
-        '$alc_first_sep'(Atom, Sep, B, A) :-
-            findall(B0, sub_atom(Atom, B0, _, _, Sep), Bs),
-            Bs = [_|_],
-            min_list(Bs, B),
-            sub_atom(Atom, B, _, A, Sep).
 
         %! char_type(+Char, ?Type) | Atoms & strings | Tests or computes a character's type: alpha, alnum, digit(W), space, upper(L), to_lower(L), and so on. Classification is full Unicode (the '$ctype' tables); digit(W) keeps its decimal ASCII weights.
         char_type(Char, Type) :- char_code(Char, Code), '$char_type'(Type, Code).

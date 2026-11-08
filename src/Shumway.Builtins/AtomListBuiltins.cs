@@ -587,6 +587,118 @@ public static class AtomListBuiltins
         }
     }
 
+    // ---------- atomic_list_concat/2,3 ----------
+
+    /// <summary><c>'$alc_join'(+List, +Separator, ?Atom)</c> — the join
+    /// direction of <c>atomic_list_concat/2,3</c> in one pass: every
+    /// element's text (an atom's name, a number's canonical text) and the
+    /// separator's go into one buffer, and one atom is interned. The prelude
+    /// has already refused a partial list, a non-atomic element and a
+    /// non-atomic separator, so those shapes cannot reach here.</summary>
+    public static bool AlcJoin(Activation engine)
+    {
+        Cell sepCell = Resolve(engine, engine.GetRegister(1));
+        if (!SwiLenient.TryAtomicText(engine, sepCell, out string sep))
+            throw new PrologRuntimeException("type_error", "atomic", engine, sepCell);
+        var sb = new StringBuilder();
+        Cell cur = ListCursor.Resolve(engine, engine.GetRegister(0));
+        var guard = new SpineGuard(cur);
+        bool first = true;
+        while (ListCursor.TryUncons(engine, cur, out Cell head, out Cell tail))
+        {
+            if (!first && sep.Length > 0) sb.Append(sep);
+            first = false;
+            Cell element = Resolve(engine, head);
+            if (!SwiLenient.TryAtomicText(engine, element, out string text))
+                throw new PrologRuntimeException("type_error", "atomic", engine, element);
+            sb.Append(text);
+            cur = ListCursor.Resolve(engine, tail);
+            if (guard.Loops(cur)) throw ListCursor.CyclicList(engine, engine.GetRegister(0));
+        }
+        if (!ListCursor.IsNil(cur))
+            throw new PrologRuntimeException("type_error", "list", engine, engine.GetRegister(0));
+        int id = AtomTable.Intern(sb.ToString(), permanent: false).Id;
+        return engine.UnifyRegisterWithCell(2, Cell.Atom(id));
+    }
+
+    /// <summary><c>'$alc_split'(+Atom, +Separator, -Parts)</c> — the split
+    /// direction of <c>atomic_list_concat/3</c>: Parts are the pieces of
+    /// Atom between the occurrences of Separator, left to right, each an
+    /// atom, found in one scan. Both arguments must be atoms (the checks of
+    /// the <c>sub_atom/5</c> scan this replaces: a number is
+    /// type_error(atom, N), in any dialect); an empty separator never gets
+    /// here. Without an occurrence Parts is <c>[Atom]</c>.</summary>
+    public static bool AlcSplit(Activation engine)
+    {
+        try { return AlcSplitCore(engine); }
+        catch (PrologRuntimeException e) { e.StampBuiltin("atomic_list_concat", 3); throw; }
+    }
+
+    private static bool AlcSplitCore(Activation engine)
+    {
+        Cell atomCell = Resolve(engine, engine.GetRegister(0));
+        if (atomCell.Tag is Tag.Ref or Tag.AttVar)
+            throw new PrologRuntimeException("instantiation_error");
+        if (atomCell.Tag != Tag.Atom)
+            throw new PrologRuntimeException("type_error", "atom", engine, atomCell);
+        Cell sepCell = Resolve(engine, engine.GetRegister(1));
+        if (sepCell.Tag != Tag.Atom)
+            throw new PrologRuntimeException("type_error", "atom", engine, sepCell);
+        string text = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
+        string sep = AtomTable.GetById(sepCell.AsAtomId)?.Name ?? "";
+
+        var parts = new List<Cell>();
+        int pos = 0;
+        if (sep.Length > 0)
+        {
+            int at = NextOccurrence(text, sep, 0);
+            while (at >= 0)
+            {
+                parts.Add(Cell.Atom(AtomTable.Intern(text.Substring(pos, at - pos), permanent: false).Id));
+                pos = at + sep.Length;
+                at = NextOccurrence(text, sep, pos);
+            }
+        }
+        parts.Add(parts.Count == 0
+            ? atomCell
+            : Cell.Atom(AtomTable.Intern(text.Substring(pos), permanent: false).Id));
+        return engine.UnifyRegisterWithHeapAt(2, BuildList(engine, parts));
+    }
+
+    /// <summary>The next occurrence of <paramref name="sep"/> at or after
+    /// <paramref name="from"/> that starts and ends on a code-point boundary
+    /// (ADR-048: a match inside a surrogate pair is not one), or -1.</summary>
+    private static int NextOccurrence(string text, string sep, int from)
+    {
+        int at = text.IndexOf(sep, from, StringComparison.Ordinal);
+        while (at >= 0 && (SplitsPair(text, at) || SplitsPair(text, at + sep.Length)))
+            at = text.IndexOf(sep, at + 1, StringComparison.Ordinal);
+        return at;
+    }
+
+    private static bool SplitsPair(string text, int i)
+        => i > 0 && i < text.Length
+           && char.IsLowSurrogate(text[i]) && char.IsHighSurrogate(text[i - 1]);
+
+    private static int BuildList(Activation engine, List<Cell> elements)
+    {
+        if (elements.Count == 0)
+        {
+            int nilSlot = engine.AllocateHeap(1);
+            engine.SetHeap(nilSlot, Cell.Atom(AtomTable.EmptyListId));
+            return nilSlot;
+        }
+        int start = engine.AllocateHeap(2 * elements.Count + 1);
+        for (int i = 0; i < elements.Count; i++)
+        {
+            int lisIdx = start + 2 * i;
+            engine.SetHeap(lisIdx, Cell.Lis(lisIdx + 1));
+            engine.SetHeap(lisIdx + 1, elements[i]);
+        }
+        engine.SetHeap(start + 2 * elements.Count, Cell.Atom(AtomTable.EmptyListId));
+        return start;
+    }
+
     // ---------- Helpers ----------
 
     private static Cell Resolve(Activation engine, Cell c)

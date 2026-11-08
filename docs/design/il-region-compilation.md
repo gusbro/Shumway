@@ -271,7 +271,9 @@ WAM state.
      `SetB0` + `br member` (Cp unchanged); every other opcode (head match, unify,
      arith, allocate/deallocate, deterministic builtin) is emitted unchanged.
      `IsStage3RegionEmittable` gates the minimal subset (≥2 members, all
-     single-clause, intra-region calls + det builtins, no cut). Gated
+     single-clause, intra-region calls + det builtins, no cut). (The ≥2-members
+     gate was lifted for multi-clause roots by the ADR-057 amendment of
+     2026-11: a root alone with clause alternatives is a region of one member.) Gated
      `SHUMWAY_REGION=1`. Validated: minimal `go→a→{b,c}` and value-flow
      `a(X,Y):-b(X),c(Y)` give identical answers to the trampoline; the **full
      Embedding suite is green with SHUMWAY_REGION=1 (2147)**. 5 Chunk373Tests.

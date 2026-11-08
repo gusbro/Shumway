@@ -486,7 +486,12 @@ public sealed partial class Activation
     /// verdict loop applies it explicitly.</summary>
     public void SyncFromWasmMailbox(System.ReadOnlySpan<long> m)
     {
-        _heapTop = (int)m[WasmAbi.HeapTop];
+        // The cells the module claimed on its own, which no managed counter
+        // saw, less the ones still on the heap: what its backtracking gave
+        // back. Drained here, so re-entering the chain does not count them twice.
+        int heapTop = (int)m[WasmAbi.HeapTop];
+        _cellsReclaimed += m[WasmAbi.CellsClaimed] - (heapTop - _heapTop);
+        _heapTop = heapTop;
         _bindingTrailTop = (int)m[WasmAbi.TrailTop];
         // Adopted because a cut that compacts in place lowers it. Nothing
         // else in the module writes it, so this is a no-op for every other
@@ -523,8 +528,5 @@ public sealed partial class Activation
         _unifyPointer = (int)m[WasmAbi.UnifyPointer];
         CurrentViewGen = m[WasmAbi.ViewGen];
         _b0 = (int)m[WasmAbi.CutBarrier];
-        // The cells the module claimed on its own, which no managed counter
-        // saw. Drained here, so re-entering the chain does not count them twice.
-        _cellsAllocated += m[WasmAbi.CellsClaimed];
     }
 }

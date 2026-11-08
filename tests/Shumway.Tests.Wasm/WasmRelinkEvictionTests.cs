@@ -160,21 +160,24 @@ public class WasmRelinkEvictionTests
         // dynamic, and the load's directives running it minted anonymous
         // $disj_N helpers mid-consult, with the library's block landing on
         // top of them. The hook went module-local and static (ADR-040) and
-        // stopped leaving anything behind -- so the same shape is built
-        // here: a dynamic predicate with a disjunction body, run by a
-        // directive, in the same consult that then loads the library above
-        // it. The next consult drops the helper and the block slides.
+        // stopped leaving anything behind, and a rule derived again keeps
+        // the helpers its earlier variant took, so a consult of more code
+        // leaves nothing behind either. A module loaded again replaces its
+        // previous load: a module with rules whose helpers and clauses go
+        // when it is replaced by a smaller one, loaded before the library,
+        // leaves the hole below the library's block, and the block slides.
         engine.ConsultString("""
-            :- dynamic(h/1).
+            :- module(wre_m, [h/1, hs/1]).
             h(X) :- ( X = 1 ; X = 2 ).
-            :- ( h(_) -> true ; true ).
-            :- use_module(library(clpfd)).
+            hs(L) :- findall(Y, h(Y), L).
             """);
+        engine.ConsultString(":- use_module(library(clpfd)).");
         wasm.CompileAllTick(engine);
         Assert.Equal(0, wasm.RelinkEvictions);
         Snapshot(engine);
 
-        // The consult that closes the hole the directives left.
+        // The consult that opens the hole and lets the next link close it.
+        engine.ConsultString(":- module(wre_m, [h/1]).\nh(1).\n");
         engine.ConsultString("after(1). after(2).");
         wasm.CompileAllTick(engine);
 

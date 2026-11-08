@@ -59,17 +59,19 @@ public sealed class TierBudgetTests(ITestOutputHelper o)
         // length/2 deciding its mode: two type tests, two chain exits, two
         // re-entries. They are the same two in each goal, which is why the
         // three moved by the same amount. sumto is unchanged: it tests
-        // nothing.
-        { "numlist(1, 60, L), rev(L, R), length(R, N), N == 60.", 4, 0, 0 },
-        // 1604 entries for 780 solutions: findall re-enters the tier once per
+        // nothing. The same three fell by one more when length/2 took its
+        // fast path first: a proper list no longer runs the cycle check, one
+        // chain exit and one re-entry fewer per goal.
+        { "numlist(1, 60, L), rev(L, R), length(R, N), N == 60.", 3, 0, 0 },
+        // 1603 entries for 780 solutions: findall re-enters the tier once per
         // solution, and each re-entry stages the whole image. Recorded rather
         // than rounded off -- it is the largest boundary cost in this file and
         // the number that should move if that ever gets addressed.
-        { "numlist(1, 40, L), findall(P, pairs(L, X, Y), Ps), length(Ps, N).", 1604, 0, 0 },
+        { "numlist(1, 40, L), findall(P, pairs(L, X, Y), Ps), length(Ps, N).", 1603, 0, 0 },
         // Deep recursion under a cut: one entry for 300 frames, which is what
         // a chain is supposed to buy.
         { "sumto(300, S), S == 45150.", 1, 0, 0 },
-        { "numlist(1, 200, A), app(A, [x], B), length(B, N), N == 201.", 4, 0, 0 },
+        { "numlist(1, 200, A), app(A, [x], B), length(B, N), N == 201.", 3, 0, 0 },
     };
 
     [DiagTheory]

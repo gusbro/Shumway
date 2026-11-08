@@ -314,6 +314,17 @@ public sealed partial class PrologEngine
     /// prefilter could not rule out.</summary>
     internal long ClauseCandidatesTried;
 
+    /// <summary>Clauses clause/2 has looked at to choose its candidates —
+    /// the static ones from the functor index, the dynamic ones through the
+    /// first-argument index when the pattern keys one. A keyed lookup keeps
+    /// it near the number of candidates; a walk of the whole predicate, or
+    /// of the whole program, would not.</summary>
+    internal long ClauseCandidatesScanned;
+
+    /// <summary>Builds of the static clause index: one per program change
+    /// that a lookup follows, never one per lookup.</summary>
+    internal long StaticClauseIndexBuilds;
+
     /// <summary>The physical clause list, tombstones included — the retract
     /// path only. Everything else reads through the dense accessors, which
     /// compact first, so a tombstone cannot reach anything that shows a
@@ -995,26 +1006,48 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>Static clauses whose head functor matches
-    /// <paramref name="functorId"/>, across every loaded module. Used by
-    /// <c>clause/2</c> as the static half of the lookup; dynamic clauses
-    /// come from <see cref="DynamicClausesFor"/>.</summary>
-    internal IEnumerable<Clause> StaticClausesFor(int functorId)
+    /// <paramref name="functorId"/>, across every loaded module, in module
+    /// then clause order. Used by <c>clause/2</c> as the static half of the
+    /// lookup; dynamic clauses come from <see cref="DynamicClausesFor"/>.
+    /// One probe of <see cref="StaticClauseIndex"/>: the walk of every
+    /// clause of every module, interning each head, was paid per call.</summary>
+    internal IReadOnlyList<Clause> StaticClausesFor(int functorId)
+        => StaticClauseIndex().TryGetValue(functorId, out var clauses)
+            ? clauses
+            : Array.Empty<Clause>();
+
+    /// <summary>Every module's inspectable clauses by the head functor they
+    /// define — a grammar rule under its translated head, and translated,
+    /// so clause/2 on a non-terminal reads the body the predicate runs.
+    /// Built lazily, dropped by <see cref="DropStaticClauseCaches"/> and by a
+    /// derivation bump, so it is never older than the manifests.</summary>
+    private Dictionary<int, List<Clause>> StaticClauseIndex()
     {
+        if (_staticClausesByFid is { } cached && _staticClausesByFidGen == _derivationGen)
+            return cached;
+        StaticClauseIndexBuilds++;
+        var index = new Dictionary<int, List<Clause>>();
         foreach (var manifest in _modules.Values)
         {
             foreach (var c in manifest.InspectableClauses)
             {
-                // A grammar rule defines its translated head, and that is the
-                // clause it contributes: clause/2 on a non-terminal reads the
-                // same body the predicate runs.
-                if (TryExtractDefinedHead(c, out string n, out int a))
-                {
-                    int fid = FunctorTable.Intern(
-                        AtomTable.Intern(n, permanent: true).Id, a);
-                    if (fid == functorId) yield return TranslatedForListing(c);
-                }
+                if (!TryExtractDefinedHead(c, out string n, out int a)) continue;
+                int fid = FunctorTable.Intern(AtomTable.Intern(n, permanent: true).Id, a);
+                if (!index.TryGetValue(fid, out var list)) index[fid] = list = new List<Clause>();
+                list.Add(TranslatedForListing(c));
             }
         }
+        _staticClausesByFid = index;
+        _staticClausesByFidGen = _derivationGen;
+        return index;
+    }
+
+    /// <summary>Drops every cache built from the module manifests' clause
+    /// lists. Called wherever those lists change.</summary>
+    internal void DropStaticClauseCaches()
+    {
+        _staticHeadFunctorsCache = null;
+        _staticClausesByFid = null;
     }
 
     /// <summary>A grammar rule in the form it defines. Falls back to the rule
@@ -1727,9 +1760,7 @@ public sealed partial class PrologEngine
         var unfolded = (_flags.DebugCodegen && !opaqueModule)
             ? newStaticClauses
             : MetaWrapperUnfold.Apply(newStaticClauses);
-        var transformed = ClausePipeline.Apply(
-            unfolded, Modes, inlineIte: EnableInlineIte,
-            helperIdProvider: NextMetaHelperId, dcgFailFast: !_flags.DebugCodegen);
+        var transformed = TransformClauses(unfolded, moduleName, EnableInlineIte);
         // Body-call mangling locals: the batch's own head functors. For a
         // self-contained consulted file (a Logtalk entity's scratch code)
         // these are exactly the predicates it defines; cross-batch calls
@@ -2336,6 +2367,110 @@ public sealed partial class PrologEngine
         };
     }
 
+    /// <summary>A rule's transform by module and <see cref="ClausePipeline.VariantKey"/>
+    /// (<see cref="TransformClauses"/>), for a rule the transform gave helpers.
+    /// Bounded by the distinct rules the engine transformed, as the helper
+    /// registry is.</summary>
+    private readonly Dictionary<string, (List<Clause> Transformed, int ModesVersion, bool InlineIte)>
+        _ruleTransforms = new();
+
+    /// <summary>The clause pipeline over clauses of one module, the transform
+    /// of each rule memoized by its variant key: a rule asserted or consulted
+    /// again takes the helper predicates (<c>'$disj_N'</c> and kin) its earlier
+    /// variant took, instead of minting fresh ones. A helper's name is a
+    /// permanent atom (ADR-003) and the late-helper registry keeps its code for
+    /// the engine's life, so this is what keeps an engine that asserts and
+    /// retracts the same rules over time bounded by its distinct rules.
+    /// Ordered as <see cref="ClausePipeline.Apply"/> orders it: the clauses,
+    /// then every helper. Per module, since the registry aliases a helper under
+    /// its bare name, which two modules must not share. Not under debug
+    /// codegen, where each clause keeps its own stop sites and variable names,
+    /// and not for a run with SSU rules, whose no-match trailer is a property
+    /// of the run.</summary>
+    internal List<Clause> TransformClauses(IReadOnlyList<Clause> clauses, string moduleName, bool inlineIte,
+        HashSet<string>? used = null)
+    {
+        if (_flags.DebugCodegen || _flags.EmitDebugInfo || HasSsuRule(clauses))
+            return ClausePipeline.Apply(clauses, Modes, inlineIte: inlineIte,
+                helperIdProvider: NextMetaHelperId, dcgFailFast: !_flags.DebugCodegen);
+        var result = new List<Clause>(clauses.Count);
+        List<Clause>? helpers = null;
+        List<Clause>? plain = null;   // a run of clauses with no key: facts
+        int modesVersion = Modes.Version;
+        foreach (var clause in clauses)
+        {
+            string? key = clause.Kind is ClauseKind.Rule or ClauseKind.DcgRule
+                ? ClausePipeline.VariantKey(clause)
+                : null;
+            if (key is null)
+            {
+                (plain ??= new List<Clause>()).Add(clause);
+                continue;
+            }
+            if (plain is { Count: > 0 })
+            {
+                SplitTransformed(ClausePipeline.Apply(plain, Modes, inlineIte: inlineIte,
+                    helperIdProvider: NextMetaHelperId), plain.Count, result, ref helpers);
+                plain.Clear();
+            }
+            key = moduleName + "\0" + key;
+            if (!_ruleTransforms.TryGetValue(key, out var memo)
+                || memo.ModesVersion != modesVersion || memo.InlineIte != inlineIte)
+            {
+                var transformed = ClausePipeline.Apply(new[] { clause }, Modes, inlineIte: inlineIte,
+                    helperIdProvider: NextMetaHelperId);
+                if (transformed.Count <= 1)
+                {
+                    SplitTransformed(transformed, 1, result, ref helpers);
+                    continue;
+                }
+                _ruleTransforms[key] = memo = (transformed, modesVersion, inlineIte);
+            }
+            used?.Add(key);
+            SplitTransformed(memo.Transformed, 1, result, ref helpers);
+        }
+        if (plain is { Count: > 0 })
+            SplitTransformed(ClausePipeline.Apply(plain, Modes, inlineIte: inlineIte,
+                helperIdProvider: NextMetaHelperId), plain.Count, result, ref helpers);
+        if (helpers is not null) result.AddRange(helpers);
+        return result;
+    }
+
+    /// <summary>The memo keys a module's last whole transform took
+    /// (<see cref="PruneRuleTransforms"/>).</summary>
+    private readonly Dictionary<string, HashSet<string>> _moduleRuleTransformKeys = new();
+
+    /// <summary>Drops the memo entries a module's previous transform took and
+    /// this one did not: a reconsult forgets the clauses it replaced, so the
+    /// memo stays bounded by the program for consulted code. A rule asserted
+    /// at run time has no position and so no key a module's transform takes;
+    /// its entry stays, to serve the next assert of the rule.</summary>
+    private void PruneRuleTransforms(string moduleName, HashSet<string> used)
+    {
+        if (_moduleRuleTransformKeys.TryGetValue(moduleName, out var previous))
+            foreach (var key in previous)
+                if (!used.Contains(key)) _ruleTransforms.Remove(key);
+        _moduleRuleTransformKeys[moduleName] = used;
+    }
+
+    private static bool HasSsuRule(IReadOnlyList<Clause> clauses)
+    {
+        for (int i = 0; i < clauses.Count; i++)
+            if (clauses[i].Kind == ClauseKind.SsuRule) return true;
+        return false;
+    }
+
+    // The pipeline's output for n clauses is those n, transformed, then their
+    // helpers.
+    private static void SplitTransformed(
+        List<Clause> transformed, int n, List<Clause> clauses, ref List<Clause>? helpers)
+    {
+        int split = Math.Min(n, transformed.Count);
+        for (int i = 0; i < split; i++) clauses.Add(transformed[i]);
+        if (transformed.Count > split)
+            (helpers ??= new List<Clause>()).AddRange(transformed.GetRange(split, transformed.Count - split));
+    }
+
     /// <summary>single-clause transform + compile for the four
     /// runtime <c>assertz</c> / <c>asserta</c> compile sites (chain and
     /// extensible-indexed, append and prepend). Facts take a fast path that
@@ -2364,13 +2499,6 @@ public sealed partial class PrologEngine
         }
         else
         {
-            // Apply the same transforms the setup path runs — dynamic
-            // clauses share a flat module rewrite context. The first
-            // transformed clause is the asserted one; any MetaTransform
-            // helper clauses (a body catch/3 → '$catchgoal_N'/'$catchrec_N',
-            // a nested control construct → '$disj_N', ...) follow it.
-            var transformed = ClausePipeline.Apply(new[] { newClause }, Modes, helperIdProvider: NextMetaHelperId, dcgFailFast: !_flags.DebugCodegen);
-            if (transformed.Count == 0) return null;
             var userImports = ImportsOf(DefaultModuleName);
             if (_assertDynCtx is null || !ReferenceEquals(_assertDynCtx.Imports, userImports))
                 _assertDynCtx = new ModuleRewrite.Context(
@@ -2378,6 +2506,14 @@ public sealed partial class PrologEngine
             // A modern module's predicate compiles in the module's context,
             // where its clauses reach the module's private predicates.
             var ctx = OwnedDynamicContextFor(functorId) ?? _assertDynCtx;
+            // Apply the same transforms the setup path runs. The first
+            // transformed clause is the asserted one; any MetaTransform
+            // helper clauses (a body catch/3 → '$catchgoal_N'/'$catchrec_N',
+            // a nested control construct → '$disj_N', ...) follow it. The
+            // setup path keys the same memo under the owner's name, so its
+            // re-derivation of the predicate takes these helpers too.
+            var transformed = TransformClauses(new[] { newClause }, ctx.ModuleName, inlineIte: false);
+            if (transformed.Count == 0) return null;
             toCompile = ModuleRewrite.Rewrite(transformed[0], ctx);
             // the helpers used to be dropped here, leaving the
             // asserted clause's body calling a '$catchgoal_N' that nothing
@@ -2441,6 +2577,14 @@ public sealed partial class PrologEngine
         var linked = new List<(Shumway.Compiler.Wam.CompiledPredicate Pred, int Addr)>();
         foreach (int fid in order!)
         {
+            // A helper the transform memo handed back again (TransformClauses)
+            // was linked by an earlier assert of a variant of this rule: into
+            // this activation, or into the registry, from which it is linked
+            // here as a late helper is.
+            if (addrMap.TryGetValue(fid, out int known) && !Shumway.Core.CallTarget.IsUnresolved(known))
+                continue;
+            if (_runtimeAssertHelperPreds.ContainsKey(fid) && TryMaterializeAssertHelper(engine, fid) >= 0)
+                continue;
             var pred = new Shumway.Compiler.Wam.PredicateCompiler
                 {
                 EmitDebugInfo = _flags.EmitDebugInfo,

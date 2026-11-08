@@ -63,4 +63,75 @@ public static class ClausePipeline
             MetaTransform.HelperPrefix = prevPrefix;
         }
     }
+
+    /// <summary>A key equal for two clauses that are variants of each other:
+    /// the same kind and position, and the same term up to a renaming of the
+    /// variables. The pipeline transforms variants alike, so a host memoizes a
+    /// rule's transform on it and a rule asserted again takes the helper
+    /// predicates its earlier variant took. Null for a clause the key cannot
+    /// name (a cyclic term's back-edge).</summary>
+    public static string? VariantKey(Clause clause)
+    {
+        ArgumentNullException.ThrowIfNull(clause);
+        var sb = new System.Text.StringBuilder(64);
+        var pos = clause.Position;
+        sb.Append('K').Append((int)clause.Kind).Append(';')
+          .Append(pos.Line).Append(',').Append(pos.Column).Append(',')
+          .Append(pos.Offset).Append(',').Append(pos.FileId).Append(';');
+        // Pre-order with each compound's arity written: unambiguous without
+        // brackets. Iterative, as a body is as deep as a list literal is long.
+        Dictionary<string, int>? vars = null;
+        var work = new Stack<Term>();
+        work.Push(clause.Term);
+        while (work.Count > 0)
+        {
+            switch (work.Pop())
+            {
+                case AtomTerm a:
+                    sb.Append('a').Append(a.Name.Length).Append(':').Append(a.Name);
+                    break;
+                case VarTerm v:
+                    if (v.IsCycleBack) return null;
+                    // Every `_` is its own variable, and the transforms know it
+                    // by that name; the others number in order of first sight.
+                    if (v.Name == "_") { sb.Append('_'); break; }
+                    vars ??= new Dictionary<string, int>();
+                    if (!vars.TryGetValue(v.Name, out int index))
+                        vars[v.Name] = index = vars.Count;
+                    sb.Append('v').Append(index).Append(';');
+                    break;
+                case IntTerm i:
+                    sb.Append('i').Append(i.Value).Append(';');
+                    break;
+                case BigIntTerm b:
+                {
+                    string digits = b.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    sb.Append('b').Append(digits.Length).Append(':').Append(digits);
+                    break;
+                }
+                case FloatTerm f:
+                    sb.Append('f').Append(BitConverter.DoubleToInt64Bits(f.Value)).Append(';');
+                    break;
+                case RationalTerm r:
+                {
+                    string num = r.Num.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    string den = r.Den.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    sb.Append('r').Append(num.Length).Append(':').Append(num).Append('/').Append(den).Append(';');
+                    break;
+                }
+                case StringTerm s:
+                    sb.Append('s').Append((int)s.Kind).Append(',')
+                      .Append(s.Content.Length).Append(':').Append(s.Content);
+                    break;
+                case CompoundTerm c:
+                    sb.Append('c').Append(c.Args.Length).Append(',')
+                      .Append(c.Functor.Length).Append(':').Append(c.Functor);
+                    for (int i = c.Args.Length - 1; i >= 0; i--) work.Push(c.Args[i]);
+                    break;
+                default:
+                    return null;
+            }
+        }
+        return sb.ToString();
+    }
 }

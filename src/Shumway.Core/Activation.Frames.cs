@@ -156,7 +156,7 @@ public sealed partial class Activation
     /// <summary>Monotonic count of WAM heap cells reserved over this engine's
     /// lifetime (never decremented by backtracking). A deterministic,
     /// wall-clock-independent metric for allocation-affecting changes.</summary>
-    public long CellsAllocated => _cellsAllocated;
+    public long CellsAllocated => _cellsReclaimed + _heapTop;
 
     public Cell GetHeap(int idx) => _heap[idx];
 
@@ -178,7 +178,6 @@ public sealed partial class Activation
         if (newTop > _heap.Length) EnsureHeapCapacity(count);
         int start = _heapTop;
         _heapTop = newTop;
-        _cellsAllocated += count;
         return start;
     }
 
@@ -196,7 +195,6 @@ public sealed partial class Activation
         if (idx + 1 > _heap.Length) EnsureHeapCapacity(1);
         _heap[idx] = Cell.UnboundVar(idx);
         _heapTop = idx + 1;
-        _cellsAllocated++;
         return idx;
     }
 
@@ -333,7 +331,7 @@ public sealed partial class Activation
             EnsureExtraTrailCapacity(1);
             f.DeactivateRecord = _extraTrailTop;
             _catchFrames[i] = f;
-            Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Note(CellsAllocated,
                 Diagnostics.CommitTrace.Kind.Trail,
                 (int)TrailType.CatchFrame, _extraTrailTop);
             _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
@@ -389,7 +387,7 @@ public sealed partial class Activation
         if (CatchDiag)
             System.Console.Error.WriteLine($"[catch] push idx={index} xTop={_extraTrailTop}");
         EnsureExtraTrailCapacity(1);
-        Diagnostics.CommitTrace.Note(_cellsAllocated,
+        Diagnostics.CommitTrace.Note(CellsAllocated,
             Diagnostics.CommitTrace.Kind.Trail,
             (int)TrailType.CatchFrame, _extraTrailTop);
         _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
@@ -430,7 +428,7 @@ public sealed partial class Activation
             if (CatchDiag)
                 System.Console.Error.WriteLine($"[catch] deact idx={i} xTop={_extraTrailTop}");
             EnsureExtraTrailCapacity(1);
-            Diagnostics.CommitTrace.Note(_cellsAllocated,
+            Diagnostics.CommitTrace.Note(CellsAllocated,
                 Diagnostics.CommitTrace.Kind.Trail,
                 (int)TrailType.CatchFrame, _extraTrailTop);
             _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
@@ -482,6 +480,7 @@ public sealed partial class Activation
         if (CatchDiag)
             System.Console.Error.WriteLine($"[catch] reclaim idx={i} rec={rec} xTop={_extraTrailTop}");
         NeuterCatchRecord(rec);
+        PopReclaimedRecordsDownTo(rec);
         _catchFrames.RemoveAt(i);
         // What the guarded goal trailed only because the frame raised the
         // boundary is undone by nothing now: the trail keeps what a choice
@@ -512,7 +511,11 @@ public sealed partial class Activation
                 || !IsCatchRecord(f.DeactivateRecord, i, CatchTrailDeactivate)) return;
             if (CatchDiag)
                 System.Console.Error.WriteLine($"[catch] reclaim-dead idx={i} xTop={_extraTrailTop}");
-            // The later record first, so the trail can shrink past both.
+            // Neutered in place, never popped: a mark taken since the frame
+            // died may sit above them with no choice point to show it (a
+            // CP-free guard's marks live in IL locals, ADR-031), and a top
+            // below that mark makes its restore unwind past the end. The
+            // next compacting cut drops them (the watermark is lowered).
             NeuterCatchRecord(f.DeactivateRecord);
             NeuterCatchRecord(f.PushRecord);
             _catchFrames.RemoveAt(i);
@@ -526,11 +529,14 @@ public sealed partial class Activation
         && _extraTrail[rec].OldValue.Data == kind
         && _extraTrail[rec].HeapIdx == frame;
 
-    // A record of a frame that is gone. On top of the trail it goes, with
-    // any neutered records below it; elsewhere it stays as a record that
-    // undoes nothing, the entries after it being live, until a compaction.
-    // Not below the top the newest choice point saved: comparing addresses does
-    // not make it older than the frame, a cut can have freed the address.
+    // A record of a frame that is gone: it stays where it is, undoing nothing,
+    // until a compaction drops it or an unwind passes it. The trail shrinks
+    // only at a frame's deterministic exit, over its own records
+    // (PopReclaimedRecordsDownTo): every mark taken before the frame lies at or
+    // below its push record. A frame that died earlier may have records under a
+    // mark taken since, with no choice point to show it (a guard's marks in IL
+    // locals, ADR-031), and a top below that mark makes the restore unwind to a
+    // position that no longer exists.
     private void NeuterCatchRecord(int rec)
     {
         ExtraTrailEntry e = _extraTrail[rec];
@@ -543,8 +549,13 @@ public sealed partial class Activation
             _compactedExtra = rec;
             _compactedBinding = Math.Min(_compactedBinding, e.BindingTrailMarker);
         }
-        int floor = ExtraTopAtB();
-        while (_extraTrailTop > floor
+    }
+
+    // The reclaimed records on top of the trail, down to the frame's own push
+    // record and no further: what lies below it may be under a live mark.
+    private void PopReclaimedRecordsDownTo(int rec)
+    {
+        while (_extraTrailTop > rec
                && _extraTrail[_extraTrailTop - 1].Type == TrailType.CatchFrame
                && _extraTrail[_extraTrailTop - 1].OldValue.Data == CatchTrailReclaimed)
             _extraTrailTop--;
@@ -619,6 +630,7 @@ public sealed partial class Activation
                 + $" attrLogCount={_attrTrailLog.Count}");
         }
         UnwindTrails(f.SnapBindingTrailTop, f.SnapExtraTrailTop);
+        _cellsReclaimed += _heapTop - f.SnapHeapTop;
         _heapTop = f.SnapHeapTop;
         AssignHb(f.SnapHb);
         if (AttrSweepEnabled) DebugSweepAttrTable("catch_unwind");
@@ -929,7 +941,7 @@ public sealed partial class Activation
 
     public void PushChoicePoint(int arity, int nextClauseAddr)
     {
-        Diagnostics.CommitTrace.Note(_cellsAllocated,
+        Diagnostics.CommitTrace.Note(CellsAllocated,
             Diagnostics.CommitTrace.Kind.Push, _b, _stackTop);
         if (arity < 0)
             throw new ArgumentOutOfRangeException(nameof(arity));
@@ -1055,7 +1067,9 @@ public sealed partial class Activation
         int extraTarget = (int)ctl[5].Data;        // CpExtraTrailOffset
         UnwindTrails(bindingTarget, extraTarget);
 
-        _heapTop = (int)ctl[6].Data;               // CpHeapTopOffset
+        int heapTop = (int)ctl[6].Data;            // CpHeapTopOffset
+        _cellsReclaimed += _heapTop - heapTop;
+        _heapTop = heapTop;
         if (_pendingWakeups.Count != 0) DropDeadWakeups();
         if (AttrSweepEnabled) DebugSweepAttrTable("cp_restore");
         // ViewGen is a 60-bit value; read via Payload to strip the RawInt tag.
@@ -1085,7 +1099,7 @@ public sealed partial class Activation
     /// </summary>
     public void Cut(int barrier)
     {
-        Diagnostics.CommitTrace.Note(_cellsAllocated,
+        Diagnostics.CommitTrace.Note(CellsAllocated,
             Diagnostics.CommitTrace.Kind.Cut, _b, barrier);
         if (barrier < -1)
             throw new ArgumentOutOfRangeException(nameof(barrier));
