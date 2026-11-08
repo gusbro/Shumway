@@ -213,7 +213,7 @@ public sealed partial class IlPredicateCompiler
             // (see ModuleRewrite / BytecodeInterpreter.DispatchCall). Unwrap it,
             // updating X0; the module steers the user-address resolution below so
             // a bare goal functor resolves against that module's locals first.
-            int resolutionModule = PrepareMqualGoal(engine, ref goal);
+            int resolutionModule = PrepareMqualGoal(engine, ref goal, controlConstructs: callArity == 1);
 
             // SS7.6.2 — convert the body at the call/N boundary (and only
             // there; '$call'/2 dispatches an already-converted body). See
@@ -493,7 +493,7 @@ public sealed partial class IlPredicateCompiler
         /// <summary>Mirror of BytecodeInterpreter.PrepareMqualGoal: unwraps a
         /// <c>'$mqual'(Module, Goal)</c> tag on X0, distributes the module over a
         /// control construct's goal sub-args, and returns the module (or -1).</summary>
-        private static int PrepareMqualGoal(Activation engine, ref Cell goal)
+        private static int PrepareMqualGoal(Activation engine, ref Cell goal, bool controlConstructs)
         {
             int module = -1;
             while (goal.Tag == Tag.Str)
@@ -526,7 +526,9 @@ public sealed partial class IlPredicateCompiler
             }
             if (module < 0) return -1;
 
-            if (goal.Tag == Tag.Str)
+            // Only for call/1, as the interpreter's twin: with arguments
+            // appended, `;`/2 is the goal `;`/3, a predicate that keeps the module.
+            if (controlConstructs && goal.Tag == Tag.Str)
             {
                 int fid = engine.GetHeap(goal.AsHeapIndex).AsFunctorId;
                 if (fid == ConjFid || fid == DisjFid || fid == ArrowFid || fid == SoftArrowFid)

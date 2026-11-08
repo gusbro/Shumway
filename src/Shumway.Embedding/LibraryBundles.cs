@@ -22,13 +22,21 @@ internal static class LibraryBundles
         => Array.IndexOf(Names, name) >= 0;
 
     /// <summary>The library's public predicates: what a program that imports
-    /// it may call.</summary>
+    /// it may call, spelled as the importer's compiled code calls them. A
+    /// legacy library's are its bare publics; an export-qualified module's
+    /// are its exports under the module's name, which is what a program
+    /// consulted with the library loaded compiled its calls to.</summary>
     public static IReadOnlyCollection<PredicateRef> PublicsOf(string name)
     {
         var publics = new HashSet<PredicateRef>();
         foreach (var entry in Get(name).Entries)
+        {
             foreach (var d in entry.Defined)
                 if (d.Visibility == PredicateVisibility.Public) publics.Add(d.Indicator);
+            if (entry.IsExportQualified)
+                foreach (var ex in entry.Exports)
+                    publics.Add(new PredicateRef(entry.ModuleName + "$" + ex.Name, ex.Arity));
+        }
         return publics;
     }
 

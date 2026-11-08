@@ -514,7 +514,7 @@ public sealed partial class BytecodeInterpreter
         // module of the clause that meta-called it. Unwrap it, updating X0 to the
         // real goal; the module (or -1) steers the user-address resolution below
         // so a bare goal functor resolves against that module's locals first.
-        int resolutionModule = PrepareMqualGoal(ref goal);
+        int resolutionModule = PrepareMqualGoal(ref goal, controlConstructs: callArity == 1);
 
         // SS7.6.2 converts the whole body up front, at the call/N boundary:
         // in call(G) with G = (C=(!), (X=1,C;X=2)), C is a variable at
@@ -886,7 +886,7 @@ public sealed partial class BytecodeInterpreter
     /// real goal is a control construct, the module is distributed into its goal
     /// sub-args (so they keep resolving in that module once the <c>$call_*</c>
     /// helper runs them) and -1 is returned.</summary>
-    private int PrepareMqualGoal(ref Cell goal)
+    private int PrepareMqualGoal(ref Cell goal, bool controlConstructs)
     {
         int module = -1;
         while (goal.Tag == Tag.Str)
@@ -919,7 +919,11 @@ public sealed partial class BytecodeInterpreter
         }
         if (module < 0) return -1;
 
-        if (goal.Tag == Tag.Str)
+        // A control construct's sub-goals take the module each; the construct
+        // itself is nobody's predicate. Only for call/1: with arguments
+        // appended, `;`/2 is the goal `;`/3, a predicate the module may define
+        // or import (reif's), and it keeps the module.
+        if (controlConstructs && goal.Tag == Tag.Str)
         {
             int fid = _engine.GetHeap(goal.AsHeapIndex).AsFunctorId;
             if (fid == ConjFunctorId || fid == DisjFunctorId

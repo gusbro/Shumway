@@ -16,7 +16,7 @@ public sealed partial class PrologEngine
     /// <c>ins</c> — and their operators available to subsequently consulted
     /// source and queries. CLP(FD) is opt-in: an engine that never calls
     /// this carries none of the library's weight. Idempotent.</summary>
-    public void UseClpfd() => UseLibrary(LibraryBundles.Clpfd);
+    public void UseClpfd() => UseLibraryIntoUser(LibraryBundles.Clpfd);
 
     /// <summary>Loads the CLP(R) constraint library into this
     /// engine, making linear-equality constraints over the reals available
@@ -26,14 +26,14 @@ public sealed partial class PrologEngine
     /// <para>CLP(R) and CLP(FD) can share an engine — both declare their
     /// <c>verify_attributes/4</c> hook <c>:- multifile</c> — as long as no
     /// variable carries both libraries' constraints.</para></summary>
-    public void UseClpr() => UseLibrary(LibraryBundles.Clpr);
+    public void UseClpr() => UseLibraryIntoUser(LibraryBundles.Clpr);
 
     /// <summary>Loads the coroutining library into this engine:
     /// <c>freeze/2</c>, <c>frozen/2</c> and the <c>dif/2</c> disequality
     /// constraint. Opt-in like the CLP libraries, and built on the same
     /// multifile <c>verify_attributes/4</c> hook, so it coexists with
     /// CLP(FD)/CLP(R) on one engine. Idempotent.</summary>
-    public void UseCoroutining() => UseLibrary(LibraryBundles.Coroutining);
+    public void UseCoroutining() => UseLibraryIntoUser(LibraryBundles.Coroutining);
 
     /// <summary>Loads the reified-conditions library into this engine:
     /// <c>if_/3</c>, <c>(=)/3</c>, <c>dif/3</c>, <c>tfilter/3</c> and their
@@ -41,7 +41,7 @@ public sealed partial class PrologEngine
     /// success, so a decided condition leaves no choice point. Loads the
     /// coroutining library too (an undecided condition answers with
     /// <c>dif/2</c>). Idempotent.</summary>
-    public void UseReif() => UseLibrary(LibraryBundles.Reif);
+    public void UseReif() => UseLibraryIntoUser(LibraryBundles.Reif);
 
     // The engine's own libraries load from bundles baked at build time
     // (Shumway.Libraries), one path on every target; a loaded library is
@@ -66,13 +66,25 @@ public sealed partial class PrologEngine
     internal void RemoveNetObject(int id) => _netObjects.Remove(id);
 
     /// <summary>Loads one of the engine's own libraries by name, as a
-    /// bundle that calls it asks.</summary>
+    /// bundle that calls it asks, with its exports imported into
+    /// <c>user</c>: the bundle's top-level code calls them bare.</summary>
     internal void UseEngineLibrary(string name)
     {
         if (!LibraryBundles.IsEngineLibrary(name))
             throw new System.IO.InvalidDataException(
                 $"Bundle: needs the engine library '{name}', which this Shumway does not have.");
+        UseLibraryIntoUser(name);
+    }
+
+    /// <summary>The host's and the top level's way in: the library loaded and,
+    /// when it is an export-qualified module (ADR-038, second amendment), its
+    /// exports imported into <c>user</c>, as <c>use_module(library(X))</c>
+    /// does for a program. A legacy library has nothing to import.</summary>
+    private void UseLibraryIntoUser(string name)
+    {
         UseLibrary(name);
+        if (_modules.TryGetValue(name, out var manifest) && manifest.IsExportQualified)
+            ImportAllExportsIntoUser(name);
     }
 
     /// <summary>The engine libraries loaded so far, in a fixed order.</summary>
@@ -829,9 +841,16 @@ public sealed partial class PrologEngine
         if (spec is CompoundTerm { Functor: "library", Args: [var libArg] }
             && TryLibraryRelName(libArg, out string libName))
         {
-            // (1) the engine's own libraries take precedence: they carry
-            // native hooks and stay bare-global (no import table).
-            if (LibraryBundles.IsEngineLibrary(libName)) { UseLibrary(libName); return null; }
+            // (1) the engine's own libraries take precedence. An
+            // export-qualified one hands its name back so the caller imports
+            // it where the directive stands (the module, or user for the goal
+            // form); a legacy one stays bare-global, with nothing to import.
+            if (LibraryBundles.IsEngineLibrary(libName))
+            {
+                UseLibrary(libName);
+                return _modules.TryGetValue(libName, out var libManifest)
+                       && libManifest.IsExportQualified ? libName : null;
+            }
             if (CompatLibraries.IsNative(libName) && UseCompatLibrary(libName)) return libName;
             switch (libName)
             {
