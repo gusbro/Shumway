@@ -558,7 +558,8 @@ public static partial class MetaBuiltins
             + "nothing (ISO 7.4.2.8). Lets several files each name their own "
             + "dependencies without any of them being loaded twice. A File "
             + "that CHANGED on disk since it was loaded is reloaded. Argument "
-            + "and errors are as consult/1.");
+            + "and errors are as consult/1. File may also be library(Name), "
+            + "loaded as use_module/1 loads it.");
         BuiltinsRegistry.Register("use_module", 1, UseModule,
             Database, "use_module(+Spec)",
             "Loads a library or file. Spec is either library(Name), where Name "

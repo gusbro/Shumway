@@ -2100,6 +2100,15 @@ internal sealed class ConsultPipeline
                 string? src = E.ExecuteUseModuleDirective(umDir2.Args[0]);
                 RecordImports(src, filter);
             }
+            else if (body is CompoundTerm { Functor: "ensure_loaded",
+                         Args: [CompoundTerm { Functor: "library", Args.Length: 1 } elLib] })
+            {
+                // `:- ensure_loaded(library(Name))` is `:- use_module(library(Name))`,
+                // as on the reference systems: the library's exports are imported
+                // where the directive stands. A file name stays a goal below.
+                string? src = E.ExecuteUseModuleDirective(elLib);
+                RecordImports(src, filter: null);
+            }
             else
             {
                 // A directive that matched none of the branches above is

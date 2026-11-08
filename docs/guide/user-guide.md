@@ -339,7 +339,8 @@ All of them can be enabled on one engine (each library owns its
 variable's constraints within one library: mixed clpfd+clpr constraints
 on the same variable are not supported. From Prolog source, the same
 libraries load with `:- use_module(library(clpfd))` /
-`library(clpr)` / `library(coroutining)` / `library(reif)`. Each is a
+`library(clpr)` / `library(coroutining)` / `library(reif)`, and
+`:- ensure_loaded(library(clpfd))` loads them the same way. Each is a
 module with an export list: the import brings its predicates and, for
 `clpfd`, its operators, and `clpfd:sum(...)` names the library's predicate
 whatever the program defines under that name. The libraries' internal

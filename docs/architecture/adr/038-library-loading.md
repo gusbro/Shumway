@@ -468,7 +468,9 @@ written for the other world.
    the module's own and reach no namespace. `use_module(library(Name))`
    imports the exports where the directive stands, the goal form and the
    host's `UseName()` into `user`, as for any module; `Name:Goal` is the
-   library's own predicate.
+   library's own predicate. `ensure_loaded(library(Name))` is the same load,
+   as on the reference systems, in the directive, the goal and separate
+   compilation; `ensure_loaded` of a file name is unchanged.
 2. **The attribute hooks are the module's own.** `verify_attributes/4` is
    already (ADR-040), and `attribute_goals/4` joins it: the projection reads
    `M:attribute_goals(M, Attr, Var, Goals)`, the module's own clause first and

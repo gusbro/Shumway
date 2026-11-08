@@ -417,7 +417,20 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "ensure_loaded/1 requires the engine to be hosted by a PrologEngine.");
 
-        string given = FileSpecAtom(engine, MaterializeRegister(engine, 0), out string? intoModule);
+        // ensure_loaded(library(Name)) is use_module(library(Name)), as on the
+        // reference systems: a library loads once and a module's exports are
+        // imported. Only a file name below.
+        Term spec = MaterializeRegister(engine, 0);
+        Term unqualified = spec;
+        while (unqualified is CompoundTerm { Functor: ":", Args: [AtomTerm, var inner] })
+            unqualified = inner;
+        if (unqualified is CompoundTerm { Functor: "library", Args.Length: 1 })
+        {
+            LoadLibraryIntoUser(engine, host, unqualified);
+            return true;
+        }
+
+        string given = FileSpecAtom(engine, spec, out string? intoModule);
         string path = given;
         // A relative name resolves against the directory of the file being
         // loaded, as `:- include/1` does — `:- ensure_loaded(file_1)` inside
@@ -462,22 +475,26 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "use_module/1 requires the engine to be hosted by a PrologEngine.");
 
-        Term arg = UseModuleSpec(engine);
+        LoadLibraryIntoUser(engine, host, UseModuleSpec(engine));
+        return true;
+    }
 
-        // Same resolution as the consult-time directive (file search path,
-        // coroutining, compat libraries), returning the loaded export-qualified
-        // module name (or null).
+    /// <summary>The goal form of loading <paramref name="spec"/> as a module:
+    /// the consult-time directive's resolution (file search path, the engine's
+    /// libraries, compat libraries), then the loaded export-qualified module's
+    /// whole surface imported into <c>user</c>.</summary>
+    private static void LoadLibraryIntoUser(Activation engine, PrologEngine host, Term spec)
+    {
         // Loaded by a running goal: what it defines links into this query's
         // code, as consult/1's does, so the goal's next call reaches it.
         var prevLive = host._liveConsultEngine;
         host._liveConsultEngine = engine;
         try
         {
-            string? src = host.ExecuteUseModuleDirective(arg, throwOnUnresolved: true);
+            string? src = host.ExecuteUseModuleDirective(spec, throwOnUnresolved: true);
             if (src is not null) host.ImportAllExportsIntoUser(src);
         }
         finally { host._liveConsultEngine = prevLive; }
-        return true;
     }
 
     /// <summary><c>use_module(+Spec, +Imports)</c>: the goal form of the
