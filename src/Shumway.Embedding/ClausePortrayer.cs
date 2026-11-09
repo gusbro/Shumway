@@ -32,10 +32,10 @@ namespace Shumway.Embedding;
 /// <item><strong>Demangle</strong> — ModuleRewrite-mangled local
 ///   predicate names (<c>user$helper</c>) → source-spelled
 ///   (<c>helper</c>).</item>
-/// <item><strong>Variable renaming</strong> — synthetic
-///   <c>_G&lt;addr&gt;</c> names from a heap round-trip get
-///   renumbered <c>A</c>, <c>B</c>, <c>C</c>, … sharing-aware.
-///   Parser-given names pass through unchanged.</item>
+/// <item><strong>Variable naming</strong> — a clause as written keeps its
+///   parser-given names; one with variables the program did not write (a
+///   grammar rule's translation, a heap round-trip) has them all named
+///   <c>A</c>, <c>B</c>, <c>C</c>, … in order of first occurrence.</item>
 /// </list>
 /// </summary>
 public static class ClausePortrayer
@@ -48,7 +48,7 @@ public static class ClausePortrayer
     {
         Term t = DemangleTerm(clauseTerm);
         t = StripHookOrderGuard(t);
-        t = RenameSyntheticVars(t);
+        t = NameVariables(t);
 
         if (t is CompoundTerm rule && rule.Functor == ":-" && rule.Args.Length == 2)
         {
@@ -373,13 +373,17 @@ public static class ClausePortrayer
         return finished!;
     }
 
-    /// <summary>Walks the AST mapping each synthetic <c>_G&lt;n&gt;</c>
-    /// / <c>_C&lt;n&gt;</c> variable name to a fresh single-letter
-    /// name (A, B, C, …; then A1, B1, … after Z). Sharing-aware:
-    /// same synthetic name maps to the same letter throughout.
-    /// User-given names pass through unchanged.</summary>
-    private static Term RenameSyntheticVars(Term term)
+    /// <summary>The names a listed clause's variables print with. A clause
+    /// as the program wrote it keeps its names. One with a variable the
+    /// program did not write (a grammar rule's translation, a clause read
+    /// back from the heap) has every variable named A, B, C, … (then A1, …)
+    /// in order of first occurrence, as numbervars/3 names what clause/2
+    /// returns: its source names no longer describe the clause, and keeping
+    /// them beside fresh letters printed two variables as one (issue #222).
+    /// An anonymous <c>_</c> stays <c>_</c>.</summary>
+    private static Term NameVariables(Term term)
     {
+        if (!HasSyntheticVar(term)) return term;
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
         int next = 0;
         string FreshName()
@@ -392,7 +396,7 @@ public static class ClausePortrayer
         }
         Term RenameLeaf(Term t)
         {
-            if (t is not VarTerm v || !IsSyntheticName(v.Name)) return t;
+            if (t is not VarTerm v || v.Name == "_") return t;
             if (!map.TryGetValue(v.Name, out var nm))
             {
                 nm = FreshName();
@@ -400,9 +404,27 @@ public static class ClausePortrayer
             }
             return new VarTerm(nm);
         }
-        // Leaves are reached left to right, so the letters still go out in
+        // Leaves are reached left to right, so the letters go out in
         // first-occurrence order.
         return RewriteBottomUp(term, RenameLeaf, f => f);
+    }
+
+    private static bool HasSyntheticVar(Term term)
+    {
+        var pending = new Stack<Term>();
+        pending.Push(term);
+        while (pending.Count > 0)
+        {
+            switch (pending.Pop())
+            {
+                case VarTerm v when IsSyntheticName(v.Name):
+                    return true;
+                case CompoundTerm c:
+                    foreach (Term a in c.Args) pending.Push(a);
+                    break;
+            }
+        }
+        return false;
     }
 
     private static bool IsSyntheticName(string name)
