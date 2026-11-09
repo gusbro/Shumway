@@ -105,8 +105,10 @@ public static partial class MetaBuiltins
         }
         else
         {
-            if (module is not null
-                && host.ModuleImportSource(module, fid) is { } src
+            // A bare head is asked from user's viewpoint, whose import table
+            // holds what a top-level use_module brought in (an engine library
+            // that is an export-qualified module among them).
+            if (host.ModuleImportSource(module ?? PrologEngine.DefaultModuleName, fid) is { } src
                 && host.ModuleDefinesFunctor(src, fid))
             {
                 importedFrom = src;

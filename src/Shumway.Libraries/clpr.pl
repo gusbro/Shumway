@@ -20,12 +20,8 @@
 % promoted. A variable carrying BOTH clpfd and clpr attributes is not
 % supported.
 
-:- module(clpr).
-
-:- public '{}'/1.
-:- public '$clpr_dep_eq'/2.
-:- public '$clpr_par_bound'/1.
-:- public clpr_attr_goals/3.
+:- module(clpr, ['{}'/1, entailed/1, inf/2, sup/2, minimize/1, maximize/1,
+                 bb_inf/3, bb_inf/4, dump/3]).
 
 % ===== linear forms: lin(Constant, [Var-Coeff, ...]) =====
 clpr_add(lin(C1, T1), lin(C2, T2), lin(C3, T3)) :-
@@ -456,7 +452,6 @@ verify_attributes(clpr, AttrValue, Value, Goals) :-
 % ===== asking the store questions (SWI / SICStus surface) =====
 
 %! entailed(+Constraint) | CLP(R) | True when the store already implies Constraint, without adding it. Asks whether the negation is unsatisfiable, so the store is left exactly as it was.
-:- public entailed/1.
 entailed(C) :- var(C), !, throw(error(instantiation_error, entailed/1)).
 entailed((A, B)) :- !, entailed(A), entailed(B).
 entailed(C) :-
@@ -474,19 +469,15 @@ clpr_negate(A  =  B, A =\= B) :- !.
 clpr_negate(C, _) :- throw(error(type_error(clpr_constraint, C), _)).
 
 %! inf(+Expr, -Inf) | CLP(R) | The infimum of Expr under the current store: the greatest lower bound the constraints imply. Fails when Expr is unbounded below.
-:- public inf/2.
 inf(Expr, Inf) :- clpr_optimum(Expr, min, Inf).
 
 %! sup(+Expr, -Sup) | CLP(R) | The supremum of Expr under the current store: the least upper bound the constraints imply. Fails when Expr is unbounded above.
-:- public sup/2.
 sup(Expr, Sup) :- clpr_optimum(Expr, max, Sup).
 
 %! minimize(+Expr) | CLP(R) | Pins Expr to its infimum, adding that equation to the store. Fails when Expr is unbounded below.
-:- public minimize/1.
 minimize(Expr) :- inf(Expr, I), '{}'(Expr =:= I).
 
 %! maximize(+Expr) | CLP(R) | Pins Expr to its supremum, adding that equation to the store. Fails when Expr is unbounded above.
-:- public maximize/1.
 maximize(Expr) :- sup(Expr, S), '{}'(Expr =:= S).
 
 % Optimising a linear objective: hand the component's inequalities and
@@ -540,11 +531,9 @@ clpr_lp_coeffs([V|Vs], Terms, [C|Cs]) :-
     clpr_lp_coeffs(Vs, Terms, Cs).
 
 %! bb_inf(+Ints, +Expr, -Inf) | CLP(R) | The infimum of Expr with the variables in Ints restricted to integers: branch and bound over the linear relaxation. Requires those variables to be bounded, as the search has nothing to close otherwise.
-:- public bb_inf/3.
 bb_inf(Ints, Expr, Inf) :- bb_inf(Ints, Expr, Inf, _).
 
 %! bb_inf(+Ints, +Expr, -Inf, -Vertex) | CLP(R) | As bb_inf/3, and Vertex comes back as the values the Ints take where that infimum is reached.
-:- public bb_inf/4.
 bb_inf(Ints, Expr, Inf, Vertex) :- bb_min(Ints, Expr, Inf, Vertex).
 
 % Solve the relaxation; if an integer variable came out fractional,
@@ -598,7 +587,6 @@ bb_at(V, [W|_], [X|_], X) :- V == W, !.
 bb_at(V, [_|Ws], [_|Xs], X) :- bb_at(V, Ws, Xs, X).
 
 %! dump(+Vars, +Names, -Constraints) | CLP(R) | The residual constraints on Vars, written over Names instead of the variables themselves. The store is not changed: this reports it.
-:- public dump/3.
 dump(Vars, Names, Constraints) :-
     copy_term(Vars, Copy, Goals),
     Copy = Names,
@@ -607,9 +595,9 @@ dump(Vars, Names, Constraints) :-
 % ===== constraint projection =====
 % copy_term/3 collects, for every constrained variable of the
 % copied term, the residual constraints re-expressed over the
-% copy. attribute_goals/4 is dynamic (pre-declared by the prelude);
-% a dynamic clause's body is not module-mangled, so it delegates to
-% the public clpr_attr_goals/3, whose body resolves clpr locals.
+% copy. attribute_goals/4 is this module's own hook, read as
+% clpr:attribute_goals(...) by the projection (ADR-038, second
+% amendment), as the engine reads verify_attributes/4 (ADR-040).
 attribute_goals(clpr, Attr, V, Goals) :- clpr_attr_goals(Attr, V, Goals).
 
 % a solved variable projects as `{V =:= Expr}`; every constraint

@@ -58,6 +58,32 @@ public sealed class BundleClauseTermsTests
         Assert.Equal(expectedText, actual.Bindings["R"].ToString()!);
     }
 
+    // The same through user's qualified view. A bundle's program lives in a
+    // module named after its file, with global publics; user's view is the
+    // global namespace, so user:foo/1 names it as the consult's does.
+    private const string QualifiedProbe =
+        "current_predicate(user:foo/1), " +
+        "findall(B, clause(user:foo(_), B), Bs), " +
+        "with_output_to(atom(L), listing(user:foo/1)), " +
+        "R = Bs-L.";
+
+    [Fact]
+    public void ReleaseBundle_UserQualifiedView_MatchesTheConsult()
+    {
+        var consulted = new PrologEngine();
+        consulted.ConsultString(Program);
+        var expected = consulted.Query(QualifiedProbe);
+        Assert.True(expected.Success);
+        string expectedText = expected.Bindings["R"].ToString()!;
+        Assert.Contains("foo(X) :-", expectedText);
+
+        var bundled = FromBundle(strip: false);
+        Assert.True(bundled.Query("main.").Success);
+        var actual = bundled.Query(QualifiedProbe);
+        Assert.True(actual.Success);
+        Assert.Equal(expectedText, actual.Bindings["R"].ToString()!);
+    }
+
     [Fact]
     public void StrippedBundle_HasNoClausesToShow()
     {

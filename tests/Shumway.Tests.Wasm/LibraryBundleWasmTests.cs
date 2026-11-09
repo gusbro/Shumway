@@ -61,7 +61,9 @@ public class LibraryBundleWasmTests
         Assert.Single(engine.IlPromotion.PendingWasmModules);
 
         WasmTierDelegate.ResetDiag();
-        var r = engine.Query("freeze(X, Y = done), dif(A, B), A = 1, X = go.");
+        // A library bundle loaded directly imports nothing into user: the
+        // exports are named by their module.
+        var r = engine.Query("coroutining:freeze(X, Y = done), coroutining:dif(A, B), A = 1, X = go.");
         Assert.True(r.Success);
         Assert.Equal("done", r.Bindings["Y"].ToString());
         var wasm = engine.IlPromotion.Wasm!;

@@ -371,8 +371,12 @@ public static class ShmoCompiler
                 // dependency for the linker; for a filtered file import, resolve the
                 // import table now (lib name = module name) so ModuleRewrite mangles
                 // the importer's calls to X$pred.
-                if (d.Args[0] is CompoundTerm { Functor: "use_module" } umDir
-                    && umDir.Args.Length is 1 or 2
+                // `:- ensure_loaded(library(X))` is the same load as use_module/1;
+                // ensure_loaded of a file name is not, and stays a goal.
+                if (d.Args[0] is CompoundTerm { Functor: "use_module" or "ensure_loaded" } umDir
+                    && (umDir.Functor == "use_module"
+                        ? umDir.Args.Length is 1 or 2
+                        : umDir.Args is [CompoundTerm { Functor: "library", Args.Length: 1 }])
                     && TryReadLibrarySpec(umDir.Args[0], out string libName, out bool baked))
                 {
                     List<PredicateRef>? filter = null;

@@ -1089,6 +1089,7 @@ internal sealed class ConsultPipeline
         // debug-compiled program stepped into permutation/2 with the prelude's
         // recompiled sites attributed to the user's own file.
         foreach (int fid in module.PublicFunctors) AddSpecOf(specs, fid);
+        foreach (int fid in module.ExportFunctors) AddSpecOf(specs, fid);
         foreach (int fid in module.DynamicFunctors) AddSpecOf(specs, fid);
         if (E._precompiledModuleLocals.TryGetValue(moduleName, out var locals))
             foreach (int fid in locals) AddSpecOf(specs, fid);
@@ -2098,6 +2099,15 @@ internal sealed class ConsultPipeline
                 var filter = DirectiveImportList("use_module/2", umDir2.Args[1]);
                 string? src = E.ExecuteUseModuleDirective(umDir2.Args[0]);
                 RecordImports(src, filter);
+            }
+            else if (body is CompoundTerm { Functor: "ensure_loaded",
+                         Args: [CompoundTerm { Functor: "library", Args.Length: 1 } elLib] })
+            {
+                // `:- ensure_loaded(library(Name))` is `:- use_module(library(Name))`,
+                // as on the reference systems: the library's exports are imported
+                // where the directive stands. A file name stays a goal below.
+                string? src = E.ExecuteUseModuleDirective(elLib);
+                RecordImports(src, filter: null);
             }
             else
             {

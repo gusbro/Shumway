@@ -495,12 +495,21 @@ public static class ShmoLinker
                 // its (mangled Source$edge) definition. The bytecode already mangled
                 // the call, so only reachability needs the mapping here.
                 if (moduleImports.TryGetValue(curMod, out var curImports)
-                    && curImports.TryGetValue(edge, out var importSrc)
-                    && moduleDefined.TryGetValue(importSrc, out var srcDefs)
-                    && srcDefs.ContainsKey(edge))
+                    && curImports.TryGetValue(edge, out var importSrc))
                 {
-                    queue.Enqueue((importSrc, edge));
-                    continue;
+                    if (moduleDefined.TryGetValue(importSrc, out var srcDefs)
+                        && srcDefs.ContainsKey(edge))
+                    {
+                        queue.Enqueue((importSrc, edge));
+                        continue;
+                    }
+                    // Imported from an engine library baked as a module: its
+                    // bundle, loaded before this one, defines Source$edge, and
+                    // the call is already spelled so. Nothing here to walk.
+                    if (engineLibraries.Contains(importSrc)
+                        && foreignIndicators.Contains(
+                            new PredicateRef(importSrc + "$" + edge.Name, edge.Arity)))
+                        continue;
                 }
                 // 2) Global public namespace.
                 if (globalPublic.TryGetValue(edge, out var defMod))
@@ -1824,13 +1833,22 @@ public static class ShmoLinker
         foreach (var o in input)
             if (o.IsExportQualified)
                 exportsByModule[o.ModuleName] = o.Exports;
+        // An engine library that is an export-qualified module (ADR-038, second
+        // amendment) has its surface in its baked bundle; a legacy one offers
+        // bare publics and nothing to import.
+        foreach (var o in input)
+            foreach (var d in o.LibraryDeps)
+                if (d.Baked && !exportsByModule.ContainsKey(d.LibName)
+                    && BakedExportsOf(d.LibName) is { } baked)
+                    exportsByModule[d.LibName] = baked;
 
         var result = new List<ShmoObject>(input.Count);
         foreach (var obj in input)
         {
             bool hasImportAll = false;
             foreach (var d in obj.LibraryDeps)
-                if (!d.Baked && d.Filter is null) { hasImportAll = true; break; }
+                if (d.Filter is null && (!d.Baked || exportsByModule.ContainsKey(d.LibName)))
+                { hasImportAll = true; break; }
             if (!hasImportAll || obj.ClauseTerms.Count == 0) { result.Add(obj); continue; }
 
             var imports = new List<ShmoImportEntry>(obj.Imports);
@@ -1839,7 +1857,7 @@ public static class ShmoLinker
             bool gained = false;
             foreach (var dep in obj.LibraryDeps)
             {
-                if (dep.Baked || dep.Filter is not null) continue;
+                if (dep.Filter is not null) continue;
                 if (!exportsByModule.TryGetValue(dep.LibName, out var exports))
                     continue;   // unresolved library — reported by the check above
                 foreach (var p in exports)
@@ -1851,6 +1869,18 @@ public static class ShmoLinker
             result.Add(recompiled ?? obj);
         }
         return result;
+    }
+
+    /// <summary>The exports of an engine library baked as an export-qualified
+    /// module, or null for a legacy one and for a name that is no engine
+    /// library.</summary>
+    private static IReadOnlyList<PredicateRef>? BakedExportsOf(string libName)
+    {
+        if (!LibraryBundles.IsEngineLibrary(libName)) return null;
+        foreach (var entry in LibraryBundles.Get(libName).Entries)
+            if (entry.IsExportQualified && entry.ModuleName == libName)
+                return entry.Exports;
+        return null;
     }
 
     // ADR-038 — recompile a module from its clause terms with a resolved import

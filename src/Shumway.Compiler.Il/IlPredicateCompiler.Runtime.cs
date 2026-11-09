@@ -188,6 +188,10 @@ public sealed partial class IlPredicateCompiler
         // $mqual; unwrapped so call(M:G, Extra) extends G, not the ':' functor.
         private static readonly int ColonFid =
             FunctorTable.Intern(AtomTable.Intern(":", permanent: true).Id, 2);
+        private static readonly int UserModuleAtomId =
+            AtomTable.Intern("user", permanent: true).Id;
+        private static readonly int PreludeModuleAtomId =
+            AtomTable.Intern("$prelude", permanent: true).Id;
 
         /// <summary>Dispatches <c>call/N</c> with <paramref name="callArity"/>
         /// extra-arg count and the supplied cut barrier. Returns the
@@ -213,7 +217,7 @@ public sealed partial class IlPredicateCompiler
             // (see ModuleRewrite / BytecodeInterpreter.DispatchCall). Unwrap it,
             // updating X0; the module steers the user-address resolution below so
             // a bare goal functor resolves against that module's locals first.
-            int resolutionModule = PrepareMqualGoal(engine, ref goal);
+            int resolutionModule = PrepareMqualGoal(engine, ref goal, controlConstructs: callArity == 1);
 
             // SS7.6.2 — convert the body at the call/N boundary (and only
             // there; '$call'/2 dispatches an already-converted body). See
@@ -276,16 +280,24 @@ public sealed partial class IlPredicateCompiler
                 engine.SetRegister(i, engine.GetHeap(argBase + i));
             for (int i = 0; i < extraCount; i++)
                 engine.SetRegister(goalArity + i, extra[i]);
-            if (resolutionModule >= 0)
-                engine.QualifyMetaArgRegisters(resolutionModule, atomId, totalArity);
-
             // §7.8.3 — a control construct's arguments must convert
             // before any of it runs. Same spot as the bytecode twin:
-            // ahead of the route cache, so the cached path is covered;
-            // and, as there, only at the boundary.
-            if (convertBody && totalArity == 2 && AtomTable.GetById(atomId)?.Name
-                    is "," or ";" or "->" or "*->")
+            // before the arguments take a module and ahead of the route
+            // cache, so the cached path is covered; and, as there, only at
+            // the boundary.
+            bool controlConstruct = totalArity == 2 && AtomTable.GetById(atomId)?.Name
+                    is "," or ";" or "->" or "*->";
+            if (convertBody && controlConstruct)
                 MetaBodyConvert.CheckControlGoalFromRegisters(engine, atomId);
+            // A construct's two goals take the module each, as the bytecode
+            // twin does; a predicate's meta-arguments by its declaration.
+            if (resolutionModule >= 0 && controlConstruct)
+            {
+                if (resolutionModule != PreludeModuleAtomId)
+                    MetaBodyConvert.DistributeModuleIntoRegisters(engine, resolutionModule);
+            }
+            else if (resolutionModule >= 0)
+                engine.QualifyMetaArgRegisters(resolutionModule, atomId, totalArity);
 
             // shared meta-call route cache (see MetaRoute.cs).
             // Same cache the bytecode interpreter's DispatchCall fills; each
@@ -416,6 +428,21 @@ public sealed partial class IlPredicateCompiler
                     return importedAddr;
                 }
             }
+            // An untagged goal is user's: a top-level import before the
+            // bare-global namespace, as the interpreter's twin; so is a goal
+            // the prelude meta-calls and does not define.
+            if ((resolutionModule < 0 || resolutionModule == PreludeModuleAtomId)
+                && addresses is not null
+                && engine.CurrentImportMap is { } userImports
+                && userImports.TryGetValue(
+                    ((long)UserModuleAtomId << 32) | (uint)functorId, out int userImportedFid)
+                && addresses.TryGetValue(userImportedFid, out int userImportedAddr))
+            {
+                if (routeCacheable)
+                    cache[routeKey] = new MetaRoute(MetaRouteKind.Jump, userImportedAddr);
+                engine.SetB0(engine.B);
+                return userImportedAddr;
+            }
 
             // Builtin-as-goal. The recursion case (call(call(...))) is
             // handled by re-entering Dispatch with the recovered arity
@@ -493,7 +520,7 @@ public sealed partial class IlPredicateCompiler
         /// <summary>Mirror of BytecodeInterpreter.PrepareMqualGoal: unwraps a
         /// <c>'$mqual'(Module, Goal)</c> tag on X0, distributes the module over a
         /// control construct's goal sub-args, and returns the module (or -1).</summary>
-        private static int PrepareMqualGoal(Activation engine, ref Cell goal)
+        private static int PrepareMqualGoal(Activation engine, ref Cell goal, bool controlConstructs)
         {
             int module = -1;
             while (goal.Tag == Tag.Str)
@@ -526,7 +553,9 @@ public sealed partial class IlPredicateCompiler
             }
             if (module < 0) return -1;
 
-            if (goal.Tag == Tag.Str)
+            // Only for call/1, as the interpreter's twin: with arguments
+            // appended, `;`/2 is the goal `;`/3, a predicate that keeps the module.
+            if (controlConstructs && goal.Tag == Tag.Str)
             {
                 int fid = engine.GetHeap(goal.AsHeapIndex).AsFunctorId;
                 if (fid == ConjFid || fid == DisjFid || fid == ArrowFid || fid == SoftArrowFid)

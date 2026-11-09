@@ -2168,7 +2168,7 @@ public sealed partial class PrologEngine
                 bool known = entryByFunctor.TryGetValue(fid, out int at);
                 if (!seen.Add(known ? at : -(fid + 1))) continue;
                 var (markerAtom, markerArity) = FunctorTable.Lookup(fid);
-                string markerName = AtomTable.GetById(markerAtom)?.Name ?? "?";
+                var (markerName, markerInternal) = FrameNameOf(markerAtom, fid);
                 if (markerName == "__query__") continue;
                 plain.Add((markerName, markerArity));
                 // The cursor does not say which clause: only a predicate of
@@ -2176,7 +2176,7 @@ public sealed partial class PrologEngine
                 var compiled = known ? map[at] : null;
                 frames.Add(new StackFrame(markerName, markerArity,
                     compiled is { ClauseCount: 1 } ? compiled.SourcePosition : SourcePosition.Start,
-                    _nonDebuggableFunctors.Contains(fid)));
+                    markerInternal));
                 continue;
             }
             int idx = Array.BinarySearch(sortedEntries, addr);
@@ -2196,7 +2196,7 @@ public sealed partial class PrologEngine
             }
             if (!seen.Add(entryAddr)) continue;
             var (atomId, arity) = FunctorTable.Lookup(pred.FunctorId);
-            string name = AtomTable.GetById(atomId)?.Name ?? "?";
+            var (name, isInternal) = FrameNameOf(atomId, pred.FunctorId);
             if (name == "__query__") continue;
             plain.Add((name, arity));
             // Locate the most recent Meta(DbgInfo) opcode at or before the
@@ -2206,10 +2206,23 @@ public sealed partial class PrologEngine
             // the predicate's first-clause position when no Meta opcode is
             // present (single-clause predicates or older bundle blobs).
             SourcePosition framePos = FindClausePosition(pred, addr - entryAddr);
-            frames.Add(new StackFrame(name, arity, framePos,
-                _nonDebuggableFunctors.Contains(pred.FunctorId)));
+            frames.Add(new StackFrame(name, arity, framePos, isInternal));
         }
         return (plain, frames);
+    }
+
+    /// <summary>The name a frame shows and whether the user wrote it. A
+    /// predicate of one of the engine's libraries (an export-qualified module,
+    /// ADR-038 second amendment) reads by its bare name and is internal: the
+    /// module is the engine's, not a file of the program's.</summary>
+    private (string Name, bool IsInternal) FrameNameOf(int atomId, int functorId)
+    {
+        string name = AtomTable.GetById(atomId)?.Name ?? "?";
+        bool isInternal = _nonDebuggableFunctors.Contains(functorId);
+        int cut = name.IndexOf('$');
+        if (cut > 0 && cut < name.Length - 1 && LibraryBundles.IsEngineLibrary(name[..cut]))
+            return (name[(cut + 1)..], true);
+        return (name, isInternal);
     }
 
     /// <summary>Scans <paramref name="pred"/>'s bytecode from offset 0 up to

@@ -1265,14 +1265,34 @@ public static partial class MetaBuiltins
         // The store key M names for the predicate (ADR-038, amendment):
         // the global one in the legacy world, M's own or its import's
         // source otherwise.
-        var candidates = new List<Clause>();
+        IEnumerable<Clause> source;
         int key = host.DatabaseFunctorFor(mod.Name, fid, create: false);
         if (host.IsDynamic(key))
-            candidates.AddRange(host.DynamicClausesFor(key));
+            source = host.DynamicClausesFor(key);
         else if (host.ModuleDefinesFunctor(mod.Name, fid))
-            candidates.AddRange(host.StaticClausesInModule(mod.Name, fid));
+            // user's view is the global one: a program's predicate, in a
+            // bundle's file-named module as much as consulted into user.
+            source = mod.Name == PrologEngine.DefaultModuleName
+                ? host.StaticClausesFor(fid)
+                : host.StaticClausesInModule(mod.Name, fid);
         else if (host.ModuleImportSource(mod.Name, fid) is { } src)
-            candidates.AddRange(host.StaticClausesInModule(src, fid));
+            source = host.StaticClausesInModule(src, fid);
+        else
+            source = System.Array.Empty<Clause>();
+
+        // The same head prefilter as the unqualified form's: a clause whose
+        // head cannot match is no candidate, so clause(m:p(1), B) over
+        // p(1). p(2). is deterministic too.
+        var candidates = new List<Clause>();
+        int headHeap = engine.MaterializeRegisterForTrace(1);
+        foreach (Clause c in source)
+        {
+            host.ClauseCandidatesScanned++;
+            bool excluded = c.HeadImage is { } image
+                ? image.DefinitelyDiffers(engine, headHeap, 4)
+                : !HeadCanMatch(headPattern, ClauseHead(c));
+            if (!excluded) candidates.Add(c);
+        }
 
         int returnPc = engine.BuiltinReturnPc;
         var steps = new ClauseEnumSteps(candidates, pairRegister: 2);

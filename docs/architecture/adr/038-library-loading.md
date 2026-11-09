@@ -7,6 +7,9 @@ Shipped ([Phase 36](../../history/phase-36-closure.md)).
 Amended 2026-11-06 (accepted; built 2026-11-07): a dynamic predicate of an
 export-qualified module belongs to that module (the amendment at the end).
 
+Amended 2026-11-08 (accepted; built with it): the engine's own libraries are
+export-qualified modules (the second amendment at the end).
+
 ## Implementation status
 
 All four components are implemented and tested:
@@ -88,9 +91,10 @@ and assume per-module import isolation. We want them to load unchanged.
 A **2-argument** module directive is the sole trigger for the new model. Everything
 that exists today is untouched:
 
-- **Legacy (unchanged, bare-global).** `:- module(Name)` (1-arg) + `:- public`, the
-  prelude, and the engine's own libraries keep their bare-global names (`member/2`,
-  `#=/2`, …). Those libraries ship as bundles baked at build time
+- **Legacy (unchanged, bare-global).** `:- module(Name)` (1-arg) + `:- public` and
+  the prelude keep their bare-global names (`member/2`, …). The engine's own
+  libraries kept theirs (`#=/2`, …) until the second amendment made them
+  export-qualified modules. Those libraries ship as bundles baked at build time
   (`src/Shumway.Libraries`), never as source consulted at load.
 - **Export-qualified module** = a source with `:- module(Name, [Exports])`. ALL its
   predicates are mangled `Name$x` — it contributes **nothing** to the bare-global
@@ -437,3 +441,111 @@ pin the qualified spellings; the tests that pinned the global model now
 write `m:` or `user:`. Red counter-proofs: the global store for a modern
 module's dynamic fails the two-predicates test; compiling an asserted clause
 in `user`'s context fails the private-helper test.
+
+## Second amendment (2026-11-08): the engine's libraries are export-qualified modules
+
+Accepted 2026-11-08, built with it.
+
+### Context
+
+Section 1 left the engine's own libraries (`clpfd`, `clpr`, `coroutining`,
+`reif`) as `:- module(Name)` modules with `:- public` predicates: bare-global
+names, one namespace with the program's. That is the legacy world, kept for a
+program written as one application in many files; a library is not that. The
+cost showed in issue #198: `clpr:{...}` reached the program's own `{}/1`,
+because a bare-global public is what any definition of the name is. On the
+reference systems a library is a module with an export list, a program's
+`{}/1` and `clpr:{}/1` are two predicates, and `Name:Goal` names the
+library's by construction. The first amendment gave the modern world its
+dynamics; the libraries that ship with the engine are the last thing in it
+written for the other world.
+
+### Decision
+
+1. **Each engine library is `:- module(Name, Exports)`**, the export list
+   its former `:- public` predicates and, for `clpfd`, its operators
+   (ADR-046 point 3). Its internals, the `$`-named helpers among them, are
+   the module's own and reach no namespace. `use_module(library(Name))`
+   imports the exports where the directive stands, the goal form and the
+   host's `UseName()` into `user`, as for any module; `Name:Goal` is the
+   library's own predicate. `ensure_loaded(library(Name))` is the same load,
+   as on the reference systems, in the directive, the goal and separate
+   compilation; `ensure_loaded` of a file name is unchanged.
+2. **The attribute hooks are the module's own.** `verify_attributes/4` is
+   already (ADR-040), and `attribute_goals/4` joins it: the projection reads
+   `M:attribute_goals(M, Attr, Var, Goals)`, the module's own clause first and
+   `user`'s dynamic predicate, the legacy form, when the module has none. A
+   library's bare `attribute_goals(M, ...)` clause is then its own, as its
+   `verify_attributes/4` is, and nothing of it reaches `user`. The engine's
+   other hook facts stay `user`'s (first amendment, point 9).
+3. **A baked library is loaded as the module it is.** The bundle carries the
+   export list, the exported operators and the import table as any
+   export-qualified bundle does (section 4 and the first amendment, point
+   10); the loader imports the exports into the module that asked. The
+   linker counts a baked library's exports, spelled `Name$pred`, as what an
+   importer's compiled calls reach, and an import of one resolves there.
+4. **A control construct with arguments appended is a predicate.**
+   `call((A ; B), T)` is the goal `;(A, B, T)`, `reif`'s `;/3`; the module a
+   meta-argument carries stays on it, where before the module was distributed
+   over `A` and `B` as if the goal were the construct. Only `call/1` sees a
+   construct.
+5. **`predicate_property/2` on a bare head answers from `user`'s viewpoint**:
+   a top-level import is found, with `imported_from(Name)`, as it is on the
+   reference systems. The other way round, `user`'s qualified view is the
+   global namespace: `current_predicate(user:PI)`, `clause(user:H, B)` and
+   `listing(user:Spec)` see a bare-global module's publics (a bundle's
+   program lives in a module named after its file) as the goal `user:H`
+   reaches them already. The qualified `clause/2` filters the heads that
+   cannot match as the bare form does, so it is as deterministic.
+6. **A goal from `user` carries `user`.** A goal meta-called with a module
+   context passes that module to its meta-arguments (ADR-056); `user`'s
+   goals passed bare, since `user`'s predicates were global. A bare name in
+   `user` now means a top-level import first, which the callee's module
+   cannot see, so `user`'s goals are qualified like any module's, with the
+   rule the compiler applies to `user`'s text: a `:` argument of a builtin
+   stays bare there, where bare already names the global store. A control
+   construct is checked before its arguments take a module, so the culprit
+   of `call(',', fail, 3)` stays what the program wrote; handed to `call/N`
+   as an atom with its goals appended (`call(;, P, Q)`), its goals take the
+   module each, as the compound form's do. A goal that reaches
+   the dispatcher with no module at all (a closure's argument, a goal built
+   as data) is `user`'s, and resolves a top-level import before the
+   bare-global namespace, as `user`'s text does; so does a goal the prelude
+   meta-calls and does not define, such as the goals a blackboard entry
+   re-runs, which `copy_term/3` handed back as the program's.
+7. **The legacy world is untouched.** `:- module(Name)` and `:- public` stay
+   for the programs written that way; nothing about them changes because the
+   engine's libraries stopped using them.
+
+### Consequences
+
+- A program that defined a predicate under a library's name beside the
+  library, which the bare-global world refused as a public collision or let
+  shadow, now has its own and reaches the library's as `Name:Goal`.
+- A program that called a library's internal `$`-helper bare has to stop:
+  nothing outside the library did, in the repository or its tests.
+- The `--consult` compile of a program using a library keeps working: the
+  import table it records is what the linker and the loader resolve. The
+  file-at-a-time compile stays the narrow deferred case of the implementation
+  status above.
+- The error contexts, the predicate reference and the generated
+  documentation name the predicates as before: the export list is the same
+  surface the `:- public` directives named.
+
+### Tests
+
+The library test classes run as before on the modern form, library by
+library: `reif` first, whose `;/3` and `','/3` are what point 4 is for
+(`ReifTests`, `MetaPredicatePropertyTests`, `MidQueryLibraryLoadTests`,
+`EngineLibraryLinkTests`); `coroutining`, whose projection is point 2 and
+whose `maplist(call, Goals)` over `copy_term/3`'s goals is point 6's
+untagged goal (`CoroutiningTests`, `FrozenVariableGoalTests`,
+`DifResidualProjectionTests`); `clpr` (`Clpr*Tests`, `ClpCoexistenceTests`);
+and `clpfd`, whose reified comparisons handed to `reif` as data are point
+6's qualified goal (`ReifTests.ClpfdReifiedComparisons`, the `Clpfd*` and
+`Fd*` classes, the operator tests). `ControlConstructAppendedGoalsTests`
+pins `call(;, P, Q)` in a module on both tiers;
+`BundleClauseTermsTests.ReleaseBundle_UserQualifiedView_MatchesTheConsult`,
+`ClauseLookupIndexTests.AQualifiedLookupFiltersHeadsLikeTheBareOne` and
+`EnumerationDeterminismConformance.ClauseFiltersHeadsThatCannotMatch`
+pin `user`'s qualified view and the qualified `clause/2`'s determinism.

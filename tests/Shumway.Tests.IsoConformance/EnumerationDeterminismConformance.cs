@@ -59,12 +59,17 @@ public class EnumerationDeterminismConformance
         // First-argument indexing's question, asked at the AST level.
         Assert.True(IsDeterministic(
             "assertz(det_cl(1)), assertz(det_cl(2)),", "clause(det_cl(1), _)"));
+        // The qualified form filters the same way.
+        Assert.True(IsDeterministic(
+            "assertz(det_cl(1)), assertz(det_cl(2)),", "clause(user:det_cl(1), _)"));
         // Filtering must not lose solutions.
         var engine = new PrologEngine();
         engine.ConsultString(":- public p/2.\np(1, a). p(2, b). p(X, c) :- q(X). q(9).");
         Assert.Equal(2, engine.QueryAll("clause(p(1, _), _).").Count());
         Assert.Equal(3, engine.QueryAll("clause(p(_, _), _).").Count());
         Assert.Single(engine.QueryAll("clause(p(2, b), _)."));
+        Assert.Equal(2, engine.QueryAll("clause(user:p(1, _), _).").Count());
+        Assert.Equal(3, engine.QueryAll("clause(user:p(_, _), _).").Count());
     }
 
     [Fact]

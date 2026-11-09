@@ -9,25 +9,13 @@
 % verify_attributes/4 hook (ADR-040) as clpfd and clpr, so all three own
 % their hooks and share an engine.
 
-:- module(coroutining).
-
-:- public freeze/2.
-:- public frozen/2.
-:- public dif/2.
-:- public when/2.
+:- module(coroutining, [freeze/2, frozen/2, dif/2, when/2]).
 
 % Surfaced by predicate_property/2 as meta_predicate(T) — how an
 % embedding layer (Logtalk's compiler) learns the goal argument must
 % be wrapped for its calling context before handing it over.
 :- meta_predicate(freeze(*, 0)).
 :- meta_predicate(when(*, 0)).
-:- public coroutining_attr_goals/3.
-% public because the hook (a dynamic clause, body not module-mangled)
-% references it in its residual Goals — like clpfd's '$fd_set'/3.
-:- public '$co_alias_check'/1.
-:- public '$when_fire'/1.
-:- public '$dif_wake'/1.
-:- public '$co_goal'/1.
 
 % The attribute value is frozen(Goal), where Goal is one wrapped goal
 % or a (G1, G2) conjunction of them, oldest first: waking runs them in
@@ -374,9 +362,9 @@ verify_attributes(coroutining, frozen(G), Value, Goals) :-
 '$co_alias_check'(_).
 
 % ===== projection: residual constraints for the top level =====
-% attribute_goals/4 is dynamic (pre-declared by the prelude); a
-% dynamic clause's body is not module-mangled, so it delegates to
-% the public coroutining_attr_goals/3, whose body resolves locals.
+% attribute_goals/4 is this module's own hook, read as
+% coroutining:attribute_goals(...) by the projection (ADR-038, second
+% amendment), the way the engine reads verify_attributes/4 (ADR-040).
 % A dif/when suspension reads back as its user-facing constraint,
 % emitted ONCE — from its owner variable (the first variable of the
 % watched terms), skipping any retired incarnation — so a constraint

@@ -11,21 +11,10 @@
 % makes it so (X = Y, or dif(X, Y)). A T that is already bound decides
 % which one, without a choice point.
 
-:- module(reif).
+:- module(reif, [if_/3, (=)/3, dif/3, (',')/3, (;)/3, cond_t/3, memberd_t/3,
+                 tmember/2, tmember_t/3, tfilter/3, tpartition/4]).
 
 :- use_module(library(coroutining)).
-
-:- public if_/3.
-:- public (=)/3.
-:- public dif/3.
-:- public (',')/3.
-:- public (;)/3.
-:- public cond_t/3.
-:- public memberd_t/3.
-:- public tmember/2.
-:- public tmember_t/3.
-:- public tfilter/3.
-:- public tpartition/4.
 
 :- meta_predicate(if_(1, 0, 0)).
 :- meta_predicate(','(1, 1, *)).

@@ -297,11 +297,11 @@ public sealed partial class Activation
         _goalHasMetaArgs = false;
         if (MetaArgSpecOf is not { } specOf) return;
         if (moduleAtomId == PreludeModuleAtomId) return;
-        // user's predicates are global, so its goals need no module; wrapped,
-        // call(',', fail, 3) reported (user:fail, user:3) as its culprit. A
-        // `:` argument of a predicate the program defines is the exception:
-        // the callee reads it in the caller's module, wherever it lives.
-        bool inUser = moduleAtomId == UserModuleAtomId;
+        // user's goals carry user too: what a bare name means there is a
+        // top-level import first (an engine library's export, ADR-038 second
+        // amendment), which the callee's module cannot see. A control
+        // construct is not qualified: the caller checks it first, so its
+        // culprit stays what the program wrote.
         // The module's own predicate of that name is what the goal reaches.
         string? local = CurrentFunctorAddresses is { } addresses
             && addresses.TryGetValue(ModuleQualify.Mangle(moduleAtomId, atomId, totalArity), out _)
@@ -310,11 +310,16 @@ public sealed partial class Activation
         int[]? spec = specOf(FunctorTable.Intern(atomId, totalArity), local);
         if (spec is null || spec.Length != totalArity) return;
         _goalHasMetaArgs = true;
+        bool inUser = moduleAtomId == UserModuleAtomId;
         for (int i = 0; i < totalArity; i++)
         {
             int code = spec[i];
             if (code == -1) continue;
-            if (inUser && code != ModuleQualify.ColonArg) continue;
+            // As the compile-time twin (ModuleRewrite.QualifyMetaArgs): a `:`
+            // argument of a builtin stays bare in user, where bare already
+            // names the global store. Wrapped, clause(user:p(1), B) takes the
+            // qualified path, which enumerates where the bare one indexes.
+            if (inUser && code == ModuleQualify.ColonBuiltinArg) continue;
             Cell c = GetRegister(i);
             Cell d = c.Tag == Tag.Ref ? GetHeap(Deref(c.AsHeapIndex)) : c;
             if (d.Tag == Tag.Str)

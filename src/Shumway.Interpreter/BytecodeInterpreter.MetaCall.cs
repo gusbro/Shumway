@@ -514,7 +514,7 @@ public sealed partial class BytecodeInterpreter
         // module of the clause that meta-called it. Unwrap it, updating X0 to the
         // real goal; the module (or -1) steers the user-address resolution below
         // so a bare goal functor resolves against that module's locals first.
-        int resolutionModule = PrepareMqualGoal(ref goal);
+        int resolutionModule = PrepareMqualGoal(ref goal, controlConstructs: callArity == 1);
 
         // SS7.6.2 converts the whole body up front, at the call/N boundary:
         // in call(G) with G = (C=(!), (X=1,C;X=2)), C is a variable at
@@ -590,7 +590,29 @@ public sealed partial class BytecodeInterpreter
             _engine.SetRegister(i, _engine.GetHeap(argBase + i));
         for (int i = 0; i < extraCount; i++)
             _engine.SetRegister(goalArity + i, extra[i]);
-        if (resolutionModule >= 0)
+        // §7.8.3: a control construct's arguments must convert to a body
+        // before any of it runs — call((fail, 3)) and call(',', fail, 3)
+        // are both type_error(callable, (fail,3)), and `fail` must not
+        // execute first. Checked before the arguments take a module (the
+        // culprit is what the program wrote) and before the route cache, so
+        // the cached path is covered too. Only at the boundary: a '$call'/2
+        // sub-dispatch runs a piece of a body the boundary already checked
+        // and converted whole, and re-walking the rest of it at every piece
+        // made call/1 of an n-goal conjunction quadratic.
+        bool controlConstruct = IsControlConstruct(atomId, totalArity);
+        if (convertBody && controlConstruct)
+            Shumway.Core.MetaBodyConvert.CheckControlGoalFromRegisters(
+                _engine, atomId);
+        // A construct's two goals take the module each (call(;, P, Q) in m
+        // runs m's P and Q), as the compound form's do in PrepareMqualGoal;
+        // a predicate's meta-arguments take it by its declaration.
+        if (resolutionModule >= 0 && controlConstruct)
+        {
+            if (resolutionModule != PreludeModuleAtomId)
+                Shumway.Core.MetaBodyConvert.DistributeModuleIntoRegisters(
+                    _engine, resolutionModule);
+        }
+        else if (resolutionModule >= 0)
             _engine.QualifyMetaArgRegisters(resolutionModule, atomId, totalArity);
 
         // route cache. A repeat goal functor skips the intern,
@@ -607,17 +629,6 @@ public sealed partial class BytecodeInterpreter
         // A module-tagged goal bypasses the route cache: its resolution depends
         // on the module too, and the tagged path is the (uncommon) variable
         // meta-call, not the hot direct-call path.
-        // §7.8.3: a control construct's arguments must convert to a body
-        // before any of it runs — call((fail, 3)) and call(',', fail, 3)
-        // are both type_error(callable, (fail,3)), and `fail` must not
-        // execute first. Checked here (not after the route cache) so the
-        // cached path is covered too. Only at the boundary: a '$call'/2
-        // sub-dispatch runs a piece of a body the boundary already checked
-        // and converted whole, and re-walking the rest of it at every piece
-        // made call/1 of an n-goal conjunction quadratic.
-        if (convertBody && IsControlConstruct(atomId, totalArity))
-            Shumway.Core.MetaBodyConvert.CheckControlGoalFromRegisters(
-                _engine, atomId);
         bool routeCacheable = resolutionModule < 0 && (uint)totalArity <= 0xFFFF;   // key packs arity in 16 bits
         long routeKey = ((long)atomId << 16) | (uint)totalArity;
         if (routeCacheable && cache.TryGetValue(routeKey, out var route))
@@ -756,6 +767,27 @@ public sealed partial class BytecodeInterpreter
                 return JumpToUserGoal(code, pc, importedAddr);
             }
         }
+        // An untagged goal is user's (a goal built as data, a closure's
+        // argument): what its bare name means there is a top-level import
+        // first (an engine library's export, ADR-038 second amendment), then
+        // the bare-global namespace, as user's own text resolves. A goal the
+        // prelude meta-calls and does not define is the program's as well
+        // (the goals a blackboard entry re-runs are copy_term/3's).
+        if ((resolutionModule < 0 || resolutionModule == PreludeModuleAtomId)
+            && addresses is not null
+            && _engine.CurrentImportMap is { } userImports
+            && userImports.TryGetValue(
+                ((long)UserModuleAtomId << 32) | (uint)functorId, out int userImportedFid)
+            && addresses.TryGetValue(userImportedFid, out int userImportedAddr))
+        {
+            if (routeCacheable)
+                cache[routeKey] = new Shumway.Core.MetaRoute(Shumway.Core.MetaRouteKind.Jump, userImportedAddr);
+            else
+                _engine.PublishMetaResolution(
+                    addresses, resolutionModule, observedGoalKey, extraCount,
+                    userImportedFid, observedAtomGoal, -1);
+            return JumpToUserGoal(code, pc, userImportedAddr);
+        }
 
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int builtinId))
         {
@@ -886,7 +918,12 @@ public sealed partial class BytecodeInterpreter
     /// real goal is a control construct, the module is distributed into its goal
     /// sub-args (so they keep resolving in that module once the <c>$call_*</c>
     /// helper runs them) and -1 is returned.</summary>
-    private int PrepareMqualGoal(ref Cell goal)
+    private static readonly int UserModuleAtomId =
+        AtomTable.Intern("user", permanent: true).Id;
+    private static readonly int PreludeModuleAtomId =
+        AtomTable.Intern("$prelude", permanent: true).Id;
+
+    private int PrepareMqualGoal(ref Cell goal, bool controlConstructs)
     {
         int module = -1;
         while (goal.Tag == Tag.Str)
@@ -919,7 +956,11 @@ public sealed partial class BytecodeInterpreter
         }
         if (module < 0) return -1;
 
-        if (goal.Tag == Tag.Str)
+        // A control construct's sub-goals take the module each; the construct
+        // itself is nobody's predicate. Only for call/1: with arguments
+        // appended, `;`/2 is the goal `;`/3, a predicate the module may define
+        // or import (reif's), and it keeps the module.
+        if (controlConstructs && goal.Tag == Tag.Str)
         {
             int fid = _engine.GetHeap(goal.AsHeapIndex).AsFunctorId;
             if (fid == ConjFunctorId || fid == DisjFunctorId
