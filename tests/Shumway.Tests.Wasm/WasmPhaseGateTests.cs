@@ -32,7 +32,10 @@ public class WasmPhaseGateTests
             wasm = Math.Min(wasm, sw.Elapsed.TotalMilliseconds * 1e6 / N);
         }
 
+        // Pinned to the interpreter: the default engine promotes to Tier-1 IL,
+        // which is not the baseline this gate measures against.
         var engine = new PrologEngine();
+        engine.IlPromotion.Threshold = 0;
         engine.ConsultString(program);
         engine.Query("loop(200000).");
         double tier0 = double.MaxValue;
