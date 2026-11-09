@@ -958,6 +958,20 @@ public sealed partial class Activation
     /// use. Typed in Compiler.Il, as the cache is.</summary>
     public object? PersistedIndexGraphs;
 
+    /// <summary>The literal pools' versions this activation's copies were taken
+    /// at (query setup, or the last refresh), so a refresh after an assert runs
+    /// only when a pool moved. A field, not a weak table keyed by activation:
+    /// every query makes an activation, and the table's entries made each setup
+    /// and each collection pay for all the dead ones.</summary>
+    public int[]? LiteralPoolVersions;
+
+    /// <summary>The host's code patcher state for this activation: the chain
+    /// table of the buffer it runs on, and the code its query owns. Fields,
+    /// not weak tables keyed by activation, for the same reason as
+    /// <see cref="LiteralPoolVersions"/>. Typed by the host.</summary>
+    public object? HostChainTable;
+    public object? HostQueryUnits;
+
     // threaded Tier-1 dispatch. An IL non-tail Call site sets
     // engine.Cp to a *resume marker* address instead of recursing into
     // RunSubroutine. When the callee Proceeds (Pc = Cp), the bytecode

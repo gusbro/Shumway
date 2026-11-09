@@ -2840,7 +2840,7 @@ public sealed partial class PrologEngine
     {
         // Per engine (one with no record refreshes unconditionally; a
         // refresh is idempotent).
-        var versions = _interpPoolVersions.GetValue(engine, static _ => new int[3] { -1, -1, -1 });
+        var versions = engine.LiteralPoolVersions ??= new int[3] { -1, -1, -1 };
         if (_literalPools.Strings.Version == versions[0]
             && _literalPools.Floats.Version == versions[1]
             && _literalPools.BigInts.Version == versions[2])

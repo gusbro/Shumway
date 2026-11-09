@@ -2046,8 +2046,9 @@ public sealed partial class PrologEngine
         };
         // The versions the interpreter's copies were taken at, so the
         // per-assert refresh (three Snapshot() copies) runs only when a pool
-        // changed since. Per activation (see _interpPoolVersions).
-        _interpPoolVersions.AddOrUpdate(engine, poolVersions);
+        // changed since. Per activation: under the mutation broadcast a
+        // refresh of one activation must not make another's look current.
+        engine.LiteralPoolVersions = poolVersions;
 
         // lets a PrologRuntimeException thrown from a
         // builtin Impl carry the offending term in its error/2 value
@@ -2140,7 +2141,7 @@ public sealed partial class PrologEngine
         if (builtPersistentNow)
         {
             // a fresh buffer gets a fresh chain table. Older
-            // tables stay alive through _engineChainTables for any outer
+            // tables stay alive on their activations for any outer
             // (nested-query) engines still running on their buffers.
             ResetDynChains();
             PopulateDynChains(program, addressMap, mergedPredicatesByAddress);
