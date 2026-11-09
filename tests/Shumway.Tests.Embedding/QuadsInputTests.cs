@@ -138,6 +138,22 @@ public sealed class QuadsInputTests
     }
 
     [Fact]
+    public void TheInputIsWrittenAsTheUtf8TheGoalReads()
+    {
+        // The harness writes the input as bytes, the sentinel behind them in
+        // the same open. A character of every UTF-8 length reads back as
+        // itself, and the sentinel still stops a read past the last one.
+        Assert.Contains("quads: 1/1", RunQuads(
+            "u\n?- get_char(A), get_char(B), get_char(C), get_char(D).\n" +
+            "   inputs(\"aé€\U0001D11E\"), A = a, B = 'é', C = '€', D = '\U0001D11E'.\n"));
+        Assert.Contains("quads: 0/1", RunQuads(
+            "u\n?- get_char(A), get_char(B).\n" +
+            "   inputs(\"é\"), A = 'é', B = end_of_file.\n"));
+        Assert.Contains("quads: 0/1", RunQuads(
+            "u\n?- get_char(A).\n   inputs(\"é\"), A = e.\n"));
+    }
+
+    [Fact]
     public void WhatTheGoalLeaves_IsComparedToThePeek()
     {
         // inputs ++ peeks is the text on the stream, so the peek is there
