@@ -1381,6 +1381,8 @@ internal sealed class ConsultPipeline
             // prolog_load_context(module, _) — save/restore around (possibly
             // nested) consults so a hook always sees the module being loaded now.
             string? prevLoadModule = E._currentLoadModule;
+            long prevLoadSerial = E._currentLoadSerial;
+            E._currentLoadSerial = E.NextLoadSerial();
             E._consultDepth++;
             // No new Tier-1 promotions while program text is loading — a
             // predicate the load is still extending (the expansion hooks above
@@ -1401,6 +1403,7 @@ internal sealed class ConsultPipeline
                 _multifileSource = prevMultifileSource;
                 E.PopOpCollection();
                 E._currentLoadModule = prevLoadModule;
+                E._currentLoadSerial = prevLoadSerial;
                 if (--E._consultDepth == 0)
                     E.IlPromotion.PromotionsSuspended = false;
             }

@@ -494,6 +494,15 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// which the outer file's own consult expands).</summary>
     internal int _consultDepth;
 
+    /// <summary>The consult in progress, by a number no other consult shares
+    /// (0 outside one); restored when a nested consult returns. A shim's
+    /// expansion hook keys once-per-source output on it.</summary>
+    internal long _currentLoadSerial;
+    private long _loadSerialCounter;
+
+    /// <summary>A fresh number for a consult that starts.</summary>
+    internal long NextLoadSerial() => ++_loadSerialCounter;
+
     /// <summary>Arity-Prolog recorded database.
     /// Lazily constructed on first access so engines that never use it
     /// pay nothing.</summary>

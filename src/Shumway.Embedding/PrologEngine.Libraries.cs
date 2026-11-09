@@ -550,6 +550,7 @@ public sealed partial class PrologEngine
     {
         if (_swiShimLoaded) return;
         _swiShimLoaded = true;
+        SwiShim.RegisterAttrUnifyHookBridge(this);
         var savedDq = Flags.DoubleQuotes;
         Flags.DoubleQuotes = DialectRegistry.DoubleQuotesOf(SwiShim.LibraryName);
         try { ConsultStringInner(SwiShim.Source, recordInHistory: false, librarySource: true); }
