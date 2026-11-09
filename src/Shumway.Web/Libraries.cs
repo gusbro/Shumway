@@ -200,9 +200,47 @@ internal static partial class WebShumwayApp
     {
         lock (CompileGate)
         {
+            _bakeSession = null;
+            _bakeSessionRoot = null;
             _compiling = false;
             Monitor.PulseAll(CompileGate);
         }
+    }
+
+    // The baking engine of the compile holding the gate, shared by every
+    // library it compiles: one engine with the prelude and the collection's
+    // libraries loaded once, not one per library.
+    private static WasmBakeSession? _bakeSession;
+    private static string? _bakeSessionRoot;
+
+    // A measurement switch: false bakes each library in an engine of its
+    // own, as before the session, to compare the two in one page.
+    private static bool _sharedBake = true;
+
+    // A Task: the threaded runtime refuses a synchronous export.
+    [JSExport]
+    internal static Task LibraryBakeShared(bool on)
+    {
+        _sharedBake = on;
+        return Task.CompletedTask;
+    }
+
+    // The bake's own account of its phases, beside the compile's.
+    private static void BakeLog(string line)
+    {
+        if (!line.StartsWith("wasm: skipping", StringComparison.Ordinal))
+            _compileLog?.WriteLine("%   " + line);
+    }
+
+    private static WasmBakeSession BakeSessionFor(string root, string? dialect)
+    {
+        if (!_sharedBake) return new WasmBakeSession(e => AddCollection(e, root, dialect));
+        if (_bakeSession is null || _bakeSessionRoot != root)
+        {
+            _bakeSession = new WasmBakeSession(e => AddCollection(e, root, dialect));
+            _bakeSessionRoot = root;
+        }
+        return _bakeSession;
     }
 
     // Libraries compiled on demand since the page last asked: it stores them,
@@ -393,8 +431,7 @@ internal static partial class WebShumwayApp
                          var bakeClock = System.Diagnostics.Stopwatch.StartNew();
                          try
                          {
-                             return WasmBundleTier.Bake(b, stdlib: false,
-                                                        prepare: e => AddCollection(e, root, dialect));
+                             return BakeSessionFor(root, dialect).Bake(b, BakeLog);
                          }
                          finally { baked(bakeClock.Elapsed.TotalSeconds); }
                      }

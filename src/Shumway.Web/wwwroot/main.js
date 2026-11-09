@@ -2620,9 +2620,12 @@ if (persistMode) {
     // collection and the bundles compiled on demand are stored, and a later
     // visit with the same profile loads what is there instead of writing
     // the collection again: the second visit.
+    // &freshbake: each library compiled on demand bakes its wasm module in
+    // an engine of its own, instead of the compile's shared one.
     const bundlesOff = location.hash.includes('&bundles_off');
     const keep = location.hash.includes('&keep');
-    const spec = /^#wasmclpz(src)?=(\d+)(?::([\w,]+))?(?:&bundles_off)?(?:&keep)?$/.exec(location.hash);
+    const freshBake = location.hash.includes('&freshbake');
+    const spec = /^#wasmclpz(src)?=(\d+)(?::([\w,]+))?((?:&\w+)*)$/.exec(location.hash);
     const fromSource = !!(spec && spec[1]);
     const rounds = spec ? Number(spec[2]) : 1;
     const onlyCases = spec && spec[3] ? spec[3].split(',') : null;
@@ -2651,6 +2654,10 @@ if (persistMode) {
 
     if (bundlesOff)
       mark('clpz: ' + (await session.exports().JitCompileControl('bundles_off')).trim());
+    if (freshBake) {
+      await session.exports().LibraryBakeShared(false);
+      mark('clpz: each library bakes in an engine of its own');
+    }
     // 2. clpz + the benchmark program. The load is itself a number.
     const cases = await (await fetch('scryerlib/cases.pl')).text();
     const tLoad0 = performance.now();
@@ -2661,7 +2668,8 @@ if (persistMode) {
     mark(`clpz: consulted clpz + cases in ${Math.round(tLoad)}ms`);
     // What each library compiled on demand took, as the engine said it.
     for (const line of out.textContent.split('\n'))
-      if (line.startsWith('% library(') && line.includes(' compiled in ')) mark('clpz: ' + line);
+      if ((line.startsWith('% library(') && line.includes(' compiled in '))
+          || line.startsWith('%   wasm: ')) mark('clpz: ' + line);
     if (keep) {
       const compiled = await libraries.takeCompiledOnDemand();
       for (const { name, library } of compiled) await libraries.persistLibrary(name, library);

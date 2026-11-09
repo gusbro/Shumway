@@ -27,24 +27,16 @@ public static class WasmBundleTier
     public static byte[]? Bake(Bundle bundle, bool stdlib, Action<string>? log = null,
                                Action<PrologEngine>? prepare = null)
     {
-        PrologEngine engine;
-        var before = new HashSet<int>();
-        if (stdlib)
-        {
-            engine = PrologEngine.FromBundle(bundle);
-            Silence(engine);
-        }
-        else
-        {
-            engine = new PrologEngine();
-            Silence(engine);
-            prepare?.Invoke(engine);
-            engine.LoadLibraryDependencies(bundle);
-            engine.Query("true.");
-            foreach (var (_, pred) in WasmPromotionStore.StaticPredicatesOf(engine))
-                before.Add(pred.FunctorId);
-            engine.LoadBundle(bundle);
-        }
+        if (!stdlib) return new WasmBakeSession(prepare).Bake(bundle, log);
+        var engine = PrologEngine.FromBundle(bundle);
+        Silence(engine);
+        return BakeLoaded(engine, new HashSet<int>(), log);
+    }
+
+    /// <summary>Bakes what the last bundle loaded into <paramref name="engine"/>
+    /// added: its static predicates, but for those in <paramref name="before"/>.</summary>
+    internal static byte[]? BakeLoaded(PrologEngine engine, HashSet<int> before, Action<string>? log)
+    {
         // What the bundle registered, read before the query that links: that
         // setup mints helpers for the bundle's dynamic clauses (a library's
         // attribute_goals/4 hook) under per-process numbers, and a member
@@ -66,7 +58,8 @@ public static class WasmBundleTier
             {
                 var (name, arity) = RelocatingCompileEnv.NameOf(m.Predicate.FunctorId);
                 log?.Invoke($"wasm: skipping {name}/{arity}: {why}");
-            });
+            },
+            log);
         if (module.Members.Count == 0) return null;
         log?.Invoke($"wasm: {module.Members.Count} of {members.Count} predicates baked");
         return module.ToBytes();
@@ -75,7 +68,7 @@ public static class WasmBundleTier
     // No IL promotion in the baking engine: its work would be wasted, and
     // a wasm store with an unreachable threshold gives StaticPredicatesOf
     // its link without promoting anything either.
-    private static void Silence(PrologEngine engine)
+    internal static void Silence(PrologEngine engine)
     {
         var store = engine.IlPromotion;
         store.Threshold = 0;
@@ -133,5 +126,38 @@ public static class WasmBundleTier
             installed.Add(fid);
         }
         return (installed, $"{installed.Count} predicates installed from the bundle");
+    }
+}
+
+/// <summary>A baking engine prepared once for several bundles: the libraries of
+/// one on-demand compile, each baked as it is compiled. Each bake loads into
+/// the engine what the bundle imports and is not there yet, then the bundle,
+/// and bakes the predicates the bundle added. A fresh engine per bundle
+/// installed the prelude and loaded every library under it again for each.</summary>
+public sealed class WasmBakeSession
+{
+    private readonly PrologEngine _engine;
+
+    public WasmBakeSession(Action<PrologEngine>? prepare = null)
+    {
+        _engine = new PrologEngine();
+        WasmBundleTier.Silence(_engine);
+        prepare?.Invoke(_engine);
+    }
+
+    /// <summary>Bakes the bundle's own static predicates; null when none compiled.</summary>
+    public byte[]? Bake(Bundle bundle, Action<string>? log = null)
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        _engine.LoadLibraryDependencies(bundle);
+        _engine.Query("true.");
+        var before = new HashSet<int>();
+        foreach (var (_, pred) in WasmPromotionStore.StaticPredicatesOf(_engine))
+            before.Add(pred.FunctorId);
+        double dependencies = clock.Elapsed.TotalSeconds;
+        _engine.LoadBundle(bundle);
+        log?.Invoke($"wasm: loaded what it imports in {dependencies:0.00} s, "
+            + $"the bundle in {clock.Elapsed.TotalSeconds - dependencies:0.00} s");
+        return WasmBundleTier.BakeLoaded(_engine, before, log);
     }
 }
