@@ -2646,6 +2646,9 @@ if (persistMode) {
     const tLoad = performance.now() - tLoad0;
     if (err) { emit('consult failed: ' + err + '\n', 'error'); mark('clpz: CONSULT FAILED ' + err); }
     mark(`clpz: consulted clpz + cases in ${Math.round(tLoad)}ms`);
+    // What each library compiled on demand took, as the engine said it.
+    for (const line of out.textContent.split('\n'))
+      if (line.startsWith('% library(') && line.includes(' compiled in ')) mark('clpz: ' + line);
 
     const goal = (g, budget) => m.timedGoal(session, g, budget ?? 120);
     const mode = async (mo) => {

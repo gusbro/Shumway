@@ -3,6 +3,8 @@
 # a hook headless"). It serves the publish with WebShumwayServe.ps1, opens the
 # page on the hook with a throwaway profile, waits until the report matches
 # -Done, and then kills the browser tree and the server, success or not.
+# -ProfileDir keeps the profile instead, so a second run with the same one is
+# a page's second visit: what the first stored (compiled libraries) is there.
 #
 #   powershell -File src/Shumway.Web/WebShumwayHook.ps1 `
 #       -Hook '#wasmprobe=exits&n=100000' -Done 'probe exits: done|CRASHED'
@@ -17,7 +19,8 @@ param(
   [int]$TimeoutSec = 900,
   [string]$Browser = '',                     # chrome.exe or msedge.exe; found if empty
   [string]$Root = '',                        # the site to serve; the last publish if empty
-  [string]$JsFlags = ''                      # V8 flags for the run, e.g. '--no-liftoff'
+  [string]$JsFlags = '',                     # V8 flags for the run, e.g. '--no-liftoff'
+  [string]$ProfileDir = ''                   # a profile to reuse and keep; throwaway if empty
 )
 $ErrorActionPreference = 'Stop'
 
@@ -45,7 +48,9 @@ $serveArgs = @(
   '-Port', $Port, '-Collect', $Out)
 if ($Root) { $serveArgs += @('-Root', $Root) }
 $server = Start-Process $shell -PassThru -WindowStyle Hidden -ArgumentList $serveArgs
-$profileDir = Join-Path ([System.IO.Path]::GetTempPath()) ('webshumway-hook-' + [guid]::NewGuid().ToString('N'))
+$keepProfile = [bool]$ProfileDir
+$profileDir = if ($keepProfile) { $ProfileDir }
+  else { Join-Path ([System.IO.Path]::GetTempPath()) ('webshumway-hook-' + [guid]::NewGuid().ToString('N')) }
 $page = $null
 $ok = $false
 try {
@@ -69,7 +74,7 @@ try {
     Where-Object { $_.CommandLine -and $_.CommandLine.Contains($profileDir) } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
   Start-Sleep -Seconds 1
-  Remove-Item $profileDir -Recurse -Force -ErrorAction SilentlyContinue
+  if (-not $keepProfile) { Remove-Item $profileDir -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 if (Test-Path $Out) { Get-Content $Out }
