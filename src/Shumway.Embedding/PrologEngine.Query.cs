@@ -2014,14 +2014,12 @@ public sealed partial class PrologEngine
             || (IlPromotion.Wasm?.Threshold ?? 0) > 0
             || HoldsCompiledCode(interp.IlByFunctorId);
 
-        // --strip-wam: register each persisted dispatch graph onto this query's
-        // fresh engine, so a stripped indexed predicate resolves its entry clause
-        // from the graph (its WAM body is gone). The indexed-dispatch cache is
-        // per-engine, so this runs per query.
+        // --strip-wam: a stripped indexed predicate resolves its entry clause
+        // from its persisted graph (its WAM body is gone). A reference, not a
+        // copy: registering every graph at each setup made each query pay for
+        // all of them, the prelude's included.
         if (_persistedIndexGraphs.Count > 0)
-            foreach (var (fid, graphBytes) in _persistedIndexGraphs)
-                Shumway.Compiler.Il.IlIndexedDispatch.RegisterPersistedGraph(
-                    engine, fid, graphBytes);
+            engine.PersistedIndexGraphs = _persistedIndexGraphs;
 
         // wire the direct IL-delegate table (the
         // CallIl opcode reads this) and rewrite every Call site whose

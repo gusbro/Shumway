@@ -517,10 +517,10 @@ public sealed partial class PrologEngine
         _precompiledStaticPredicates = new();
 
     /// <summary>Persisted WAM-independent dispatch graphs (--strip-wam), keyed by
-    /// runtime functor id. Populated at LoadBundle; registered onto each query's
-    /// fresh engine at setup (the indexed-dispatch cache is per-engine), so a
+    /// runtime functor id, decoded at LoadBundle. Each query's activation gets a
+    /// reference and takes a graph on its first dispatch through it, so a
     /// stripped indexed predicate resolves its entry clause without a WAM body.</summary>
-    internal readonly Dictionary<int, byte[]> _persistedIndexGraphs = new();
+    internal readonly Shumway.Compiler.Il.PersistedIndexGraphs _persistedIndexGraphs = new();
 
     /// <summary>Module names already warned about unbindable persisted IL, so
     /// the two load passes that visit an entry warn once, not twice.</summary>

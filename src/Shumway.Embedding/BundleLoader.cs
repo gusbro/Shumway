@@ -1562,13 +1562,12 @@ internal sealed class BundleLoader
             var bound = module;
             if (hasCps) E.IlPromotion.OfferBoundCps(fid, del, () => bound.BindCps(fid), cost);
         }
-        // A stripped indexed predicate carries its dispatch graph in the bundle.
-        // Stash it by runtime functor id; each query's fresh engine gets it
-        // registered at setup. Without a WAM body the delegate would otherwise
-        // have nothing to rebuild the switch model from.
+        // A stripped indexed predicate carries its dispatch graph in the bundle,
+        // decoded here by runtime functor id. Without a WAM body the delegate
+        // would otherwise have nothing to rebuild the switch model from.
         if (index.IndexGraphs is not null)
             foreach (var kv in index.IndexGraphs)
-                E._persistedIndexGraphs[kv.Key] = kv.Value;
+                E._persistedIndexGraphs.Add(kv.Key, kv.Value);
         // A region method publishes its members' entry cursors; the alias marker
         // dispatches the region delegate at the member's entry.
         if (index.RegionAliases is not null)

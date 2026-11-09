@@ -952,6 +952,12 @@ public sealed partial class Activation
     /// type-token compare (no Dictionary boxing / cast).</summary>
     public object? IlIndexedDispatchCache;
 
+    /// <summary>The dispatch graphs the loaded bundles carry for predicates
+    /// stripped of their WAM body, decoded once by the engine and shared by
+    /// every query's activation; the cache above takes one on its first
+    /// use. Typed in Compiler.Il, as the cache is.</summary>
+    public object? PersistedIndexGraphs;
+
     // threaded Tier-1 dispatch. An IL non-tail Call site sets
     // engine.Cp to a *resume marker* address instead of recursing into
     // RunSubroutine. When the callee Proceeds (Pc = Cp), the bytecode
