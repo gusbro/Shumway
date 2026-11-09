@@ -134,32 +134,31 @@ Shumway; only that one selector borrows SWI's name.
   `format/2,3`, `predicate_property/2` and the full ISO surface Logtalk's
   compiler needs, is native.
 
-- **The `tests/prolog` ISO conformity battery** (192 testers, 4,372
-  counted tests): **4,326 passed / 46 failed**, every tester reporting
-  (measured 2026-09; `atom_codes_2`, `number_codes_2`,
-  `at_end_of_stream_1` and the 27 testers whose cyclic-term cases run once
-  `coinduction` is announced again 2026-10;
-  baseline before the 2026-08 campaign: 2,096 / 933).
-  The total predates the official encoding names and counts 14 failures in
-  the `unicode/` testers. Those testers now pass in full (measured 2026-11):
-  `directives/encoding_1` 3/3, `escape_sequences` 12/12, `case_variables`
-  12/12, `builtins` 138/138, `encodings` 49/49. The `encodings` tester and
-  `tests/logtalk/directives/encoding_1` (5/5) need `shumway` added to the
-  list of systems in their `tester.lgt`.
+- **The `tests/prolog` ISO conformity battery** (192 testers, 4,417
+  tests): **4,339 passed / 28 failed / 50 skipped**, every tester
+  reporting (measured 2026-11 against Logtalk's development tree;
+  baseline before the 2026-08 campaign: 2,096 / 933). `control/if_3` is
+  the one tester skipped whole: it runs only where `if/3` is a built-in.
+  The `unicode/` testers pass in full. Logtalk's development tree lists
+  `shumway` among the systems of the `unicode/encodings` and
+  `tests/logtalk/directives/encoding_1` testers; in 3.101.0 it has to be
+  added to their `tester.lgt`.
 
-  Two more divergences are deliberate and closed. The six single-test
-  failures in `functions/` are the float-conversion functions: the
-  battery's `lgt_*` tests expect the strict-ISO reading, `ceiling(9)`,
-  `floor(9)`, `round(9)`, `truncate(9)`, `float_integer_part(9)`,
+  Each failure below was checked against the standard and against
+  SWI-Prolog, SICStus, Scryer and GNU Prolog.
+
+  One divergence is deliberate. The six single-test failures in
+  `functions/` are the float-conversion functions: the battery's `lgt_*`
+  tests expect the strict-ISO reading, `ceiling(9)`, `floor(9)`,
+  `round(9)`, `truncate(9)`, `float_integer_part(9)`,
   `float_fractional_part(9)` → `type_error(float, 9)`, which is what GNU
-  Prolog does. Shumway stays in the **lenient camp with SWI and Scryer**
-  (integers accepted, identity for the rounding functions): the SWI/Scryer
-  library ecosystems this engine certifies against rely on it, and Scryer
-  (the strictest of the modern systems) accepts it too. The four
-  `unbounded` failures build terms of enormous arity with `functor/3`:
-  a term's arity has no limit of its own here (`max_arity` is
-  `unbounded`), so running into the memory it would take is
-  `resource_error(finite_memory)`.
+  Prolog does. SICStus raises it for `float_integer_part/1` and
+  `float_fractional_part/1` only. Shumway accepts an integer, as SWI (with
+  its `iso` flag on or off) and Scryer do. With rational numbers an
+  integral rational is an integer, so the strict reading would make
+  `floor(4r2)` an error and `floor(5r2)` not, and libraries that round
+  rationals, Scryer's `simplex` among them, rely on integers being
+  accepted.
 
   `\e`, `\s`, `\d` in quoted tokens and a lone `0''` are SWI extensions,
   not ISO: GNU Prolog rejects them too, and Shumway's reader accepts them
@@ -171,22 +170,25 @@ Shumway; only that one selector borrows SWI's name.
   systems do:
 
   - `length_2` (7): `length(a, N)` and other non-lists, a cyclic list
-    among them, fail rather than raise `type_error(list, ...)`, as
-    Neumerkel's `length/2` cases have it (`length(2, 0)` is false).
+    with a given length among them, fail rather than raise
+    `type_error(list, ...)`, as Neumerkel's `length/2` cases have it
+    (`length(2, 0)` is false). SICStus and Scryer fail too.
   - `term_comparison` (4): `X = s(X,_), Y = s(Y,_), X @< Y` and three
     like it depend on which of two fresh variables is older, and the
-    standard leaves the order of variables to the implementation. lgtunit
-    calls the goal as a term built at run time, and Shumway builds the
-    deeper subterm first, so the variable in `Y`'s term is the older one.
+    standard (7.2.1) leaves the order of variables to the implementation.
+    lgtunit calls the goal as a term built at run time, and Shumway builds
+    the deeper subterm first, so the variable in `Y`'s term is the older
+    one. SWI-Prolog, SICStus and Scryer follow the order of the text.
     Written as a clause body, the same goals give the answers the tests
     expect.
   - `read_term_3` (6): `variables/1`, `variable_names/1` and
     `singletons/1` are output options, so a value that cannot unify
     (`variables(a)`) makes the read fail; it is not a
-    `domain_error(read_option, ...)` (Cor.3, Neumerkel's cases).
+    `domain_error(read_option, ...)` (Cor.3, Neumerkel's cases). SWI,
+    SICStus and Scryer fail too; GNU Prolog raises the domain error.
   - `current_input_1`, `current_output_1` and `stream_property_2` (4):
-    asking about a closed stream fails; the error tables of 8.11 list no
-    error for that case.
+    asking about a closed stream fails, as in SICStus and GNU Prolog; the
+    error tables of 8.11 list no error for that case.
 
   The one `syntax/numbers` failure is the lone `0''` above
   (`lgt_number_30`, which the battery itself marks de facto rather than
