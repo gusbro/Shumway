@@ -459,7 +459,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
 
     /// <summary>As above; <paramref name="settled"/> is true when a null
     /// answer holds for the rest of the program view (see
-    /// <see cref="IlPromotionStore.RecordInvocation(int, CompiledPredicate, IReadOnlyDictionary{int, CompiledPredicate}, int?, out bool)"/>).</summary>
+    /// <see cref="IlPromotionStore.RecordInvocation(int, CompiledPredicate, Func{IReadOnlyDictionary{int, CompiledPredicate}}, int?, out bool)"/>).</summary>
     internal PredicateDelegate? RecordDispatch(int functorId, CompiledPredicate predicate,
         int linkedAddress, Activation? engine, int? viewEpoch, out bool settled)
     {

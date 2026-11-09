@@ -64,7 +64,12 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
         => _store.TryGetRetiredResumeWrapper(functorId);
 
     // Functor-keyed view for IL CanCompile's callee inspection. Built lazily: only a
-    // dispatch that reaches a compile decision needs it.
+    // dispatch that reaches a compile decision needs it, which the store asks
+    // through this provider.
+    private Func<IReadOnlyDictionary<int, CompiledPredicate>>? _calleeMapProvider;
+    private Func<IReadOnlyDictionary<int, CompiledPredicate>> CalleeMapProvider
+        => _calleeMapProvider ??= () => CalleeMap;
+
     private Dictionary<int, CompiledPredicate> CalleeMap
     {
         get
@@ -113,7 +118,7 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
             return;
         }
         if (_store.HasOffers && _store.HasOffer(functorId)) return;
-        _store.RecordInvocation(functorId, caller, CalleeMap, _viewEpoch);
+        _store.RecordInvocation(functorId, caller, CalleeMapProvider, _viewEpoch, out _);
     }
 
     private CompiledPredicate? PredicateContaining(int pc)
@@ -244,7 +249,7 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
         // a parser asks its empty pushback predicate at every character).
         // Below the threshold or with a compile in flight the next call may
         // promote, so nothing is cached.
-        var fresh = _store.RecordInvocation(functorId, pred, CalleeMap, _viewEpoch, out bool settled);
+        var fresh = _store.RecordInvocation(functorId, pred, CalleeMapProvider, _viewEpoch, out bool settled);
         if (fresh is null)
         {
             if (settled) _dispatchCache[targetAddress] = null!;
