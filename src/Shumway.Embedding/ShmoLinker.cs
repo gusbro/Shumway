@@ -110,6 +110,11 @@ public static class ShmoLinker
         // inputs win, source compilation last).
         if (config.LibraryDirs.Count > 0)
             linkInput = PullLibraryDirDeps(linkInput, config.LibraryDirs, Emit);
+        var archived = new HashSet<string>();
+        foreach (var lib in config.Libraries)
+            foreach (var m in lib.Members)
+                archived.Add(m.ModuleName);
+        linkInput = PullShimDeps(linkInput, archived, out var shimsWithoutCode, Emit);
         AddEngineLibraries(linkInput);
 
         // ADR-038 — a use_module(library(X)) dependency that is still unresolved
@@ -119,9 +124,8 @@ public static class ShmoLinker
         // a downstream missing-predicate error for each imported predicate.
         {
             var provided = new HashSet<string>(linkInput.Select(o => o.ModuleName));
-            foreach (var lib in config.Libraries)
-                foreach (var m in lib.Members)
-                    provided.Add(m.ModuleName);
+            provided.UnionWith(archived);
+            provided.UnionWith(shimsWithoutCode);
             var reportedLibs = new HashSet<string>();
             foreach (var obj in linkInput)
                 foreach (var dep in obj.LibraryDeps)
@@ -1813,6 +1817,58 @@ public static class ShmoLinker
                     queue.Enqueue(pulled);
                     emit(LinkSeverity.Info, "library_pulled",
                         $"pulled library '{pulled.ModuleName}' from {path}.", null);
+                }
+            }
+        }
+        return result;
+    }
+
+    /// <summary>ADR-038 §4: a dependency nothing else provided, on a library the
+    /// engine serves from a dialect shim (no file on the search path), links the
+    /// shim's source, transitively. A shim with no code is provided as it stands
+    /// and named in <paramref name="withoutCode"/>.</summary>
+    private static IReadOnlyList<ShmoObject> PullShimDeps(
+        IReadOnlyList<ShmoObject> input,
+        HashSet<string> archived,
+        out HashSet<string> withoutCode,
+        Action<LinkSeverity, string, string, string?> emit)
+    {
+        withoutCode = new HashSet<string>(StringComparer.Ordinal);
+        var result = new List<ShmoObject>(input);
+        var have = new HashSet<string>(result.Select(o => o.ModuleName));
+        have.UnionWith(archived);
+        var queue = new Queue<ShmoObject>(result);
+        while (queue.Count > 0)
+        {
+            var obj = queue.Dequeue();
+            foreach (var dep in obj.LibraryDeps)
+            {
+                if (dep.Baked || have.Contains(dep.LibName) || withoutCode.Contains(dep.LibName)
+                    || !DialectRegistry.TryResolve(obj.Dialect, dep.LibName,
+                           out string source, out _, out _))
+                    continue;
+                if (source.Length == 0)
+                {
+                    withoutCode.Add(dep.LibName);
+                    continue;
+                }
+                ShmoObject pulled;
+                try
+                {
+                    pulled = ShmoCompiler.CompileSource(source, dep.LibName);
+                }
+                catch (Exception ex)
+                {
+                    emit(LinkSeverity.Error, "library_pull_failed",
+                        $"library '{dep.LibName}' (the engine's own): {ex.Message}", dep.LibName);
+                    continue;
+                }
+                if (have.Add(pulled.ModuleName))
+                {
+                    result.Add(pulled);
+                    queue.Enqueue(pulled);
+                    emit(LinkSeverity.Info, "library_pulled",
+                        $"linked the engine's library '{dep.LibName}'.", null);
                 }
             }
         }
