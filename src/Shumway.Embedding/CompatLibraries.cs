@@ -1494,31 +1494,46 @@ internal static class CompatLibraries
 
         quads_open_input_(Path, Chars, Stream, Saved) :-
             current_input(Saved),
-            setup_call_cleanup(open(Path, write, W),
-                               quads_put_chars(W, Chars),
+            setup_call_cleanup(open(Path, write, W, [type(binary)]),
+                               quads_put_sealed(W, Chars),
                                close(W)),
-            quads_seal_input(Path),
             open(Path, read, Stream),
             set_input(Stream).
 
-        % The sentinel behind the input: a byte no character can be read
-        % from. Anything the goal reads PAST what the description sanctioned
-        % -- a get, or the peek a reader does to find where a term ends --
-        % raises representation_error(character) rather than quietly seeing
-        % end_of_file, so a description that did not sanction the look is not
-        % met. It is how a transcript says "this much input, and no looking
-        % behind it", and it is what makes `waits` observable at all.
-        quads_seal_input(Path) :-
-            catch(setup_call_cleanup(open(Path, append, W, [type(binary)]),
-                                     put_byte(W, 255),
-                                     close(W)),
-                  _, true).
+        % The input, then the sentinel behind it: a byte no character can be
+        % read from. Anything the goal reads PAST what the description
+        % sanctioned -- a get, or the peek a reader does to find where a term
+        % ends -- raises representation_error(character) rather than quietly
+        % seeing end_of_file, so a description that did not sanction the look
+        % is not met. It is how a transcript says "this much input, and no
+        % looking behind it", and it is what makes `waits` observable at all.
+        % One open writes both, the text as the UTF-8 the read side decodes:
+        % appending the sentinel through a second open of the file just
+        % written can fail (a scanner holding it), and the input went unsealed.
+        quads_put_sealed(W, Chars) :-
+            quads_put_utf8(W, Chars),
+            put_byte(W, 255).
         quads_close_input(Path, Stream, Saved) :-
             set_input(Saved),
             catch(close(Stream), _, true),
             catch(delete_file(Path), _, true).
-        quads_put_chars(_, []).
-        quads_put_chars(W, [C|Cs]) :- put_char(W, C), quads_put_chars(W, Cs).
+        quads_put_utf8(_, []).
+        quads_put_utf8(W, [C|Cs]) :-
+            char_code(C, X),
+            quads_utf8_bytes(X, Bs),
+            quads_put_bytes(W, Bs),
+            quads_put_utf8(W, Cs).
+        quads_utf8_bytes(X, [X]) :- X < 0x80, !.
+        quads_utf8_bytes(X, [B1, B2]) :- X < 0x800, !,
+            B1 is 0xC0 \/ (X >> 6), B2 is 0x80 \/ (X /\ 0x3F).
+        quads_utf8_bytes(X, [B1, B2, B3]) :- X < 0x10000, !,
+            B1 is 0xE0 \/ (X >> 12), B2 is 0x80 \/ ((X >> 6) /\ 0x3F),
+            B3 is 0x80 \/ (X /\ 0x3F).
+        quads_utf8_bytes(X, [B1, B2, B3, B4]) :-
+            B1 is 0xF0 \/ (X >> 18), B2 is 0x80 \/ ((X >> 12) /\ 0x3F),
+            B3 is 0x80 \/ ((X >> 6) /\ 0x3F), B4 is 0x80 \/ (X /\ 0x3F).
+        quads_put_bytes(_, []).
+        quads_put_bytes(W, [B|Bs]) :- put_byte(W, B), quads_put_bytes(W, Bs).
 
         % A scratch file needs a name nothing else will pick. A fixed one in
         % the working directory looked harmless and was not: the test suite
