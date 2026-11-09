@@ -1170,26 +1170,42 @@ internal static class BrowserWasmTier
             }
             catch (WasmCompileException)
             {
-                // Sort the poisoners out one by one, then build the rest.
+                // Sort the poisoners out one by one, then build the rest. The
+                // refusals almost always come before emission, so they are
+                // found there; a module per member only for one that is not.
                 var good = new List<WasmGroupMember>();
                 foreach (var m in members)
                 {
-                    try
-                    {
-                        WasmPredicateCompiler.CompileGroup(
-                            new List<WasmGroupMember> { m }, env);
-                        good.Add(m);
-                    }
-                    catch (WasmCompileException ex)
-                    {
-                        store.Wasm?.MarkUnpromotable(m.Predicate.FunctorId, ex.Message);
-                    }
+                    string? why = WasmPredicateCompiler.RefusalBeforeEmit(m, env);
+                    if (why is null) good.Add(m);
+                    else store.Wasm?.MarkUnpromotable(m.Predicate.FunctorId, why);
                 }
                 if (good.Count == 0) return 0;
-                // Individually fine but jointly refused should not happen;
-                // if it does, nothing is installed.
                 try { Install(store, world, good, env); }
-                catch (WasmCompileException) { return 0; }
+                catch (WasmRegisterException) { return 0; }
+                catch (WasmCompileException)
+                {
+                    var compiled = new List<WasmGroupMember>();
+                    foreach (var m in good)
+                    {
+                        try
+                        {
+                            WasmPredicateCompiler.CompileGroup(
+                                new List<WasmGroupMember> { m }, env);
+                            compiled.Add(m);
+                        }
+                        catch (WasmCompileException ex)
+                        {
+                            store.Wasm?.MarkUnpromotable(m.Predicate.FunctorId, ex.Message);
+                        }
+                    }
+                    if (compiled.Count == 0) return 0;
+                    // Individually fine but jointly refused should not happen;
+                    // if it does, nothing is installed.
+                    try { Install(store, world, compiled, env); }
+                    catch (WasmCompileException) { return 0; }
+                    good = compiled;
+                }
                 members = good;
             }
             foreach (var m in members)

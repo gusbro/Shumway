@@ -70,29 +70,64 @@ public sealed class WasmRelocatableModule
     /// name="onRefused"/>) and the rest are baked together. A relocating
     /// probe interns nothing, so the retry costs no process state.</summary>
     public static WasmRelocatableModule BakeCompilable(IReadOnlyList<WasmGroupMember> members,
-        IWasmCompileEnv liveEnv, Action<WasmGroupMember, string>? onRefused = null)
+        IWasmCompileEnv liveEnv, Action<WasmGroupMember, string>? onRefused = null,
+        Action<string>? timing = null)
     {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            return Bake(members, liveEnv);
+            var whole = Bake(members, liveEnv);
+            timing?.Invoke($"wasm: compiled in one pass, {clock.Elapsed.TotalSeconds:0.00} s");
+            return whole;
         }
-        catch (WasmCompileException)
+        catch (WasmCompileException first)
         {
+            double attempt = clock.Elapsed.TotalSeconds;
+            clock.Restart();
+            // The refusals almost always come before emission: sort them out
+            // there, member by member, and compile the rest once. Compiling
+            // each member whole only to learn whether it compiles cost a
+            // module per member, longer than the group's own compile.
             var good = new List<WasmGroupMember>(members.Count);
             foreach (var m in members)
             {
-                try
-                {
-                    WasmPredicateCompiler.CompileGroup(new[] { m },
-                        new RelocatingCompileEnv(new[] { m }, liveEnv));
-                    good.Add(m);
-                }
-                catch (WasmCompileException e)
-                {
-                    onRefused?.Invoke(m, e.Message);
-                }
+                string? why = WasmPredicateCompiler.RefusalBeforeEmit(m,
+                    new RelocatingCompileEnv(new[] { m }, liveEnv));
+                if (why is null) good.Add(m);
+                else onRefused?.Invoke(m, why);
             }
-            return Bake(good, liveEnv);
+            double sorted = clock.Elapsed.TotalSeconds;
+            clock.Restart();
+            try
+            {
+                var rest = Bake(good, liveEnv);
+                timing?.Invoke($"wasm: the whole group refused after {attempt:0.00} s ({first.Message}); "
+                    + $"{members.Count - good.Count} of {members.Count} members refused, sorted out in "
+                    + $"{sorted:0.00} s; the rest compiled in {clock.Elapsed.TotalSeconds:0.00} s");
+                return rest;
+            }
+            catch (WasmCompileException late)
+            {
+                // A refusal only emission finds: each member whole, as before.
+                var compiled = new List<WasmGroupMember>(good.Count);
+                foreach (var m in good)
+                {
+                    try
+                    {
+                        WasmPredicateCompiler.CompileGroup(new[] { m },
+                            new RelocatingCompileEnv(new[] { m }, liveEnv));
+                        compiled.Add(m);
+                    }
+                    catch (WasmCompileException e)
+                    {
+                        onRefused?.Invoke(m, e.Message);
+                    }
+                }
+                var rest = Bake(compiled, liveEnv);
+                timing?.Invoke($"wasm: refused again at emission ({late.Message}); "
+                    + $"{good.Count} members compiled alone, the rest in {clock.Elapsed.TotalSeconds:0.00} s");
+                return rest;
+            }
         }
     }
 

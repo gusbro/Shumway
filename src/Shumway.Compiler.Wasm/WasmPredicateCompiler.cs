@@ -73,6 +73,26 @@ public static class WasmPredicateCompiler
                                   c.RegisterDemand, c.CallSites, moduleId);
     }
 
+    /// <summary>Why <paramref name="member"/>, compiled on its own, is refused
+    /// before anything is emitted, or null: the phases of
+    /// <see cref="CompileGroup"/> that find most refusals, without a module
+    /// for each member. A refusal only emission finds still needs a compile.</summary>
+    public static string? RefusalBeforeEmit(WasmGroupMember member, IWasmCompileEnv env)
+    {
+        var c = new Compilation(new[] { member }, env, 0, CpsMode, CpsGrain);
+        try
+        {
+            c.RejectDispatchOnlyPredicates();
+            c.Decode();
+            c.RejectIfCrossingsDominate();
+            return null;
+        }
+        catch (WasmCompileException e)
+        {
+            return e.Message;
+        }
+    }
+
     /// <summary>Diagnostic: emit a dispatch counter + loop breaker into the
     /// dispatcher (see the guard at the loop top). Off in production.</summary>
     public static bool DebugLoopGuard;
