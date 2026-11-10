@@ -193,6 +193,19 @@ public static class WasmPredicateCompiler
         32 => "a cut would leave a catch frame's snapshot to clip",
         33 => "an attribute entry indexes past both the log and the parked rows",
         36 => "a control construct with an if-then goal: the host distributes the module into it",
+        // Why an attribute read or write went to the host as its builtin.
+        40 => "attribute form: no attribute image staged",
+        41 => "attribute form: the module is not a bound atom",
+        42 => "attribute form: the variable is bound",
+        43 => "attribute write: Attr is unbound",
+        44 => "attribute write: Attr's functor is not mirrored",
+        45 => "attribute write: no write ring staged",
+        46 => "attribute write: the write ring is full",
+        47 => "attribute write: no room on the extra trail",
+        48 => "attribute write: promoting a variable an orphan record names",
+        49 => "attribute write: promoting with fewer than two image slots in the budget",
+        50 => "attribute write: the image insert budget is spent",
+        51 => "attribute write: no heap room for the new list",
         _ => "unnamed",
     };
 
@@ -7013,6 +7026,7 @@ public static class WasmPredicateCompiler
             Op(new LocalGet(LT0));
             Op(new Int32Constant(0));
             Op(new Int32Equal());
+            MetaGuard(40);
             Op(new BranchIf(0));                            // -> $slow
 
             // A1 first, and the order is the contract, not a preference.
@@ -7027,6 +7041,7 @@ public static class WasmPredicateCompiler
             TagOfC0();
             Op(new Int32Constant((int)Tag.Atom));
             Op(new Int32NotEqual());
+            MetaGuard(41);
             Op(new BranchIf(0));                            // -> $slow
             Op(new LocalGet(LC0));
             Op(new Int64Constant(Cell.PayloadMask));
@@ -7075,6 +7090,7 @@ public static class WasmPredicateCompiler
                 CloseNested();
                 Op(new LocalGet(LAtPromote));
                 Op(new Int32EqualZero());
+                MetaGuard(42);
                 Op(new BranchIf(1));                        // still bound -> $slow
             }
             CloseNested();
@@ -7541,6 +7557,7 @@ public static class WasmPredicateCompiler
         /// an update.</para></summary>
         private void EmitInlineAttrListWrite(int pc, bool isDelete)
         {
+            MetaGuard(43);
             // Attr keys the walk two ways, and both are the builtin's own.
             // A compound keys on its functor, which the mirror names. Any
             // other bound term keys on itself, and the module can ask that
@@ -7585,6 +7602,7 @@ public static class WasmPredicateCompiler
                 Op(new Int64Load());
                 Op(new Int32WrapInt64());
                 Op(new Int32EqualZero());
+                MetaGuard(44);
                 Op(new BranchIf(1));                        // unmirrored -> $slow
             }
             CloseNested();
@@ -7592,12 +7610,14 @@ public static class WasmPredicateCompiler
             // Neither ring nor trail room is something to discover halfway.
             LoadSlot32(WasmAbi.AttrWriteBase);
             Op(new Int32EqualZero());
+            MetaGuard(45);
             Op(new BranchIf(0));                            // -> $slow
             LoadSlot32(WasmAbi.AttrWriteTop);
             Op(new Int32Constant(1));
             Op(new Int32Add());
             LoadSlot32(WasmAbi.AttrWriteLimit);
             Op(new Int32GreaterThanSigned());
+            MetaGuard(46);
             Op(new BranchIf(0));                            // -> $slow
             // Two entries, because a promotion or a last removal writes
             // the CELL's change beside the attribute's.
@@ -7606,6 +7626,7 @@ public static class WasmPredicateCompiler
             Op(new Int32Add());
             LoadSlot32(WasmAbi.ExtraTrailLimit);
             Op(new Int32GreaterThanOrEqualSigned());
+            MetaGuard(47);
             Op(new BranchIf(0));                            // -> $slow
             LoadSlot32(WasmAbi.ExtraTrailBase);
             Op(new Int32EqualZero());
@@ -7652,6 +7673,7 @@ public static class WasmPredicateCompiler
                 OpenIf();
                 {
                     EmitAttrCountProbe();
+                    MetaGuard(48);
                     Op(new LocalGet(LAtCount));
                     Op(new Int32EqualZero());
                     Op(new Int32EqualZero());
@@ -7667,6 +7689,7 @@ public static class WasmPredicateCompiler
                     Op(new Int32Add());
                     LoadSlot32(WasmAbi.AttrMirrorBudget);
                     Op(new Int32GreaterThanSigned());
+                    MetaGuard(49);
                     Op(new BranchIf(1));                    // -> $slow
                 }
                 CloseNested();
@@ -7689,6 +7712,7 @@ public static class WasmPredicateCompiler
                     LoadSlot32(WasmAbi.AttrMirrorBudget);
                     Op(new Int32Constant(0));
                     Op(new Int32LessThanOrEqualSigned());
+                    MetaGuard(50);
                     Op(new BranchIf(2));                    // -> $slow
                 }
                 CloseNested();
@@ -7715,6 +7739,7 @@ public static class WasmPredicateCompiler
             Op(new Int32Add());
             LoadSlot32(WasmAbi.HeapWatermark);
             Op(new Int32GreaterThanOrEqualSigned());
+            MetaGuard(51);
             Op(new BranchIf(0));                            // -> $slow
 
             Op(new LocalGet(LH));

@@ -183,6 +183,12 @@ public sealed class WasmTierDelegate
     /// WasmResumeTable.MetaKey's.</summary>
     public static readonly Dictionary<long, long> DiagMetaMissKeys = new();
 
+    /// <summary>Why a builtin was requested, where the form that declined
+    /// it stamped a reason (DiagA): (builtin id &lt;&lt; 8 | reason) -> hits.
+    /// A request with no stamp is the builtin having no form at all.
+    /// </summary>
+    public static readonly Dictionary<long, long> DiagRequestReasons = new();
+
     /// <summary>DiagA and DiagB as of the last deopt, not the first.
     /// <see cref="DiagFirstDeoptSlots"/> samples the first, which on a run
     /// with twelve deopt sites need not be the interesting one -- a guard
@@ -222,6 +228,7 @@ public sealed class WasmTierDelegate
         System.Array.Clear(DiagMetaGuardHist, 0, DiagMetaGuardHist.Length);
         System.Array.Clear(DiagGuardFids, 0, DiagGuardFids.Length);
         DiagMetaMissKeys.Clear();
+        DiagRequestReasons.Clear();
     }
 
 
@@ -297,6 +304,17 @@ public sealed class WasmTierDelegate
     {
         DiagBuiltins++;
         DiagBuiltinTally.AddOrUpdate(builtinId, 1, (_, n) => n + 1);
+    }
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void CountRequestReason(IWasmChainContext cx, int builtinId)
+    {
+        long reason = cx.ReadSlot(WasmAbi.DiagA);
+        if (reason == 0) return;
+        long key = ((long)builtinId << 8) | (reason & 0xFF);
+        DiagRequestReasons[key] = DiagRequestReasons.GetValueOrDefault(key) + 1;
+        // Read once: the next request may come from a form with no stamps.
+        cx.WriteSlot(WasmAbi.DiagA, 0);
     }
 
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
@@ -851,6 +869,7 @@ public sealed class WasmTierDelegate
                     break;
                 }
                 CountBuiltin(builtinId);
+                CountRequestReason(cx, builtinId);
                 int trim = (int)(req >> 32);
                 int ret = (int)cx.ReadSlot(WasmAbi.Cursor);
                 // The return address is in the requesting module's build
