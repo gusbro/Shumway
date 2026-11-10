@@ -609,7 +609,23 @@ public static class WasmAbi
     public const int FindallRingTop = 90;
     public const int FindallRingLimit = 91;
 
-    public const int SlotCount = 92;
+    /// <summary>Where a module parks the backtrackable global writes it made
+    /// in the global-variable image (b_setval/2, Scryer's bb_b_put/2),
+    /// <see cref="GlobalWriteEntryLongs"/> i64 each: the key's atom id, the
+    /// new cell, the old one. The store and the external trail log are the
+    /// host's; the module writes the image row and the MutableSet trail entry,
+    /// whose log index is <see cref="ExternalTrailLogLength"/> plus the
+    /// entry's place in the ring, and the host appends the log record and
+    /// sets the store in that order. A zero base means the write is
+    /// requested.</summary>
+    public const int GlobalWriteBase = 92;
+    public const int GlobalWriteTop = 93;
+    public const int GlobalWriteLimit = 94;
+    public const int GlobalWriteEntryLongs = 3;
+    /// <summary>The external trail log's length as staged.</summary>
+    public const int ExternalTrailLogLength = 95;
+
+    public const int SlotCount = 96;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 

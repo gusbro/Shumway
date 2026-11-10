@@ -165,6 +165,13 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
         };
     }
 
+    public bool IsInlineGlobalStore(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Arity == 2
+            && entry.Name is "b_setval" or "$store_backtrackable_global_var";
+    }
+
     public bool IsInlineCompare3(int builtinId)
     {
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);

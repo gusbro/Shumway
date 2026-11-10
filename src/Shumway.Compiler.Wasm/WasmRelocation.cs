@@ -87,6 +87,7 @@ public sealed record WasmBuiltinEvidence(
         if (env.IsInlineDomDel(builtinId)) f |= WasmInlineForms.DomDel;
         if (env.IsInlineDomSingleton(builtinId)) f |= WasmInlineForms.DomSingleton;
         if (env.IsInlineCompare3(builtinId)) f |= WasmInlineForms.Compare3;
+        if (env.IsInlineGlobalStore(builtinId)) f |= WasmInlineForms.GlobalStore;
         f |= env.FindallFormOf(builtinId) switch
         {
             WasmFindallForm.Push => WasmInlineForms.FindallPush,
@@ -140,6 +141,7 @@ public enum WasmInlineForms
     FindallPush = 1 << 23,
     FindallRecord = 1 << 24,
     FindallCollect = 1 << 25,
+    GlobalStore = 1 << 26,
 }
 
 /// <summary>The builtins of findall's collect loop the compiled code parks
@@ -456,6 +458,12 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
     {
         Note(builtinId);
         return _inner.FindallFormOf(builtinId);
+    }
+
+    public bool IsInlineGlobalStore(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.IsInlineGlobalStore(builtinId);
     }
 
     public bool IsInlineAttrListWrite(int builtinId, out bool isDelete)

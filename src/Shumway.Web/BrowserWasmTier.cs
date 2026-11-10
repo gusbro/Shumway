@@ -282,6 +282,8 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 AttrModuleCount: _engine.WasmAttrModuleCount,
                 FindallRingBase: FindallRingAddress(),
                 FindallRingLimit: _engine.WasmFindallRingView.Length,
+                GlobalWriteBase: GlobalWriteRingAddress(),
+                GlobalWriteLimit: _engine.WasmGlobalWriteRingView.Length / WasmAbi.GlobalWriteEntryLongs,
                 FunctorReverseBase: FunctorReverseAddress(),
                 FunctorReverseMask: Shumway.Core.FunctorReverseTable.Mask,
                 GlobalVarBase: GlobalVarImageAddress(out int globalPairs),
@@ -436,8 +438,9 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         private long GlobalVarImageAddress(out int pairs)
         {
             if (_engine.Host is not Shumway.Builtins.IGlobalVarHost host)
-            { pairs = 0; return 0; }
+            { pairs = 0; _engine.WasmGlobalStore = null; return 0; }
             var store = host.GlobalVars;
+            _engine.WasmGlobalStore = store;
             if (store.Version != _globalImageVersion || _engine.InstanceId != _globalImageOwner)
             {
                 _globalImagePairs = store.WriteLiveCells(_globalImage, _engine.InstanceId);
@@ -506,6 +509,20 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
 
         private GCHandle _findallPin;
         private long[]? _findallPinned;
+        private GCHandle _globalWritePin;
+        private long[]? _globalWritePinned;
+
+        private long GlobalWriteRingAddress()
+        {
+            long[] r = _engine.WasmGlobalWriteRingView;
+            if (!ReferenceEquals(_globalWritePinned, r))
+            {
+                if (_globalWritePin.IsAllocated) _globalWritePin.Free();
+                _globalWritePin = GCHandle.Alloc(r, GCHandleType.Pinned);
+                _globalWritePinned = r;
+            }
+            return (long)_globalWritePin.AddrOfPinnedObject();
+        }
 
         private long FindallRingAddress()
         {
@@ -676,6 +693,7 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
             Unpin(ref _orphanPin); Unpin(ref _attrWritePin);
             Unpin(ref _attrDropPin); Unpin(ref _wakePin);
             Unpin(ref _attrModulePin); Unpin(ref _findallPin);
+            Unpin(ref _globalWritePin);
         }
 
         private static void Unpin(ref GCHandle pin)

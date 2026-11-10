@@ -605,7 +605,8 @@ public static class WasmPredicateCompiler
             || _env.IsInlineBarrierCall(builtinId)
             || _env.WakeSupportOf(builtinId) != WasmWakeSupport.None
             || _env.IsInlineCompare3(builtinId)
-            || _env.FindallFormOf(builtinId) != WasmFindallForm.None;
+            || _env.FindallFormOf(builtinId) != WasmFindallForm.None
+            || _env.IsInlineGlobalStore(builtinId);
 
         /// <summary>The translatable set, and the reason when it is not.
         /// Everything else in the 57-opcode universe rejects the predicate:
@@ -9014,6 +9015,11 @@ public static class WasmPredicateCompiler
                 EmitInlineCompare3(pc, exit);
                 return true;
             }
+            if (_env.IsInlineGlobalStore(builtinId))
+            {
+                EmitInlineGlobalStore(pc, exit);
+                return true;
+            }
             var findall = _env.FindallFormOf(builtinId);
             if (findall == WasmFindallForm.Collect)
             {
@@ -9226,6 +9232,169 @@ public static class WasmPredicateCompiler
             StoreSlot64(WasmAbi.FindallRingTop, () =>
             {
                 LoadSlot64(WasmAbi.FindallRingTop);
+                Op(new Int64Constant(1));
+                Op(new Int64Add());
+            });
+            Op(new Branch(1));                              // -> $done
+            CloseNested();                                  // $slow
+            exit();
+            CloseNested();                                  // $done
+        }
+
+        /// <summary><c>b_setval(Key, Value)</c> made in the global-variable
+        /// image: the key's row takes the value, so a read later in the chain
+        /// sees it, and the write is parked for the host with the old value
+        /// beside it, under a MutableSet trail entry the module writes with the
+        /// log index the host's record will have. The value is what the
+        /// host's write keeps: a variable as a reference to its home, anything
+        /// else as itself. A key the image lacks (a first write, another
+        /// activation's) or a snapshot is the request, as is a full ring or
+        /// trail.</summary>
+        private void EmitInlineGlobalStore(int pc, Action exit)
+        {
+            EmitFlagsCheck(pc);
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+            LoadSlot32(WasmAbi.GlobalWriteBase);
+            Op(new Int32EqualZero());
+            Op(new BranchIf(0));                            // -> $slow
+            LoadSlot32(WasmAbi.GlobalWriteTop);
+            LoadSlot32(WasmAbi.GlobalWriteLimit);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf(0));                            // -> $slow
+            LoadSlot32(WasmAbi.ExtraTrailBase);
+            Op(new Int32EqualZero());
+            Op(new BranchIf(0));                            // -> $slow
+            LoadSlot32(WasmAbi.ExtraTrailTop);
+            Op(new Int32Constant(1));
+            Op(new Int32Add());
+            LoadSlot32(WasmAbi.ExtraTrailLimit);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf(0));                            // -> $slow
+
+            // The key, an atom, and its row.
+            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            TagOfC0();
+            Op(new Int32Constant((int)Tag.Atom));
+            Op(new Int32NotEqual());
+            Op(new BranchIf(0));                            // -> $slow
+            Op(new LocalGet(LC0));
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LT1));                          // the key's atom id
+            LoadSlot32(WasmAbi.GlobalVarBase);
+            Op(new LocalSet(LT0));                          // the row
+            Op(new LocalGet(LT0));
+            Op(new Int32EqualZero());
+            Op(new BranchIf(0));                            // no image -> $slow
+            LoadSlot32(WasmAbi.GlobalVarCount);
+            Op(new LocalSet(LT2));                          // pairs left
+            OpenBlock();                                    // $found
+            OpenLoop();
+            {
+                Op(new LocalGet(LT2));
+                Op(new Int32Constant(0));
+                Op(new Int32LessThanOrEqualSigned());
+                Op(new BranchIf(2));                        // not there -> $slow
+                Op(new LocalGet(LT0));
+                Op(new Int64Load());
+                Op(new Int32WrapInt64());
+                Op(new LocalGet(LT1));
+                Op(new Int32Equal());
+                Op(new BranchIf(1));                        // -> $found
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant(16));
+                Op(new Int32Add());
+                Op(new LocalSet(LT0));
+                Op(new LocalGet(LT2));
+                Op(new Int32Constant(1));
+                Op(new Int32Subtract());
+                Op(new LocalSet(LT2));
+                Op(new Branch(0));
+            }
+            CloseNested();
+            CloseNested();                                  // $found: LT0
+            Op(new LocalGet(LT0));
+            Op(new Int64Load { Offset = 8 });
+            Op(new LocalSet(LU1));                          // the old value
+            Op(new LocalGet(LU1));
+            Op(new Int64Constant(WasmAbi.GlobalVarPayloadSentinel));
+            Op(new Int64Equal());
+            Op(new BranchIf(0));                            // a snapshot -> $slow
+
+            // The value as the host keeps it.
+            RegLoad(1); Op(new LocalSet(LC0));
+            TagOfC0();
+            Op(new Int32Constant((int)Tag.Ref));
+            Op(new Int32Equal());
+            OpenIf();
+            {
+                Deref();
+                TagOfC0(); Op(new LocalSet(LKT));
+                Op(new LocalGet(LKT)); Op(new Int32Constant((int)Tag.Ref)); Op(new Int32Equal());
+                Op(new LocalGet(LKT)); Op(new Int32Constant((int)Tag.AttVar)); Op(new Int32Equal());
+                Op(new Int32Or());
+                OpenIf();
+                {
+                    Op(new LocalGet(LDa));
+                    Op(new Int64ExtendInt32Unsigned());
+                    Op(new LocalSet(LC0));                  // Ref(home)
+                }
+                CloseNested();
+            }
+            CloseNested();
+
+            // The ring entry, the row, the trail entry.
+            LoadSlot32(WasmAbi.GlobalWriteBase);
+            LoadSlot32(WasmAbi.GlobalWriteTop);
+            Op(new Int32Constant(WasmAbi.GlobalWriteEntryLongs * 8));
+            Op(new Int32Multiply());
+            Op(new Int32Add());
+            Op(new LocalSet(LKH));
+            Op(new LocalGet(LKH));
+            Op(new LocalGet(LT1));
+            Op(new Int64ExtendInt32Unsigned());
+            Op(new Int64Store());
+            Op(new LocalGet(LKH));
+            Op(new LocalGet(LC0));
+            Op(new Int64Store { Offset = 8 });
+            Op(new LocalGet(LKH));
+            Op(new LocalGet(LU1));
+            Op(new Int64Store { Offset = 16 });
+            Op(new LocalGet(LT0));
+            Op(new LocalGet(LC0));
+            Op(new Int64Store { Offset = 8 });
+
+            LoadSlot32(WasmAbi.ExtraTrailBase);
+            LoadSlot32(WasmAbi.ExtraTrailTop);
+            Op(new Int32Constant(WasmAbi.ExtraTrailEntryBytes));
+            Op(new Int32Multiply());
+            Op(new Int32Add());
+            Op(new LocalSet(LKT));
+            Op(new LocalGet(LKT));
+            Op(new Int32Constant((int)Shumway.Core.TrailType.MutableSet));
+            Op(new Int32Store8 { Offset = (uint)WasmAbi.ExtraTrailTypeOffset });
+            Op(new LocalGet(LKT));
+            LoadSlot32(WasmAbi.ExternalTrailLogLength);
+            LoadSlot32(WasmAbi.GlobalWriteTop);
+            Op(new Int32Add());
+            Op(new Int32Store { Offset = (uint)WasmAbi.ExtraTrailHeapIdxOffset });
+            Op(new LocalGet(LKT));
+            Op(new Int64Constant(0));
+            Op(new Int64Store { Offset = (uint)WasmAbi.ExtraTrailOldValueOffset });
+            Op(new LocalGet(LKT));
+            Op(new LocalGet(LTR));
+            Op(new Int32Store { Offset = (uint)WasmAbi.ExtraTrailMarkerOffset });
+            StoreSlot64(WasmAbi.ExtraTrailTop, () =>
+            {
+                LoadSlot64(WasmAbi.ExtraTrailTop);
+                Op(new Int64Constant(1));
+                Op(new Int64Add());
+            });
+            StoreSlot64(WasmAbi.GlobalWriteTop, () =>
+            {
+                LoadSlot64(WasmAbi.GlobalWriteTop);
                 Op(new Int64Constant(1));
                 Op(new Int64Add());
             });

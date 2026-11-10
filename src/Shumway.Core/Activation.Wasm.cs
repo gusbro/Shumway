@@ -93,7 +93,11 @@ public sealed partial class Activation
         /// <summary>Base and capacity of the parked findall entries. A zero
         /// base means the collect loop's builtins are requested.</summary>
         long FindallRingBase = 0,
-        int FindallRingLimit = 0);
+        int FindallRingLimit = 0,
+        /// <summary>Base and capacity of the parked global writes. A zero
+        /// base means b_setval/2 is requested.</summary>
+        long GlobalWriteBase = 0,
+        int GlobalWriteLimit = 0);
 
     /// <summary>Grows the register bank to at least
     /// <paramref name="count"/> registers, before the runner takes its view:
@@ -171,6 +175,39 @@ public sealed partial class Activation
     public long[] WasmFindallRingView => _wasmFindall ??= new long[256];
 
     private long[]? _wasmFindall;
+
+    /// <summary>Where a module parks its backtrackable global writes
+    /// (<see cref="WasmAbi.GlobalWriteBase"/>).</summary>
+    public long[] WasmGlobalWriteRingView
+        => _wasmGlobalWrites ??= new long[WasmAbi.GlobalWriteEntryLongs * 256];
+
+    private long[]? _wasmGlobalWrites;
+
+    /// <summary>The store a module's parked global writes go to; the world
+    /// that stages a global write ring sets it.</summary>
+    public IBacktrackableStore? WasmGlobalStore { get; set; }
+
+    /// <summary>The writes a module parked, each as the host's b_setval/2
+    /// makes it: the log record the module's trail entry already indexes,
+    /// then the store. In ring order, which is the order the indexes were
+    /// handed out in.</summary>
+    private void DrainParkedGlobalWrites(int count)
+    {
+        if (_wasmGlobalWrites is null || count <= 0) return;
+        var store = WasmGlobalStore ?? throw new InvalidOperationException(
+            "a parked global write with no store to apply it to");
+        int w = WasmAbi.GlobalWriteEntryLongs;
+        int n = System.Math.Min(count, _wasmGlobalWrites.Length / w);
+        for (int i = 0; i < n; i++)
+        {
+            int at = i * w;
+            int key = (int)_wasmGlobalWrites[at];
+            var old = new Cell(_wasmGlobalWrites[at + 2]);
+            (_externalTrailLog ??= new List<(IExternalTrailTarget, int, Cell, bool)>())
+                .Add((store, key, old, true));
+            store.SetBacktrackable(key, new Cell(_wasmGlobalWrites[at + 1]), InstanceId);
+        }
+    }
 
     /// <summary>The buffers a module opened and the solutions it recorded,
     /// in the order it did. A collect, or any other builtin, runs after this:
@@ -519,6 +556,10 @@ public sealed partial class Activation
         m[WasmAbi.FindallRingBase] = bases.FindallRingBase;
         m[WasmAbi.FindallRingTop] = 0;
         m[WasmAbi.FindallRingLimit] = bases.FindallRingLimit;
+        m[WasmAbi.GlobalWriteBase] = WasmGlobalStore is null ? 0 : bases.GlobalWriteBase;
+        m[WasmAbi.GlobalWriteTop] = 0;
+        m[WasmAbi.GlobalWriteLimit] = bases.GlobalWriteLimit;
+        m[WasmAbi.ExternalTrailLogLength] = _externalTrailLog?.Count ?? 0;
         m[WasmAbi.ArithTableBase] = bases.ArithTableBase;
         m[WasmAbi.ArithTableLength] = bases.ArithTableLength;
         m[WasmAbi.ArithValue] = 0;
@@ -619,6 +660,7 @@ public sealed partial class Activation
         DrainDroppedAttrRecords((int)m[WasmAbi.AttrDropTop]);
         DrainParkedWakes((int)m[WasmAbi.WakeRingTop]);
         DrainParkedFindall((int)m[WasmAbi.FindallRingTop]);
+        DrainParkedGlobalWrites((int)m[WasmAbi.GlobalWriteTop]);
         // The compaction watermark, which a module's walk moves.
         _compactBarrier = (int)m[WasmAbi.CompactBarrier];
         _compactParentBinding = (int)m[WasmAbi.CompactParentBinding];

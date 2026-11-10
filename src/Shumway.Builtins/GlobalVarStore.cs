@@ -37,7 +37,7 @@ namespace Shumway.Builtins;
 /// claims the keys and the atoms of the values (<see cref="MarkAtoms"/>,
 /// ADR-003), so a key's atom lives as long as its entry.</para>
 /// </summary>
-public sealed class GlobalVarStore : IExternalTrailTarget
+public sealed class GlobalVarStore : IBacktrackableStore
 {
     private readonly Dictionary<int, Cell> _byAtomId = new();
     private readonly Dictionary<int, object> _payloads = new();
@@ -83,6 +83,9 @@ public sealed class GlobalVarStore : IExternalTrailTarget
     /// fresh activation, and the assignment a query made is over when the
     /// query is (the same place SWI's b_setval leaves it, since its toplevel
     /// backtracks out of the assignment).</summary>
+    public void SetBacktrackable(int key, Cell value, int ownerId)
+        => Set(key, value, backtrackable: true, ownerId);
+
     public void Set(int atomId, Cell value, bool backtrackable, int ownerId = 0)
     {
         _payloads.Remove(atomId);

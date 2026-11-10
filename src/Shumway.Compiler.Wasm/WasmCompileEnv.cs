@@ -204,6 +204,12 @@ public interface IWasmCompileEnv
     /// not cross at all.</summary>
     WasmFindallForm FindallFormOf(int builtinId) => WasmFindallForm.None;
 
+    /// <summary>Whether the builtin is a backtrackable global write
+    /// (b_setval/2, '$store_backtrackable_global_var'/2) the compiled code
+    /// makes in the global-variable image and parks for the host
+    /// (WasmAbi.GlobalWriteBase).</summary>
+    bool IsInlineGlobalStore(int builtinId) => false;
+
     /// <summary>Whether the builtin writes a module's attribute list:
     /// <c>'$put_to_attr_list'/3</c>, or <c>'$del_from_attr_list'/3</c>
     /// with <paramref name="isDelete"/> set.
