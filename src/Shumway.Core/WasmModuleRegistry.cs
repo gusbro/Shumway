@@ -270,11 +270,11 @@ public sealed class WasmModuleRegistry
     /// it.</para></summary>
     public void NoteMetaResolution(
         object? addressMap, int moduleAtomId, int goalKey, int appended,
-        int resolvedFid, bool atomGoal, int builtinId)
+        int resolvedFid, bool atomGoal, int builtinId, int metaArgMask)
         => Table.NoteMetaResolution(addressMap, moduleAtomId, goalKey, appended,
                                     builtinId >= 0 ? resolvedFid
                                                    : CanonicalCallee(addressMap, resolvedFid),
-                                    atomGoal, builtinId);
+                                    atomGoal, builtinId, metaArgMask);
 
     private int CanonicalCallee(object? addressMap, int functorId)
     {

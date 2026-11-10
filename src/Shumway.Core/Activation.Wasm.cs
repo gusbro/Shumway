@@ -286,20 +286,23 @@ public sealed partial class Activation
     ///
     /// <para>Null unless a wasm world is attached, and called only on the
     /// resolution path, which is already the slow one.</para></summary>
-    /// <para>The last argument is the builtin id when the goal resolved to
-    /// a direct builtin (one a module can request), -1 for a predicate.</para>
-    public System.Action<object?, int, int, int, int, bool, int>? MetaResolutionObserver;
+    /// <para>The builtin id follows when the goal resolved to a direct
+    /// builtin (one a module can request), -1 for a predicate; last, the
+    /// argument positions <see cref="QualifyMetaArgRegisters"/> qualified,
+    /// one bit each, which a module reading the row qualifies the same way.
+    /// </para>
+    public System.Action<object?, int, int, int, int, bool, int, int>? MetaResolutionObserver;
 
     /// <summary>Reports a module-tagged meta-call resolution to
-    /// <see cref="MetaResolutionObserver"/>, unless the goal's predicate has
-    /// meta-arguments: a cached row would jump straight to the callee and
-    /// skip their qualification the next time.</summary>
+    /// <see cref="MetaResolutionObserver"/>, with the meta-arguments the
+    /// goal's predicate takes qualified: a row without them would jump
+    /// straight to the callee and skip that the next time.</summary>
     public void PublishMetaResolution(object? addresses, int module, int goalKey,
         int appended, int functorId, bool atomGoal, int builtinId)
     {
-        if (_goalHasMetaArgs) return;
+        if (_goalMetaArgMask < 0) return;
         MetaResolutionObserver?.Invoke(addresses, module, goalKey, appended,
-            functorId, atomGoal, builtinId);
+            functorId, atomGoal, builtinId, _goalMetaArgMask);
     }
 
     /// <summary>ADR-056: the meta-argument positions of the predicate a goal
@@ -308,7 +311,14 @@ public sealed partial class Activation
     /// the module's name. Set by the embedding at query setup.</summary>
     public Func<int, string?, int[]?>? MetaArgSpecOf { get; set; }
 
-    private bool _goalHasMetaArgs;
+    // The positions the last QualifyMetaArgRegisters qualified, a bit each;
+    // -1 when they do not fit the bits, and the resolution is not published.
+    private int _goalMetaArgMask;
+
+    /// <summary>Says the goal being dispatched qualifies no meta-argument,
+    /// before a dispatch that does not call
+    /// <see cref="QualifyMetaArgRegisters"/>.</summary>
+    public void NoGoalMetaArgs() => _goalMetaArgMask = 0;
 
     private static readonly int ColonQualFunctorId =
         FunctorTable.Intern(AtomTable.Intern(":", permanent: true).Id, 2);
@@ -327,7 +337,7 @@ public sealed partial class Activation
     /// ModuleRewrite's meta-argument qualification.</summary>
     public void QualifyMetaArgRegisters(int moduleAtomId, int atomId, int totalArity)
     {
-        _goalHasMetaArgs = false;
+        _goalMetaArgMask = 0;
         if (MetaArgSpecOf is not { } specOf) return;
         if (moduleAtomId == PreludeModuleAtomId) return;
         // user's goals carry user too: what a bare name means there is a
@@ -342,7 +352,6 @@ public sealed partial class Activation
             : null;
         int[]? spec = specOf(FunctorTable.Intern(atomId, totalArity), local);
         if (spec is null || spec.Length != totalArity) return;
-        _goalHasMetaArgs = true;
         bool inUser = moduleAtomId == UserModuleAtomId;
         for (int i = 0; i < totalArity; i++)
         {
@@ -353,6 +362,8 @@ public sealed partial class Activation
             // names the global store. Wrapped, clause(user:p(1), B) takes the
             // qualified path, which enumerates where the bare one indexes.
             if (inUser && code == ModuleQualify.ColonBuiltinArg) continue;
+            _goalMetaArgMask = i < 31 && _goalMetaArgMask >= 0
+                ? _goalMetaArgMask | (1 << i) : -1;
             Cell c = GetRegister(i);
             Cell d = c.Tag == Tag.Ref ? GetHeap(Deref(c.AsHeapIndex)) : c;
             if (d.Tag == Tag.Str)

@@ -606,6 +606,7 @@ public sealed partial class BytecodeInterpreter
         // A construct's two goals take the module each (call(;, P, Q) in m
         // runs m's P and Q), as the compound form's do in PrepareMqualGoal;
         // a predicate's meta-arguments take it by its declaration.
+        _engine.NoGoalMetaArgs();
         if (resolutionModule >= 0 && controlConstruct)
         {
             if (resolutionModule != PreludeModuleAtomId)

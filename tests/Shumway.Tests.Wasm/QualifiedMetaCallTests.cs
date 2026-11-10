@@ -92,6 +92,19 @@ public sealed class QualifiedMetaCallTests(ITestOutputHelper o)
         Assert.Equal(0L, run.Guard9);
     }
 
+    /// <summary>probe_q/2 reports whether its closure arrived qualified: the
+    /// host qualifies it, so a module that jumped from the cache without
+    /// qualifying would answer <c>bare</c>.</summary>
+    [DiagFact]
+    public void AGoalWithMetaArgumentsTakesThemQualified()
+    {
+        const string goal = "metaarg_run(probe_q(inc), S).";
+        var run = Run(goal);
+        Assert.Equal("S=q(user)", Tier0(goal));
+        Assert.Equal(Tier0(goal), run.Answer);
+        Assert.Equal(0L, run.Guard9);
+    }
+
     /// <summary>'$call_conj'/3 hands each piece to '$call'/2 with the
     /// call's barrier, and a barrier that is an integer is the module's to
     /// take: the check that tells one apart sent every piece to the host.

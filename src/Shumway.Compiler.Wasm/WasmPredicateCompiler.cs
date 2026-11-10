@@ -5904,6 +5904,8 @@ public static class WasmPredicateCompiler
             Op(new Int32NotEqual());
             MetaGuard(2);
             Op(new BranchIf(0));                            // -> $slow
+            Op(new Int32Constant(0));
+            Op(new LocalSet(LKT));                          // no argument to qualify
             Op(new LocalGet(LC0));
             Op(new Int32WrapInt64());
             Op(new LocalSet(LT2));                          // the structure's index
@@ -6077,6 +6079,8 @@ public static class WasmPredicateCompiler
                 }
                 CloseNested();
 
+                Op(new LocalGet(LT0));
+                Op(new LocalSet(LKH));                      // the module, kept to qualify with
                 LoadSlot32(WasmAbi.MetaCacheBase);
                 Op(new LocalSet(LMetaBase));
                 Op(new LocalGet(LMetaBase));
@@ -6185,8 +6189,15 @@ public static class WasmPredicateCompiler
                     {
                         Op(new LocalGet(LT1));
                         Op(new Int64Load { Offset = 8 });
+                        Op(new LocalSet(LAtKey));           // the key is spent
+                        Op(new LocalGet(LAtKey));
                         Op(new Int32WrapInt64());
                         Op(new LocalSet(LT1));              // the resolved functor
+                        Op(new LocalGet(LAtKey));
+                        Op(new Int64Constant(32));
+                        Op(new Int64ShiftRightUnsigned());
+                        Op(new Int32WrapInt64());
+                        Op(new LocalSet(LKT));              // the arguments to qualify
                         Op(new Branch(2));                  // -> $resolved
                     }
                     CloseNested();
@@ -6332,6 +6343,23 @@ public static class WasmPredicateCompiler
 
             // Last chance: the copy below overwrites X1.
             EmitReadBarrier();
+            // The same for the qualification after the copy: three cells for
+            // each argument it may wrap.
+            Op(new LocalGet(LKT));
+            OpenIf();
+            {
+                Op(new LocalGet(LH));
+                Op(new LocalGet(LKT));
+                Op(new Int32CountOneBits());
+                Op(new Int32Constant(3));
+                Op(new Int32Multiply());
+                Op(new Int32Add());
+                LoadSlot32(WasmAbi.HeapWatermark);
+                Op(new Int32GreaterThanOrEqualSigned());
+                MetaGuard(19);
+                Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+            }
+            CloseNested();
 
             // call/N: the arguments to append are sitting in X1..Xappended,
             // and the copy below writes X0 upwards -- so it would eat them
@@ -6580,6 +6608,7 @@ public static class WasmPredicateCompiler
                 CloseNested();
             }
 
+            EmitQualifyMetaArgs();
             EmitMetaTailOrRequest();
 
             CloseNested();                                  // $slow
@@ -8662,6 +8691,87 @@ public static class WasmPredicateCompiler
             CloseNested();                                  // $slow
             emitBuiltinExit();
             CloseNested();                                  // $done
+        }
+
+        /// <summary>ADR-056: the callee's meta-arguments take the module the
+        /// goal ran in (LKH), as the host's QualifyMetaArgRegisters wraps
+        /// them, over the positions the meta cache row carries (LKT, a bit
+        /// each): <c>':'(Module, Arg)</c>, an argument already qualified left
+        /// as it is, an attributed variable referenced rather than copied.
+        /// The room was checked before the registers were overwritten.
+        /// </summary>
+        private void EmitQualifyMetaArgs()
+        {
+            OpenBlock();                                    // $qualified
+            OpenLoop();                                     // $next
+            {
+                Op(new LocalGet(LKT));
+                Op(new Int32EqualZero());
+                Op(new BranchIf(1));                        // -> $qualified
+                Op(new LocalGet(LKT));
+                Op(new Int32CountTrailingZeroes());
+                Op(new Int32Constant(3));
+                Op(new Int32ShiftLeft());
+                Op(new LocalGet(LRegsB));
+                Op(new Int32Add());
+                Op(new LocalSet(LKStop));                   // the register's address
+                Op(new LocalGet(LKT));
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant(1));
+                Op(new Int32Subtract());
+                Op(new Int32And());
+                Op(new LocalSet(LKT));
+
+                Op(new LocalGet(LKStop));
+                Op(new Int64Load());
+                Op(new LocalSet(LC2));
+                Op(new LocalGet(LC2));
+                Op(new LocalSet(LC0));
+                Deref();
+                TagOfC0();
+                Op(new Int32Constant((int)Tag.Str));
+                Op(new Int32Equal());
+                OpenIf();
+                {
+                    Op(new LocalGet(LC0));
+                    Op(new Int32WrapInt64());
+                    Op(new LocalSet(LKBR));
+                    CellLoadDyn(LHeapB, LKBR);
+                    Op(new LocalSet(LC1));
+                    EmitIsModuleTag(LC1);
+                    Op(new BranchIf(1));                    // qualified already -> $next
+                }
+                CloseNested();
+
+                Op(new LocalGet(LC2));
+                Op(new Int64Constant(60));
+                Op(new Int64ShiftRightUnsigned());
+                Op(new Int64Constant((long)Tag.AttVar));
+                Op(new Int64Equal());
+                OpenIf();
+                {
+                    Op(new LocalGet(LC2));
+                    Op(new Int64Constant(Cell.PayloadMask));
+                    Op(new Int64And());
+                    Op(new LocalSet(LC2));                  // Ref(home)
+                }
+                CloseNested();
+
+                CellStoreDyn(LHeapB, LH, 0,
+                    () => Op(new Int64Constant(_env.FunctorCell(_env.ColonFunctorId))));
+                CellStoreDyn(LHeapB, LH, 1, () => TaggedI32(LKH, Tag.Atom));
+                CellStoreDyn(LHeapB, LH, 2, () => Op(new LocalGet(LC2)));
+                Op(new LocalGet(LKStop));
+                TaggedI32(LH, Tag.Str);
+                Op(new Int64Store());
+                Op(new LocalGet(LH));
+                Op(new Int32Constant(3));
+                Op(new Int32Add());
+                Op(new LocalSet(LH));
+                Op(new Branch(0));                          // -> $next
+            }
+            CloseNested();                                  // $next
+            CloseNested();                                  // $qualified
         }
 
         /// <summary>Pushes whether the functor cell in <paramref name="cell"/>

@@ -141,8 +141,9 @@ public sealed class WasmResumeTable
 
     /// <summary>The meta-call inline cache: (module atom, goal functor) ->
     /// the resolved functor. Two i64 per slot, key
-    /// <c>((module + 1) &lt;&lt; 32) | goalFid</c> then the resolved id;
-    /// key 0 is an empty slot. Open-addressed on the same probe the
+    /// <c>((module + 1) &lt;&lt; 32) | goalFid</c> then the resolved id, with
+    /// the argument positions to qualify with the module above it (one bit
+    /// each: the callee's meta-arguments, ADR-056); key 0 is an empty slot. Open-addressed on the same probe the
     /// attribute image uses, because a module walks it the same way.
     ///
     /// <para>It holds the resolved functor, not the marker, and that is the
@@ -194,7 +195,7 @@ public sealed class WasmResumeTable
     /// there was a cache.</summary>
     public void NoteMetaResolution(
         object? addressMap, int moduleAtomId, int goalKey, int appended,
-        int resolvedFid, bool atomGoal = false, int builtinId = -1)
+        int resolvedFid, bool atomGoal = false, int builtinId = -1, int metaArgMask = 0)
     {
         if (moduleAtomId < 0 || goalKey < 0 || resolvedFid < 0) return;
         // call/N appends arguments, so the predicate it resolves to has a
@@ -216,6 +217,7 @@ public sealed class WasmResumeTable
         if (builtinId >= 0) PublishBuiltin(resolvedFid, builtinId);
         else EnsureCallMarker(resolvedFid);
         long key = MetaKey(moduleAtomId, goalKey, appended, atomGoal);
+        long row = ((long)metaArgMask << 32) | (uint)resolvedFid;
         int slot = MetaProbe(moduleAtomId, goalKey, appended, atomGoal,
                              _metaCacheMask);
         for (int probe = 0; probe <= _metaCacheMask; probe++)
@@ -223,9 +225,9 @@ public sealed class WasmResumeTable
             long k = _metaCache[slot * 2];
             if (k == key)
             {
-                if (_metaCache[slot * 2 + 1] != resolvedFid)
+                if (_metaCache[slot * 2 + 1] != row)
                 {
-                    _metaCache[slot * 2 + 1] = resolvedFid;
+                    _metaCache[slot * 2 + 1] = row;
                     MetaCacheVersion++;
                 }
                 return;
@@ -234,7 +236,7 @@ public sealed class WasmResumeTable
             {
                 if (_metaCacheUsed * 4 >= _metaCache.Length) return;   // full
                 _metaCache[slot * 2] = key;
-                _metaCache[slot * 2 + 1] = resolvedFid;
+                _metaCache[slot * 2 + 1] = row;
                 _metaCacheUsed++;
                 MetaCacheVersion++;
                 return;
