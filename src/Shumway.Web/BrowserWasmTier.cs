@@ -275,6 +275,10 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 AttrMirrorBudget: _engine.AttrMirrorInsertBudget,
                 AttrDropBase: AttrDropRingAddress(),
                 AttrDropLimit: _engine.WasmAttrDropRingView.Length,
+                WakeRingBase: WakeRingAddress(),
+                WakeRingLimit: _engine.WasmWakeRingView.Length / WasmAbi.WakeEntryInts,
+                AttrModuleBase: AttrModuleAddress(),
+                AttrModuleCount: _engine.WasmAttrModuleCount,
                 FunctorReverseBase: FunctorReverseAddress(),
                 FunctorReverseMask: Shumway.Core.FunctorReverseTable.Mask,
                 GlobalVarBase: GlobalVarImageAddress(out int globalPairs),
@@ -480,6 +484,35 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         private GCHandle _attrDropPin;
         private int[]? _attrDropPinned;
 
+        /// <summary>The parked wakeups and the attribute module list, pinned
+        /// for the chain like the rings above.</summary>
+        private GCHandle _wakePin, _attrModulePin;
+        private int[]? _wakePinned, _attrModulePinned;
+
+        private long WakeRingAddress()
+        {
+            int[] r = _engine.WasmWakeRingView;
+            if (!ReferenceEquals(_wakePinned, r))
+            {
+                if (_wakePin.IsAllocated) _wakePin.Free();
+                _wakePin = GCHandle.Alloc(r, GCHandleType.Pinned);
+                _wakePinned = r;
+            }
+            return (long)_wakePin.AddrOfPinnedObject();
+        }
+
+        private long AttrModuleAddress()
+        {
+            int[] r = _engine.WasmAttrModuleView;
+            if (!ReferenceEquals(_attrModulePinned, r))
+            {
+                if (_attrModulePin.IsAllocated) _attrModulePin.Free();
+                _attrModulePin = GCHandle.Alloc(r, GCHandleType.Pinned);
+                _attrModulePinned = r;
+            }
+            return (long)_attrModulePin.AddrOfPinnedObject();
+        }
+
         /// <summary>The reverse functor table, pinned. Replaced when it
         /// grows, so the address is re-taken rather than cached.</summary>
         private static GCHandle _funRevPin;
@@ -623,7 +656,8 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
             Unpin(ref _metaPin); Unpin(ref _atomPin);
             Unpin(ref _attrLogPin); Unpin(ref _extraTrailPin);
             Unpin(ref _orphanPin); Unpin(ref _attrWritePin);
-            Unpin(ref _attrDropPin);
+            Unpin(ref _attrDropPin); Unpin(ref _wakePin);
+            Unpin(ref _attrModulePin);
         }
 
         private static void Unpin(ref GCHandle pin)

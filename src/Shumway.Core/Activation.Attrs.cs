@@ -54,9 +54,33 @@ public sealed partial class Activation
         bool isNew = !rec.ContainsKey(moduleId);
         rec[moduleId] = valueHeapIdx;
         AttrMirrorPut(home, moduleId, valueHeapIdx);
-        if (isNew) AttrMirrorSetRowCount(home, rec.Count);
+        if (isNew)
+        {
+            AttrMirrorSetRowCount(home, rec.Count);
+            AttrNoteModule(moduleId);
+        }
         Diagnostics.AttrTrace.Note(CellsAllocated, moduleId, AttrValueShape(valueHeapIdx));
     }
+
+    // The attribute modules seen so far: the keys a wasm module probes the
+    // image with to learn which module a variable carries. A hint, never a
+    // census: a module missing from it makes the binding step aside, and a
+    // stale id only probes and misses.
+    private readonly int[] _attrModules = new int[16];
+    private int _attrModuleCount;
+
+    private void AttrNoteModule(int moduleId)
+    {
+        for (int i = 0; i < _attrModuleCount; i++)
+            if (_attrModules[i] == moduleId) return;
+        if (_attrModuleCount < _attrModules.Length) _attrModules[_attrModuleCount++] = moduleId;
+    }
+
+    /// <summary>The attribute modules the store has seen, for a wasm world to
+    /// stage; the first <see cref="WasmAttrModuleCount"/> are live.</summary>
+    public int[] WasmAttrModuleView => _attrModules;
+
+    public int WasmAttrModuleCount => _attrModuleCount;
 
     /// <summary>The written value's functor arity, or a negative tag code.
     /// ADR-051 makes a finite domain a term whose arity counts its

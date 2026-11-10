@@ -564,7 +564,28 @@ public static class WasmAbi
     /// the host instead of resuming the choice point in-chain.</summary>
     public const int BacktrackFloor = 83;
 
-    public const int SlotCount = 84;
+    /// <summary>Where a module parks the wakeups of the attributed variables
+    /// it binds, <see cref="WakeEntryInts"/> i32 each: module, the attribute
+    /// value, the term bound to, the variable's home. ADR-049: a binding
+    /// queues its wakeups and the next goal boundary runs them; the queue is
+    /// the host's, so the module parks them, sets
+    /// <see cref="FlagWakeupPending"/>, and the host takes them in order when
+    /// the chain returns, before it restores or interrupts. A zero base means
+    /// binding an attributed variable steps aside.</summary>
+    public const int WakeRingBase = 84;
+    public const int WakeRingTop = 85;
+    public const int WakeRingLimit = 86;
+    public const int WakeEntryInts = 4;
+
+    /// <summary>Base and count of the attribute modules the store has seen,
+    /// one i32 module id each: the keys a module probes the attribute image
+    /// with to learn which modules a variable carries. A variable with more
+    /// than one steps aside, so the order of its wakeups stays the record's.
+    /// </summary>
+    public const int AttrModuleBase = 87;
+    public const int AttrModuleCount = 88;
+
+    public const int SlotCount = 89;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 

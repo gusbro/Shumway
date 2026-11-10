@@ -81,7 +81,15 @@ public sealed partial class Activation
         int AttrDropLimit = 0,
         /// <summary>Base and mask of the reverse functor table.</summary>
         long FunctorReverseBase = 0,
-        int FunctorReverseMask = 0);
+        int FunctorReverseMask = 0,
+        /// <summary>Base and capacity of the parked wakeups. A zero base
+        /// means binding an attributed variable steps aside.</summary>
+        long WakeRingBase = 0,
+        int WakeRingLimit = 0,
+        /// <summary>Base and count of the attribute modules the store has
+        /// seen.</summary>
+        long AttrModuleBase = 0,
+        int AttrModuleCount = 0);
 
     /// <summary>Grows the register bank to at least
     /// <paramref name="count"/> registers, before the runner takes its view:
@@ -125,6 +133,31 @@ public sealed partial class Activation
     public int[] WasmAttrDropRingView => _wasmAttrDrops ??= new int[512];
 
     private int[]? _wasmAttrDrops;
+
+    /// <summary>Where a module parks the wakeups of the attributed variables
+    /// it binds, <see cref="WasmAbi.WakeEntryInts"/> i32 each: module, the
+    /// attribute value, the term bound to, the variable's home.</summary>
+    public int[] WasmWakeRingView
+        => _wasmWakes ??= new int[WasmAbi.WakeEntryInts * 256];
+
+    private int[]? _wasmWakes;
+
+    /// <summary>The wakeups a module parked, queued in the order it bound
+    /// them. Nothing else queues inside a chain: an entry with a wakeup
+    /// pending runs on bytecode, and a builtin that queues one closes the
+    /// chain.</summary>
+    private void DrainParkedWakes(int count)
+    {
+        if (_wasmWakes is null || count <= 0) return;
+        int w = WasmAbi.WakeEntryInts;
+        int n = count * w <= _wasmWakes.Length ? count : _wasmWakes.Length / w;
+        for (int i = 0; i < n; i++)
+        {
+            int at = i * w;
+            _pendingWakeups.Add((_wasmWakes[at], _wasmWakes[at + 1],
+                                 _wasmWakes[at + 2], _wasmWakes[at + 3]));
+        }
+    }
 
     // Whether the image staged last is the engine's own array, and the
     // insert budget it was staged with: the difference on the way back is
@@ -420,6 +453,11 @@ public sealed partial class Activation
         m[WasmAbi.AttrDropBase] = bases.AttrDropBase;
         m[WasmAbi.AttrDropLimit] = bases.AttrDropLimit;
         m[WasmAbi.AttrDropTop] = 0;
+        m[WasmAbi.WakeRingBase] = bases.WakeRingBase;
+        m[WasmAbi.WakeRingTop] = 0;
+        m[WasmAbi.WakeRingLimit] = bases.WakeRingLimit;
+        m[WasmAbi.AttrModuleBase] = bases.AttrModuleBase;
+        m[WasmAbi.AttrModuleCount] = bases.AttrModuleCount;
         m[WasmAbi.ArithTableBase] = bases.ArithTableBase;
         m[WasmAbi.ArithTableLength] = bases.ArithTableLength;
         m[WasmAbi.ArithValue] = 0;
@@ -518,6 +556,7 @@ public sealed partial class Activation
         DrainPendingAttrWrites((int)m[WasmAbi.AttrWriteTop]);
         DrainOrphanedAttrRecords((int)m[WasmAbi.AttrOrphanTop]);
         DrainDroppedAttrRecords((int)m[WasmAbi.AttrDropTop]);
+        DrainParkedWakes((int)m[WasmAbi.WakeRingTop]);
         // The compaction watermark, which a module's walk moves.
         _compactBarrier = (int)m[WasmAbi.CompactBarrier];
         _compactParentBinding = (int)m[WasmAbi.CompactParentBinding];

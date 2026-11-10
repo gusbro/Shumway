@@ -235,7 +235,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         /// aside for the host to grow the area (the image has no room past
         /// what is reserved here).</summary>
         private const int ExtraTrailHeadroom = 256;
-        private int _arithAt, _attrWriteAt, _attrDropAt, _funRevAt, _globalAt;
+        private int _arithAt, _attrWriteAt, _attrDropAt, _wakeAt, _attrModAt, _funRevAt, _globalAt;
         private readonly long[] _globalRows = new long[2 * 32];
         // Exactly one side is authoritative: the image (false) or the engine
         // (true, after SyncEngine ran and managed code may have mutated).
@@ -291,6 +291,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             int[] orphanRing = _engine.WasmOrphanRingView;
             int[] attrWrites = _engine.WasmAttrWriteRingView;
             int[] attrDrops = _engine.WasmAttrDropRingView;
+            int[] wakes = _engine.WasmWakeRingView;
+            int[] attrModules = _engine.WasmAttrModuleView;
+            int attrModuleCount = _engine.WasmAttrModuleCount;
             long[] funRev = FunctorReverseTable.Rows;
             int[] arithRows = Shumway.Builtins.ArithFunctorTable.Rows;
             int arithLen = Shumway.Builtins.ArithFunctorTable.Length;
@@ -316,7 +319,9 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             _arithAt = _orphanAt + orphanRing.Length * 4;
             _attrWriteAt = _arithAt + arithLen * 4;
             _attrDropAt = _attrWriteAt + attrWrites.Length * 4;
-            _funRevAt = (_attrDropAt + attrDrops.Length * 4 + 7) & ~7;
+            _wakeAt = _attrDropAt + attrDrops.Length * 4;
+            _attrModAt = _wakeAt + wakes.Length * 4;
+            _funRevAt = (_attrModAt + attrModules.Length * 4 + 7) & ~7;
             _globalAt = _funRevAt + funRev.Length * 8;
             if (_globalAt + (long)_globalRows.Length * 8 > (long)Pages * 65536)
                 throw new InvalidOperationException("engine areas outgrew the desktop image");
@@ -361,6 +366,10 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 AttrMirrorBudget: _engine.AttrMirrorInsertBudget,
                 AttrDropBase: _attrDropAt,
                 AttrDropLimit: attrDrops.Length,
+                WakeRingBase: _wakeAt,
+                WakeRingLimit: wakes.Length / WasmAbi.WakeEntryInts,
+                AttrModuleBase: _attrModAt,
+                AttrModuleCount: attrModuleCount,
                 FunctorReverseBase: _funRevAt,
                 FunctorReverseMask: FunctorReverseTable.Mask,
                 GlobalVarBase: globalPairs >= 0 ? _globalAt : 0,
@@ -427,6 +436,10 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             if (globalPairs > 0)
                 fixed (long* p = _globalRows)
                     Buffer.MemoryCopy(p, mem + _globalAt, globalPairs * 16L, globalPairs * 16L);
+            if (attrModuleCount > 0)
+                fixed (int* p = attrModules)
+                    Buffer.MemoryCopy(p, mem + _attrModAt, attrModuleCount * 4L,
+                                      attrModuleCount * 4L);
             if (arithLen > 0)
                 fixed (int* p = arithRows)
                     Buffer.MemoryCopy(p, mem + _arithAt, arithLen * 4L, arithLen * 4L);
@@ -547,6 +560,13 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 fixed (int* p = attrDrops)
                     Buffer.MemoryCopy(mem + _attrDropAt, p, attrDrops.Length * 4L,
                                       System.Math.Min(dropped, attrDrops.Length) * 4L);
+            int woke = (int)_mailbox[WasmAbi.WakeRingTop];
+            int[] wakes = _engine.WasmWakeRingView;
+            if (woke > 0)
+                fixed (int* p = wakes)
+                    Buffer.MemoryCopy(mem + _wakeAt, p, wakes.Length * 4L,
+                                      System.Math.Min(
+                                          woke * WasmAbi.WakeEntryInts, wakes.Length) * 4L);
             int orphans = (int)_mailbox[WasmAbi.AttrOrphanTop];
             int[] orphanRing = _engine.WasmOrphanRingView;
             if (orphans > 0)
