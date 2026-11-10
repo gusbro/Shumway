@@ -790,6 +790,7 @@ public static class WasmPredicateCompiler
                         break;
                 }
             }
+            FindWakeResumes();
             foreach (int addr in _leaders)
                 if (!_byPc.ContainsKey(addr))
                     throw new WasmCompileException($"jump target {addr} is not an instruction boundary");
@@ -884,6 +885,75 @@ public static class WasmPredicateCompiler
         }
 
         private int CursorOf(int addr) => _cursorByAddr[addr];
+
+        // ADR-049: the boundaries a parked wakeup can reach whose resume is
+        // the instruction itself -- a cut, a builtin -- each made a leader so
+        // the interrupt has a cursor to come back to. Found in a pass of its
+        // own, before emission knows what it will park: a guess too wide
+        // costs a leader the next run falls into, one too narrow a
+        // step-aside, and neither changes an answer.
+        private readonly HashSet<int> _wakeResumes = new();
+
+        private void FindWakeResumes()
+        {
+            bool mayPend = false;
+            int section = -1;
+            foreach (var ins in _instrs)
+            {
+                if (ins.Section != section) { section = ins.Section; mayPend = false; }
+                if (_wakeJoins.Contains(ins.Pc)) mayPend = true;
+                switch (ins.Op)
+                {
+                    case Opcode.Try: case Opcode.Retry: case Opcode.Trust:
+                    case Opcode.TryMeElse: case Opcode.RetryMeElse: case Opcode.TrustMe:
+                    case Opcode.Proceed: case Opcode.DeallocateProceed: case Opcode.DeallocateExecute:
+                        mayPend = false;
+                        break;
+                    case Opcode.NeckCut: case Opcode.Cut:
+                    case Opcode.CutProceed: case Opcode.CutDeallocateProceed:
+                        if (mayPend) AddWakeResume(ins.Pc);
+                        mayPend = false;
+                        break;
+                    case Opcode.CallBuiltin: case Opcode.ExecuteBuiltin:
+                        if (_env.IsInlineUnify(ins.I0)) break;
+                        if (mayPend) AddWakeResume(ins.Pc);
+                        mayPend = false;
+                        break;
+                    case Opcode.Call: case Opcode.Execute:
+                        if (_callee.TryGetValue(ins.Pc, out int callee)
+                            && _env.TryGetBuiltin(callee, out int builtinId))
+                        {
+                            if (_env.IsInlineUnify(builtinId)) break;
+                            if (mayPend) AddWakeResume(ins.Pc);
+                        }
+                        mayPend = false;
+                        break;
+                    case Opcode.GetAtom: case Opcode.GetConstant:
+                    case Opcode.GetConstantA1: case Opcode.GetConstantA2:
+                    case Opcode.GetInteger: case Opcode.GetNil:
+                    case Opcode.GetStructure: case Opcode.GetList:
+                    case Opcode.GetListA1: case Opcode.GetListA2:
+                    case Opcode.UnifyAtom: case Opcode.UnifyConstant:
+                    case Opcode.UnifyInteger: case Opcode.UnifyNil:
+                    case Opcode.UnifyStructure: case Opcode.UnifyList:
+                        mayPend = true;
+                        break;
+                }
+            }
+        }
+
+        private void AddWakeResume(int pc)
+        {
+            _wakeResumes.Add(pc);
+            _leaders.Add(pc);
+        }
+
+        // The interrupts at a cut save every register the module uses: what
+        // is live there is not computed, and the collector scans a saved
+        // register conservatively, so one too many only retains. The count is
+        // the module's, known when emission ends.
+        private readonly List<Int64Constant> _liveAllPatches = new();
+        private const int LiveAll = -1;
 
         // ------------------------------------------------------------------
         // Emission
@@ -1272,6 +1342,9 @@ public static class WasmPredicateCompiler
             // known once every body is emitted.
             foreach (byte[] image in _images)
                 module.Data.Add(new Data { Kind = DataKind.Passive, RawData = image });
+
+            foreach (var live in _liveAllPatches)
+                live.Value = ((long)RegisterDemand << 32) | (uint)WasmAbi.WakeRequest;
 
             using var ms = new MemoryStream();
             module.WriteToBinary(ms);
@@ -2605,16 +2678,16 @@ public static class WasmPredicateCompiler
                     RegStore(1, () => Op(new Int64Constant(_env.AtomCell(ins.I0))));
                     return false;
                 case Opcode.DeallocateExecute:
-                    EmitExecuteWakePoint(ins.Pc, EmitDeallocate);
+                    EmitExecuteWakePoint(ins, EmitDeallocate);
                     EmitDeallocate();
                     EmitExecuteTail(ins.Pc);
                     return true;
                 case Opcode.NeckCut:
-                    EmitFlagsCheck(ins.Pc);
+                    EmitResumableWakePoint(ins, LiveAll);
                     EmitCut(() => LoadSlot32(WasmAbi.CutBarrier), ins.Pc);
                     return false;
                 case Opcode.Cut:
-                    EmitFlagsCheck(ins.Pc);
+                    EmitResumableWakePoint(ins, LiveAll);
                     EmitCut(() => { YLoad(ins.I0); Op(new Int32WrapInt64()); }, ins.Pc);
                     return false;
                 case Opcode.GetLevel:
@@ -2628,12 +2701,12 @@ public static class WasmPredicateCompiler
                     YStore(ins.I1, () => RawInt(() => LoadSlot32(WasmAbi.CutBarrier)));
                     return false;
                 case Opcode.CutProceed:
-                    EmitFlagsCheck(ins.Pc);
+                    EmitResumableWakePoint(ins, LiveAll);
                     EmitCut(() => { YLoad(ins.I0); Op(new Int32WrapInt64()); }, ins.Pc);
                     EmitProceedReturn();
                     return true;
                 case Opcode.CutDeallocateProceed:
-                    EmitFlagsCheck(ins.Pc);
+                    EmitResumableWakePoint(ins, LiveAll);
                     EmitCut(() => { YLoad(ins.I0); Op(new Int32WrapInt64()); }, ins.Pc);
                     EmitDeallocate();
                     EmitProceedReturn();
@@ -2643,7 +2716,7 @@ public static class WasmPredicateCompiler
                     // resolves builtins when the registry is loaded, exactly
                     // as the linker would. The env-trim count (I1) rides the
                     // high half of the id slot; -1 is the no-trim sentinel.
-                    EmitWakeTestBeforeBuiltin(ins.I0, ins.Pc);
+                    EmitWakeTestBeforeBuiltin(ins.I0, ins);
                     if (_env.IsInlineUnify(ins.I0))
                     {
                         // The escape is the site's own non-inline exit: a
@@ -2905,7 +2978,7 @@ public static class WasmPredicateCompiler
                     EmitReturn(WasmVerdict.BuiltinRequest);
                     return true;
                 case Opcode.ExecuteBuiltin:
-                    EmitWakeTestBeforeBuiltin(ins.I0, ins.Pc);
+                    EmitWakeTestBeforeBuiltin(ins.I0, ins);
                     if (_env.IsInlineUnify(ins.I0))
                     {
                         // Same escape, tail form: cursor -1, no trim.
@@ -3180,10 +3253,22 @@ public static class WasmPredicateCompiler
         /// <summary>The flags test in front of a builtin that may follow a
         /// parked wakeup. =/2 is a unification, part of the stretch, and
         /// does not wake (ADR-049 point 11).</summary>
-        private void EmitWakeTestBeforeBuiltin(int builtinId, int pc)
+        private void EmitWakeTestBeforeBuiltin(int builtinId, Instr ins)
         {
             if (!_wakeMayPend || _env.IsInlineUnify(builtinId)) return;
-            EmitFlagsCheck(pc);
+            EmitResumableWakePoint(ins, Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Arity);
+        }
+
+        /// <summary>The boundary of a cut or a builtin: with a resume point of
+        /// its own the interrupt comes back to this instruction, which tests
+        /// the flags word again and goes on; without one it steps aside.
+        /// </summary>
+        private void EmitResumableWakePoint(Instr ins, int arity)
+        {
+            if (_wakeMayPend && _wakeResumes.Contains(ins.Pc))
+                EmitWakePoint(ins.Pc, arity, () => _env.EncodeReturnMarker(SelfFid(ins), ins.Pc));
+            else
+                EmitFlagsCheck(ins.Pc);
             _wakeMayPend = false;
         }
 
@@ -3211,8 +3296,12 @@ public static class WasmPredicateCompiler
                 OpenIf();
                 {
                     beforeRequest?.Invoke();
-                    StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
-                        ((long)arity << 32) | (uint)WasmAbi.WakeRequest)));
+                    StoreSlot64(WasmAbi.BuiltinId, () =>
+                    {
+                        var request = new Int64Constant(((long)arity << 32) | (uint)WasmAbi.WakeRequest);
+                        if (arity == LiveAll) _liveAllPatches.Add(request);
+                        Op(request);
+                    });
                     // Asked for here and not by the caller: a relocating
                     // environment records every constant it hands out.
                     StoreSlot64(WasmAbi.Pc, () => Op(new Int64Constant(resumeMarker())));
@@ -3225,11 +3314,6 @@ public static class WasmPredicateCompiler
             CloseNested();
         }
 
-        /// <summary>The callee's arity, or -1 when it is a builtin: a
-        /// builtin's resume would have to re-run it, which needs a cursor in
-        /// front of it.</summary>
-        private int WakeCalleeArity(int callee)
-            => _env.TryGetBuiltin(callee, out _) ? -1 : FunctorTable.Lookup(callee).Arity;
 
         private void EmitFlagsCheck(int pc)
         {
@@ -4983,7 +5067,7 @@ public static class WasmPredicateCompiler
                 throw new WasmCompileException($"call at {ins.Pc} has no call site");
             if (_env.TryGetBuiltin(callee, out int builtinId))
             {
-                EmitWakeTestBeforeBuiltin(builtinId, ins.Pc);
+                EmitWakeTestBeforeBuiltin(builtinId, ins);
                 if (_env.IsInlineUnify(builtinId))
                 {
                     EmitInlineUnify(ins.Pc);
@@ -9041,17 +9125,24 @@ public static class WasmPredicateCompiler
 
         private void EmitExecute(Instr ins)
         {
-            EmitExecuteWakePoint(ins.Pc, null);
+            EmitExecuteWakePoint(ins, null);
             EmitExecuteTail(ins.Pc);
         }
 
         /// <summary>An execute's boundary: a wakeup resumes by dispatching the
-        /// callee, CP untouched. A builtin callee keeps the step-aside.</summary>
-        private void EmitExecuteWakePoint(int pc, Action? beforeRequest)
+        /// callee, CP untouched; at a builtin callee, at this instruction.
+        /// </summary>
+        private void EmitExecuteWakePoint(Instr ins, Action? beforeRequest)
         {
-            int arity = _callee.TryGetValue(pc, out int callee) ? WakeCalleeArity(callee) : -1;
-            if (arity < 0) { EmitFlagsCheck(pc); return; }
-            EmitWakePoint(pc, arity, () => _env.EncodeCallTarget(callee), beforeRequest);
+            if (!_callee.TryGetValue(ins.Pc, out int callee)) { EmitFlagsCheck(ins.Pc); return; }
+            if (_env.TryGetBuiltin(callee, out int builtinId))
+            {
+                // Resumed at this instruction, before anything it pops.
+                EmitResumableWakePoint(ins, Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Arity);
+                return;
+            }
+            EmitWakePoint(ins.Pc, FunctorTable.Lookup(callee).Arity,
+                          () => _env.EncodeCallTarget(callee), beforeRequest);
         }
 
         private void EmitExecuteTail(int pc)

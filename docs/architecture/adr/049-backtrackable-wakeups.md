@@ -12,7 +12,9 @@ boundaries; the cut-boundary drain stays, deliberately (see Decision §5).
 Amended 2026-10-03: compiled code wakes in front of builtins and inlined
 calls, and inside CP-free guards (points 9 and 10), with continuation methods
 (ADR-061) and in regions; a stretch of unifications is atomic, as SICStus
-documents (point 11).
+documents (point 11). Amended 2026-11-10: the wasm tier binds an attributed
+variable itself, parks the wakeup, and asks the host for the interrupt at its
+boundaries (point 12).
 
 ## Context
 
@@ -164,8 +166,9 @@ loop over engine state (P/CP/E/B), so the mapping is direct.
    resumes at the continuation of the call before it when only argument
    staging lies between them (no argument register is live there, and the
    staging binds nothing); any other point hands the activation to the
-   interpreter (point 10). The wasm tier hands its points to the
-   interpreter too. A predicate with no bytecode of its own keeps the
+   interpreter (point 10). The wasm tier binds an attributed variable
+   itself when it carries one module, and parks the wakeup for the host's
+   queue (point 12). A predicate with no bytecode of its own keeps the
    first form in every mode, and is not a region: a dynamic predicate's
    snapshot (ADR-023), whose functor runs the live clause chain, and in a
    bundle any predicate whose bytecode the bundle does not carry under its
@@ -221,6 +224,25 @@ loop over engine state (P/CP/E/B), so the mapping is direct.
     stretch, which it does not document and which would tie the rule to our
     frames (lazy Y-slots, regions, CP-free guards). Here the stretch
     continues into the caller.
+
+12. **The wasm tier binds and parks, and the host arms the interrupt.** A
+    head match that meets an attributed variable with one module binds it as
+    the unifier does (the value's cells on the heap, the cell trailed with
+    its attributed value when older than HB, the record dropped when not)
+    and parks the wakeup in linear memory, since the queue is the host's;
+    the flags word says one is parked. Every boundary after it tests that
+    word. A call, an execute, a proceed, and a cut or builtin the compiler
+    gave a resume point of its own ask the host for the interrupt with the
+    live registers and the resume: the callee's forward marker, the
+    continuation in CP, or a marker back to the instruction. At a cut the
+    module saves every register it uses, since what is live there is not
+    computed, and a saved dead register only retains. The host queues what
+    was parked and arms the interrupt; when the driver is on the tier the
+    chain runs it, and when it returns the host restores the frame and
+    follows the resume back into the module. Any other boundary, a variable
+    with more than one module, and a backtrack while a wakeup is parked
+    hand the activation to the interpreter, which drops the wakeups whose
+    binding the restore undid (point 8).
 
 ### Staging
 
