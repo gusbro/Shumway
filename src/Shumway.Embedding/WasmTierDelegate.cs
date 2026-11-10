@@ -177,6 +177,12 @@ public sealed class WasmTierDelegate
     /// cannot be named in the current tables is itself a finding.</summary>
     public static readonly long[] DiagGuardFids = new long[64];
 
+    /// <summary>Every key a meta cache probe missed with (guard 9), and how
+    /// often: <see cref="DiagGuardFids"/> keeps the last one, which names a
+    /// goal but not the one that dominates. The key is
+    /// WasmResumeTable.MetaKey's.</summary>
+    public static readonly Dictionary<long, long> DiagMetaMissKeys = new();
+
     /// <summary>DiagA and DiagB as of the last deopt, not the first.
     /// <see cref="DiagFirstDeoptSlots"/> samples the first, which on a run
     /// with twelve deopt sites need not be the interesting one -- a guard
@@ -215,6 +221,7 @@ public sealed class WasmTierDelegate
         DiagDelegateTicks = DiagBuiltinTicks = 0;
         System.Array.Clear(DiagMetaGuardHist, 0, DiagMetaGuardHist.Length);
         System.Array.Clear(DiagGuardFids, 0, DiagGuardFids.Length);
+        DiagMetaMissKeys.Clear();
     }
 
 
@@ -315,6 +322,8 @@ public sealed class WasmTierDelegate
         {
             DiagMetaGuardHist[DiagLastGuard]++;
             DiagGuardFids[DiagLastGuard] = DiagLastGuardFid;
+            if (DiagLastGuard == 9)
+                DiagMetaMissKeys[DiagLastGuardFid] = DiagMetaMissKeys.GetValueOrDefault(DiagLastGuardFid) + 1;
         }
         // Cleared, because this runs on every deopt and only a meta-call
         // decline writes the slot. Left standing, the code from one decline

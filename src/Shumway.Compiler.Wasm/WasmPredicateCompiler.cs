@@ -5916,13 +5916,15 @@ public static class WasmPredicateCompiler
             // do that resolution -- it is a walk through a module's locals
             // and imports -- so it reads what the host resolved, out of the
             // inline cache the host fills on the path it was taking anyway.
+            // Module:Goal is the same pair to the host, which unwraps both
+            // alike and keys the cache by what is inside; a closure a
+            // meta_predicate declaration qualified arrives that way, and
+            // keyed by ':'/2 the probe never hits.
             //
             // Compared as a cell, never as a baked id: FunctorCell relocates
             // by (name, arity), and a functor id is only valid in the process
             // that interned it.
-            Op(new LocalGet(LC1));
-            Op(new Int64Constant(_env.FunctorCell(_env.MqualFunctorId)));
-            Op(new Int64Equal());
+            EmitIsModuleTag(LC1);
             OpenIf();
             {
                 // Module must be a bound atom.
@@ -5951,7 +5953,8 @@ public static class WasmPredicateCompiler
                 Deref();
 
                 // A tag inside a tag: a tagged call of a goal that already
-                // carries its module (the prelude's wakeup driver). The
+                // carries its module (the prelude's wakeup driver, a
+                // qualified closure meta-called from its module). The
                 // innermost module wins, as on the host; keyed by the outer
                 // one the probe never hits. One level is the shape that
                 // occurs; a deeper one still resolves, on the host.
@@ -5964,8 +5967,8 @@ public static class WasmPredicateCompiler
                     Op(new Int32WrapInt64());
                     Op(new LocalSet(LT2));
                     CellLoadDyn(LHeapB, LT2);
-                    Op(new Int64Constant(_env.FunctorCell(_env.MqualFunctorId)));
-                    Op(new Int64Equal());
+                    Op(new LocalSet(LC1));
+                    EmitIsModuleTag(LC1);
                     OpenIf();
                     {
                         CellLoadDyn(LHeapB, LT2, 1);
@@ -8657,6 +8660,20 @@ public static class WasmPredicateCompiler
             CloseNested();                                  // $slow
             emitBuiltinExit();
             CloseNested();                                  // $done
+        }
+
+        /// <summary>Pushes whether the functor cell in <paramref name="cell"/>
+        /// is '$mqual'/2 or ':'/2, the two (Module, Goal) pairs the host
+        /// unwraps alike.</summary>
+        private void EmitIsModuleTag(uint cell)
+        {
+            Op(new LocalGet(cell));
+            Op(new Int64Constant(_env.FunctorCell(_env.MqualFunctorId)));
+            Op(new Int64Equal());
+            Op(new LocalGet(cell));
+            Op(new Int64Constant(_env.FunctorCell(_env.ColonFunctorId)));
+            Op(new Int64Equal());
+            Op(new Int32Or());
         }
 
         /// <summary>Asks the host to run the builtin: the env trim rides the
