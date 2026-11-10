@@ -613,10 +613,22 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         public void Dispose()
         {
             SyncEngine();
-            if (_heapPin.IsAllocated) _heapPin.Free();
-            if (_stackPin.IsAllocated) _stackPin.Free();
-            if (_regsPin.IsAllocated) _regsPin.Free();
-            if (_trailPin.IsAllocated) _trailPin.Free();
+            // Every pin this chain took, not only the areas': a chain is
+            // made per entry, and a handle left allocated is never freed --
+            // the handle table grew by one per ring and image per chain,
+            // and the collector scans every pinned handle on every pass.
+            Unpin(ref _heapPin); Unpin(ref _stackPin);
+            Unpin(ref _regsPin); Unpin(ref _trailPin);
+            Unpin(ref _attrPin); Unpin(ref _callPin);
+            Unpin(ref _metaPin); Unpin(ref _atomPin);
+            Unpin(ref _attrLogPin); Unpin(ref _extraTrailPin);
+            Unpin(ref _orphanPin); Unpin(ref _attrWritePin);
+            Unpin(ref _attrDropPin);
+        }
+
+        private static void Unpin(ref GCHandle pin)
+        {
+            if (pin.IsAllocated) pin.Free();
         }
     }
 }
