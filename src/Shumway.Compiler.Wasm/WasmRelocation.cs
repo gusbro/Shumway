@@ -86,6 +86,13 @@ public sealed record WasmBuiltinEvidence(
         if (env.IsInlineDomContains(builtinId)) f |= WasmInlineForms.DomContains;
         if (env.IsInlineDomDel(builtinId)) f |= WasmInlineForms.DomDel;
         if (env.IsInlineDomSingleton(builtinId)) f |= WasmInlineForms.DomSingleton;
+        f |= env.WakeSupportOf(builtinId) switch
+        {
+            WasmWakeSupport.CutBarrier => WasmInlineForms.CutBarrier,
+            WasmWakeSupport.Settle => WasmInlineForms.WakeSettle,
+            WasmWakeSupport.HookGoal => WasmInlineForms.WakeHookGoal,
+            _ => WasmInlineForms.None,
+        };
         return f;
     }
 }
@@ -118,6 +125,24 @@ public enum WasmInlineForms
     DomContains = 1 << 16,
     DomDel = 1 << 17,
     DomSingleton = 1 << 18,
+    CutBarrier = 1 << 19,
+    WakeSettle = 1 << 20,
+    WakeHookGoal = 1 << 21,
+}
+
+/// <summary>ADR-049's wake driver builtins the compiled code answers itself.
+/// </summary>
+public enum WasmWakeSupport
+{
+    None,
+    /// <summary><c>'$get_cut_barrier'/1</c>: B0, which the module keeps.</summary>
+    CutBarrier,
+    /// <summary><c>'$wake_settle'/2</c>: nothing to do unless the proxy is
+    /// an attributed variable.</summary>
+    Settle,
+    /// <summary><c>'$wake_hook_goal'/7</c>: a <c>verify_attributes/4</c>
+    /// hook's goal, from the hook table the host stages.</summary>
+    HookGoal,
 }
 
 /// <summary>A compile env that bakes a unique sentinel for every immediate
@@ -387,6 +412,12 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
     {
         Note(builtinId);
         return _inner.IsInlineTrivial(builtinId, out succeeds);
+    }
+
+    public WasmWakeSupport WakeSupportOf(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.WakeSupportOf(builtinId);
     }
 
     public bool IsInlineAttrListWrite(int builtinId, out bool isDelete)

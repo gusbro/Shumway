@@ -185,6 +185,11 @@ public interface IWasmCompileEnv
     bool IsInlineTrivial(int builtinId, out bool succeeds)
     { succeeds = false; return false; }
 
+    /// <summary>Which of ADR-049's wake driver builtins the builtin is, when
+    /// the compiled code answers it itself; None for every other builtin.
+    /// Each one is a host crossing per wakeup otherwise.</summary>
+    WasmWakeSupport WakeSupportOf(int builtinId) => WasmWakeSupport.None;
+
     /// <summary>Whether the builtin writes a module's attribute list:
     /// <c>'$put_to_attr_list'/3</c>, or <c>'$del_from_attr_list'/3</c>
     /// with <paramref name="isDelete"/> set.

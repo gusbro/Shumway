@@ -587,9 +587,17 @@ public static class WasmAbi
     /// one i32 module id each: the keys a module probes the attribute image
     /// with to learn which modules a variable carries. A variable with more
     /// than one steps aside, so the order of its wakeups stays the record's.
-    /// </summary>
+    /// The area holds <see cref="AttrModuleCapacity"/> ids, then two i32 per
+    /// module at <see cref="AttrHookOffset"/>: its <c>verify_attributes/4</c>
+    /// hook's functor (<see cref="AttrHookIsVerify3"/> when the module has a
+    /// /3 hook, <see cref="AttrHookNone"/> when it has none) and the module
+    /// the hook's goals run in.</summary>
     public const int AttrModuleBase = 87;
     public const int AttrModuleCount = 88;
+    public const int AttrModuleCapacity = 16;
+    public const int AttrHookOffset = AttrModuleCapacity * 4;
+    public const int AttrHookIsVerify3 = -1;
+    public const int AttrHookNone = -2;
 
     public const int SlotCount = 89;
     public const int SlotSize = 8;

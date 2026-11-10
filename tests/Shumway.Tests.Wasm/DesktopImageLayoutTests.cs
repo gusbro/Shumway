@@ -56,7 +56,11 @@ public sealed class DesktopImageLayoutTests
         Add("attr write ring", WasmAbi.AttrWriteBase, WasmAbi.AttrWriteLimit, WasmAbi.AttrWriteEntryInts * 4);
         Add("attr drop ring", WasmAbi.AttrDropBase, WasmAbi.AttrDropLimit, 4);
         Add("wake ring", WasmAbi.WakeRingBase, WasmAbi.WakeRingLimit, WasmAbi.WakeEntryInts * 4);
-        Add("attr module list", WasmAbi.AttrModuleBase, WasmAbi.AttrModuleCount, 4);
+        // Read whole, not by its count: the ids, then each one's hook pair.
+        long modules = cx.ReadSlot(WasmAbi.AttrModuleBase);
+        if (modules != 0)
+            areas.Add(("attr module list", modules,
+                       WasmAbi.AttrHookOffset + WasmAbi.AttrModuleCapacity * 8L));
         Add("attr log", WasmAbi.AttrLogBase, WasmAbi.AttrLogLength, 4);
         Add("arith table", WasmAbi.ArithTableBase, WasmAbi.ArithTableLength, 4);
 

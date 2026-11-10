@@ -438,8 +438,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                     Buffer.MemoryCopy(p, mem + _globalAt, globalPairs * 16L, globalPairs * 16L);
             if (attrModuleCount > 0)
                 fixed (int* p = attrModules)
-                    Buffer.MemoryCopy(p, mem + _attrModAt, attrModuleCount * 4L,
-                                      attrModuleCount * 4L);
+                    Buffer.MemoryCopy(p, mem + _attrModAt, attrModules.Length * 4L,
+                                      attrModules.Length * 4L);
             if (arithLen > 0)
                 fixed (int* p = arithRows)
                     Buffer.MemoryCopy(p, mem + _arithAt, arithLen * 4L, arithLen * 4L);

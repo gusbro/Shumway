@@ -153,6 +153,18 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
         return entry.Arity == 0 && (succeeds || entry.Name == "fail");
     }
 
+    public WasmWakeSupport WakeSupportOf(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return (entry.Name, entry.Arity) switch
+        {
+            ("$get_cut_barrier", 1) => WasmWakeSupport.CutBarrier,
+            ("$wake_settle", 2) => WasmWakeSupport.Settle,
+            ("$wake_hook_goal", 7) => WasmWakeSupport.HookGoal,
+            _ => WasmWakeSupport.None,
+        };
+    }
+
     public bool IsInlineAttrListWrite(int builtinId, out bool isDelete)
     {
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);

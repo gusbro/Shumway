@@ -294,7 +294,8 @@ public static class WasmPredicateCompiler
         private int GroundIndex => _parts.Count + 5;    // and K+5 ground/1
         private int AcyclicIndex => _parts.Count + 6;   // and K+6 acyclic_term/1
         private int CompareIndex => _parts.Count + 7;   // and K+7 the standard order
-        private const int HelperCount = 6;              // K+2 .. K+7
+        private int UnwindIndex => _parts.Count + 8;    // and K+8 the extra trail's unwind
+        private const int HelperCount = 7;              // K+2 .. K+8
 
         // The helpers the emitted code calls. A helper no call names keeps
         // its slot with a stub: the fixed cost of a module is what it uses
@@ -307,7 +308,7 @@ public static class WasmPredicateCompiler
             _helperUsed[index - UnifierIndex] = true;
             return (uint)index;
         }
-        private int RouterIndex => _parts.Count + 8;    // CPS only: K+8 the cursor router
+        private int RouterIndex => _parts.Count + 9;    // CPS only: K+9 the cursor router
 
         /// <summary>CPS: the locals a transfer carries as arguments, 0 to
         /// <see cref="LCP"/>: the mailbox, the cursor (twice: the entry
@@ -587,7 +588,8 @@ public static class WasmPredicateCompiler
             || _env.IsInlineDomDel(builtinId)
             || _env.IsInlineDomSingleton(builtinId)
             || _env.IsInlineMetaCall(builtinId)
-            || _env.IsInlineBarrierCall(builtinId);
+            || _env.IsInlineBarrierCall(builtinId)
+            || _env.WakeSupportOf(builtinId) != WasmWakeSupport.None;
 
         /// <summary>The translatable set, and the reason when it is not.
         /// Everything else in the 57-opcode universe rejects the predicate:
@@ -1267,8 +1269,8 @@ public static class WasmPredicateCompiler
             // 0: run (the exported router); 1..K: partitions; K+1: the
             // fail/proceed resolver; K+2: the general unifier; K+3: term
             // identity; K+4: arithmetic evaluation; K+5: ground/1's walk;
-            // K+6: acyclic_term/1's; K+7: the standard order of two terms.
-            // All internal but run.
+            // K+6: acyclic_term/1's; K+7: the standard order of two terms;
+            // K+8: the extra trail's unwind. All internal but run.
             module.Types.Add(new WebAssemblyType
             {
                 Parameters = [WebAssemblyValueType.Int64, WebAssemblyValueType.Int32],
@@ -1290,6 +1292,7 @@ public static class WasmPredicateCompiler
             module.Functions.Add(new Function { Type = 2 });
             module.Functions.Add(new Function { Type = 2 });
             module.Functions.Add(new Function { Type = 1 });
+            module.Functions.Add(new Function { Type = 2 });
             module.Exports.Add(new Export
             {
                 Kind = ExternalKind.Function, Index = 0, Name = WasmAbi.EntryExport,
@@ -1401,7 +1404,7 @@ public static class WasmPredicateCompiler
                 ],
                 Code = BuildAcyclicBody(),
             },
-            _ => new FunctionBody
+            5 => new FunctionBody
             {
                 Locals =
                 [
@@ -1409,6 +1412,11 @@ public static class WasmPredicateCompiler
                     new Local { Count = 5, Type = WebAssemblyValueType.Int64 },
                 ],
                 Code = BuildCompareBody(),
+            },
+            _ => new FunctionBody
+            {
+                Locals = [new Local { Count = 10, Type = WebAssemblyValueType.Int32 }],
+                Code = BuildUnwindExtraBody(),
             },
         };
 
@@ -1634,7 +1642,7 @@ public static class WasmPredicateCompiler
             }
             names.Add("resolver"); names.Add("unifier"); names.Add("identity");
             names.Add("arith"); names.Add("ground"); names.Add("acyclic");
-            names.Add("compare");
+            names.Add("compare"); names.Add("unwind");
             if (_cps) names.Add("router");
 
             var payload = new List<byte>();
@@ -2028,6 +2036,18 @@ public static class WasmPredicateCompiler
             CellAddr(LStackB, LE);
             value();
             Op(new Int64Store { Offset = (uint)((3 + slot) * 8) });
+        }
+
+        /// <summary>Int(v), the Prolog integer, for an i32 pushed by
+        /// <paramref name="value"/>.</summary>
+        private void IntCell(Action value)
+        {
+            value();
+            Op(new Int64ExtendInt32Signed());
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int64Constant((long)Tag.Int << Cell.TagShift));
+            Op(new Int64Or());
         }
 
         /// <summary>RawInt(v) for an i32 pushed by <paramref name="value"/> --
@@ -2755,6 +2775,9 @@ public static class WasmPredicateCompiler
                         if (!cbOk) GoFail();
                         return false;               // true/0: on to the next goal
                     }
+                    if (TryEmitWakeSupport(ins.I0, ins.Pc,
+                            () => EmitBuiltinRequest(ins.I0, ins.I1, ins.Pc + 9)))
+                        return false;
                     if (_env.IsInlineArg(ins.I0))
                     {
                         EmitInlineArg(ins.Pc, () =>
@@ -3008,6 +3031,12 @@ public static class WasmPredicateCompiler
                     {
                         EmitFlagsCheck(ins.Pc);
                         if (!ebOk) GoFail();
+                        EmitProceedReturn();
+                        return true;
+                    }
+                    if (TryEmitWakeSupport(ins.I0, ins.Pc,
+                            () => EmitBuiltinRequest(ins.I0, 0, -1)))
+                    {
                         EmitProceedReturn();
                         return true;
                     }
@@ -5089,6 +5118,9 @@ public static class WasmPredicateCompiler
                     if (!callOk) GoFail();
                     return false;               // true/0: on to the next goal
                 }
+                if (TryEmitWakeSupport(builtinId, ins.Pc,
+                        () => EmitBuiltinRequest(builtinId, 0, ins.Pc + 9)))
+                    return false;
                 if (_env.IsInlineArg(builtinId))
                 {
                     EmitInlineArg(ins.Pc, () =>
@@ -8627,6 +8659,197 @@ public static class WasmPredicateCompiler
             CloseNested();                                  // $done
         }
 
+        /// <summary>Asks the host to run the builtin: the env trim rides the
+        /// id (-1 none), and the chain resumes at <paramref name="resumePc"/>,
+        /// or at CP for -1 (a tail call).</summary>
+        private void EmitBuiltinRequest(int builtinId, int envTrim, int resumePc)
+        {
+            StoreSlot64(WasmAbi.BuiltinId,
+                () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, envTrim))));
+            StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(
+                resumePc < 0 ? -1 : _env.EncodeAddress(resumePc))));
+            EmitReturn(WasmVerdict.BuiltinRequest);
+        }
+
+        /// <summary>ADR-049's wake driver builtins, answered in the module
+        /// when the answer is at hand; <paramref name="exit"/> asks the host
+        /// otherwise. False: the builtin is not one of them.</summary>
+        private bool TryEmitWakeSupport(int builtinId, int pc, Action exit)
+        {
+            switch (_env.WakeSupportOf(builtinId))
+            {
+                case WasmWakeSupport.CutBarrier:
+                    // B0, kept in the mailbox where get_level reads it.
+                    EmitFlagsCheck(pc);
+                    EmitUnifyTwo(() => RegLoad(0),
+                        () => IntCell(() => LoadSlot32(WasmAbi.CutBarrier)), pc, exit);
+                    return true;
+                case WasmWakeSupport.Settle:
+                    // Only a /3 hook's proxy, an attributed variable, has
+                    // anything to settle.
+                    EmitFlagsCheck(pc);
+                    RegLoad(0); Op(new LocalSet(LC0)); Deref();
+                    TagOfC0(); Op(new Int32Constant((int)Tag.AttVar)); Op(new Int32Equal());
+                    OpenIf();
+                    exit();
+                    CloseNested();
+                    return true;
+                case WasmWakeSupport.HookGoal:
+                    EmitFlagsCheck(pc);
+                    EmitInlineWakeHookGoal(pc, exit);
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary><c>'$wake_hook_goal'/7</c> for a module whose hook is a
+        /// <c>verify_attributes/4</c>: the goal the host builds, cell for
+        /// cell and in its order, from the hook pair staged beside the module
+        /// list. A /3 hook needs a proxy carrying an attribute, a module off
+        /// the list needs a lookup, and outputs other than four distinct
+        /// fresh variables need a unification: the host does those. Nothing
+        /// is written before the last check.</summary>
+        private void EmitInlineWakeHookGoal(int pc, Action exit)
+        {
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+
+            // The module, an atom on the list.
+            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            TagOfC0(); Op(new Int32Constant((int)Tag.Atom)); Op(new Int32NotEqual());
+            Op(new BranchIf(0));                            // -> $slow
+            Op(new LocalGet(LC0)); Op(new Int32WrapInt64()); Op(new LocalSet(LAtMod));
+            LoadSlot32(WasmAbi.AttrModuleBase); Op(new Int32EqualZero());
+            Op(new BranchIf(0));                            // -> $slow
+            Op(new Int32Constant(0)); Op(new LocalSet(LAtSlot));
+            OpenBlock();                                    // $found
+            OpenLoop();                                     // $next
+            {
+                Op(new LocalGet(LAtSlot));
+                LoadSlot32(WasmAbi.AttrModuleCount);
+                Op(new Int32GreaterThanOrEqualSigned());
+                Op(new BranchIf(2));                        // -> $slow
+                LoadSlot32(WasmAbi.AttrModuleBase);
+                Op(new LocalGet(LAtSlot)); Op(new Int32Constant(2)); Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int32Load());
+                Op(new LocalGet(LAtMod));
+                Op(new Int32Equal());
+                Op(new BranchIf(1));                        // -> $found
+                Op(new LocalGet(LAtSlot)); Op(new Int32Constant(1)); Op(new Int32Add());
+                Op(new LocalSet(LAtSlot));
+                Op(new Branch(0));                          // -> $next
+            }
+            CloseNested();                                  // $next
+            CloseNested();                                  // $found
+
+            // Its pair: LKT the hook's functor, LKH the goals' module.
+            LoadSlot32(WasmAbi.AttrModuleBase);
+            Op(new LocalGet(LAtSlot)); Op(new Int32Constant(3)); Op(new Int32ShiftLeft());
+            Op(new Int32Add());
+            Op(new LocalSet(LT0));
+            Op(new LocalGet(LT0)); Op(new Int32Load { Offset = (uint)WasmAbi.AttrHookOffset });
+            Op(new LocalSet(LKT));
+            Op(new LocalGet(LT0)); Op(new Int32Load { Offset = (uint)WasmAbi.AttrHookOffset + 4 });
+            Op(new LocalSet(LKH));
+            // A hookless module: the builtin fails, which the driver reads as
+            // nothing to run.
+            Op(new LocalGet(LKT)); Op(new Int32Constant(WasmAbi.AttrHookNone)); Op(new Int32Equal());
+            OpenIf();
+            GoFail();
+            CloseNested();
+            Op(new LocalGet(LKT)); Op(new Int32Constant(0)); Op(new Int32LessThanSigned());
+            Op(new BranchIf(0));                            // a /3 hook -> $slow
+
+            // The outputs: four fresh variables, no two the same. Their homes
+            // in LT0, LT1, LT2, LKStop.
+            uint[] homes = { LT0, LT1, LT2, LKStop };
+            for (int k = 0; k < homes.Length; k++)
+            {
+                RegLoad(3 + k); Op(new LocalSet(LC0)); Deref();
+                TagOfC0(); Op(new Int32Constant((int)Tag.Ref)); Op(new Int32NotEqual());
+                Op(new BranchIf(0));                        // bound or attributed -> $slow
+                Op(new LocalGet(LDa)); Op(new LocalSet(homes[k]));
+                for (int j = 0; j < k; j++)
+                {
+                    Op(new LocalGet(homes[j])); Op(new LocalGet(homes[k])); Op(new Int32Equal());
+                    Op(new BranchIf(0));                    // -> $slow
+                }
+            }
+
+            // Room: a cell for the value, the goals variable, the five-cell
+            // goal; three trail entries.
+            Op(new LocalGet(LH)); Op(new Int32Constant(7)); Op(new Int32Add());
+            LoadSlot32(WasmAbi.HeapWatermark);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf(0));                            // -> $slow
+            Op(new LocalGet(LTR)); Op(new Int32Constant(3)); Op(new Int32Add());
+            LoadSlot32(WasmAbi.TrailLimit);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf(0));                            // -> $slow
+
+            // The value's slot: the Ref the interrupt put in the batch, or a
+            // cell of its own for a value that reached the register directly.
+            RegLoad(1); Op(new LocalSet(LC0));
+            TagOfC0(); Op(new LocalSet(LAtVal));
+            Op(new LocalGet(LAtVal)); Op(new Int32Constant((int)Tag.Ref)); Op(new Int32Equal());
+            Op(new LocalGet(LAtVal)); Op(new Int32Constant((int)Tag.AttVar)); Op(new Int32Equal());
+            Op(new Int32Or());
+            OpenIf();
+            {
+                Op(new LocalGet(LC0)); Op(new Int64Constant(Cell.PayloadMask)); Op(new Int64And());
+                Op(new Int32WrapInt64()); Op(new LocalSet(LAtVal));
+            }
+            OpenElse();
+            {
+                CellStoreDyn(LHeapB, LH, 0, () => Op(new LocalGet(LC0)));
+                Op(new LocalGet(LH)); Op(new LocalSet(LAtVal));
+                Op(new LocalGet(LH)); Op(new Int32Constant(1)); Op(new Int32Add());
+                Op(new LocalSet(LH));
+            }
+            CloseNested();
+
+            // The goals variable at H (LKBR), the goal after it (LKBW):
+            // hook(Module, Value, Other, Goals).
+            Op(new LocalGet(LH)); Op(new LocalSet(LKBR));
+            Op(new LocalGet(LH)); Op(new Int32Constant(1)); Op(new Int32Add());
+            Op(new LocalSet(LKBW));
+            CellStoreDyn(LHeapB, LH, 0, () => { Op(new LocalGet(LKBR)); Op(new Int64ExtendInt32Unsigned()); });
+            CellStoreDyn(LHeapB, LH, 1, () => TaggedI32(LKT, Tag.Functor));
+            CellStoreDyn(LHeapB, LH, 2, () => TaggedI32(LAtMod, Tag.Atom));
+            CellStoreDyn(LHeapB, LH, 3, () => { Op(new LocalGet(LAtVal)); Op(new Int64ExtendInt32Unsigned()); });
+            CellStoreDyn(LHeapB, LH, 4, () => RegLoad(2));
+            CellStoreDyn(LHeapB, LH, 5, () => { Op(new LocalGet(LKBR)); Op(new Int64ExtendInt32Unsigned()); });
+            Op(new LocalGet(LH)); Op(new Int32Constant(6)); Op(new Int32Add());
+            Op(new LocalSet(LH));
+
+            // The outputs, bound as the host binds them: the goal; the goals
+            // variable, the younger of the two, pointing at the caller's;
+            // [] for the proxy; the goals' module.
+            Op(new LocalGet(LT0)); Op(new LocalSet(LDa));
+            EmitBindDa(pc, () => TaggedI32(LKBW, Tag.Str));
+            CellStoreDyn(LHeapB, LKBR, 0, () => { Op(new LocalGet(LT1)); Op(new Int64ExtendInt32Unsigned()); });
+            Op(new LocalGet(LT2)); Op(new LocalSet(LDa));
+            EmitBindDa(pc, () => Op(new Int64Constant(_env.AtomCell(AtomTable.EmptyListId))));
+            Op(new LocalGet(LKStop)); Op(new LocalSet(LDa));
+            EmitBindDa(pc, () => TaggedI32(LKH, Tag.Atom));
+            Op(new Branch(1));                              // -> $done
+            CloseNested();                                  // $slow
+            exit();
+            CloseNested();                                  // $done
+        }
+
+        /// <summary>A cell of <paramref name="tag"/> whose payload is the i32
+        /// in <paramref name="local"/>.</summary>
+        private void TaggedI32(uint local, Tag tag)
+        {
+            Op(new LocalGet(local));
+            Op(new Int64ExtendInt32Unsigned());
+            Op(new Int64Constant((long)tag << Cell.TagShift));
+            Op(new Int64Or());
+        }
+
         /// <summary>A one-argument test answered by one of the module's
         /// walkers over X0 -- 0 fails, 1 succeeds, 2 declines to the host.
         /// </summary>
@@ -9178,6 +9401,11 @@ public static class WasmPredicateCompiler
                     EmitProceedReturn();
                     return;
                 }
+                if (TryEmitWakeSupport(builtinId, pc, () => EmitBuiltinRequest(builtinId, 0, -1)))
+                {
+                    EmitProceedReturn();
+                    return;
+                }
                 if (_env.IsInlineArg(builtinId))
                 {
                     EmitInlineArg(pc, () =>
@@ -9723,17 +9951,32 @@ public static class WasmPredicateCompiler
             Op(new LocalGet(LT1)); Op(new Int64Load { Offset = 2 * 8 });
             Op(new Int32WrapInt64()); Op(new LocalSet(LCP));        // ctl[1]
 
-            // The extra trail cannot be unwound from here; equal tops means
-            // there is nothing to unwind. Otherwise the host unwinds both
-            // trails (interleaved: an extra entry may restore a cell a binding
-            // entry also names) and re-enters this retry, which then finds
-            // the tops equal. Nothing above has written state the retry does
-            // not write again. Without the builtin, it steps aside.
+            // Equal tops means there is no extra entry to unwind. Entries
+            // that only put a cell back the module unwinds itself, with the
+            // binding trail interleaved (an extra entry may restore a cell a
+            // binding entry also names); any other kind restores managed
+            // state, and then the host unwinds both trails and re-enters this
+            // retry, which finds the tops equal. Nothing above has written
+            // state the retry does not write again. Without the builtin, it
+            // steps aside.
             Op(new LocalGet(LT1)); Op(new Int64Load { Offset = 6 * 8 });
             Op(new Int32WrapInt64());
             LoadSlot32(WasmAbi.ExtraTrailTop);
             Op(new Int32NotEqual());
             OpenIf();
+            Op(new LocalGet(LTR)); Op(new Int64ExtendInt32Unsigned());
+            Op(new Int64Constant(32)); Op(new Int64ShiftLeft());
+            Op(new LocalGet(LT1)); Op(new Int64Load { Offset = 6 * 8 });
+            Op(new Int64Constant(0xFFFF_FFFFL)); Op(new Int64And());
+            Op(new Int64Or());
+            Op(new LocalGet(0));
+            Op(new WebAssembly.Instructions.Call(UseHelper(UnwindIndex)));
+            Op(new LocalTee(LT2));
+            Op(new Int32Constant(0));
+            Op(new Int32GreaterThanOrEqualSigned());
+            OpenIf();
+            Op(new LocalGet(LT2)); Op(new LocalSet(LTR));
+            OpenElse();
             int unwindId = _env.UnwindCpTrailsBuiltinId;
             if (unwindId >= 0)
             {
@@ -9755,6 +9998,7 @@ public static class WasmPredicateCompiler
                 { LoadSlot32(WasmAbi.ExtraTrailTop); Op(new Int64ExtendInt32Signed()); });
                 EmitDeopt(pcForDeopt, 23);
             }
+            CloseNested();                                  // the helper's answer
             CloseNested();
 
             // Unwind the binding trail to the saved top.
@@ -12205,6 +12449,101 @@ public static class WasmPredicateCompiler
         // divide-by-zero checks, same promotion of a mixed pair to float.
         // Everything else declines, and declining is always sound -- the
         // engine then evaluates the whole expression itself, errors and all.
+
+        // ---- the extra trail's unwind: module function K+8 ----
+        // (packed: i64, mailbox: i32) -> i32. packed = (TR << 32) | target:
+        // the binding trail's top and the extra top a choice point saved.
+        // Returns the binding trail's new top with both trails unwound, in
+        // UnwindTrails' order, or -1 having touched nothing, when an entry
+        // above the target restores managed state rather than a cell.
+
+        private static List<Instruction> BuildUnwindExtraBody()
+        {
+            const uint P = 0, MB = 1;
+            const uint HEAPB = 2, TRB = 3, EXB = 4, TR = 5, TOP = 6, TGT = 7,
+                       E = 8, MARK = 9, DA = 10, K = 11;
+
+            var code = new List<Instruction>();
+            void O(Instruction x) => code.Add(x);
+            void LG(uint n) => O(new LocalGet(n));
+            void LSet(uint n) => O(new LocalSet(n));
+            void I32(int v) => O(new Int32Constant(v));
+            void SlotToI32(int slot, uint local)
+            {
+                LG(MB); O(new Int64Load { Offset = WasmAbi.ByteOffset(slot) });
+                O(new Int32WrapInt64()); LSet(local);
+            }
+            void Entry(uint index, uint into)
+            {
+                LG(EXB); LG(index); I32(WasmAbi.ExtraTrailEntryBytes); O(new Int32Multiply());
+                O(new Int32Add()); LSet(into);
+            }
+            void Decrement(uint n) { LG(n); I32(1); O(new Int32Subtract()); LSet(n); }
+
+            LG(P); O(new Int32WrapInt64()); LSet(TGT);
+            LG(P); O(new Int64Constant(32)); O(new Int64ShiftRightUnsigned());
+            O(new Int32WrapInt64()); LSet(TR);
+            SlotToI32(WasmAbi.HeapBase, HEAPB);
+            SlotToI32(WasmAbi.BindingTrailBase, TRB);
+            SlotToI32(WasmAbi.ExtraTrailBase, EXB);
+            SlotToI32(WasmAbi.ExtraTrailTop, TOP);
+
+            // Pass one: every entry above the target only puts a cell back.
+            LG(TOP); LSet(K);
+            O(new Block(BlockType.Empty));                  // $ok
+            O(new Loop(BlockType.Empty));
+            LG(K); LG(TGT); O(new Int32LessThanOrEqualSigned()); O(new BranchIf(1));
+            Decrement(K);
+            Entry(K, E);
+            LG(E); O(new Int32Load8Unsigned { Offset = (uint)WasmAbi.ExtraTrailTypeOffset });
+            LSet(DA);
+            LG(DA); I32((int)Shumway.Core.TrailType.ValueChange); O(new Int32NotEqual());
+            LG(DA); I32((int)Shumway.Core.TrailType.BigIntAlloc); O(new Int32NotEqual());
+            O(new Int32And());
+            O(new If(BlockType.Empty)); I32(-1); O(new Return()); O(new End());
+            O(new Branch(0));
+            O(new End());
+            O(new End());                                   // $ok
+
+            // Pass two: the binding entries above each extra entry's marker
+            // first, then the entry.
+            O(new Block(BlockType.Empty));                  // $out
+            O(new Loop(BlockType.Empty));
+            LG(TOP); LG(TGT); O(new Int32LessThanOrEqualSigned()); O(new BranchIf(1));
+            Decrement(TOP);
+            Entry(TOP, E);
+            LG(E); O(new Int32Load { Offset = (uint)WasmAbi.ExtraTrailMarkerOffset }); LSet(MARK);
+            O(new Block(BlockType.Empty));
+            O(new Loop(BlockType.Empty));
+            LG(TR); LG(MARK); O(new Int32LessThanOrEqualSigned()); O(new BranchIf(1));
+            Decrement(TR);
+            LG(TRB); LG(TR); I32(2); O(new Int32ShiftLeft()); O(new Int32Add());
+            O(new Int32Load()); LSet(DA);
+            LG(HEAPB); LG(DA); I32(3); O(new Int32ShiftLeft()); O(new Int32Add());
+            LG(DA); O(new Int64ExtendInt32Unsigned());
+            O(new Int64Store());
+            O(new Branch(0));
+            O(new End());
+            O(new End());
+            LG(E); O(new Int32Load8Unsigned { Offset = (uint)WasmAbi.ExtraTrailTypeOffset });
+            I32((int)Shumway.Core.TrailType.ValueChange); O(new Int32Equal());
+            O(new If(BlockType.Empty));
+            LG(HEAPB);
+            LG(E); O(new Int32Load { Offset = (uint)WasmAbi.ExtraTrailHeapIdxOffset });
+            I32(3); O(new Int32ShiftLeft()); O(new Int32Add());
+            LG(E); O(new Int64Load { Offset = (uint)WasmAbi.ExtraTrailOldValueOffset });
+            O(new Int64Store());
+            O(new End());
+            O(new Branch(0));
+            O(new End());
+            O(new End());                                   // $out
+
+            LG(MB); LG(TGT); O(new Int64ExtendInt32Signed());
+            O(new Int64Store { Offset = WasmAbi.ByteOffset(WasmAbi.ExtraTrailTop) });
+            LG(TR);
+            O(new End());
+            return code;
+        }
 
         // ---- ground/1: module function K+5 ----
         // (term: i64, mailbox: i32) -> i32: 1 ground, 0 not, 2 decline.

@@ -242,7 +242,13 @@ loop over engine state (P/CP/E/B), so the mapping is direct.
     follows the resume back into the module. Any other boundary, a variable
     with more than one module, and a backtrack while a wakeup is parked
     hand the activation to the interpreter, which drops the wakeups whose
-    binding the restore undid (point 8).
+    binding the restore undid (point 8). What the driver asks the engine on
+    the way the module answers when the answer is plain: the cut barrier,
+    the goal of a `verify_attributes/4` hook (from the hooks the host
+    stages beside the module list, resolved once per program), a proxy with
+    nothing to settle, and the unwind of extra-trail entries that only put a
+    cell back. A /3 hook's proxy, a proxy to settle, and an entry that
+    restores managed state are the host's.
 
 ### Staging
 

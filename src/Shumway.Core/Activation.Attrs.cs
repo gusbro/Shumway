@@ -65,20 +65,68 @@ public sealed partial class Activation
     // The attribute modules seen so far: the keys a wasm module probes the
     // image with to learn which module a variable carries. A hint, never a
     // census: a module missing from it makes the binding step aside, and a
-    // stale id only probes and misses.
-    private readonly int[] _attrModules = new int[16];
+    // stale id only probes and misses. Laid out as WasmAbi.AttrModuleBase
+    // says: the ids, then each one's hook pair.
+    private readonly int[] _attrModules = new int[WasmAbi.AttrModuleCapacity * 3];
     private int _attrModuleCount;
+    // Each listed module's verify_attributes/3 functor, or -1, beside the
+    // pairs: ResolveAttrHook's answer without a string per wakeup.
+    private readonly int[] _attrModuleV3 = new int[WasmAbi.AttrModuleCapacity];
+    // The hooks are the program's: resolved again when the program changes.
+    private int _attrHooksResolved;
+    private IReadOnlyDictionary<int, int>? _attrHooksFor;
 
     private void AttrNoteModule(int moduleId)
     {
         for (int i = 0; i < _attrModuleCount; i++)
             if (_attrModules[i] == moduleId) return;
-        if (_attrModuleCount < _attrModules.Length) _attrModules[_attrModuleCount++] = moduleId;
+        if (_attrModuleCount < WasmAbi.AttrModuleCapacity) _attrModules[_attrModuleCount++] = moduleId;
     }
 
-    /// <summary>The attribute modules the store has seen, for a wasm world to
+    private void RefreshAttrHooks()
+    {
+        var addrs = CurrentFunctorAddresses;
+        if (!ReferenceEquals(addrs, _attrHooksFor)) { _attrHooksFor = addrs; _attrHooksResolved = 0; }
+        for (; _attrHooksResolved < _attrModuleCount; _attrHooksResolved++)
+        {
+            int i = _attrHooksResolved, moduleId = _attrModules[i];
+            int v3 = Verify3FunctorId(moduleId);
+            int v4 = v3 >= 0 ? -1 : Verify4FunctorId(moduleId);
+            _attrModuleV3[i] = v3;
+            int pair = WasmAbi.AttrModuleCapacity + 2 * i;
+            _attrModules[pair] = v3 >= 0 ? WasmAbi.AttrHookIsVerify3
+                : v4 >= 0 ? v4 : WasmAbi.AttrHookNone;
+            _attrModules[pair + 1] = HookGoalsModule(v3 >= 0 ? v3 : v4, moduleId);
+        }
+    }
+
+    /// <summary>Module <paramref name="moduleId"/>'s attribute-unification
+    /// hooks, as <see cref="Verify3FunctorId"/> and (when there is no /3)
+    /// <see cref="Verify4FunctorId"/> resolve them; for a module the store
+    /// has seen, resolved once per program instead of once per wakeup.
+    /// </summary>
+    public void ResolveAttrHook(int moduleId, out int v3, out int v4)
+    {
+        RefreshAttrHooks();
+        for (int i = 0; i < _attrModuleCount; i++)
+            if (_attrModules[i] == moduleId)
+            {
+                v3 = _attrModuleV3[i];
+                int hook = _attrModules[WasmAbi.AttrModuleCapacity + 2 * i];
+                v4 = hook >= 0 ? hook : -1;
+                return;
+            }
+        v3 = Verify3FunctorId(moduleId);
+        v4 = v3 >= 0 ? -1 : Verify4FunctorId(moduleId);
+    }
+
+    /// <summary>The attribute modules the store has seen and their hooks
+    /// (the <see cref="WasmAbi.AttrModuleBase"/> layout), for a wasm world to
     /// stage; the first <see cref="WasmAttrModuleCount"/> are live.</summary>
-    public int[] WasmAttrModuleView => _attrModules;
+    public int[] WasmAttrModuleView
+    {
+        get { RefreshAttrHooks(); return _attrModules; }
+    }
 
     public int WasmAttrModuleCount => _attrModuleCount;
 
