@@ -118,4 +118,30 @@ public sealed class QualifiedMetaCallTests(ITestOutputHelper o)
         Assert.False(run.Sites.ContainsKey("$call_conj/3"),
             "a piece of the conjunction left '$call_conj'/3");
     }
+
+    [DiagTheory]
+    [InlineData("nested_run(L).")]
+    [InlineData("disj_run(L).")]
+    // The construct's `!` arrives tagged with the module, which the module
+    // now cuts with itself.
+    [InlineData("cut_run(L).")]
+    public void AConstructInsideACallRunsFromTheModule(string goal)
+    {
+        var run = Run(goal);
+        Assert.Equal(Tier0(goal), run.Answer);
+        Assert.False(run.Sites.ContainsKey("$call_conj/3"),
+            "a construct reached through '$call'/2 still left '$call_conj'/3");
+    }
+
+    /// <summary>An if-then inside the construct is distributed into on the
+    /// host: the module declines it, and the answer is still Tier-0's.</summary>
+    [DiagFact]
+    public void AnIfThenInsideTheConstructIsTheHosts()
+    {
+        const string goal = "ifthen_run(L).";
+        var run = Run(goal);
+        Assert.Equal(Tier0(goal), run.Answer);
+        Assert.True(WasmTierDelegate.DiagMetaGuardHist[36] > 0,
+            "the if-then was not declined to the host");
+    }
 }

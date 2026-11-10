@@ -192,6 +192,7 @@ public static class WasmPredicateCompiler
         31 => "a cut dropped a binding whose dead record the engine must drop",
         32 => "a cut would leave a catch frame's snapshot to clip",
         33 => "an attribute entry indexes past both the log and the parked rows",
+        36 => "a control construct with an if-then goal: the host distributes the module into it",
         _ => "unnamed",
     };
 
@@ -5803,51 +5804,7 @@ public static class WasmPredicateCompiler
                 // The barrier is the one X1 carries, which is the whole point
                 // of '$call'/2: the cut commits no further than the call that
                 // established it.
-                if (barrierFromX1)
-                {
-                    Op(new LocalGet(LC0));
-                    Op(new Int64Constant(_env.AtomCell(CutAtomId)));
-                    Op(new Int64Equal());
-                    OpenIf();
-                    {
-                        // A live setup_call_cleanup handler makes a cut run
-                        // cleanups, and running one is meta-calling a goal
-                        // from inside the cut. That is host work.
-                        LoadSlot32(WasmAbi.CleanupReach);
-                        Op(new Int32Constant(0));
-                        Op(new Int32NotEqual());
-                        MetaGuard(16);
-                        Op(new BranchIf(2));                // -> $slow
-                        // X1 is a cell, and a cell can be a REF chain: the
-                        // host reads this barrier through a deref. Taking the
-                        // payload raw yields a heap index, which is a small
-                        // positive number and therefore a plausible-looking
-                        // barrier -- it cuts, just to the wrong place, and
-                        // takes the caller's choice points with it.
-                        //
-                        // Deref works on LC0 and clobbers it. Safe here only
-                        // because both ways out of this arm are exits: the
-                        // $slow branch re-reads the registers in the host.
-                        RegLoad(1);
-                        Op(new LocalSet(LC0));
-                        Deref();
-                        EmitCut(() =>
-                        {
-                            Op(new LocalGet(LC0));
-                            Op(new Int32WrapInt64());
-                        }, pc);
-                        // Symmetry with the calling path: pc + 9 pops a frame.
-                        if (ownFrame)
-                        {
-                            EmitAllocateFrame(0, pc);
-                            _metaFrameResume.Add(pc + 9);
-                        }
-                        // A cut succeeds and execution carries on at the next
-                        // instruction, exactly as the host's does.
-                        GoTo(pc + 9);
-                    }
-                    CloseNested();
-                }
+                if (barrierFromX1) EmitCutGoal();
 
                 EmitTrueFailGoal();
 
@@ -6007,6 +5964,7 @@ public static class WasmPredicateCompiler
                     Op(new LocalGet(LC0));
                     Op(new Int32WrapInt64());
                     Op(new LocalSet(LT2));                  // the GOAL's index
+                    EmitConstructCall(tagged: true);
                     CellLoadDyn(LHeapB, LT2);
                     Op(new Int64Constant(Cell.PayloadMask));
                     Op(new Int64And());
@@ -6064,6 +6022,8 @@ public static class WasmPredicateCompiler
                         GoSlow();
                     }
                     CloseNested();
+                    // A cut the host's distribution tagged with a module.
+                    if (barrierFromX1 && appended == 0) EmitCutGoal();
                     // A variable goal in a clause arrives tagged with its
                     // module, so the common call(G) reaches `true` here.
                     EmitTrueFailGoal();
@@ -6224,6 +6184,7 @@ public static class WasmPredicateCompiler
             }
             OpenElse();
             {
+                EmitConstructCall(tagged: false);
                 // Not wrapped: the callee is the goal, so there are not two
                 // arities to reconcile.
                 Op(new Int32Constant(0));
@@ -6473,6 +6434,216 @@ public static class WasmPredicateCompiler
                 // Conditional: an unconditional br here sent every '$call'/2
                 // to the host whatever its barrier, and nothing failed.
                 Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+            }
+
+            // The goal is `!` (LC0), under '$call'/2: it cuts to the barrier
+            // X1 carries and execution goes on at the next instruction, as
+            // the host's does.
+            void EmitCutGoal()
+            {
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(_env.AtomCell(CutAtomId)));
+                Op(new Int64Equal());
+                OpenIf();
+                {
+                    // A live setup_call_cleanup handler makes a cut run
+                    // cleanups, and running one is meta-calling a goal
+                    // from inside the cut. That is host work.
+                    LoadSlot32(WasmAbi.CleanupReach);
+                    Op(new Int32Constant(0));
+                    Op(new Int32NotEqual());
+                    MetaGuard(16);
+                    Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                    // X1 is a cell, and a cell can be a REF chain: the
+                    // host reads this barrier through a deref. Taking the
+                    // payload raw yields a heap index, which is a small
+                    // positive number and therefore a plausible-looking
+                    // barrier -- it cuts, just to the wrong place, and
+                    // takes the caller's choice points with it.
+                    //
+                    // Deref works on LC0 and clobbers it. Safe here only
+                    // because both ways out of this arm are exits: the
+                    // $slow branch re-reads the registers in the host.
+                    RegLoad(1);
+                    Op(new LocalSet(LC0));
+                    Deref();
+                    TagOfC0();
+                    Op(new Int32Constant((int)Tag.Int));
+                    Op(new Int32NotEqual());
+                    MetaGuard(12);
+                    Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                    EmitCut(() =>
+                    {
+                        Op(new LocalGet(LC0));
+                        Op(new Int32WrapInt64());
+                    }, pc);
+                    // Symmetry with the calling path: pc + 9 pops a frame.
+                    if (ownFrame)
+                    {
+                        EmitAllocateFrame(0, pc);
+                        _metaFrameResume.Add(pc + 9);
+                    }
+                    // A cut succeeds and execution carries on at the next
+                    // instruction, exactly as the host's does.
+                    GoTo(pc + 9);
+                }
+                CloseNested();
+            }
+
+            // '$call'/2 of a control construct, as the host dispatches it: a
+            // tagged construct's two goals take the module, each one already
+            // tagged left as it is, and the prelude's helper ('$call_conj'/3
+            // and its kin) is entered with the barrier in X2 and B0 = B. An
+            // if-then among the goals is distributed into in turn on the
+            // host, which this leaves to it. The goal is the Str at LT2, the
+            // module LT0. Every check comes before the first write: $slow
+            // re-reads '$call'(Goal, Barrier) out of X0 and X1.
+            void EmitConstructCall(bool tagged)
+            {
+                if (!barrierFromX1 || appended != 0) return;
+                foreach (var (construct, helper) in BarrierConstructs)
+                {
+                    CellLoadDyn(LHeapB, LT2);
+                    Op(new Int64Constant(_env.FunctorCell(construct)));
+                    Op(new Int64Equal());
+                    OpenIf();
+                    {
+                        for (int k = 1; k <= 2; k++)
+                        {
+                            CellLoadDyn(LHeapB, LT2, k);
+                            Op(new LocalSet(LC0));
+                            Deref();
+                            TagOfC0();
+                            Op(new Int32Constant((int)Tag.Str));
+                            Op(new Int32Equal());
+                            OpenIf();
+                            {
+                                Op(new LocalGet(LC0));
+                                Op(new Int32WrapInt64());
+                                Op(new LocalSet(LKBR));
+                                CellLoadDyn(LHeapB, LKBR);
+                                Op(new LocalSet(LC1));
+                                Op(new LocalGet(LC1));
+                                Op(new Int64Constant(_env.FunctorCell(IfThenFid)));
+                                Op(new Int64Equal());
+                                Op(new LocalGet(LC1));
+                                Op(new Int64Constant(_env.FunctorCell(SoftIfThenFid)));
+                                Op(new Int64Equal());
+                                Op(new Int32Or());
+                                MetaGuard(36);
+                                Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                            }
+                            CloseNested();
+                        }
+                        RegLoad(1); Op(new LocalSet(LC0)); Deref();
+                        TagOfC0();
+                        Op(new Int32Constant((int)Tag.Int));
+                        Op(new Int32NotEqual());
+                        MetaGuard(12);
+                        Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                        if (tagged)
+                        {
+                            Op(new LocalGet(LH));
+                            Op(new Int32Constant(6));
+                            Op(new Int32Add());
+                            LoadSlot32(WasmAbi.HeapWatermark);
+                            Op(new Int32GreaterThanOrEqualSigned());
+                            MetaGuard(19);
+                            Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                        }
+
+                        // X2: the barrier X1 carries, or B when the goal came
+                        // in a variable -- it is call(V) then (7.6.2), as the
+                        // host's dispatcher has it.
+                        RegLoad(0);
+                        Op(new LocalSet(LC2));
+                        Op(new LocalGet(LC2));
+                        Op(new Int64Constant(60));
+                        Op(new Int64ShiftRightUnsigned());
+                        Op(new Int32WrapInt64());
+                        Op(new LocalSet(LKBW));
+                        Op(new LocalGet(LKBW));
+                        Op(new Int32Constant((int)Tag.Ref));
+                        Op(new Int32Equal());
+                        Op(new LocalGet(LKBW));
+                        Op(new Int32Constant((int)Tag.AttVar));
+                        Op(new Int32Equal());
+                        Op(new Int32Or());
+                        OpenIf();
+                        RegStore(2, () => IntCell(() => Op(new LocalGet(LB))));
+                        OpenElse();
+                        RegStore(2, () => Op(new LocalGet(LC0)));
+                        CloseNested();
+
+                        for (int k = 0; k < 2; k++)
+                        {
+                            CellLoadDyn(LHeapB, LT2, k + 1);
+                            Op(new LocalSet(LC2));                  // the goal, raw
+                            if (tagged) EmitTagWithModule();
+                            RegStore(k, () => Op(new LocalGet(LC2)));
+                        }
+                        Op(new Int32Constant(_env.EncodeCallTarget(helper)));
+                        Op(new LocalSet(LAtVal));
+                        EmitMetaTail();
+                    }
+                    CloseNested();
+                }
+            }
+
+            // LC2 tagged '$mqual'(LT0, LC2), unless it carries a tag: the
+            // innermost one resolves, so another outside it changes nothing
+            // (MetaBodyConvert.TagModule). An attributed variable is
+            // referenced, not copied.
+            void EmitTagWithModule()
+            {
+                Op(new LocalGet(LC2));
+                Op(new LocalSet(LC0));
+                Deref();
+                Op(new Int32Constant(0));
+                Op(new LocalSet(LKBW));                     // tagged already
+                TagOfC0();
+                Op(new Int32Constant((int)Tag.Str));
+                Op(new Int32Equal());
+                OpenIf();
+                {
+                    Op(new LocalGet(LC0));
+                    Op(new Int32WrapInt64());
+                    Op(new LocalSet(LKBR));
+                    CellLoadDyn(LHeapB, LKBR);
+                    Op(new LocalSet(LC1));
+                    EmitIsModuleTag(LC1);
+                    Op(new LocalSet(LKBW));
+                }
+                CloseNested();
+                Op(new LocalGet(LKBW));
+                Op(new Int32EqualZero());
+                OpenIf();
+                {
+                    Op(new LocalGet(LC2));
+                    Op(new Int64Constant(60));
+                    Op(new Int64ShiftRightUnsigned());
+                    Op(new Int64Constant((long)Tag.AttVar));
+                    Op(new Int64Equal());
+                    OpenIf();
+                    {
+                        Op(new LocalGet(LC2));
+                        Op(new Int64Constant(Cell.PayloadMask));
+                        Op(new Int64And());
+                        Op(new LocalSet(LC2));
+                    }
+                    CloseNested();
+                    CellStoreDyn(LHeapB, LH, 0,
+                        () => Op(new Int64Constant(_env.FunctorCell(_env.MqualFunctorId))));
+                    CellStoreDyn(LHeapB, LH, 1, () => TaggedI32(LT0, Tag.Atom));
+                    CellStoreDyn(LHeapB, LH, 2, () => Op(new LocalGet(LC2)));
+                    TaggedI32(LH, Tag.Str);
+                    Op(new LocalSet(LC2));
+                    Op(new LocalGet(LH));
+                    Op(new Int32Constant(3));
+                    Op(new Int32Add());
+                    Op(new LocalSet(LH));
+                }
+                CloseNested();
             }
 
             void EmitMetaTail()
@@ -11857,6 +12028,20 @@ public static class WasmPredicateCompiler
 
         // `!` as an atom. Compared as a relocatable atom cell, never as a
         // baked id: atom ids are per process.
+        // The control constructs '$call'/2 hands to a prelude helper with the
+        // barrier in X2 (the host dispatcher's BarrierHelperJump).
+        private static readonly (int Construct, int Helper)[] BarrierConstructs =
+        {
+            (Fid(",", 2), Fid("$call_conj", 3)),
+            (Fid(";", 2), Fid("$call_disj", 3)),
+            (Fid("->", 2), Fid("$call_arrow", 3)),
+            (Fid("*->", 2), Fid("$call_softarrow", 3)),
+        };
+        private static readonly int IfThenFid = Fid("->", 2);
+        private static readonly int SoftIfThenFid = Fid("*->", 2);
+        private static int Fid(string name, int arity)
+            => FunctorTable.Intern(AtomTable.Intern(name, permanent: true).Id, arity);
+
         private static readonly int CutAtomId =
             Shumway.Core.AtomTable.Intern("!", permanent: true).Id;
         private static readonly int TrueAtomId =
