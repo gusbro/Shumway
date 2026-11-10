@@ -153,9 +153,10 @@ public sealed class WasmRelocatableModule
         }
         foreach (var (fid, cursor) in entry.EntryCursorByFid)
             cursors[byIndex[fid]].Add((0, cursor));
+        var owners = MemberAddressIndex.Of(members);
         foreach (var (addr, cursor) in entry.CursorByAddress)
         {
-            int owner = OwnerOf(members, addr);
+            int owner = owners.OwnerOf(addr);
             if (owner < 0) throw new WasmCompileException($"cursor address {addr} lies in no member");
             int off = addr - members[owner].Bias;
             if (off != 0) cursors[owner].Add((off, cursor));
@@ -405,23 +406,6 @@ public sealed class WasmRelocatableModule
 
     private static int Functor(string name, int arity)
         => FunctorTable.Intern(AtomTable.Intern(name, permanent: true).Id, arity);
-
-    // Members are contiguous: the end of one is the start of the next, and
-    // an address at a member's bias is that member's entry, not the
-    // predecessor's end cursor. The end of the last member is still legal
-    // (the cursor after a trailing call).
-    internal static int OwnerOf(IReadOnlyList<WasmGroupMember> members, int address)
-    {
-        for (int i = 0; i < members.Count; i++)
-            if (members[i].Bias == address) return i;
-        for (int i = 0; i < members.Count; i++)
-        {
-            int bias = members[i].Bias;
-            if (address > bias && address <= bias + members[i].Predicate.Bytecode.Length)
-                return i;
-        }
-        return -1;
-    }
 
     // ---- serialization ----
 

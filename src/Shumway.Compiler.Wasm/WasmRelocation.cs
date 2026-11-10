@@ -144,6 +144,7 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
     private readonly Dictionary<(WasmRelocKind, string, int, int), int> _slotByKey = new();
     private readonly List<WasmRelocation> _relocations = new();
     private readonly Dictionary<int, WasmBuiltinEvidence> _evidence = new();
+    private readonly MemberAddressIndex _byAddress;
 
     public RelocatingCompileEnv(IReadOnlyList<WasmGroupMember> members, IWasmCompileEnv inner)
     {
@@ -154,6 +155,7 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
             _memberByFid[m.Predicate.FunctorId] = _members.Count;
             _members.Add((name, arity, m.Bias, m.Predicate.Bytecode.Length));
         }
+        _byAddress = MemberAddressIndex.Of(members);
     }
 
     public IReadOnlyList<WasmRelocation> Relocations => _relocations;
@@ -196,16 +198,14 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
         return (m.Name, m.Arity, address - m.Bias);
     }
 
-    // Same ownership rule as WasmRelocatableModule.OwnerOf: an address at
-    // a bias belongs to that member, never to its predecessor's end.
+    // The ownership rule of MemberAddressIndex: an address at a bias belongs
+    // to that member, never to its predecessor's end.
     private (string Name, int Arity, int Offset) AddressSite(int address)
     {
-        foreach (var m in _members)
-            if (address == m.Bias) return (m.Name, m.Arity, 0);
-        foreach (var m in _members)
-            if (address > m.Bias && address <= m.Bias + m.Length)
-                return (m.Name, m.Arity, address - m.Bias);
-        throw new WasmCompileException($"address {address} lies in no member");
+        int i = _byAddress.OwnerOf(address);
+        if (i < 0) throw new WasmCompileException($"address {address} lies in no member");
+        var m = _members[i];
+        return (m.Name, m.Arity, address - m.Bias);
     }
 
     public int EncodeBp(int functorId, int address)
@@ -457,5 +457,70 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
     {
         Note(builtinId);
         return _inner.TryGetInlineTypeTest(builtinId, out test);
+    }
+}
+
+/// <summary>Which member of a group an address lies in, by binary search over the
+/// members' biases. An address at a bias belongs to the first member at it,
+/// never to its predecessor's end; past a bias, to the member whose bytecode
+/// spans it, its end included (the cursor after a trailing call). A scan of
+/// every member per address made a group's compile grow as members times
+/// addresses: clpz's 1681 members spent more there than in emitting.</summary>
+internal sealed class MemberAddressIndex
+{
+    private readonly int[] _bias;    // ascending; ties in member order
+    private readonly int[] _end;     // bias + bytecode length, same order
+    private readonly int[] _member;  // the member's index as given
+
+    public MemberAddressIndex(IReadOnlyList<int> biases, IReadOnlyList<int> lengths)
+    {
+        int n = biases.Count;
+        var order = new int[n];
+        for (int i = 0; i < n; i++) order[i] = i;
+        System.Array.Sort(order, (x, y) => biases[x] != biases[y]
+            ? biases[x].CompareTo(biases[y]) : x.CompareTo(y));
+        _member = order;
+        _bias = new int[n];
+        _end = new int[n];
+        for (int i = 0; i < n; i++)
+        {
+            _bias[i] = biases[order[i]];
+            _end[i] = _bias[i] + lengths[order[i]];
+        }
+    }
+
+    public static MemberAddressIndex Of(IReadOnlyList<WasmGroupMember> members)
+    {
+        var biases = new int[members.Count];
+        var lengths = new int[members.Count];
+        for (int i = 0; i < members.Count; i++)
+        {
+            biases[i] = members[i].Bias;
+            lengths[i] = members[i].Predicate.Bytecode.Length;
+        }
+        return new MemberAddressIndex(biases, lengths);
+    }
+
+    /// <summary>The index of the member <paramref name="address"/> lies in, or -1.</summary>
+    public int OwnerOf(int address)
+    {
+        int lo = 0, hi = _bias.Length;
+        while (lo < hi)
+        {
+            int mid = (lo + hi) >> 1;
+            if (_bias[mid] < address) lo = mid + 1;
+            else hi = mid;
+        }
+        if (lo < _bias.Length && _bias[lo] == address) return _member[lo];
+        // The members at the last bias below the address: the first, in
+        // member order, whose bytecode reaches it.
+        int at = lo - 1;
+        if (at < 0) return -1;
+        int first = at;
+        while (first > 0 && _bias[first - 1] == _bias[at]) first--;
+        int owner = -1;
+        for (int i = first; i <= at; i++)
+            if (address <= _end[i] && (owner < 0 || _member[i] < owner)) owner = _member[i];
+        return owner;
     }
 }
