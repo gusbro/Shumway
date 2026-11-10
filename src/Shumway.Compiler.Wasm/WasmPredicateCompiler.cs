@@ -590,7 +590,8 @@ public static class WasmPredicateCompiler
             || _env.IsInlineDomSingleton(builtinId)
             || _env.IsInlineMetaCall(builtinId)
             || _env.IsInlineBarrierCall(builtinId)
-            || _env.WakeSupportOf(builtinId) != WasmWakeSupport.None;
+            || _env.WakeSupportOf(builtinId) != WasmWakeSupport.None
+            || _env.IsInlineCompare3(builtinId);
 
         /// <summary>The translatable set, and the reason when it is not.
         /// Everything else in the 57-opcode universe rejects the predicate:
@@ -6739,6 +6740,8 @@ public static class WasmPredicateCompiler
                             body = () => EmitInlineTypeTest(test, pc);
                         else if (_env.IsInlineGetAttr(builtinId))
                             body = () => EmitInlineGetAttr(pc, () => Request(builtinId));
+                        else if (_env.IsInlineCompare3(builtinId))
+                            body = () => EmitInlineCompare3(pc, () => Request(builtinId));
                         else
                             continue;
                         Op(new LocalGet(LAtVal));
@@ -8971,11 +8974,17 @@ public static class WasmPredicateCompiler
             EmitReturn(WasmVerdict.BuiltinRequest);
         }
 
-        /// <summary>ADR-049's wake driver builtins, answered in the module
-        /// when the answer is at hand; <paramref name="exit"/> asks the host
-        /// otherwise. False: the builtin is not one of them.</summary>
+        /// <summary>The builtins the four call forms reach through one entry:
+        /// ADR-049's wake driver builtins and compare/3, answered in the
+        /// module when the answer is at hand; <paramref name="exit"/> asks the
+        /// host otherwise. False: the builtin is not one of them.</summary>
         private bool TryEmitWakeSupport(int builtinId, int pc, Action exit)
         {
+            if (_env.IsInlineCompare3(builtinId))
+            {
+                EmitInlineCompare3(pc, exit);
+                return true;
+            }
             switch (_env.WakeSupportOf(builtinId))
             {
                 case WasmWakeSupport.CutBarrier:
@@ -9134,6 +9143,71 @@ public static class WasmPredicateCompiler
             EmitBindDa(pc, () => Op(new Int64Constant(_env.AtomCell(AtomTable.EmptyListId))));
             Op(new LocalGet(LKStop)); Op(new LocalSet(LDa));
             EmitBindDa(pc, () => TaggedI32(LKH, Tag.Atom));
+            Op(new Branch(1));                              // -> $done
+            CloseNested();                                  // $slow
+            exit();
+            CloseNested();                                  // $done
+        }
+
+        /// <summary><c>compare(Order, A, B)</c> over the module's comparator:
+        /// the order atom unified with X0. An Order bound to anything but the
+        /// three atoms is an error the host raises, and a pair the comparator
+        /// hands back (two atoms, a float, ...) the host orders; so does
+        /// <paramref name="exit"/>, before anything is written.</summary>
+        private void EmitInlineCompare3(int pc, Action exit)
+        {
+            EmitFlagsCheck(pc);
+            long lt = _env.AtomCell(AtomTable.Intern("<", permanent: true).Id);
+            long eq = _env.AtomCell(AtomTable.Intern("=", permanent: true).Id);
+            long gt = _env.AtomCell(AtomTable.Intern(">", permanent: true).Id);
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+
+            // Order: a variable, or one of the three atoms.
+            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            TagOfC0();
+            Op(new Int32Constant((int)Tag.Ref));
+            Op(new Int32NotEqual());
+            OpenIf();
+            {
+                Op(new LocalGet(LC0)); Op(new Int64Constant(lt)); Op(new Int64NotEqual());
+                Op(new LocalGet(LC0)); Op(new Int64Constant(eq)); Op(new Int64NotEqual());
+                Op(new Int32And());
+                Op(new LocalGet(LC0)); Op(new Int64Constant(gt)); Op(new Int64NotEqual());
+                Op(new Int32And());
+                Op(new BranchIf(1));                        // -> $slow
+            }
+            CloseNested();
+
+            // The comparator works above the stack top.
+            StoreSlotFromI32Local(WasmAbi.StackTop, LST);
+            RegLoad(1);
+            RegLoad(2);
+            Op(new LocalGet(0));
+            Op(new WebAssembly.Instructions.Call(UseHelper(CompareIndex)));
+            Op(new LocalSet(LT0));
+            Op(new LocalGet(LT0));
+            Op(new Int32Constant(3));
+            Op(new Int32Equal());
+            Op(new BranchIf(0));                            // -> $slow
+
+            // 0 equal, 1 smaller, 2 greater.
+            Op(new LocalGet(LT0));
+            OpenIf();
+            {
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant(1));
+                Op(new Int32Equal());
+                OpenIf();
+                Op(new Int64Constant(lt)); Op(new LocalSet(LU0));
+                OpenElse();
+                Op(new Int64Constant(gt)); Op(new LocalSet(LU0));
+                CloseNested();
+            }
+            OpenElse();
+            Op(new Int64Constant(eq)); Op(new LocalSet(LU0));
+            CloseNested();
+            EmitUnifyTwo(() => RegLoad(0), () => Op(new LocalGet(LU0)), pc, exit);
             Op(new Branch(1));                              // -> $done
             CloseNested();                                  // $slow
             exit();

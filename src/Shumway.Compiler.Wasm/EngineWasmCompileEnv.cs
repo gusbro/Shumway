@@ -153,6 +153,12 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
         return entry.Arity == 0 && (succeeds || entry.Name == "fail");
     }
 
+    public bool IsInlineCompare3(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "compare" && entry.Arity == 3;
+    }
+
     public WasmWakeSupport WakeSupportOf(int builtinId)
     {
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);

@@ -86,6 +86,7 @@ public sealed record WasmBuiltinEvidence(
         if (env.IsInlineDomContains(builtinId)) f |= WasmInlineForms.DomContains;
         if (env.IsInlineDomDel(builtinId)) f |= WasmInlineForms.DomDel;
         if (env.IsInlineDomSingleton(builtinId)) f |= WasmInlineForms.DomSingleton;
+        if (env.IsInlineCompare3(builtinId)) f |= WasmInlineForms.Compare3;
         f |= env.WakeSupportOf(builtinId) switch
         {
             WasmWakeSupport.CutBarrier => WasmInlineForms.CutBarrier,
@@ -128,6 +129,7 @@ public enum WasmInlineForms
     CutBarrier = 1 << 19,
     WakeSettle = 1 << 20,
     WakeHookGoal = 1 << 21,
+    Compare3 = 1 << 22,
 }
 
 /// <summary>ADR-049's wake driver builtins the compiled code answers itself.
@@ -418,6 +420,12 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
     {
         Note(builtinId);
         return _inner.WakeSupportOf(builtinId);
+    }
+
+    public bool IsInlineCompare3(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.IsInlineCompare3(builtinId);
     }
 
     public bool IsInlineAttrListWrite(int builtinId, out bool isDelete)

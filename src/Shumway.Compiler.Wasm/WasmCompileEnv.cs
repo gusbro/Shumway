@@ -190,6 +190,12 @@ public interface IWasmCompileEnv
     /// Each one is a host crossing per wakeup otherwise.</summary>
     WasmWakeSupport WakeSupportOf(int builtinId) => WasmWakeSupport.None;
 
+    /// <summary>Whether the builtin is compare/3, which the compiled code
+    /// answers over the module's standard-order comparator: the order of
+    /// two terms the comparator can decide, unified with the order atom.
+    /// library(assoc) asks it once per tree level.</summary>
+    bool IsInlineCompare3(int builtinId) => false;
+
     /// <summary>Whether the builtin writes a module's attribute list:
     /// <c>'$put_to_attr_list'/3</c>, or <c>'$del_from_attr_list'/3</c>
     /// with <paramref name="isDelete"/> set.
