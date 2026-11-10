@@ -91,4 +91,18 @@ public sealed class QualifiedMetaCallTests(ITestOutputHelper o)
         Assert.Equal("L=.(2, .(3, .(4, [])))", run.Answer);
         Assert.Equal(0L, run.Guard9);
     }
+
+    /// <summary>'$call_conj'/3 hands each piece to '$call'/2 with the
+    /// call's barrier, and a barrier that is an integer is the module's to
+    /// take: the check that tells one apart sent every piece to the host.
+    /// </summary>
+    [DiagFact]
+    public void AConjunctionsPiecesRunFromTheModule()
+    {
+        const string goal = "flat_run(L).";
+        var run = Run(goal);
+        Assert.Equal(Tier0(goal), run.Answer);
+        Assert.False(run.Sites.ContainsKey("$call_conj/3"),
+            "a piece of the conjunction left '$call_conj'/3");
+    }
 }

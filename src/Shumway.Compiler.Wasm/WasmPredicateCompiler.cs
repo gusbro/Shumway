@@ -6442,7 +6442,9 @@ public static class WasmPredicateCompiler
                 Op(new Int32Constant((int)Tag.Int));
                 Op(new Int32NotEqual());
                 MetaGuard(12);
-                GoSlow();
+                // Conditional: an unconditional br here sent every '$call'/2
+                // to the host whatever its barrier, and nothing failed.
+                Op(new BranchIf((uint)(_extraDepth - slowDepth)));
             }
 
             void EmitMetaTail()
