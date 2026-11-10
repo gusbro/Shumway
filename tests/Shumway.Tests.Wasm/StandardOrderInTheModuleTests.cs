@@ -4,9 +4,10 @@ using Xunit.Abstractions;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary>compare/3 over the module's own standard-order comparator,
-/// called or reached through a meta-call. library(assoc) asks compare/3 once
-/// per tree level, and it crossed to the host every time. Tier-0 is the oracle; a pair the
+/// <summary>compare/3 over the module's own standard-order comparator, and
+/// arg/3 and compare/3 reached through a meta-call. library(assoc) asks
+/// compare/3 once per tree level and clp(Z) maps arg/3 over lists; both
+/// crossed to the host every time. Tier-0 is the oracle; a pair the
 /// comparator hands back (two different atoms) still crosses, and an Order
 /// that is not an order atom is still the host's error.</summary>
 public sealed class StandardOrderInTheModuleTests(ITestOutputHelper o)
@@ -66,6 +67,7 @@ public sealed class StandardOrderInTheModuleTests(ITestOutputHelper o)
     [InlineData("bad(E).")]
     [InlineData("meta_cmp(R).")]
     [InlineData("meta_cmp_no(R).")]
+    [InlineData("meta_arg(L).")]
     public void TheModuleAnswersAsTier0Does(string goal)
         => Assert.Equal(Tier0(goal), Run(goal).Answer);
 
@@ -90,6 +92,7 @@ public sealed class StandardOrderInTheModuleTests(ITestOutputHelper o)
 
     [DiagTheory]
     [InlineData("meta_cmp(R).", "compare/3")]
+    [InlineData("meta_arg(L).", "arg/3")]
     public void AMetaCalledBuiltinStaysInTheModule(string goal, string builtin)
     {
         var run = Run(goal);

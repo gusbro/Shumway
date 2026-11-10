@@ -6740,6 +6740,8 @@ public static class WasmPredicateCompiler
                             body = () => EmitInlineTypeTest(test, pc);
                         else if (_env.IsInlineGetAttr(builtinId))
                             body = () => EmitInlineGetAttr(pc, () => Request(builtinId));
+                        else if (_env.IsInlineArg(builtinId))
+                            body = () => EmitInlineArg(pc, () => Request(builtinId));
                         else if (_env.IsInlineCompare3(builtinId))
                             body = () => EmitInlineCompare3(pc, () => Request(builtinId));
                         else
@@ -7504,7 +7506,7 @@ public static class WasmPredicateCompiler
             Op(new Int32Add());
             Op(new LocalSet(LT0Alt));
             EmitUnifyTwo(() => RegLoad(2),
-                         () => CellLoadDyn(LHeapB, LT0Alt), pc);
+                         () => CellLoadDyn(LHeapB, LT0Alt), pc, emitBuiltinExit);
             Op(new Branch(1));                              // -> $done
 
             CloseNested();                                  // $slow
