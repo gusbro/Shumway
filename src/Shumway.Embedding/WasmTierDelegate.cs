@@ -67,6 +67,10 @@ public sealed class WasmTierDelegate
     /// functions, from modules compiled with
     /// WasmPredicateCompiler.CountTransfers on.</summary>
     public static long DiagDispatches, DiagTransfers;
+    /// <summary>ADR-049 interrupts a module asked for at a boundary (armed
+    /// or not: a hookless queue just clears), and wake driver returns
+    /// restored inside a chain.</summary>
+    public static long DiagWakeInterrupts, DiagWakeReturns;
     /// <summary>Requests per builtin id — which builtins actually cost a
     /// chain exit, to decide what earns open-coding. Diagnostic only.</summary>
     public static readonly System.Collections.Concurrent.ConcurrentDictionary<int, long>
@@ -194,6 +198,7 @@ public sealed class WasmTierDelegate
         DiagEntries = DiagSwitches = DiagDeopts = DiagBuiltins = DiagTailExits = 0;
         DiagForeignExits = DiagBoundaryExits = DiagInWasmHops = 0;
         DiagDispatches = DiagTransfers = 0;
+        DiagWakeInterrupts = DiagWakeReturns = 0;
         DiagMaxStackTop = DiagMaxChoiceTop = 0;
         DiagCpCensus = DiagEnvCensus = null;
         for (int i = 0; i < DiagBuiltinCallerKeys.Length; i++)
@@ -254,6 +259,12 @@ public sealed class WasmTierDelegate
 
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
     private static void CountTailExit() => DiagTailExits++;
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void CountWakeInterrupt() => DiagWakeInterrupts++;
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void CountWakeReturn() => DiagWakeReturns++;
 
     [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
     private static void CountDeopt(long pc) { DiagDeopts++; NoteDeoptPc(pc); }
@@ -700,6 +711,22 @@ public sealed class WasmTierDelegate
                 if (v == WasmVerdict.Success)
                 {
                     int cp = (int)cx.ReadSlot(WasmAbi.ContinuationPc);
+                    if (cp == Activation.WakeReturnCp)
+                    {
+                        // ADR-049: the wake driver returned. Restore the
+                        // interrupted goal here, as the interpreter's proceed
+                        // would, and go on in the chain when it resumes in a
+                        // module. A wakeup queued meanwhile is the
+                        // interpreter's to fire at this return.
+                        cx.SyncEngine();
+                        if (engine.HasPendingWakeups) { result = true; break; }
+                        engine.WakeReturn();
+                        CountWakeReturn();
+                        if (ResumeInChain(cx, engine, engine.P, ref currentFid, ref target,
+                                          ref pendingPc, out result))
+                            continue;
+                        break;
+                    }
                     if (Activation.IsResumeMarker(cp)
                         && TryChain(cx, engine, cp, ref currentFid, ref target))
                         continue;
@@ -762,6 +789,35 @@ public sealed class WasmTierDelegate
 
                 long req = cx.ReadSlot(WasmAbi.BuiltinId);
                 int builtinId = (int)(uint)req;
+                if (builtinId == WasmAbi.WakeRequest)
+                {
+                    // ADR-049 at a boundary the module reached with a wakeup
+                    // it parked: the interrupt the interpreter would arm
+                    // there, with the resume pointing back into the module.
+                    // When the driver is in this world the chain follows it;
+                    // when there is nothing to run, it goes on at the resume.
+                    int live = (int)(req >> 32);
+                    long resumeSlot = cx.ReadSlot(WasmAbi.Pc);
+                    CountWakeInterrupt();
+                    cx.SyncEngine();
+                    int resume = resumeSlot < 0 ? engine.Cp : (int)resumeSlot;
+                    if (engine.TryWakeInterrupt(live, resume))
+                    {
+                        if (ResumeInChain(cx, engine, Activation.EncodeResumeMarker(
+                                Activation.WakeDriverFunctorId, 0),
+                                ref currentFid, ref target, ref pendingPc, out result))
+                            continue;
+                        // The driver runs on bytecode: its entry, not a marker.
+                        pendingPc = engine.P;
+                        break;
+                    }
+                    // No hook to run, or no driver linked: what is still
+                    // queued is the interpreter's, at the resume's boundary.
+                    if (ResumeInChain(cx, engine, resume, ref currentFid, ref target,
+                                      ref pendingPc, out result))
+                        continue;
+                    break;
+                }
                 if (builtinId == WasmAbi.UnifyCellsRequest)
                 {
                     // A get_value whose pair only the engine's unifier
@@ -876,6 +932,23 @@ public sealed class WasmTierDelegate
             if (deopted) engine.SignalIlDeopt();
         }
         return result;
+    }
+
+    /// <summary>Goes on at <paramref name="resume"/> after the host changed the
+    /// engine (an interrupt armed, a wake frame restored): in the chain when
+    /// it is a marker into this world and the chain guards hold, otherwise
+    /// out to the interpreter there -- a proceed when it is the continuation
+    /// in CP, a pending tail call for anything else.</summary>
+    private static bool ResumeInChain(IWasmChainContext cx, Activation engine, int resume,
+                                      ref int currentFid, ref WasmTarget target,
+                                      ref int pendingPc, out bool result)
+    {
+        result = true;
+        cx.RefreshFromEngine();
+        if (Activation.IsResumeMarker(resume) && TryChain(cx, engine, resume, ref currentFid, ref target))
+            return true;
+        if (resume != engine.Cp) pendingPc = resume;
+        return false;
     }
 
     /// <summary>Whether the marker can be followed inside the chain: the

@@ -19,7 +19,9 @@ public sealed partial class Activation
     /// -1 query-top and the interpreter's -2 subroutine sentinel.</summary>
     public const int WakeReturnCp = -9;
 
-    private static readonly int WakeDriverFunctorId =
+    /// <summary>'$wake_driver'/1, which a wasm chain follows into when the
+    /// interrupt is armed inside it.</summary>
+    public static readonly int WakeDriverFunctorId =
         FunctorTable.Intern(AtomTable.Intern("$wake_driver", permanent: true).Id, 1);
     private static readonly int WakeItemFunctorId =
         FunctorTable.Intern(AtomTable.Intern("$wake", permanent: true).Id, 3);

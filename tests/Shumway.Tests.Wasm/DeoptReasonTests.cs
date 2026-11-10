@@ -57,11 +57,11 @@ public sealed class DeoptReasonTests(ITestOutputHelper o)
     }
 
     /// <summary>ADR-049: with one module the module binds the variable
-    /// itself and parks the wakeup, and comes out at the next boundary, where
-    /// the interpreter wakes. The same corpus as above, one attribute each.
-    /// </summary>
+    /// itself and parks the wakeup, and the next boundary asks the host for
+    /// the interrupt instead of stepping aside. The same corpus as above, one
+    /// attribute each.</summary>
     [DiagFact]
-    public void BindingAnAttvarWithOneModuleWakesAtTheNextBoundary()
+    public void BindingAnAttvarWithOneModuleWakesInTheModule()
     {
         var hist = RunAndReadHistogram("""
             p(f(_)).
@@ -73,9 +73,10 @@ public sealed class DeoptReasonTests(ITestOutputHelper o)
             """,
             "run(2).", "run(20).");
         Assert.Equal(0L, hist[AttvarBind]);
-        Assert.True(hist[FlagSet] >= 20,
-            $"{hist[FlagSet]} at code {FlagSet}: the bindings did not reach a "
-            + "boundary with the flag set");
+        Assert.Equal(0L, hist[FlagSet]);
+        Assert.True(WasmTierDelegate.DiagWakeInterrupts >= 20,
+            $"{WasmTierDelegate.DiagWakeInterrupts} interrupts asked for: the bindings "
+            + "did not reach a boundary with the wakeup parked");
     }
 
     /// <summary>A bignum result escalates to the host's evaluator, and says

@@ -415,6 +415,12 @@ public static class WasmAbi
     /// registered builtin has it.</summary>
     public const int UnifyCellsRequest = 0x7FFFFFF0;
 
+    /// <summary>A builtin request asking for ADR-049's interrupt at a goal
+    /// boundary with a parked wakeup: the high half of <see cref="BuiltinId"/>
+    /// is how many argument registers are live, <see cref="Pc"/> the resume
+    /// marker (-1: the continuation in CP).</summary>
+    public const int WakeRequest = 0x7FFFFFF1;
+
     /// <summary>Where the expression evaluator leaves its answer: the value
     /// (a 60-bit integer, or the bits of a double) and which of the two it
     /// is. It is a function, so it cannot write the caller's locals.

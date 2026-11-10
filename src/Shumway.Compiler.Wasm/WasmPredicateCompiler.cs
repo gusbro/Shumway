@@ -2505,7 +2505,7 @@ public static class WasmPredicateCompiler
                 case Opcode.Allocate: EmitAllocate(ins); return false;
                 case Opcode.Deallocate: EmitDeallocate(); return false;
                 case Opcode.DeallocateProceed:
-                    EmitFlagsCheck(ins.Pc);
+                    EmitWakePoint(ins.Pc, 0, () => -1, EmitDeallocate);
                     EmitDeallocate();
                     EmitProceedReturn();
                     return true;
@@ -2605,7 +2605,7 @@ public static class WasmPredicateCompiler
                     RegStore(1, () => Op(new Int64Constant(_env.AtomCell(ins.I0))));
                     return false;
                 case Opcode.DeallocateExecute:
-                    EmitFlagsCheck(ins.Pc);
+                    EmitExecuteWakePoint(ins.Pc, EmitDeallocate);
                     EmitDeallocate();
                     EmitExecuteTail(ins.Pc);
                     return true;
@@ -2643,7 +2643,7 @@ public static class WasmPredicateCompiler
                     // resolves builtins when the registry is loaded, exactly
                     // as the linker would. The env-trim count (I1) rides the
                     // high half of the id slot; -1 is the no-trim sentinel.
-                    EmitWakeTestBeforeBuiltin(ins);
+                    EmitWakeTestBeforeBuiltin(ins.I0, ins.Pc);
                     if (_env.IsInlineUnify(ins.I0))
                     {
                         // The escape is the site's own non-inline exit: a
@@ -2905,7 +2905,7 @@ public static class WasmPredicateCompiler
                     EmitReturn(WasmVerdict.BuiltinRequest);
                     return true;
                 case Opcode.ExecuteBuiltin:
-                    EmitWakeTestBeforeBuiltin(ins);
+                    EmitWakeTestBeforeBuiltin(ins.I0, ins.Pc);
                     if (_env.IsInlineUnify(ins.I0))
                     {
                         // Same escape, tail form: cursor -1, no trim.
@@ -3180,12 +3180,56 @@ public static class WasmPredicateCompiler
         /// <summary>The flags test in front of a builtin that may follow a
         /// parked wakeup. =/2 is a unification, part of the stretch, and
         /// does not wake (ADR-049 point 11).</summary>
-        private void EmitWakeTestBeforeBuiltin(Instr ins)
+        private void EmitWakeTestBeforeBuiltin(int builtinId, int pc)
         {
-            if (!_wakeMayPend || _env.IsInlineUnify(ins.I0)) return;
-            EmitFlagsCheck(ins.Pc);
+            if (!_wakeMayPend || _env.IsInlineUnify(builtinId)) return;
+            EmitFlagsCheck(pc);
             _wakeMayPend = false;
         }
+
+        /// <summary>A goal boundary's flags test, where a wakeup the module
+        /// parked may be pending. The wakeup bit alone asks the host for
+        /// ADR-049's interrupt instead of stepping aside: the driver runs,
+        /// and the activation resumes at <paramref name="resumeMarker"/> (-1:
+        /// the continuation in CP), so the rest of the clause stays here.
+        /// <paramref name="arity"/> argument registers are live across it;
+        /// <paramref name="beforeRequest"/> stages what the resume expects
+        /// (a call's continuation, a frame popped). Any other bit steps
+        /// aside as before.</summary>
+        private void EmitWakePoint(int pc, int arity, Func<long> resumeMarker, Action? beforeRequest = null)
+        {
+            if (!_wakeMayPend) { EmitFlagsCheck(pc); return; }
+            _wakeMayPend = false;
+            LoadSlot64(WasmAbi.Flags);
+            Op(new Int64Constant(0));
+            Op(new Int64NotEqual());
+            OpenIf();
+            {
+                LoadSlot64(WasmAbi.Flags);
+                Op(new Int64Constant(WasmAbi.FlagWakeupPending));
+                Op(new Int64Equal());
+                OpenIf();
+                {
+                    beforeRequest?.Invoke();
+                    StoreSlot64(WasmAbi.BuiltinId, () => Op(new Int64Constant(
+                        ((long)arity << 32) | (uint)WasmAbi.WakeRequest)));
+                    // Asked for here and not by the caller: a relocating
+                    // environment records every constant it hands out.
+                    StoreSlot64(WasmAbi.Pc, () => Op(new Int64Constant(resumeMarker())));
+                    EmitReturn(WasmVerdict.BuiltinRequest);
+                }
+                CloseNested();
+                MetaGuard(17);
+                EmitDeopt(pc, DeoptStamped);
+            }
+            CloseNested();
+        }
+
+        /// <summary>The callee's arity, or -1 when it is a builtin: a
+        /// builtin's resume would have to re-run it, which needs a cursor in
+        /// front of it.</summary>
+        private int WakeCalleeArity(int callee)
+            => _env.TryGetBuiltin(callee, out _) ? -1 : FunctorTable.Lookup(callee).Arity;
 
         private void EmitFlagsCheck(int pc)
         {
@@ -3877,7 +3921,7 @@ public static class WasmPredicateCompiler
 
         private void EmitProceed(Instr ins)
         {
-            EmitFlagsCheck(ins.Pc);
+            EmitWakePoint(ins.Pc, 0, () => -1);
             EmitProceedReturn();
         }
 
@@ -4939,6 +4983,7 @@ public static class WasmPredicateCompiler
                 throw new WasmCompileException($"call at {ins.Pc} has no call site");
             if (_env.TryGetBuiltin(callee, out int builtinId))
             {
+                EmitWakeTestBeforeBuiltin(builtinId, ins.Pc);
                 if (_env.IsInlineUnify(builtinId))
                 {
                     EmitInlineUnify(ins.Pc);
@@ -5090,7 +5135,14 @@ public static class WasmPredicateCompiler
                 EmitReturn(WasmVerdict.BuiltinRequest);
                 return true;
             }
-            EmitFlagsCheck(ins.Pc);
+            // A wakeup resumes by dispatching the callee, with CP already the
+            // marker of our return cursor.
+            EmitWakePoint(ins.Pc, FunctorTable.Lookup(callee).Arity, () => _env.EncodeCallTarget(callee), () =>
+            {
+                StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
+                Op(new Int32Constant(_env.EncodeReturnMarker(SelfFid(ins), ins.Pc + 9)));
+                Op(new LocalSet(LCP));
+            });
             // Env trimming is skipped: frames sit a little higher, results
             // are unaffected. CP becomes the marker that re-enters us at the
             // return cursor. The callee enters a new procedure: refresh its
@@ -8989,8 +9041,17 @@ public static class WasmPredicateCompiler
 
         private void EmitExecute(Instr ins)
         {
-            EmitFlagsCheck(ins.Pc);
+            EmitExecuteWakePoint(ins.Pc, null);
             EmitExecuteTail(ins.Pc);
+        }
+
+        /// <summary>An execute's boundary: a wakeup resumes by dispatching the
+        /// callee, CP untouched. A builtin callee keeps the step-aside.</summary>
+        private void EmitExecuteWakePoint(int pc, Action? beforeRequest)
+        {
+            int arity = _callee.TryGetValue(pc, out int callee) ? WakeCalleeArity(callee) : -1;
+            if (arity < 0) { EmitFlagsCheck(pc); return; }
+            EmitWakePoint(pc, arity, () => _env.EncodeCallTarget(callee), beforeRequest);
         }
 
         private void EmitExecuteTail(int pc)
