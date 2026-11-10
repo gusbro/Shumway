@@ -116,6 +116,14 @@ public static class WasmPredicateCompiler
     /// clock. Puts real instructions in every module compiled while on.</summary>
     public static bool CountTransfers;
 
+    /// <summary>A run that ends by falling into the next case of its
+    /// partition falls into it, where it went round the dispatch loop: the
+    /// cases are nested blocks, so the end of one case's code is the start of
+    /// the next one's. <c>SHUMWAY_WASM_FALLTHROUGH=0</c> turns it off, for
+    /// measuring.</summary>
+    public static bool FallThrough { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_WASM_FALLTHROUGH") != "0";
+
     public static WasmCpsGrain CpsGrain { get; set; } =
         Environment.GetEnvironmentVariable("SHUMWAY_WASM_CPS_GRAIN") == "budget"
             ? WasmCpsGrain.Budget : WasmCpsGrain.EntryPoint;
@@ -1121,6 +1129,7 @@ public static class WasmPredicateCompiler
             Op(new Int32Constant(cursor));
             Op(new LocalSet(LCur));
             BrDispatch();
+            if (_extraDepth == 0) { _tailGoToAt = _code.Count; _tailGoToCursor = cursor; }
         }
 
         /// <summary>CPS: tail-call <paramref name="function"/> at
@@ -2380,6 +2389,12 @@ public static class WasmPredicateCompiler
 
         private void EmitRun(int startAddr)
         {
+            EmitRunBody(startAddr);
+            DropTailDispatch();
+        }
+
+        private void EmitRunBody(int startAddr)
+        {
             _aevalDepth = 0;
             _wakeMayPend = _wakeJoins.Contains(startAddr);
             _runsEmitted.Add(startAddr);
@@ -2427,6 +2442,22 @@ public static class WasmPredicateCompiler
             if (_wakeMayPend && _wakeJoins.Add(leader) && _runsEmitted.Contains(leader))
                 throw new WasmCompileException($"a run falls back into leader {leader}");
             GoTo(leader);
+        }
+
+        // Where the last top-level jump of the case ended, and to what.
+        private int _tailGoToAt = -1, _tailGoToCursor = -1;
+
+        /// <summary>A case that ends jumping to the next case of its
+        /// partition falls into it instead (<see cref="FallThrough"/>). Only
+        /// the final branch goes: LCur still names the case, as the dispatch
+        /// would leave it, and nothing follows the branch to make reachable.
+        /// </summary>
+        private void DropTailDispatch()
+        {
+            if (!FallThrough || _cps || !_inPartition || _tailGoToAt != _code.Count) return;
+            if (_tailGoToCursor != _curPart.Lo + _caseIndex + 1 || _tailGoToCursor >= _curPart.Hi) return;
+            _code.RemoveAt(_code.Count - 1);
+            _tailGoToAt = -1;
         }
 
         /// <summary>Emits one instruction; true when it transferred control.</summary>

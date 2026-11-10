@@ -2156,6 +2156,13 @@ internal static partial class WebShumwayApp
                     ? WasmCpsGrain.Budget : WasmCpsGrain.EntryPoint;
                 return $"% jit_compile: {command}; the next build takes it\n";
             }
+            // The form the next build compiles to, as with cps: one page
+            // measures both (#wasmprobe=...&ab=fallthrough).
+            if (command is "fallthrough on" or "fallthrough off")
+            {
+                Shumway.Compiler.Wasm.WasmPredicateCompiler.FallThrough = command == "fallthrough on";
+                return $"% jit_compile: {command}; the next build takes it\n";
+            }
             if (command is "cps" or "nocps")
             {
                 var (_, report) = BrowserWasmTier.SetForm(engine, command == "cps");
