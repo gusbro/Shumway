@@ -117,6 +117,26 @@ public sealed partial class Activation
     /// it back and not just in.</summary>
     public ExtraTrailEntry[] WasmExtraTrailView => _extraTrail;
 
+    /// <summary>Grows the extra trail to leave a module room to append, within
+    /// the configured maximum; a world calls it before it takes the view.
+    /// The host grows the trail only when a push of its own needs room, and a
+    /// module's attribute write reserves two entries it may not write. A
+    /// trail that stopped just short of full sent every such write to the
+    /// host, which on a young variable trailed nothing, grew nothing, and
+    /// left the next write where this one was.</summary>
+    public void ReserveWasmExtraTrail()
+    {
+        int want = _extraTrailTop + WasmExtraTrailHeadroom;
+        int max = _config.MaxExtraTrailSize;
+        if (max > 0 && want > max) want = max;
+        if (want > _extraTrail.Length)
+            GrowIfNeeded(ref _extraTrail, _extraTrailTop, want - _extraTrailTop, max, "extra trail");
+    }
+
+    /// <summary>The entries <see cref="ReserveWasmExtraTrail"/> leaves free,
+    /// the eight a world keeps back included.</summary>
+    public const int WasmExtraTrailHeadroom = 256 + 8;
+
     /// <summary>Where a compaction parks the records it orphaned. Allocated
     /// on first ask, because an engine that never meets a wasm world has no
     /// use for it.</summary>

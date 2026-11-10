@@ -286,6 +286,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             long[] metaCache = _w.ResumeTable.MetaCache;
             int[] atomMarkers = _w.ResumeTable.AtomCallMarkers;
             _engine.AttrLogMirrorEnable();
+            _engine.ReserveWasmExtraTrail();
             ExtraTrailEntry[] extraTrail = _engine.WasmExtraTrailView;
             int extraTop = _engine.WasmExtraTrailTop;
             int[] orphanRing = _engine.WasmOrphanRingView;

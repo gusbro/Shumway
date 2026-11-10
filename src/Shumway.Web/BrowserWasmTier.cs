@@ -228,6 +228,7 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
             var stack = _engine.WasmStackView;
             var regs = _engine.WasmRegistersView;
             var trail = _engine.WasmBindingTrailView;
+            _engine.ReserveWasmExtraTrail();
             RepinIfChanged(ref _heapPin, ref _heap, heap);
             RepinIfChanged(ref _stackPin, ref _stack, stack);
             RepinIfChanged(ref _regsPin, ref _regs, regs);
