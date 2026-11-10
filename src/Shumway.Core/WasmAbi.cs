@@ -599,7 +599,17 @@ public static class WasmAbi
     public const int AttrHookIsVerify3 = -1;
     public const int AttrHookNone = -2;
 
-    public const int SlotCount = 89;
+    /// <summary>Where a module parks what findall's collect loop hands the
+    /// solution buffers, one i64 each: zero opens a buffer
+    /// ('$findall_push'), an atom or integer cell is a solution
+    /// ('$findall_record_s'). The buffers are the host's, so the host takes
+    /// the entries in order when the chain returns, before any builtin runs.
+    /// A zero base means both are requested.</summary>
+    public const int FindallRingBase = 89;
+    public const int FindallRingTop = 90;
+    public const int FindallRingLimit = 91;
+
+    public const int SlotCount = 92;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 

@@ -89,7 +89,11 @@ public sealed partial class Activation
         /// <summary>Base and count of the attribute modules the store has
         /// seen.</summary>
         long AttrModuleBase = 0,
-        int AttrModuleCount = 0);
+        int AttrModuleCount = 0,
+        /// <summary>Base and capacity of the parked findall entries. A zero
+        /// base means the collect loop's builtins are requested.</summary>
+        long FindallRingBase = 0,
+        int FindallRingLimit = 0);
 
     /// <summary>Grows the register bank to at least
     /// <paramref name="count"/> registers, before the runner takes its view:
@@ -141,6 +145,29 @@ public sealed partial class Activation
         => _wasmWakes ??= new int[WasmAbi.WakeEntryInts * 256];
 
     private int[]? _wasmWakes;
+
+    /// <summary>Where a module parks findall's collect loop
+    /// (<see cref="WasmAbi.FindallRingBase"/>).</summary>
+    public long[] WasmFindallRingView => _wasmFindall ??= new long[256];
+
+    private long[]? _wasmFindall;
+
+    /// <summary>The buffers a module opened and the solutions it recorded,
+    /// in the order it did. A collect, or any other builtin, runs after this:
+    /// every exit drains first.</summary>
+    private void DrainParkedFindall(int count)
+    {
+        if (_wasmFindall is null || count <= 0) return;
+        int n = System.Math.Min(count, _wasmFindall.Length);
+        for (int i = 0; i < n; i++)
+        {
+            long v = _wasmFindall[i];
+            if (v == 0) PushSolutions(NewSolutions());
+            else (_topSolutions ?? throw new InvalidOperationException(
+                    "a parked findall solution with no call collecting"))
+                .AddToList(this, new Cell(v));
+        }
+    }
 
     /// <summary>The wakeups a module parked, queued in the order it bound
     /// them. Nothing else queues inside a chain: an entry with a wakeup
@@ -469,6 +496,9 @@ public sealed partial class Activation
         m[WasmAbi.WakeRingLimit] = bases.WakeRingLimit;
         m[WasmAbi.AttrModuleBase] = bases.AttrModuleBase;
         m[WasmAbi.AttrModuleCount] = bases.AttrModuleCount;
+        m[WasmAbi.FindallRingBase] = bases.FindallRingBase;
+        m[WasmAbi.FindallRingTop] = 0;
+        m[WasmAbi.FindallRingLimit] = bases.FindallRingLimit;
         m[WasmAbi.ArithTableBase] = bases.ArithTableBase;
         m[WasmAbi.ArithTableLength] = bases.ArithTableLength;
         m[WasmAbi.ArithValue] = 0;
@@ -568,6 +598,7 @@ public sealed partial class Activation
         DrainOrphanedAttrRecords((int)m[WasmAbi.AttrOrphanTop]);
         DrainDroppedAttrRecords((int)m[WasmAbi.AttrDropTop]);
         DrainParkedWakes((int)m[WasmAbi.WakeRingTop]);
+        DrainParkedFindall((int)m[WasmAbi.FindallRingTop]);
         // The compaction watermark, which a module's walk moves.
         _compactBarrier = (int)m[WasmAbi.CompactBarrier];
         _compactParentBinding = (int)m[WasmAbi.CompactParentBinding];

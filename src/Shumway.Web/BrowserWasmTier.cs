@@ -279,6 +279,8 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 WakeRingLimit: _engine.WasmWakeRingView.Length / WasmAbi.WakeEntryInts,
                 AttrModuleBase: AttrModuleAddress(),
                 AttrModuleCount: _engine.WasmAttrModuleCount,
+                FindallRingBase: FindallRingAddress(),
+                FindallRingLimit: _engine.WasmFindallRingView.Length,
                 FunctorReverseBase: FunctorReverseAddress(),
                 FunctorReverseMask: Shumway.Core.FunctorReverseTable.Mask,
                 GlobalVarBase: GlobalVarImageAddress(out int globalPairs),
@@ -501,6 +503,21 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
             return (long)_wakePin.AddrOfPinnedObject();
         }
 
+        private GCHandle _findallPin;
+        private long[]? _findallPinned;
+
+        private long FindallRingAddress()
+        {
+            long[] r = _engine.WasmFindallRingView;
+            if (!ReferenceEquals(_findallPinned, r))
+            {
+                if (_findallPin.IsAllocated) _findallPin.Free();
+                _findallPin = GCHandle.Alloc(r, GCHandleType.Pinned);
+                _findallPinned = r;
+            }
+            return (long)_findallPin.AddrOfPinnedObject();
+        }
+
         private long AttrModuleAddress()
         {
             int[] r = _engine.WasmAttrModuleView;
@@ -657,7 +674,7 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
             Unpin(ref _attrLogPin); Unpin(ref _extraTrailPin);
             Unpin(ref _orphanPin); Unpin(ref _attrWritePin);
             Unpin(ref _attrDropPin); Unpin(ref _wakePin);
-            Unpin(ref _attrModulePin);
+            Unpin(ref _attrModulePin); Unpin(ref _findallPin);
         }
 
         private static void Unpin(ref GCHandle pin)

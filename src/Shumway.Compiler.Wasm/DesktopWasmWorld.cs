@@ -235,7 +235,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         /// aside for the host to grow the area (the image has no room past
         /// what is reserved here).</summary>
         private const int ExtraTrailHeadroom = 256;
-        private int _arithAt, _attrWriteAt, _attrDropAt, _wakeAt, _attrModAt, _funRevAt, _globalAt;
+        private int _arithAt, _attrWriteAt, _attrDropAt, _wakeAt, _attrModAt, _findallAt, _funRevAt, _globalAt;
         private readonly long[] _globalRows = new long[2 * 32];
         // Exactly one side is authoritative: the image (false) or the engine
         // (true, after SyncEngine ran and managed code may have mutated).
@@ -294,6 +294,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             int[] wakes = _engine.WasmWakeRingView;
             int[] attrModules = _engine.WasmAttrModuleView;
             int attrModuleCount = _engine.WasmAttrModuleCount;
+            long[] findall = _engine.WasmFindallRingView;
             long[] funRev = FunctorReverseTable.Rows;
             int[] arithRows = Shumway.Builtins.ArithFunctorTable.Rows;
             int arithLen = Shumway.Builtins.ArithFunctorTable.Length;
@@ -321,7 +322,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             _attrDropAt = _attrWriteAt + attrWrites.Length * 4;
             _wakeAt = _attrDropAt + attrDrops.Length * 4;
             _attrModAt = _wakeAt + wakes.Length * 4;
-            _funRevAt = (_attrModAt + attrModules.Length * 4 + 7) & ~7;
+            _findallAt = (_attrModAt + attrModules.Length * 4 + 7) & ~7;
+            _funRevAt = _findallAt + findall.Length * 8;
             _globalAt = _funRevAt + funRev.Length * 8;
             if (_globalAt + (long)_globalRows.Length * 8 > (long)Pages * 65536)
                 throw new InvalidOperationException("engine areas outgrew the desktop image");
@@ -370,6 +372,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 WakeRingLimit: wakes.Length / WasmAbi.WakeEntryInts,
                 AttrModuleBase: _attrModAt,
                 AttrModuleCount: attrModuleCount,
+                FindallRingBase: _findallAt,
+                FindallRingLimit: findall.Length,
                 FunctorReverseBase: _funRevAt,
                 FunctorReverseMask: FunctorReverseTable.Mask,
                 GlobalVarBase: globalPairs >= 0 ? _globalAt : 0,
@@ -560,6 +564,12 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 fixed (int* p = attrDrops)
                     Buffer.MemoryCopy(mem + _attrDropAt, p, attrDrops.Length * 4L,
                                       System.Math.Min(dropped, attrDrops.Length) * 4L);
+            int parked = (int)_mailbox[WasmAbi.FindallRingTop];
+            long[] findall = _engine.WasmFindallRingView;
+            if (parked > 0)
+                fixed (long* p = findall)
+                    Buffer.MemoryCopy(mem + _findallAt, p, findall.Length * 8L,
+                                      System.Math.Min(parked, findall.Length) * 8L);
             int woke = (int)_mailbox[WasmAbi.WakeRingTop];
             int[] wakes = _engine.WasmWakeRingView;
             if (woke > 0)

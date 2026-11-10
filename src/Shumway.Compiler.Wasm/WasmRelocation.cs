@@ -87,6 +87,13 @@ public sealed record WasmBuiltinEvidence(
         if (env.IsInlineDomDel(builtinId)) f |= WasmInlineForms.DomDel;
         if (env.IsInlineDomSingleton(builtinId)) f |= WasmInlineForms.DomSingleton;
         if (env.IsInlineCompare3(builtinId)) f |= WasmInlineForms.Compare3;
+        f |= env.FindallFormOf(builtinId) switch
+        {
+            WasmFindallForm.Push => WasmInlineForms.FindallPush,
+            WasmFindallForm.Record => WasmInlineForms.FindallRecord,
+            WasmFindallForm.Collect => WasmInlineForms.FindallCollect,
+            _ => WasmInlineForms.None,
+        };
         f |= env.WakeSupportOf(builtinId) switch
         {
             WasmWakeSupport.CutBarrier => WasmInlineForms.CutBarrier,
@@ -130,6 +137,23 @@ public enum WasmInlineForms
     WakeSettle = 1 << 20,
     WakeHookGoal = 1 << 21,
     Compare3 = 1 << 22,
+    FindallPush = 1 << 23,
+    FindallRecord = 1 << 24,
+    FindallCollect = 1 << 25,
+}
+
+/// <summary>The builtins of findall's collect loop the compiled code parks
+/// for the host.</summary>
+public enum WasmFindallForm
+{
+    None,
+    /// <summary><c>'$findall_push'/0</c>: opens a solution buffer.</summary>
+    Push,
+    /// <summary><c>'$findall_record_s'/1</c> of an atom or an integer.</summary>
+    Record,
+    /// <summary><c>'$findall_collect'/1</c> of a call whose buffer and
+    /// solutions are all still parked.</summary>
+    Collect,
 }
 
 /// <summary>ADR-049's wake driver builtins the compiled code answers itself.
@@ -426,6 +450,12 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
     {
         Note(builtinId);
         return _inner.IsInlineCompare3(builtinId);
+    }
+
+    public WasmFindallForm FindallFormOf(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.FindallFormOf(builtinId);
     }
 
     public bool IsInlineAttrListWrite(int builtinId, out bool isDelete)

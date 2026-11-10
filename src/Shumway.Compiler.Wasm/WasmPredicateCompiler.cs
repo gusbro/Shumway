@@ -591,7 +591,8 @@ public static class WasmPredicateCompiler
             || _env.IsInlineMetaCall(builtinId)
             || _env.IsInlineBarrierCall(builtinId)
             || _env.WakeSupportOf(builtinId) != WasmWakeSupport.None
-            || _env.IsInlineCompare3(builtinId);
+            || _env.IsInlineCompare3(builtinId)
+            || _env.FindallFormOf(builtinId) != WasmFindallForm.None;
 
         /// <summary>The translatable set, and the reason when it is not.
         /// Everything else in the 57-opcode universe rejects the predicate:
@@ -8977,14 +8978,26 @@ public static class WasmPredicateCompiler
         }
 
         /// <summary>The builtins the four call forms reach through one entry:
-        /// ADR-049's wake driver builtins and compare/3, answered in the
-        /// module when the answer is at hand; <paramref name="exit"/> asks the
-        /// host otherwise. False: the builtin is not one of them.</summary>
+        /// ADR-049's wake driver builtins, compare/3 and findall's collect
+        /// loop, answered in the module when the answer is at hand;
+        /// <paramref name="exit"/> asks the host otherwise. False: the builtin
+        /// is not one of them.</summary>
         private bool TryEmitWakeSupport(int builtinId, int pc, Action exit)
         {
             if (_env.IsInlineCompare3(builtinId))
             {
                 EmitInlineCompare3(pc, exit);
+                return true;
+            }
+            var findall = _env.FindallFormOf(builtinId);
+            if (findall == WasmFindallForm.Collect)
+            {
+                EmitInlineFindallCollect(pc, exit);
+                return true;
+            }
+            if (findall != WasmFindallForm.None)
+            {
+                EmitInlineFindall(findall, pc, exit);
                 return true;
             }
             switch (_env.WakeSupportOf(builtinId))
@@ -9145,6 +9158,206 @@ public static class WasmPredicateCompiler
             EmitBindDa(pc, () => Op(new Int64Constant(_env.AtomCell(AtomTable.EmptyListId))));
             Op(new LocalGet(LKStop)); Op(new LocalSet(LDa));
             EmitBindDa(pc, () => TaggedI32(LKH, Tag.Atom));
+            Op(new Branch(1));                              // -> $done
+            CloseNested();                                  // $slow
+            exit();
+            CloseNested();                                  // $done
+        }
+
+        /// <summary>findall's collect loop, parked for the host in the ring
+        /// WasmAbi.FindallRingBase names: '$findall_push' opens a buffer (a
+        /// zero entry) and '$findall_record_s' of an atom or an integer is
+        /// the cell itself. Anything else, or no room, is the request, after
+        /// which the host has drained what was parked before it.</summary>
+        private void EmitInlineFindall(WasmFindallForm form, int pc, Action exit)
+        {
+            EmitFlagsCheck(pc);
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+            LoadSlot32(WasmAbi.FindallRingBase);
+            Op(new Int32EqualZero());
+            Op(new BranchIf(0));                            // -> $slow
+            LoadSlot32(WasmAbi.FindallRingTop);
+            LoadSlot32(WasmAbi.FindallRingLimit);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf(0));                            // -> $slow
+            if (form == WasmFindallForm.Record)
+            {
+                RegLoad(0); Op(new LocalSet(LC0)); Deref();
+                TagOfC0(); Op(new LocalSet(LT0));
+                Op(new LocalGet(LT0)); Op(new Int32Constant((int)Tag.Atom)); Op(new Int32NotEqual());
+                Op(new LocalGet(LT0)); Op(new Int32Constant((int)Tag.Int)); Op(new Int32NotEqual());
+                Op(new Int32And());
+                Op(new BranchIf(0));                        // a compound, a variable -> $slow
+            }
+            LoadSlot32(WasmAbi.FindallRingBase);
+            LoadSlot32(WasmAbi.FindallRingTop);
+            Op(new Int32Constant(3));
+            Op(new Int32ShiftLeft());
+            Op(new Int32Add());
+            if (form == WasmFindallForm.Record) Op(new LocalGet(LC0));
+            else Op(new Int64Constant(0));
+            Op(new Int64Store());
+            StoreSlot64(WasmAbi.FindallRingTop, () =>
+            {
+                LoadSlot64(WasmAbi.FindallRingTop);
+                Op(new Int64Constant(1));
+                Op(new Int64Add());
+            });
+            Op(new Branch(1));                              // -> $done
+            CloseNested();                                  // $slow
+            exit();
+            CloseNested();                                  // $done
+        }
+
+        /// <summary><c>'$findall_collect'(List)</c> of a call that is still
+        /// all in the ring: its buffer's zero entry and every solution after
+        /// it. The list is laid out as the host's collect lays it, a pair per
+        /// solution, and the entries are taken back off the ring, so the host
+        /// never sees the call. A call whose buffer the host already holds (a
+        /// request since drained the ring) is the request.</summary>
+        private void EmitInlineFindallCollect(int pc, Action exit)
+        {
+            EmitFlagsCheck(pc);
+            long nil = _env.AtomCell(AtomTable.EmptyListId);
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+            LoadSlot32(WasmAbi.FindallRingBase);
+            Op(new Int32EqualZero());
+            Op(new BranchIf(0));                            // -> $slow
+            // The list goes to a fresh variable, the shape findall/3 has:
+            // a binding that cannot fail. Anything else is the host's to
+            // unify, and a failure there pops the buffer it holds.
+            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            TagOfC0();
+            Op(new Int32Constant((int)Tag.Ref));
+            Op(new Int32NotEqual());
+            Op(new BranchIf(0));                            // -> $slow
+            Op(new LocalGet(LDa));
+            Op(new LocalSet(LAtHome));                      // the variable
+
+            // The innermost buffer still parked: the last zero entry.
+            LoadSlot32(WasmAbi.FindallRingTop);
+            Op(new LocalSet(LKT));
+            OpenBlock();                                    // $found
+            OpenLoop();
+            {
+                Op(new LocalGet(LKT));
+                Op(new Int32EqualZero());
+                Op(new BranchIf(2));                        // none parked -> $slow
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant(1));
+                Op(new Int32Subtract());
+                Op(new LocalSet(LKT));
+                LoadSlot32(WasmAbi.FindallRingBase);
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant(3));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int64Load());
+                Op(new Int64EqualZero());
+                Op(new BranchIf(1));                        // -> $found
+                Op(new Branch(0));
+            }
+            CloseNested();
+            CloseNested();                                  // $found: LKT
+
+            // n = top - LKT - 1 solutions, two cells each.
+            LoadSlot32(WasmAbi.FindallRingTop);
+            Op(new LocalGet(LKT));
+            Op(new Int32Subtract());
+            Op(new Int32Constant(1));
+            Op(new Int32Subtract());
+            Op(new LocalSet(LKH));
+            Op(new LocalGet(LH));
+            Op(new LocalGet(LKH));
+            Op(new Int32Constant(1));
+            Op(new Int32ShiftLeft());
+            Op(new Int32Add());
+            LoadSlot32(WasmAbi.HeapWatermark);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf(0));                            // -> $slow
+
+            Op(new Int64Constant(nil));
+            Op(new LocalSet(LU0));                          // the list
+            Op(new LocalGet(LKH));
+            OpenIf();
+            {
+                // pair i at H + 2i: the solution, then the next pair or [].
+                Op(new Int32Constant(0));
+                Op(new LocalSet(LKStop));
+                OpenBlock();
+                OpenLoop();
+                {
+                    Op(new LocalGet(LKStop));
+                    Op(new LocalGet(LKH));
+                    Op(new Int32GreaterThanOrEqualSigned());
+                    Op(new BranchIf(1));
+                    Op(new LocalGet(LKStop));
+                    Op(new Int32Constant(1));
+                    Op(new Int32ShiftLeft());
+                    Op(new LocalGet(LH));
+                    Op(new Int32Add());
+                    Op(new LocalSet(LKBR));                 // the pair
+                    CellStoreDyn(LHeapB, LKBR, 0, () =>
+                    {
+                        LoadSlot32(WasmAbi.FindallRingBase);
+                        Op(new LocalGet(LKT));
+                        Op(new LocalGet(LKStop));
+                        Op(new Int32Add());
+                        Op(new Int32Constant(1));
+                        Op(new Int32Add());
+                        Op(new Int32Constant(3));
+                        Op(new Int32ShiftLeft());
+                        Op(new Int32Add());
+                        Op(new Int64Load());
+                    });
+                    Op(new LocalGet(LKStop));
+                    Op(new Int32Constant(1));
+                    Op(new Int32Add());
+                    Op(new LocalSet(LKStop));
+                    CellStoreDyn(LHeapB, LKBR, 1, () =>
+                    {
+                        Op(new LocalGet(LKStop));
+                        Op(new LocalGet(LKH));
+                        Op(new Int32LessThanSigned());
+                        OpenIf(BlockType.Int64);
+                        {
+                            Op(new LocalGet(LKBR));
+                            Op(new Int32Constant(2));
+                            Op(new Int32Add());
+                            Op(new Int64ExtendInt32Unsigned());
+                            Op(new Int64Constant((long)Tag.Lis << Cell.TagShift));
+                            Op(new Int64Or());
+                        }
+                        OpenElse();
+                        Op(new Int64Constant(nil));
+                        CloseNested();
+                    });
+                    Op(new Branch(0));
+                }
+                CloseNested();
+                CloseNested();
+                TaggedI32(LH, Tag.Lis);
+                Op(new LocalSet(LU0));
+                Op(new LocalGet(LH));
+                Op(new LocalGet(LKH));
+                Op(new Int32Constant(1));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new LocalSet(LH));
+            }
+            CloseNested();
+
+            // The call is the module's now: off the ring, then the list bound.
+            StoreSlot64(WasmAbi.FindallRingTop, () =>
+            {
+                Op(new LocalGet(LKT));
+                Op(new Int64ExtendInt32Signed());
+            });
+            Op(new LocalGet(LAtHome));
+            Op(new LocalSet(LDa));
+            EmitBindDa(pc, () => Op(new LocalGet(LU0)));
             Op(new Branch(1));                              // -> $done
             CloseNested();                                  // $slow
             exit();

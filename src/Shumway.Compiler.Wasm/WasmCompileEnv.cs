@@ -196,6 +196,14 @@ public interface IWasmCompileEnv
     /// library(assoc) asks it once per tree level.</summary>
     bool IsInlineCompare3(int builtinId) => false;
 
+    /// <summary>Which builtin of findall's collect loop this is, when the
+    /// compiled code answers it (WasmAbi.FindallRingBase): the buffer it
+    /// opens and a solution that is an atom or an integer are parked for the
+    /// host, and a collect whose whole call is still parked builds the list
+    /// itself. A collect loop whose generator runs in the module then does
+    /// not cross at all.</summary>
+    WasmFindallForm FindallFormOf(int builtinId) => WasmFindallForm.None;
+
     /// <summary>Whether the builtin writes a module's attribute list:
     /// <c>'$put_to_attr_list'/3</c>, or <c>'$del_from_attr_list'/3</c>
     /// with <paramref name="isDelete"/> set.
