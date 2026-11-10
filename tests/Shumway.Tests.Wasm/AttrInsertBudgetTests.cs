@@ -48,4 +48,20 @@ public sealed class AttrInsertBudgetTests(ITestOutputHelper o)
         Assert.True(run.Reasons.GetValueOrDefault(47) <= 5,
             $"{run.Reasons.GetValueOrDefault(47)} writes found no room on the extra trail");
     }
+
+    /// <summary>The insert budget is the distance to the image's rebuild
+    /// line, all of it: a cap of sixteen let a chain promote eight variables
+    /// and sent each further one to the host to be given sixteen more, 757
+    /// times in one clp(Z) sudoku solve. Growing the table is log-many.
+    /// </summary>
+    [DiagFact]
+    public void ALongChainOfPromotionsStaysInTheModule()
+    {
+        var run = Run();
+        Assert.True(run.Reasons.GetValueOrDefault(49) <= 10,
+            $"{run.Reasons.GetValueOrDefault(49)} promotions were sent back for budget");
+        // Anti-vacuity: the promotions ran in the module, or there would be
+        // 400 requests.
+        Assert.True(run.Requests < 40, $"{run.Requests} of 400 promotions left the module");
+    }
 }
