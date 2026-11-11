@@ -2279,6 +2279,11 @@ internal static partial class WebShumwayApp
                 Shumway.Compiler.Wasm.WasmPredicateCompiler.FallThrough = command == "fallthrough on";
                 return $"% jit_compile: {command}; the next build takes it\n";
             }
+            if (command is "sharedexit on" or "sharedexit off")
+            {
+                Shumway.Compiler.Wasm.WasmPredicateCompiler.SharedExit = command == "sharedexit on";
+                return $"% jit_compile: {command}; the next build takes it\n";
+            }
             if (command is "cps" or "nocps")
             {
                 var (_, report) = BrowserWasmTier.SetForm(engine, command == "cps");

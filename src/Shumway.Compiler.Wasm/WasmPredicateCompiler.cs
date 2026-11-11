@@ -124,6 +124,13 @@ public static class WasmPredicateCompiler
     public static bool FallThrough { get; set; } =
         Environment.GetEnvironmentVariable("SHUMWAY_WASM_FALLTHROUGH") != "0";
 
+    /// <summary>A partition's verdicts leave through one epilogue that
+    /// spills the machine registers into the mailbox, where each one spilled
+    /// them in place: the spill was a third of the code a module carries.
+    /// <c>SHUMWAY_WASM_SHAREDEXIT=0</c> turns it off, for measuring.</summary>
+    public static bool SharedExit { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_WASM_SHAREDEXIT") != "0";
+
     public static WasmCpsGrain CpsGrain { get; set; } =
         Environment.GetEnvironmentVariable("SHUMWAY_WASM_CPS_GRAIN") == "budget"
             ? WasmCpsGrain.Budget : WasmCpsGrain.EntryPoint;
@@ -289,6 +296,9 @@ public static class WasmPredicateCompiler
         private int _curFunction;
         // Emitting a partition's cases, whose blocks TryBrForward counts.
         private bool _inPartition;
+        // A verdict branches to the partition's epilogue, the block just
+        // outside the dispatch loop (SharedExit).
+        private bool _sharedExit;
 
         /// <summary>Partition budget in decoded WAM instructions (~40 wasm
         /// instructions each). Two ceilings, and the lower one rules. The
@@ -1695,6 +1705,15 @@ public static class WasmPredicateCompiler
             _caseCount = n + 2;                             // + $fail + $out
 
             if (_cps) EmitCpsPrologue(); else EmitPrologue();
+            // The epilogue's block: a verdict branches out of the loop with
+            // the verdict, and the block's end spills and returns it. Not
+            // counted in _extraDepth either: EmitReturn adds it to the loop's.
+            bool shared = SharedExit && !_cps;
+            if (shared)
+            {
+                Op(new Block(BlockType.Int32));
+                _sharedExit = true;
+            }
             OpenLoop();                                     // never popped via CloseNested
             _extraDepth--;                                  // accounted in BrDispatch instead
             if (DebugLoopGuard)
@@ -1791,7 +1810,15 @@ public static class WasmPredicateCompiler
             _caseIndex = n + 1;
             EmitContinueReturn();
             Op(new End());                                  // the loop
-            EmitReturn(WasmVerdict.Fail);                   // unreachable fallback
+            _sharedExit = false;
+            if (shared)
+            {
+                Op(new Int32Constant((int)WasmVerdict.Fail)); // unreachable fallback
+                Op(new End());                              // the epilogue's block
+                EmitVerdictEpilogue();
+            }
+            else
+                EmitReturn(WasmVerdict.Fail);               // unreachable fallback
             Op(new End());                                  // the function
             _inPartition = false;
             var body = new FunctionBody
@@ -1947,13 +1974,24 @@ public static class WasmPredicateCompiler
 
         private void EmitReturn(WasmVerdict v)
         {
+            Op(new Int32Constant((int)v));
+            // One past the dispatch loop, whose depth BrDispatch counts.
+            if (_sharedExit)
+                Op(new Branch((uint)(_extraDepth + (_caseCount - 1 - _caseIndex) + 1)));
+            else
+                EmitVerdictEpilogue();
+        }
+
+        /// <summary>Returns the verdict on the stack, the machine registers
+        /// spilled into the mailbox first.</summary>
+        private void EmitVerdictEpilogue()
+        {
             StoreScalars();
             // After in-wasm hops the host cannot know which module it is
             // hearing from, and a deopt pc or a builtin's return address is
             // in that module's build space. Every verdict says. Not on the
             // hop path: a hop reloads nothing from this slot.
             StoreSlot64(WasmAbi.CurrentModuleId, () => Op(new Int64Constant(_env.EncodeModuleId(_moduleId))));
-            Op(new Int32Constant((int)v));
             Op(new Return());
         }
 
