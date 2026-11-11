@@ -87,6 +87,10 @@ public sealed record WasmBuiltinEvidence(
         if (env.IsInlineDomDel(builtinId)) f |= WasmInlineForms.DomDel;
         if (env.IsInlineDomSingleton(builtinId)) f |= WasmInlineForms.DomSingleton;
         if (env.IsInlineCompare3(builtinId)) f |= WasmInlineForms.Compare3;
+        // One bit: which comparison it is follows from the builtin's name,
+        // which the evidence carries.
+        if (env.ArithCompareOf(builtinId) != WasmArithCompare.None)
+            f |= WasmInlineForms.ArithCompare;
         if (env.IsInlineGlobalStore(builtinId)) f |= WasmInlineForms.GlobalStore;
         f |= env.FindallFormOf(builtinId) switch
         {
@@ -142,6 +146,7 @@ public enum WasmInlineForms
     FindallRecord = 1 << 24,
     FindallCollect = 1 << 25,
     GlobalStore = 1 << 26,
+    ArithCompare = 1 << 27,
 }
 
 /// <summary>The builtins of findall's collect loop the compiled code parks
@@ -452,6 +457,12 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
     {
         Note(builtinId);
         return _inner.IsInlineCompare3(builtinId);
+    }
+
+    public WasmArithCompare ArithCompareOf(int builtinId)
+    {
+        Note(builtinId);
+        return _inner.ArithCompareOf(builtinId);
     }
 
     public WasmFindallForm FindallFormOf(int builtinId)

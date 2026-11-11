@@ -6860,6 +6860,9 @@ public static class WasmPredicateCompiler
                             body = () => EmitInlineArg(pc, () => Request(builtinId));
                         else if (_env.IsInlineCompare3(builtinId))
                             body = () => EmitInlineCompare3(pc, () => Request(builtinId));
+                        else if (_env.ArithCompareOf(builtinId) is var rel
+                                 && rel != WasmArithCompare.None)
+                            body = () => EmitInlineArithCompare(pc, rel, () => Request(builtinId));
                         else
                             continue;
                         Op(new LocalGet(LAtVal));
@@ -9732,6 +9735,55 @@ public static class WasmPredicateCompiler
             Op(new Int64Constant(eq)); Op(new LocalSet(LU0));
             CloseNested();
             EmitUnifyTwo(() => RegLoad(0), () => Op(new LocalGet(LU0)), pc, exit);
+            Op(new Branch(1));                              // -> $done
+            CloseNested();                                  // $slow
+            exit();
+            CloseNested();                                  // $done
+        }
+
+        /// <summary>An arithmetic comparison of X0 and X1 when both are small
+        /// integers. Anything else (an expression to evaluate, a float, a big
+        /// integer, a rational, a variable) is the host's to evaluate or to
+        /// raise on, through <paramref name="exit"/>, before anything is
+        /// decided.</summary>
+        private void EmitInlineArithCompare(int pc, WasmArithCompare rel, Action exit)
+        {
+            EmitFlagsCheck(pc);
+            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            Op(new LocalGet(LC0)); Op(new LocalSet(LC2));
+            RegLoad(1); Op(new LocalSet(LC0)); Deref();
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+
+            // Both Int: xor with the Int tag clears the tag bits of an Int
+            // cell and of no other.
+            long intTag = (long)Tag.Int << 60;
+            Op(new LocalGet(LC2)); Op(new Int64Constant(intTag)); Op(new Int64ExclusiveOr());
+            Op(new LocalGet(LC0)); Op(new Int64Constant(intTag)); Op(new Int64ExclusiveOr());
+            Op(new Int64Or());
+            Op(new Int64Constant(60));
+            Op(new Int64ShiftRightUnsigned());
+            Op(new Int32WrapInt64());
+            Op(new BranchIf(0));                            // -> $slow
+
+            // The same tag on both sides, so shifted past it the cells order
+            // as their values do.
+            Op(new LocalGet(LC2)); Op(new Int64Constant(4)); Op(new Int64ShiftLeft());
+            Op(new LocalGet(LC0)); Op(new Int64Constant(4)); Op(new Int64ShiftLeft());
+            Op(rel switch
+            {
+                WasmArithCompare.Equal => new Int64Equal(),
+                WasmArithCompare.NotEqual => new Int64NotEqual(),
+                WasmArithCompare.Less => new Int64LessThanSigned(),
+                WasmArithCompare.Greater => new Int64GreaterThanSigned(),
+                WasmArithCompare.LessOrEqual => new Int64LessThanOrEqualSigned(),
+                WasmArithCompare.GreaterOrEqual => (Instruction)new Int64GreaterThanOrEqualSigned(),
+                _ => throw new ArgumentOutOfRangeException(nameof(rel)),
+            });
+            Op(new Int32EqualZero());
+            OpenIf();
+            GoFail();
+            CloseNested();
             Op(new Branch(1));                              // -> $done
             CloseNested();                                  // $slow
             exit();

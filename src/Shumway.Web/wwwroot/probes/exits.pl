@@ -16,6 +16,7 @@
 %probe attvar wake: mb_wake_run({N}).
 %probe bb_get shim: bb_b_put(mbk2, 1), mb_bb({N}).
 %probe bb put+get: mb_bbw({N}).
+%probe meta =</2: mb_mcmp_run({N}).
 
 :- use_module(library(iso_ext)).
 :- use_module(library(coroutining)).
@@ -60,3 +61,7 @@ mb_bb(N) :- bb_get(mbk2, V), V == 1, N1 is N-1, mb_bb(N1).
 
 mb_bbw(0) :- !.
 mb_bbw(N) :- bb_b_put(mbk3, N), bb_get(mbk3, V), V == N, N1 is N-1, mb_bbw(N1).
+
+mb_mcmp(0, _) :- !.
+mb_mcmp(N, R) :- call(R, 0, N), N1 is N-1, mb_mcmp(N1, R).
+mb_mcmp_run(N) :- mb_mcmp(N, =<).

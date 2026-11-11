@@ -178,6 +178,22 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
         return entry.Name == "compare" && entry.Arity == 3;
     }
 
+    public WasmArithCompare ArithCompareOf(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        if (entry.Arity != 2) return WasmArithCompare.None;
+        return entry.Name switch
+        {
+            "=:=" => WasmArithCompare.Equal,
+            "=\\=" => WasmArithCompare.NotEqual,
+            "<" => WasmArithCompare.Less,
+            ">" => WasmArithCompare.Greater,
+            "=<" => WasmArithCompare.LessOrEqual,
+            ">=" => WasmArithCompare.GreaterOrEqual,
+            _ => WasmArithCompare.None,
+        };
+    }
+
     public WasmWakeSupport WakeSupportOf(int builtinId)
     {
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);

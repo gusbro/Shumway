@@ -196,6 +196,14 @@ public interface IWasmCompileEnv
     /// library(assoc) asks it once per tree level.</summary>
     bool IsInlineCompare3(int builtinId) => false;
 
+    /// <summary>Which arithmetic comparison the builtin is, when a meta-call
+    /// that resolves to it is answered in the module; None for every other
+    /// builtin. A clause body never reaches these builtins (the compiler
+    /// lowers a comparison to ADR-018 instructions), so only a goal built at
+    /// run time does: a <c>maplist(=&lt;(0), L)</c> closure, or a
+    /// conjunction handed to call/1.</summary>
+    WasmArithCompare ArithCompareOf(int builtinId) => WasmArithCompare.None;
+
     /// <summary>Which builtin of findall's collect loop this is, when the
     /// compiled code answers it (WasmAbi.FindallRingBase): the buffer it
     /// opens and a solution that is an atom or an integer are parked for the
@@ -359,6 +367,19 @@ public interface IWasmCompileEnv
 /// is Ref or AttVar, because an attributed variable has attributes and no
 /// value, and the libraries that call var/1 most are the ones that create
 /// attributed variables.</summary>
+/// <summary>The six arithmetic comparisons, as the module answers them
+/// over two small integers.</summary>
+public enum WasmArithCompare
+{
+    None = 0,
+    Equal,
+    NotEqual,
+    Less,
+    Greater,
+    LessOrEqual,
+    GreaterOrEqual,
+}
+
 public enum WasmTypeTest
 {
     None = 0,
