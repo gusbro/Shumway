@@ -42,7 +42,8 @@ public sealed partial class IlPredicateCompiler
             for (int gi = 0; gi < N - 1; gi++)
                 if (TryGetCpFreeGuard(
                         predicate.BytecodeUnfused, clauses[gi].Start, clauses[gi].End,
-                        predicate.Arity, calleeMap, predicate.CallSites, out guardInfo[gi]))
+                        predicate.Arity, calleeMap, predicate.CallSites, out guardInfo[gi],
+                        allowKeepAlternative: CpFreeHeadFacts))
                 {
                     guardOk[gi] = true;
                     if (guardInfo[gi].EmbeddedDynamicFids is { Count: > 0 })

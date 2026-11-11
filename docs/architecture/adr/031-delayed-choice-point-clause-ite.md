@@ -412,3 +412,34 @@ ADR-025 (inline ITE + the CP-free region finding + the guard-only-CP follow-up â
 the direct foundation); ADR-030 (redundant-cut elision â€” the last-clause
 counterpart); ADR-028 (indexing handles the first-arg-test guards); ADR-021 /
 ADR-026 (measured-ceiling discipline for rejecting/accepting); [[tier1-register-cost-poc]].
+
+## Amendment (2026-11-11): head facts
+
+A non-last clause that is its head alone (head-unification ops and type
+tests, then `proceed`, no call) runs that head as a tier-B guard with no
+entry choice point. A head that fails is undone (`FailIlGuard`) and the
+next clause runs having pushed nothing. A head that matches cannot commit,
+since the clauses after it are still alternatives: it pushes the skipped
+choice point then, with the clause-entry marks
+(`PushIlChoicePointWithMarks`, the rare path's), so a backtrack into it
+undoes the head as the clause's own choice point would have, and goes on to
+its `proceed`. At an indexed bucket's tail there is nothing to push, and the
+guard commits. The recognizer takes this shape only from the emission sites
+that ask for it (`allowKeepAlternative`); the census and the fail-direct
+analysis see the cut-shaped guards as before.
+
+The case that motivated it is member/2's helper, `'$member3'(_, X, X)`:
+first-argument indexing leaves a choice point on every element but the
+last, and in a scan most elements fail the head. On a chess sample (Trealla's
+`samples/chess.pl`), member/2 tried 20.7 million elements in one run, 3.5% of
+them matching; the run is 9 to 11% faster (A B B A, processor capped), and a
+scan of a 30-element list with the prelude's member/2, every element failing,
+14 to 18% faster.
+
+Methods only, outside a region: a region's choice points are its own (a
+marker BP and the retry plan of ADR-057), and the helper push a match makes
+here would be the wrong kind there. At runtime a multi-clause root compiles
+as a region of one, so the shape takes effect where a predicate compiles as
+a method: the libraries' baked IL, the prelude's member/2 among them. The
+wasm tier has no CP-free guards yet. `SHUMWAY_CPFREE_HEADFACT=0` turns it
+off; `SHUMWAY_CPFREE_STATS=1` counts it. Tests: `Adr031HeadFactTests`.
