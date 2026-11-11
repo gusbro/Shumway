@@ -185,6 +185,39 @@ public interface IWasmCompileEnv
     bool IsInlineTrivial(int builtinId, out bool succeeds)
     { succeeds = false; return false; }
 
+    /// <summary>Which of ADR-049's wake driver builtins the builtin is, when
+    /// the compiled code answers it itself; None for every other builtin.
+    /// Each one is a host crossing per wakeup otherwise.</summary>
+    WasmWakeSupport WakeSupportOf(int builtinId) => WasmWakeSupport.None;
+
+    /// <summary>Whether the builtin is compare/3, which the compiled code
+    /// answers over the module's standard-order comparator: the order of
+    /// two terms the comparator can decide, unified with the order atom.
+    /// library(assoc) asks it once per tree level.</summary>
+    bool IsInlineCompare3(int builtinId) => false;
+
+    /// <summary>Which arithmetic comparison the builtin is, when a meta-call
+    /// that resolves to it is answered in the module; None for every other
+    /// builtin. A clause body never reaches these builtins (the compiler
+    /// lowers a comparison to ADR-018 instructions), so only a goal built at
+    /// run time does: a <c>maplist(=&lt;(0), L)</c> closure, or a
+    /// conjunction handed to call/1.</summary>
+    WasmArithCompare ArithCompareOf(int builtinId) => WasmArithCompare.None;
+
+    /// <summary>Which builtin of findall's collect loop this is, when the
+    /// compiled code answers it (WasmAbi.FindallRingBase): the buffer it
+    /// opens and a solution that is an atom or an integer are parked for the
+    /// host, and a collect whose whole call is still parked builds the list
+    /// itself. A collect loop whose generator runs in the module then does
+    /// not cross at all.</summary>
+    WasmFindallForm FindallFormOf(int builtinId) => WasmFindallForm.None;
+
+    /// <summary>Whether the builtin is a backtrackable global write
+    /// (b_setval/2, '$store_backtrackable_global_var'/2) the compiled code
+    /// makes in the global-variable image and parks for the host
+    /// (WasmAbi.GlobalWriteBase).</summary>
+    bool IsInlineGlobalStore(int builtinId) => false;
+
     /// <summary>Whether the builtin writes a module's attribute list:
     /// <c>'$put_to_attr_list'/3</c>, or <c>'$del_from_attr_list'/3</c>
     /// with <paramref name="isDelete"/> set.
@@ -334,6 +367,19 @@ public interface IWasmCompileEnv
 /// is Ref or AttVar, because an attributed variable has attributes and no
 /// value, and the libraries that call var/1 most are the ones that create
 /// attributed variables.</summary>
+/// <summary>The six arithmetic comparisons, as the module answers them
+/// over two small integers.</summary>
+public enum WasmArithCompare
+{
+    None = 0,
+    Equal,
+    NotEqual,
+    Less,
+    Greater,
+    LessOrEqual,
+    GreaterOrEqual,
+}
+
 public enum WasmTypeTest
 {
     None = 0,

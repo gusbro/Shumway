@@ -2616,15 +2616,31 @@ if (persistMode) {
   try {
     // &bundles_off: the tier compiles the bundles' predicates like the
     // program's own, instead of installing their baked modules.
-    const bundlesOff = location.hash.endsWith('&bundles_off');
-    const spec = /^#wasmclpz(src)?=(\d+)(?::([\w,]+))?(?:&bundles_off)?$/.exec(location.hash);
+    // &keep: the page's own storage, as a user's import has it -- the
+    // collection and the bundles compiled on demand are stored, and a later
+    // visit with the same profile loads what is there instead of writing
+    // the collection again: the second visit.
+    // &freshbake: each library compiled on demand bakes its wasm module in
+    // an engine of its own, instead of the compile's shared one.
+    const bundlesOff = location.hash.includes('&bundles_off');
+    const keep = location.hash.includes('&keep');
+    const freshBake = location.hash.includes('&freshbake');
+    const spec = /^#wasmclpz(src)?=(\d+)(?::([\w,]+))?((?:&\w+)*)$/.exec(location.hash);
     const fromSource = !!(spec && spec[1]);
     const rounds = spec ? Number(spec[2]) : 1;
     const onlyCases = spec && spec[3] ? spec[3].split(',') : null;
     emit(`--- wasm clpz: Triska examples, tier0 vs tier1, x${rounds} rounds ---\n`);
 
     // 1. Scryer's library tree into a 'scryer' collection.
-    const lib = await m.loadScryerLibrary(libraries, 'scryer_clpz');
+    let lib;
+    if (keep && (await libraries.names()).includes('scryer_clpz')) {
+      await libraries.restored();
+      lib = { files: 0, bytes: 0, ms: 0 };
+      mark('clpz: the stored collection and its bundles are back');
+    } else {
+      lib = await m.loadScryerLibrary(libraries, 'scryer_clpz');
+      if (keep) mark(`clpz: collection stored: ${await libraries.persist('scryer_clpz')}`);
+    }
     const files = { length: lib.files }, bytes = lib.bytes, tWrite = lib.ms;
     mark(`clpz: wrote ${lib.files} files, ${bytes} chars, ${Math.round(tWrite)}ms`);
     // #wasmclpzsrc: clpz loads from its source rather than a bundle compiled
@@ -2638,6 +2654,10 @@ if (persistMode) {
 
     if (bundlesOff)
       mark('clpz: ' + (await session.exports().JitCompileControl('bundles_off')).trim());
+    if (freshBake) {
+      await session.exports().LibraryBakeShared(false);
+      mark('clpz: each library bakes in an engine of its own');
+    }
     // 2. clpz + the benchmark program. The load is itself a number.
     const cases = await (await fetch('scryerlib/cases.pl')).text();
     const tLoad0 = performance.now();
@@ -2646,6 +2666,15 @@ if (persistMode) {
     const tLoad = performance.now() - tLoad0;
     if (err) { emit('consult failed: ' + err + '\n', 'error'); mark('clpz: CONSULT FAILED ' + err); }
     mark(`clpz: consulted clpz + cases in ${Math.round(tLoad)}ms`);
+    // What each library compiled on demand took, as the engine said it.
+    for (const line of out.textContent.split('\n'))
+      if ((line.startsWith('% library(') && line.includes(' compiled in '))
+          || line.startsWith('%   wasm: ')) mark('clpz: ' + line);
+    if (keep) {
+      const compiled = await libraries.takeCompiledOnDemand();
+      for (const { name, library } of compiled) await libraries.persistLibrary(name, library);
+      mark(`clpz: stored ${compiled.length} bundle(s) compiled on demand`);
+    }
 
     const goal = (g, budget) => m.timedGoal(session, g, budget ?? 120);
     const mode = async (mo) => {

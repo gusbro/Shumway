@@ -73,6 +73,26 @@ public static class WasmPredicateCompiler
                                   c.RegisterDemand, c.CallSites, moduleId);
     }
 
+    /// <summary>Why <paramref name="member"/>, compiled on its own, is refused
+    /// before anything is emitted, or null: the phases of
+    /// <see cref="CompileGroup"/> that find most refusals, without a module
+    /// for each member. A refusal only emission finds still needs a compile.</summary>
+    public static string? RefusalBeforeEmit(WasmGroupMember member, IWasmCompileEnv env)
+    {
+        var c = new Compilation(new[] { member }, env, 0, CpsMode, CpsGrain);
+        try
+        {
+            c.RejectDispatchOnlyPredicates();
+            c.Decode();
+            c.RejectIfCrossingsDominate();
+            return null;
+        }
+        catch (WasmCompileException e)
+        {
+            return e.Message;
+        }
+    }
+
     /// <summary>Diagnostic: emit a dispatch counter + loop breaker into the
     /// dispatcher (see the guard at the loop top). Off in production.</summary>
     public static bool DebugLoopGuard;
@@ -95,6 +115,21 @@ public static class WasmPredicateCompiler
     /// TransferCount), so a test can say how a form moves control without a
     /// clock. Puts real instructions in every module compiled while on.</summary>
     public static bool CountTransfers;
+
+    /// <summary>A run that ends by falling into the next case of its
+    /// partition falls into it, where it went round the dispatch loop: the
+    /// cases are nested blocks, so the end of one case's code is the start of
+    /// the next one's. <c>SHUMWAY_WASM_FALLTHROUGH=0</c> turns it off, for
+    /// measuring.</summary>
+    public static bool FallThrough { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_WASM_FALLTHROUGH") != "0";
+
+    /// <summary>A partition's verdicts tail-call one epilogue per module that
+    /// spills the machine registers into the mailbox, where each one spilled
+    /// them in place: the spill was a third of the code a module carries.
+    /// <c>SHUMWAY_WASM_SHAREDEXIT=0</c> turns it off, for measuring.</summary>
+    public static bool SharedExit { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_WASM_SHAREDEXIT") != "0";
 
     public static WasmCpsGrain CpsGrain { get; set; } =
         Environment.GetEnvironmentVariable("SHUMWAY_WASM_CPS_GRAIN") == "budget"
@@ -164,6 +199,22 @@ public static class WasmPredicateCompiler
         31 => "a cut dropped a binding whose dead record the engine must drop",
         32 => "a cut would leave a catch frame's snapshot to clip",
         33 => "an attribute entry indexes past both the log and the parked rows",
+        36 => "a control construct with an if-then goal: the host distributes the module into it",
+        37 => "call/1 of a control construct the host converts first: a variable, a qualifier, "
+              + "a construct on the left or a goal that is not callable in it",
+        // Why an attribute read or write went to the host as its builtin.
+        40 => "attribute form: no attribute image staged",
+        41 => "attribute form: the module is not a bound atom",
+        42 => "attribute form: the variable is bound",
+        43 => "attribute write: Attr is unbound",
+        44 => "attribute write: Attr's functor is not mirrored",
+        45 => "attribute write: no write ring staged",
+        46 => "attribute write: the write ring is full",
+        47 => "attribute write: no room on the extra trail",
+        48 => "attribute write: promoting a variable an orphan record names",
+        49 => "attribute write: promoting with fewer than two image slots in the budget",
+        50 => "attribute write: the image insert budget is spent",
+        51 => "attribute write: no heap room for the new list",
         _ => "unnamed",
     };
 
@@ -245,6 +296,11 @@ public static class WasmPredicateCompiler
         private int _curFunction;
         // Emitting a partition's cases, whose blocks TryBrForward counts.
         private bool _inPartition;
+        // A verdict tail-calls the module's epilogue (SharedExit), but for
+        // the flags check's, which spills in place (_spillInPlace).
+        private bool _sharedExit;
+        private bool _spillInPlace;
+        private bool _epilogueUsed;
 
         /// <summary>Partition budget in decoded WAM instructions (~40 wasm
         /// instructions each). Two ceilings, and the lower one rules. The
@@ -266,7 +322,8 @@ public static class WasmPredicateCompiler
         private int GroundIndex => _parts.Count + 5;    // and K+5 ground/1
         private int AcyclicIndex => _parts.Count + 6;   // and K+6 acyclic_term/1
         private int CompareIndex => _parts.Count + 7;   // and K+7 the standard order
-        private const int HelperCount = 6;              // K+2 .. K+7
+        private int UnwindIndex => _parts.Count + 8;    // and K+8 the extra trail's unwind
+        private const int HelperCount = 7;              // K+2 .. K+8
 
         // The helpers the emitted code calls. A helper no call names keeps
         // its slot with a stub: the fixed cost of a module is what it uses
@@ -279,7 +336,8 @@ public static class WasmPredicateCompiler
             _helperUsed[index - UnifierIndex] = true;
             return (uint)index;
         }
-        private int RouterIndex => _parts.Count + 8;    // CPS only: K+8 the cursor router
+        private int RouterIndex => _parts.Count + 9;    // CPS only: K+9 the cursor router
+        private int EpilogueIndex => _parts.Count + 9;  // not CPS: K+9 the verdict epilogue
 
         /// <summary>CPS: the locals a transfer carries as arguments, 0 to
         /// <see cref="LCP"/>: the mailbox, the cursor (twice: the entry
@@ -559,7 +617,11 @@ public static class WasmPredicateCompiler
             || _env.IsInlineDomDel(builtinId)
             || _env.IsInlineDomSingleton(builtinId)
             || _env.IsInlineMetaCall(builtinId)
-            || _env.IsInlineBarrierCall(builtinId);
+            || _env.IsInlineBarrierCall(builtinId)
+            || _env.WakeSupportOf(builtinId) != WasmWakeSupport.None
+            || _env.IsInlineCompare3(builtinId)
+            || _env.FindallFormOf(builtinId) != WasmFindallForm.None
+            || _env.IsInlineGlobalStore(builtinId);
 
         /// <summary>The translatable set, and the reason when it is not.
         /// Everything else in the 57-opcode universe rejects the predicate:
@@ -749,16 +811,20 @@ public static class WasmPredicateCompiler
                         break;
                     case Opcode.Jump:
                         _leaders.Add(b + ins.I0);
+                        _wakeJoins.Add(b + ins.I0);
                         break;
                     case Opcode.GetBlit:
                     case Opcode.UnifyBlit:
                         _leaders.Add(b + ins.I2);
+                        _wakeJoins.Add(b + ins.I2);
                         break;
                     case Opcode.SkipIfCopied:
                         _leaders.Add(b + ins.I1);
+                        _wakeJoins.Add(b + ins.I1);
                         break;
                 }
             }
+            FindWakeResumes();
             foreach (int addr in _leaders)
                 if (!_byPc.ContainsKey(addr))
                     throw new WasmCompileException($"jump target {addr} is not an instruction boundary");
@@ -853,6 +919,75 @@ public static class WasmPredicateCompiler
         }
 
         private int CursorOf(int addr) => _cursorByAddr[addr];
+
+        // ADR-049: the boundaries a parked wakeup can reach whose resume is
+        // the instruction itself -- a cut, a builtin -- each made a leader so
+        // the interrupt has a cursor to come back to. Found in a pass of its
+        // own, before emission knows what it will park: a guess too wide
+        // costs a leader the next run falls into, one too narrow a
+        // step-aside, and neither changes an answer.
+        private readonly HashSet<int> _wakeResumes = new();
+
+        private void FindWakeResumes()
+        {
+            bool mayPend = false;
+            int section = -1;
+            foreach (var ins in _instrs)
+            {
+                if (ins.Section != section) { section = ins.Section; mayPend = false; }
+                if (_wakeJoins.Contains(ins.Pc)) mayPend = true;
+                switch (ins.Op)
+                {
+                    case Opcode.Try: case Opcode.Retry: case Opcode.Trust:
+                    case Opcode.TryMeElse: case Opcode.RetryMeElse: case Opcode.TrustMe:
+                    case Opcode.Proceed: case Opcode.DeallocateProceed: case Opcode.DeallocateExecute:
+                        mayPend = false;
+                        break;
+                    case Opcode.NeckCut: case Opcode.Cut:
+                    case Opcode.CutProceed: case Opcode.CutDeallocateProceed:
+                        if (mayPend) AddWakeResume(ins.Pc);
+                        mayPend = false;
+                        break;
+                    case Opcode.CallBuiltin: case Opcode.ExecuteBuiltin:
+                        if (_env.IsInlineUnify(ins.I0)) break;
+                        if (mayPend) AddWakeResume(ins.Pc);
+                        mayPend = false;
+                        break;
+                    case Opcode.Call: case Opcode.Execute:
+                        if (_callee.TryGetValue(ins.Pc, out int callee)
+                            && _env.TryGetBuiltin(callee, out int builtinId))
+                        {
+                            if (_env.IsInlineUnify(builtinId)) break;
+                            if (mayPend) AddWakeResume(ins.Pc);
+                        }
+                        mayPend = false;
+                        break;
+                    case Opcode.GetAtom: case Opcode.GetConstant:
+                    case Opcode.GetConstantA1: case Opcode.GetConstantA2:
+                    case Opcode.GetInteger: case Opcode.GetNil:
+                    case Opcode.GetStructure: case Opcode.GetList:
+                    case Opcode.GetListA1: case Opcode.GetListA2:
+                    case Opcode.UnifyAtom: case Opcode.UnifyConstant:
+                    case Opcode.UnifyInteger: case Opcode.UnifyNil:
+                    case Opcode.UnifyStructure: case Opcode.UnifyList:
+                        mayPend = true;
+                        break;
+                }
+            }
+        }
+
+        private void AddWakeResume(int pc)
+        {
+            _wakeResumes.Add(pc);
+            _leaders.Add(pc);
+        }
+
+        // The interrupts at a cut save every register the module uses: what
+        // is live there is not computed, and the collector scans a saved
+        // register conservatively, so one too many only retains. The count is
+        // the module's, known when emission ends.
+        private readonly List<Int64Constant> _liveAllPatches = new();
+        private const int LiveAll = -1;
 
         // ------------------------------------------------------------------
         // Emission
@@ -1098,6 +1233,7 @@ public static class WasmPredicateCompiler
             Op(new Int32Constant(cursor));
             Op(new LocalSet(LCur));
             BrDispatch();
+            if (_extraDepth == 0) { _tailGoToAt = _code.Count; _tailGoToCursor = cursor; }
         }
 
         /// <summary>CPS: tail-call <paramref name="function"/> at
@@ -1165,8 +1301,8 @@ public static class WasmPredicateCompiler
             // 0: run (the exported router); 1..K: partitions; K+1: the
             // fail/proceed resolver; K+2: the general unifier; K+3: term
             // identity; K+4: arithmetic evaluation; K+5: ground/1's walk;
-            // K+6: acyclic_term/1's; K+7: the standard order of two terms.
-            // All internal but run.
+            // K+6: acyclic_term/1's; K+7: the standard order of two terms;
+            // K+8: the extra trail's unwind. All internal but run.
             module.Types.Add(new WebAssemblyType
             {
                 Parameters = [WebAssemblyValueType.Int64, WebAssemblyValueType.Int32],
@@ -1188,6 +1324,7 @@ public static class WasmPredicateCompiler
             module.Functions.Add(new Function { Type = 2 });
             module.Functions.Add(new Function { Type = 2 });
             module.Functions.Add(new Function { Type = 1 });
+            module.Functions.Add(new Function { Type = 2 });
             module.Exports.Add(new Export
             {
                 Kind = ExternalKind.Function, Index = 0, Name = WasmAbi.EntryExport,
@@ -1231,6 +1368,17 @@ public static class WasmPredicateCompiler
                 module.Functions.Add(new Function { Type = 3 });
                 module.Codes.Add(BuildCpsRouterBody());
             }
+            else if (_epilogueUsed)
+            {
+                // The mailbox, the machine registers, the verdict.
+                var args = new List<WebAssemblyValueType> { WebAssemblyValueType.Int32 };
+                foreach (uint l in EpilogueArgs)
+                    args.Add(l == LCells ? WebAssemblyValueType.Int64 : WebAssemblyValueType.Int32);
+                args.Add(WebAssemblyValueType.Int32);
+                module.Types.Add(new WebAssemblyType { Parameters = args.ToArray(), Returns = [WebAssemblyValueType.Int32] });
+                module.Functions.Add(new Function { Type = (uint)(module.Types.Count - 1) });
+                module.Codes.Add(BuildVerdictEpilogueBody());
+            }
 
             // A diagnostic build names its functions, so a browser profile
             // reads "p12:clpz$state/3" instead of "wasm-function[12]".
@@ -1240,6 +1388,9 @@ public static class WasmPredicateCompiler
             // known once every body is emitted.
             foreach (byte[] image in _images)
                 module.Data.Add(new Data { Kind = DataKind.Passive, RawData = image });
+
+            foreach (var live in _liveAllPatches)
+                live.Value = ((long)RegisterDemand << 32) | (uint)WasmAbi.WakeRequest;
 
             using var ms = new MemoryStream();
             module.WriteToBinary(ms);
@@ -1296,7 +1447,7 @@ public static class WasmPredicateCompiler
                 ],
                 Code = BuildAcyclicBody(),
             },
-            _ => new FunctionBody
+            5 => new FunctionBody
             {
                 Locals =
                 [
@@ -1304,6 +1455,11 @@ public static class WasmPredicateCompiler
                     new Local { Count = 5, Type = WebAssemblyValueType.Int64 },
                 ],
                 Code = BuildCompareBody(),
+            },
+            _ => new FunctionBody
+            {
+                Locals = [new Local { Count = 10, Type = WebAssemblyValueType.Int32 }],
+                Code = BuildUnwindExtraBody(),
             },
         };
 
@@ -1529,8 +1685,9 @@ public static class WasmPredicateCompiler
             }
             names.Add("resolver"); names.Add("unifier"); names.Add("identity");
             names.Add("arith"); names.Add("ground"); names.Add("acyclic");
-            names.Add("compare");
+            names.Add("compare"); names.Add("unwind");
             if (_cps) names.Add("router");
+            else if (_epilogueUsed) names.Add("epilogue");
 
             var payload = new List<byte>();
             static void Leb(List<byte> o, uint v)
@@ -1563,6 +1720,7 @@ public static class WasmPredicateCompiler
             _caseCount = n + 2;                             // + $fail + $out
 
             if (_cps) EmitCpsPrologue(); else EmitPrologue();
+            _sharedExit = SharedExit && !_cps;
             OpenLoop();                                     // never popped via CloseNested
             _extraDepth--;                                  // accounted in BrDispatch instead
             if (DebugLoopGuard)
@@ -1659,6 +1817,7 @@ public static class WasmPredicateCompiler
             _caseIndex = n + 1;
             EmitContinueReturn();
             Op(new End());                                  // the loop
+            _sharedExit = false;
             EmitReturn(WasmVerdict.Fail);                   // unreachable fallback
             Op(new End());                                  // the function
             _inPartition = false;
@@ -1794,35 +1953,70 @@ public static class WasmPredicateCompiler
             Op(new LocalSet(LCells));
         }
 
-        private void StoreScalars()
+        private void StoreScalars() => StoreScalarsFrom(LH, LTR, LE, LB, LHB, LST, LCP, LMode, LS, LCells);
+
+        private void StoreScalarsFrom(uint h, uint tr, uint e, uint b, uint hb, uint st, uint cp,
+                                      uint mode, uint s, uint cells)
         {
             StoreSlot64(WasmAbi.CellsClaimed, () =>
             {
-                Op(new LocalGet(LCells));
-                Op(new LocalGet(LH)); Op(new Int64ExtendInt32Signed());
+                Op(new LocalGet(cells));
+                Op(new LocalGet(h)); Op(new Int64ExtendInt32Signed());
                 Op(new Int64Add());
             });
-            StoreSlotFromI32Local(WasmAbi.HeapTop, LH);
-            StoreSlotFromI32Local(WasmAbi.TrailTop, LTR);
-            StoreSlotFromI32Local(WasmAbi.EnvTop, LE);
-            StoreSlotFromI32Local(WasmAbi.ChoiceTop, LB);
-            StoreSlotFromI32Local(WasmAbi.HeapBacktrack, LHB);
-            StoreSlotFromI32Local(WasmAbi.StackTop, LST);
-            StoreSlotFromI32Local(WasmAbi.ContinuationPc, LCP);
-            StoreSlotFromI32Local(WasmAbi.WriteMode, LMode);
-            StoreSlotFromI32Local(WasmAbi.UnifyPointer, LS);
+            StoreSlotFromI32Local(WasmAbi.HeapTop, h);
+            StoreSlotFromI32Local(WasmAbi.TrailTop, tr);
+            StoreSlotFromI32Local(WasmAbi.EnvTop, e);
+            StoreSlotFromI32Local(WasmAbi.ChoiceTop, b);
+            StoreSlotFromI32Local(WasmAbi.HeapBacktrack, hb);
+            StoreSlotFromI32Local(WasmAbi.StackTop, st);
+            StoreSlotFromI32Local(WasmAbi.ContinuationPc, cp);
+            StoreSlotFromI32Local(WasmAbi.WriteMode, mode);
+            StoreSlotFromI32Local(WasmAbi.UnifyPointer, s);
         }
 
         private void EmitReturn(WasmVerdict v)
         {
+            if (_sharedExit && !_spillInPlace)
+            {
+                // A tail call and not a branch to one epilogue block: a block
+                // that every exit of a partition joins made V8's optimising
+                // tier slower on the hot paths (tak 8%), exits never taken.
+                Op(new LocalGet(0));
+                foreach (uint l in EpilogueArgs) Op(new LocalGet(l));
+                Op(new Int32Constant((int)v));
+                Op(new ReturnCall((uint)EpilogueIndex));
+                _epilogueUsed = true;
+                return;
+            }
             StoreScalars();
-            // After in-wasm hops the host cannot know which module it is
-            // hearing from, and a deopt pc or a builtin's return address is
-            // in that module's build space. Every verdict says. Not on the
-            // hop path: a hop reloads nothing from this slot.
-            StoreSlot64(WasmAbi.CurrentModuleId, () => Op(new Int64Constant(_env.EncodeModuleId(_moduleId))));
+            EmitModuleIdStore();
             Op(new Int32Constant((int)v));
             Op(new Return());
+        }
+
+        // After in-wasm hops the host cannot know which module it is hearing
+        // from, and a deopt pc or a builtin's return address is in that
+        // module's build space. Every verdict says. Not on the hop path: a
+        // hop reloads nothing from this slot.
+        private void EmitModuleIdStore()
+            => StoreSlot64(WasmAbi.CurrentModuleId, () => Op(new Int64Constant(_env.EncodeModuleId(_moduleId))));
+
+        /// <summary>What a verdict passes the epilogue after the mailbox, in
+        /// the order <see cref="StoreScalarsFrom"/> takes them; the verdict
+        /// comes last.</summary>
+        private static readonly uint[] EpilogueArgs = [LH, LTR, LE, LB, LHB, LST, LCP, LMode, LS, LCells];
+
+        /// <summary>The verdict epilogue: the machine registers its caller
+        /// passed spilled into the mailbox, and the verdict returned.</summary>
+        private FunctionBody BuildVerdictEpilogueBody()
+        {
+            _code = new List<Instruction>();
+            StoreScalarsFrom(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+            EmitModuleIdStore();
+            Op(new LocalGet((uint)EpilogueArgs.Length + 1));
+            Op(new End());
+            return new FunctionBody { Locals = [], Code = _code };
         }
 
         /// <summary>Spill the scalars and tail-call run with LCur: "not
@@ -1925,6 +2119,18 @@ public static class WasmPredicateCompiler
             Op(new Int64Store { Offset = (uint)((3 + slot) * 8) });
         }
 
+        /// <summary>Int(v), the Prolog integer, for an i32 pushed by
+        /// <paramref name="value"/>.</summary>
+        private void IntCell(Action value)
+        {
+            value();
+            Op(new Int64ExtendInt32Signed());
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int64Constant((long)Tag.Int << Cell.TagShift));
+            Op(new Int64Or());
+        }
+
         /// <summary>RawInt(v) for an i32 pushed by <paramref name="value"/> --
         /// the control-word encoding frames and choice points use.</summary>
         private void RawInt(Action value)
@@ -1976,9 +2182,9 @@ public static class WasmPredicateCompiler
         // ---- unify a derefed LC0 against a constant cell ----
 
         /// <summary>LC0 has been derefed. Unifies it with the constant cell:
-        /// falls through on success, branches to FAIL on mismatch, deopts on
-        /// an attributed variable, binds (with the young-to-old trail rule)
-        /// when unbound.</summary>
+        /// falls through on success, branches to FAIL on mismatch, binds
+        /// (with the young-to-old trail rule) when unbound, and binds an
+        /// attributed variable through EmitParkAttvarBind.</summary>
         private void UnifyC0WithConst(long constCell, int pcForDeopt)
         {
             Op(new LocalGet(LC0));
@@ -1997,13 +2203,263 @@ public static class WasmPredicateCompiler
                     Op(new Int32Constant((int)Tag.AttVar));
                     Op(new Int32Equal());
                     OpenIf();
-                    EmitDeopt(pcForDeopt, 24);
-                    CloseNested();
+                    EmitParkAttvarBind(pcForDeopt, 1,
+                        () => CellStoreDyn(LHeapB, LH, 0, () => Op(new Int64Constant(constCell))),
+                        () => Op(new Int64Constant(constCell)));
+                    OpenElse();
                     GoFail();
+                    CloseNested();
                 }
                 CloseNested();
             }
             CloseNested();
+        }
+
+        /// <summary>Binds the attributed variable LC0 holds to a value built
+        /// at H, and parks its wakeup: ADR-049's binding, done the way
+        /// UnifyAttVar does it -- the value's <paramref name="cells"/> at H
+        /// (the term the hook is handed), the wakeup queued, the variable
+        /// trailed with its attributed cell when it is older than HB and its
+        /// record dropped when it is not, then the cell written. The queue
+        /// is the host's, so the wakeup goes to a ring and the flags word
+        /// says it is there: every goal boundary after this one hands the
+        /// activation to the interpreter, which wakes there, and so does
+        /// a backtrack, whose restore drops the wakeups it undid.
+        ///
+        /// <para>Steps aside, before writing anything, when the variable
+        /// carries more than one module (the order of its wakeups is the
+        /// record's), when its module is not on the host's list, or when a
+        /// ring, the trail or the heap has no room.</para></summary>
+        private void EmitParkAttvarBind(int pc, int cells, Action writeCells, Action pushBoundCell)
+        {
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+            LoadSlot32(WasmAbi.WakeRingBase);
+            Op(new Int32EqualZero());
+            Op(new BranchIf(0));
+            LoadSlot32(WasmAbi.WakeRingTop);
+            LoadSlot32(WasmAbi.WakeRingLimit);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf(0));
+            LoadSlot32(WasmAbi.AttrTableBase);
+            Op(new Int32EqualZero());
+            Op(new BranchIf(0));
+            LoadSlot32(WasmAbi.AttrDropBase);
+            Op(new Int32EqualZero());
+            Op(new BranchIf(0));
+            LoadSlot32(WasmAbi.AttrDropTop);
+            LoadSlot32(WasmAbi.AttrDropLimit);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf(0));
+            LoadSlot32(WasmAbi.ExtraTrailBase);
+            Op(new Int32EqualZero());
+            Op(new BranchIf(0));
+            LoadSlot32(WasmAbi.ExtraTrailTop);
+            Op(new Int32Constant(1));
+            Op(new Int32Add());
+            LoadSlot32(WasmAbi.ExtraTrailLimit);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf(0));
+            Op(new LocalGet(LH));
+            Op(new Int32Constant(cells - 1));
+            Op(new Int32Add());
+            LoadSlot32(WasmAbi.HeapWatermark);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf(0));
+
+            // An ATTVAR cell's payload is its home. LDa is not: a register
+            // can hold the bare cell, which Deref does not follow.
+            Op(new LocalGet(LC0));
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LAtHome));
+            EmitAttrCountProbe();
+            Op(new LocalGet(LAtCount));
+            Op(new Int32Constant(1));
+            Op(new Int32NotEqual());
+            Op(new BranchIf(0));
+
+            // Which module: the listed ones, probed in turn.
+            Op(new Int32Constant(0));
+            Op(new LocalSet(LAtSlot));
+            OpenBlock();                                    // $found
+            OpenLoop();                                     // $next
+            {
+                Op(new LocalGet(LAtSlot));
+                LoadSlot32(WasmAbi.AttrModuleCount);
+                Op(new Int32GreaterThanOrEqualSigned());
+                Op(new BranchIf(2));                        // -> $slow
+                LoadSlot32(WasmAbi.AttrModuleBase);
+                Op(new LocalGet(LAtSlot));
+                Op(new Int32Constant(2));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int32Load());
+                Op(new LocalSet(LAtMod));
+                Op(new LocalGet(LAtSlot));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new LocalSet(LAtSlot));
+                EmitAttrValueProbe();
+                Op(new LocalGet(LAtVal));
+                Op(new Int32Constant(0));
+                Op(new Int32GreaterThanOrEqualSigned());
+                Op(new BranchIf(1));                        // -> $found
+                Op(new Branch(0));                          // -> $next
+            }
+            CloseNested();                                  // $next
+            CloseNested();                                  // $found
+
+            // The term the variable is bound to, at H.
+            Op(new LocalGet(LH));
+            Op(new LocalSet(LAtIns));
+            writeCells();
+            Op(new LocalGet(LH));
+            Op(new Int32Constant(cells));
+            Op(new Int32Add());
+            Op(new LocalSet(LH));
+
+            // The wakeup: module, value, the term, the home.
+            LoadSlot32(WasmAbi.WakeRingBase);
+            LoadSlot32(WasmAbi.WakeRingTop);
+            Op(new Int32Constant(WasmAbi.WakeEntryInts * 4));
+            Op(new Int32Multiply());
+            Op(new Int32Add());
+            Op(new LocalSet(LKH));
+            Op(new LocalGet(LKH)); Op(new LocalGet(LAtMod)); Op(new Int32Store());
+            Op(new LocalGet(LKH)); Op(new LocalGet(LAtVal)); Op(new Int32Store { Offset = 4 });
+            Op(new LocalGet(LKH)); Op(new LocalGet(LAtIns)); Op(new Int32Store { Offset = 8 });
+            Op(new LocalGet(LKH)); Op(new LocalGet(LAtHome)); Op(new Int32Store { Offset = 12 });
+            StoreSlot64(WasmAbi.WakeRingTop, () =>
+            {
+                LoadSlot32(WasmAbi.WakeRingTop);
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new Int64ExtendInt32Signed());
+            });
+
+            // Young to old, as BindAttVarToValue: an older variable keeps its
+            // record and is trailed with its attributed cell; a younger one
+            // dies with the binding, so its record goes.
+            Op(new LocalGet(LAtHome));
+            Op(new LocalGet(LHB));
+            Op(new Int32LessThanSigned());
+            OpenIf();
+            EmitTrailCellChange(LAtHome, () => CellLoadDyn(LHeapB, LAtHome));
+            OpenElse();
+            {
+                LoadSlot32(WasmAbi.AttrDropBase);
+                LoadSlot32(WasmAbi.AttrDropTop);
+                Op(new Int32Constant(2));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new LocalGet(LAtHome));
+                Op(new Int32Store());
+                StoreSlot64(WasmAbi.AttrDropTop, () =>
+                {
+                    LoadSlot32(WasmAbi.AttrDropTop);
+                    Op(new Int32Constant(1));
+                    Op(new Int32Add());
+                    Op(new Int64ExtendInt32Signed());
+                });
+            }
+            CloseNested();
+            CellStoreDyn(LHeapB, LAtHome, 0, pushBoundCell);
+            StoreSlot64(WasmAbi.Flags, () =>
+            {
+                LoadSlot64(WasmAbi.Flags);
+                Op(new Int64Constant(WasmAbi.FlagWakeupPending));
+                Op(new Int64Or());
+            });
+            _wakeMayPend = true;
+            Op(new Branch(1));                              // -> $done
+            CloseNested();                                  // $slow
+            EmitDeopt(pc, 24);
+            CloseNested();                                  // $done
+        }
+
+        /// <summary>The image row of (LAtHome, LAtMod): its value's heap
+        /// index in LAtVal, or -1 when there is none. The host's hash, one
+        /// pass over the table at most.</summary>
+        private void EmitAttrValueProbe()
+        {
+            Op(new LocalGet(LAtHome));
+            Op(new Int32Constant(1));
+            Op(new Int32Add());
+            Op(new Int64ExtendInt32Signed());
+            Op(new Int64Constant(32));
+            Op(new Int64ShiftLeft());
+            Op(new LocalGet(LAtMod));
+            Op(new Int64ExtendInt32Unsigned());
+            Op(new Int64Or());
+            Op(new LocalSet(LAtKey));
+
+            Op(new LocalGet(LAtHome));
+            Op(new Int32Constant(unchecked((int)2654435761u)));
+            Op(new Int32Multiply());
+            Op(new LocalGet(LAtMod));
+            Op(new Int32Constant(unchecked((int)2246822519u)));
+            Op(new Int32Multiply());
+            Op(new Int32Add());
+            Op(new LocalSet(LKT));
+            Op(new LocalGet(LKT));
+            Op(new LocalGet(LKT));
+            Op(new Int32Constant(15));
+            Op(new Int32ShiftRightUnsigned());
+            Op(new Int32ExclusiveOr());
+            LoadSlot32(WasmAbi.AttrTableMask);
+            Op(new Int32And());
+            Op(new LocalSet(LKT));                          // the slot
+            LoadSlot32(WasmAbi.AttrTableMask);
+            Op(new Int32Constant(1));
+            Op(new Int32Add());
+            Op(new LocalSet(LKStop));                       // one pass, no more
+            Op(new Int32Constant(-1));
+            Op(new LocalSet(LAtVal));
+
+            OpenBlock();                                    // $end
+            OpenLoop();                                     // $probe
+            {
+                LoadSlot32(WasmAbi.AttrTableBase);
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant(4));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new LocalSet(LKH));                      // the row
+                Op(new LocalGet(LKH));
+                Op(new Int64Load());
+                Op(new Int64EqualZero());
+                Op(new BranchIf(1));                        // empty: a miss
+                Op(new LocalGet(LKH));
+                Op(new Int64Load());
+                Op(new LocalGet(LAtKey));
+                Op(new Int64Equal());
+                OpenIf();
+                {
+                    Op(new LocalGet(LKH));
+                    Op(new Int64Load { Offset = 8 });
+                    Op(new Int32WrapInt64());
+                    Op(new LocalSet(LAtVal));
+                    Op(new Branch(2));                      // -> $end
+                }
+                CloseNested();
+                LoadSlot32(WasmAbi.AttrTableMask);
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant(1));
+                Op(new Int32Add());
+                Op(new Int32And());
+                Op(new LocalSet(LKT));
+                Op(new LocalGet(LKStop));
+                Op(new Int32Constant(1));
+                Op(new Int32Subtract());
+                Op(new LocalTee(LKStop));
+                Op(new Int32EqualZero());
+                Op(new BranchIf(1));                        // exhausted: a miss
+                Op(new Branch(0));                          // -> $probe
+            }
+            CloseNested();                                  // $probe
+            CloseNested();                                  // $end
         }
 
         /// <summary>Pushes LDa onto the binding trail (capacity checked).</summary>
@@ -2107,7 +2563,15 @@ public static class WasmPredicateCompiler
 
         private void EmitRun(int startAddr)
         {
+            EmitRunBody(startAddr);
+            DropTailDispatch();
+        }
+
+        private void EmitRunBody(int startAddr)
+        {
             _aevalDepth = 0;
+            _wakeMayPend = _wakeJoins.Contains(startAddr);
+            _runsEmitted.Add(startAddr);
             int i = _byPc[startAddr];
             while (true)
             {
@@ -2118,7 +2582,7 @@ public static class WasmPredicateCompiler
                     if (i >= _instrs.Count)
                         throw new WasmCompileException($"fell off the end after a reserved build at {ins.Pc}");
                     int afterPc = _instrs[i].Pc;
-                    if (_cursorByAddr.ContainsKey(afterPc)) { GoTo(afterPc); return; }
+                    if (_cursorByAddr.ContainsKey(afterPc)) { FallInto(afterPc); return; }
                     continue;
                 }
                 bool transferred = EmitInstr(ins);
@@ -2138,9 +2602,36 @@ public static class WasmPredicateCompiler
                     // survive it, so an open RPN sequence cannot cross one.
                     if (_aevalDepth != 0)
                         throw new WasmCompileException($"a_eval sequence crosses leader {nextPc}");
-                    GoTo(nextPc); return;
+                    FallInto(nextPc); return;
                 }
             }
+        }
+
+        /// <summary>A run that falls into the next leader hands it what it
+        /// knows of the wake queue. Runs are emitted in address order, so the
+        /// leader has not been emitted yet; one that had would start from a
+        /// guess, and that is refused rather than emitted.</summary>
+        private void FallInto(int leader)
+        {
+            if (_wakeMayPend && _wakeJoins.Add(leader) && _runsEmitted.Contains(leader))
+                throw new WasmCompileException($"a run falls back into leader {leader}");
+            GoTo(leader);
+        }
+
+        // Where the last top-level jump of the case ended, and to what.
+        private int _tailGoToAt = -1, _tailGoToCursor = -1;
+
+        /// <summary>A case that ends jumping to the next case of its
+        /// partition falls into it instead (<see cref="FallThrough"/>). Only
+        /// the final branch goes: LCur still names the case, as the dispatch
+        /// would leave it, and nothing follows the branch to make reachable.
+        /// </summary>
+        private void DropTailDispatch()
+        {
+            if (!FallThrough || _cps || !_inPartition || _tailGoToAt != _code.Count) return;
+            if (_tailGoToCursor != _curPart.Lo + _caseIndex + 1 || _tailGoToCursor >= _curPart.Hi) return;
+            _code.RemoveAt(_code.Count - 1);
+            _tailGoToAt = -1;
         }
 
         /// <summary>Emits one instruction; true when it transferred control.</summary>
@@ -2188,7 +2679,7 @@ public static class WasmPredicateCompiler
                 case Opcode.Allocate: EmitAllocate(ins); return false;
                 case Opcode.Deallocate: EmitDeallocate(); return false;
                 case Opcode.DeallocateProceed:
-                    EmitFlagsCheck(ins.Pc);
+                    EmitWakePoint(ins.Pc, 0, () => -1, EmitDeallocate);
                     EmitDeallocate();
                     EmitProceedReturn();
                     return true;
@@ -2288,16 +2779,16 @@ public static class WasmPredicateCompiler
                     RegStore(1, () => Op(new Int64Constant(_env.AtomCell(ins.I0))));
                     return false;
                 case Opcode.DeallocateExecute:
-                    EmitFlagsCheck(ins.Pc);
+                    EmitExecuteWakePoint(ins, EmitDeallocate);
                     EmitDeallocate();
                     EmitExecuteTail(ins.Pc);
                     return true;
                 case Opcode.NeckCut:
-                    EmitFlagsCheck(ins.Pc);
+                    EmitResumableWakePoint(ins, LiveAll);
                     EmitCut(() => LoadSlot32(WasmAbi.CutBarrier), ins.Pc);
                     return false;
                 case Opcode.Cut:
-                    EmitFlagsCheck(ins.Pc);
+                    EmitResumableWakePoint(ins, LiveAll);
                     EmitCut(() => { YLoad(ins.I0); Op(new Int32WrapInt64()); }, ins.Pc);
                     return false;
                 case Opcode.GetLevel:
@@ -2311,12 +2802,12 @@ public static class WasmPredicateCompiler
                     YStore(ins.I1, () => RawInt(() => LoadSlot32(WasmAbi.CutBarrier)));
                     return false;
                 case Opcode.CutProceed:
-                    EmitFlagsCheck(ins.Pc);
+                    EmitResumableWakePoint(ins, LiveAll);
                     EmitCut(() => { YLoad(ins.I0); Op(new Int32WrapInt64()); }, ins.Pc);
                     EmitProceedReturn();
                     return true;
                 case Opcode.CutDeallocateProceed:
-                    EmitFlagsCheck(ins.Pc);
+                    EmitResumableWakePoint(ins, LiveAll);
                     EmitCut(() => { YLoad(ins.I0); Op(new Int32WrapInt64()); }, ins.Pc);
                     EmitDeallocate();
                     EmitProceedReturn();
@@ -2326,6 +2817,7 @@ public static class WasmPredicateCompiler
                     // resolves builtins when the registry is loaded, exactly
                     // as the linker would. The env-trim count (I1) rides the
                     // high half of the id slot; -1 is the no-trim sentinel.
+                    EmitWakeTestBeforeBuiltin(ins.I0, ins);
                     if (_env.IsInlineUnify(ins.I0))
                     {
                         // The escape is the site's own non-inline exit: a
@@ -2364,6 +2856,9 @@ public static class WasmPredicateCompiler
                         if (!cbOk) GoFail();
                         return false;               // true/0: on to the next goal
                     }
+                    if (TryEmitWakeSupport(ins.I0, ins.Pc,
+                            () => EmitBuiltinRequest(ins.I0, ins.I1, ins.Pc + 9)))
+                        return false;
                     if (_env.IsInlineArg(ins.I0))
                     {
                         EmitInlineArg(ins.Pc, () =>
@@ -2587,6 +3082,7 @@ public static class WasmPredicateCompiler
                     EmitReturn(WasmVerdict.BuiltinRequest);
                     return true;
                 case Opcode.ExecuteBuiltin:
+                    EmitWakeTestBeforeBuiltin(ins.I0, ins);
                     if (_env.IsInlineUnify(ins.I0))
                     {
                         // Same escape, tail form: cursor -1, no trim.
@@ -2616,6 +3112,12 @@ public static class WasmPredicateCompiler
                     {
                         EmitFlagsCheck(ins.Pc);
                         if (!ebOk) GoFail();
+                        EmitProceedReturn();
+                        return true;
+                    }
+                    if (TryEmitWakeSupport(ins.I0, ins.Pc,
+                            () => EmitBuiltinRequest(ins.I0, 0, -1)))
+                    {
                         EmitProceedReturn();
                         return true;
                     }
@@ -2858,6 +3360,71 @@ public static class WasmPredicateCompiler
 
         // ---- control ----
 
+        /// <summary>The flags test in front of a builtin that may follow a
+        /// parked wakeup. =/2 is a unification, part of the stretch, and
+        /// does not wake (ADR-049 point 11).</summary>
+        private void EmitWakeTestBeforeBuiltin(int builtinId, Instr ins)
+        {
+            if (!_wakeMayPend || _env.IsInlineUnify(builtinId)) return;
+            EmitResumableWakePoint(ins, Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Arity);
+        }
+
+        /// <summary>The boundary of a cut or a builtin: with a resume point of
+        /// its own the interrupt comes back to this instruction, which tests
+        /// the flags word again and goes on; without one it steps aside.
+        /// </summary>
+        private void EmitResumableWakePoint(Instr ins, int arity)
+        {
+            if (_wakeMayPend && _wakeResumes.Contains(ins.Pc))
+                EmitWakePoint(ins.Pc, arity, () => _env.EncodeReturnMarker(SelfFid(ins), ins.Pc));
+            else
+                EmitFlagsCheck(ins.Pc);
+            _wakeMayPend = false;
+        }
+
+        /// <summary>A goal boundary's flags test, where a wakeup the module
+        /// parked may be pending. The wakeup bit alone asks the host for
+        /// ADR-049's interrupt instead of stepping aside: the driver runs,
+        /// and the activation resumes at <paramref name="resumeMarker"/> (-1:
+        /// the continuation in CP), so the rest of the clause stays here.
+        /// <paramref name="arity"/> argument registers are live across it;
+        /// <paramref name="beforeRequest"/> stages what the resume expects
+        /// (a call's continuation, a frame popped). Any other bit steps
+        /// aside as before.</summary>
+        private void EmitWakePoint(int pc, int arity, Func<long> resumeMarker, Action? beforeRequest = null)
+        {
+            if (!_wakeMayPend) { EmitFlagsCheck(pc); return; }
+            _wakeMayPend = false;
+            LoadSlot64(WasmAbi.Flags);
+            Op(new Int64Constant(0));
+            Op(new Int64NotEqual());
+            OpenIf();
+            {
+                LoadSlot64(WasmAbi.Flags);
+                Op(new Int64Constant(WasmAbi.FlagWakeupPending));
+                Op(new Int64Equal());
+                OpenIf();
+                {
+                    beforeRequest?.Invoke();
+                    StoreSlot64(WasmAbi.BuiltinId, () =>
+                    {
+                        var request = new Int64Constant(((long)arity << 32) | (uint)WasmAbi.WakeRequest);
+                        if (arity == LiveAll) _liveAllPatches.Add(request);
+                        Op(request);
+                    });
+                    // Asked for here and not by the caller: a relocating
+                    // environment records every constant it hands out.
+                    StoreSlot64(WasmAbi.Pc, () => Op(new Int64Constant(resumeMarker())));
+                    EmitReturn(WasmVerdict.BuiltinRequest);
+                }
+                CloseNested();
+                MetaGuard(17);
+                EmitDeopt(pc, DeoptStamped);
+            }
+            CloseNested();
+        }
+
+
         private void EmitFlagsCheck(int pc)
         {
             LoadSlot64(WasmAbi.Flags);
@@ -2870,7 +3437,12 @@ public static class WasmPredicateCompiler
             // clpr's deopt sites were, and reading them as meta-call
             // declines would have sent the work to the wrong place.
             MetaGuard(17);
+            // Spilled in place, not through the epilogue: this exit sits at
+            // every goal boundary, and with it a tail call V8's optimising
+            // tier ran tak 6% slower, though it is never taken.
+            _spillInPlace = true;
             EmitDeopt(pc, DeoptStamped);
+            _spillInPlace = false;
             CloseNested();
         }
 
@@ -3548,7 +4120,7 @@ public static class WasmPredicateCompiler
 
         private void EmitProceed(Instr ins)
         {
-            EmitFlagsCheck(ins.Pc);
+            EmitWakePoint(ins.Pc, 0, () => -1);
             EmitProceedReturn();
         }
 
@@ -4610,6 +5182,7 @@ public static class WasmPredicateCompiler
                 throw new WasmCompileException($"call at {ins.Pc} has no call site");
             if (_env.TryGetBuiltin(callee, out int builtinId))
             {
+                EmitWakeTestBeforeBuiltin(builtinId, ins);
                 if (_env.IsInlineUnify(builtinId))
                 {
                     EmitInlineUnify(ins.Pc);
@@ -4631,6 +5204,9 @@ public static class WasmPredicateCompiler
                     if (!callOk) GoFail();
                     return false;               // true/0: on to the next goal
                 }
+                if (TryEmitWakeSupport(builtinId, ins.Pc,
+                        () => EmitBuiltinRequest(builtinId, 0, ins.Pc + 9)))
+                    return false;
                 if (_env.IsInlineArg(builtinId))
                 {
                     EmitInlineArg(ins.Pc, () =>
@@ -4761,7 +5337,14 @@ public static class WasmPredicateCompiler
                 EmitReturn(WasmVerdict.BuiltinRequest);
                 return true;
             }
-            EmitFlagsCheck(ins.Pc);
+            // A wakeup resumes by dispatching the callee, with CP already the
+            // marker of our return cursor.
+            EmitWakePoint(ins.Pc, FunctorTable.Lookup(callee).Arity, () => _env.EncodeCallTarget(callee), () =>
+            {
+                StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
+                Op(new Int32Constant(_env.EncodeReturnMarker(SelfFid(ins), ins.Pc + 9)));
+                Op(new LocalSet(LCP));
+            });
             // Env trimming is skipped: frames sit a little higher, results
             // are unaffected. CP becomes the marker that re-enters us at the
             // return cursor. The callee enters a new procedure: refresh its
@@ -5306,51 +5889,7 @@ public static class WasmPredicateCompiler
                 // The barrier is the one X1 carries, which is the whole point
                 // of '$call'/2: the cut commits no further than the call that
                 // established it.
-                if (barrierFromX1)
-                {
-                    Op(new LocalGet(LC0));
-                    Op(new Int64Constant(_env.AtomCell(CutAtomId)));
-                    Op(new Int64Equal());
-                    OpenIf();
-                    {
-                        // A live setup_call_cleanup handler makes a cut run
-                        // cleanups, and running one is meta-calling a goal
-                        // from inside the cut. That is host work.
-                        LoadSlot32(WasmAbi.CleanupReach);
-                        Op(new Int32Constant(0));
-                        Op(new Int32NotEqual());
-                        MetaGuard(16);
-                        Op(new BranchIf(2));                // -> $slow
-                        // X1 is a cell, and a cell can be a REF chain: the
-                        // host reads this barrier through a deref. Taking the
-                        // payload raw yields a heap index, which is a small
-                        // positive number and therefore a plausible-looking
-                        // barrier -- it cuts, just to the wrong place, and
-                        // takes the caller's choice points with it.
-                        //
-                        // Deref works on LC0 and clobbers it. Safe here only
-                        // because both ways out of this arm are exits: the
-                        // $slow branch re-reads the registers in the host.
-                        RegLoad(1);
-                        Op(new LocalSet(LC0));
-                        Deref();
-                        EmitCut(() =>
-                        {
-                            Op(new LocalGet(LC0));
-                            Op(new Int32WrapInt64());
-                        }, pc);
-                        // Symmetry with the calling path: pc + 9 pops a frame.
-                        if (ownFrame)
-                        {
-                            EmitAllocateFrame(0, pc);
-                            _metaFrameResume.Add(pc + 9);
-                        }
-                        // A cut succeeds and execution carries on at the next
-                        // instruction, exactly as the host's does.
-                        GoTo(pc + 9);
-                    }
-                    CloseNested();
-                }
+                if (barrierFromX1) EmitCutGoal();
 
                 EmitTrueFailGoal();
 
@@ -5407,6 +5946,8 @@ public static class WasmPredicateCompiler
             Op(new Int32NotEqual());
             MetaGuard(2);
             Op(new BranchIf(0));                            // -> $slow
+            Op(new Int32Constant(0));
+            Op(new LocalSet(LKT));                          // no argument to qualify
             Op(new LocalGet(LC0));
             Op(new Int32WrapInt64());
             Op(new LocalSet(LT2));                          // the structure's index
@@ -5419,13 +5960,15 @@ public static class WasmPredicateCompiler
             // do that resolution -- it is a walk through a module's locals
             // and imports -- so it reads what the host resolved, out of the
             // inline cache the host fills on the path it was taking anyway.
+            // Module:Goal is the same pair to the host, which unwraps both
+            // alike and keys the cache by what is inside; a closure a
+            // meta_predicate declaration qualified arrives that way, and
+            // keyed by ':'/2 the probe never hits.
             //
             // Compared as a cell, never as a baked id: FunctorCell relocates
             // by (name, arity), and a functor id is only valid in the process
             // that interned it.
-            Op(new LocalGet(LC1));
-            Op(new Int64Constant(_env.FunctorCell(_env.MqualFunctorId)));
-            Op(new Int64Equal());
+            EmitIsModuleTag(LC1);
             OpenIf();
             {
                 // Module must be a bound atom.
@@ -5454,7 +5997,8 @@ public static class WasmPredicateCompiler
                 Deref();
 
                 // A tag inside a tag: a tagged call of a goal that already
-                // carries its module (the prelude's wakeup driver). The
+                // carries its module (the prelude's wakeup driver, a
+                // qualified closure meta-called from its module). The
                 // innermost module wins, as on the host; keyed by the outer
                 // one the probe never hits. One level is the shape that
                 // occurs; a deeper one still resolves, on the host.
@@ -5467,8 +6011,8 @@ public static class WasmPredicateCompiler
                     Op(new Int32WrapInt64());
                     Op(new LocalSet(LT2));
                     CellLoadDyn(LHeapB, LT2);
-                    Op(new Int64Constant(_env.FunctorCell(_env.MqualFunctorId)));
-                    Op(new Int64Equal());
+                    Op(new LocalSet(LC1));
+                    EmitIsModuleTag(LC1);
                     OpenIf();
                     {
                         CellLoadDyn(LHeapB, LT2, 1);
@@ -5505,6 +6049,7 @@ public static class WasmPredicateCompiler
                     Op(new LocalGet(LC0));
                     Op(new Int32WrapInt64());
                     Op(new LocalSet(LT2));                  // the GOAL's index
+                    EmitConstructCall(tagged: true);
                     CellLoadDyn(LHeapB, LT2);
                     Op(new Int64Constant(Cell.PayloadMask));
                     Op(new Int64And());
@@ -5562,6 +6107,8 @@ public static class WasmPredicateCompiler
                         GoSlow();
                     }
                     CloseNested();
+                    // A cut the host's distribution tagged with a module.
+                    if (barrierFromX1 && appended == 0) EmitCutGoal();
                     // A variable goal in a clause arrives tagged with its
                     // module, so the common call(G) reaches `true` here.
                     EmitTrueFailGoal();
@@ -5577,6 +6124,8 @@ public static class WasmPredicateCompiler
                 }
                 CloseNested();
 
+                Op(new LocalGet(LT0));
+                Op(new LocalSet(LKH));                      // the module, kept to qualify with
                 LoadSlot32(WasmAbi.MetaCacheBase);
                 Op(new LocalSet(LMetaBase));
                 Op(new LocalGet(LMetaBase));
@@ -5685,8 +6234,15 @@ public static class WasmPredicateCompiler
                     {
                         Op(new LocalGet(LT1));
                         Op(new Int64Load { Offset = 8 });
+                        Op(new LocalSet(LAtKey));           // the key is spent
+                        Op(new LocalGet(LAtKey));
                         Op(new Int32WrapInt64());
                         Op(new LocalSet(LT1));              // the resolved functor
+                        Op(new LocalGet(LAtKey));
+                        Op(new Int64Constant(32));
+                        Op(new Int64ShiftRightUnsigned());
+                        Op(new Int32WrapInt64());
+                        Op(new LocalSet(LKT));              // the arguments to qualify
                         Op(new Branch(2));                  // -> $resolved
                     }
                     CloseNested();
@@ -5713,6 +6269,7 @@ public static class WasmPredicateCompiler
             }
             OpenElse();
             {
+                EmitConstructCall(tagged: false);
                 // Not wrapped: the callee is the goal, so there are not two
                 // arities to reconcile.
                 Op(new Int32Constant(0));
@@ -5832,6 +6389,23 @@ public static class WasmPredicateCompiler
 
             // Last chance: the copy below overwrites X1.
             EmitReadBarrier();
+            // The same for the qualification after the copy: three cells for
+            // each argument it may wrap.
+            Op(new LocalGet(LKT));
+            OpenIf();
+            {
+                Op(new LocalGet(LH));
+                Op(new LocalGet(LKT));
+                Op(new Int32CountOneBits());
+                Op(new Int32Constant(3));
+                Op(new Int32Multiply());
+                Op(new Int32Add());
+                LoadSlot32(WasmAbi.HeapWatermark);
+                Op(new Int32GreaterThanOrEqualSigned());
+                MetaGuard(19);
+                Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+            }
+            CloseNested();
 
             // call/N: the arguments to append are sitting in X1..Xappended,
             // and the copy below writes X0 upwards -- so it would eat them
@@ -5942,7 +6516,318 @@ public static class WasmPredicateCompiler
                 Op(new Int32Constant((int)Tag.Int));
                 Op(new Int32NotEqual());
                 MetaGuard(12);
-                GoSlow();
+                // Conditional: an unconditional br here sent every '$call'/2
+                // to the host whatever its barrier, and nothing failed.
+                Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+            }
+
+            // The goal is `!` (LC0), under '$call'/2: it cuts to the barrier
+            // X1 carries and execution goes on at the next instruction, as
+            // the host's does.
+            void EmitCutGoal()
+            {
+                Op(new LocalGet(LC0));
+                Op(new Int64Constant(_env.AtomCell(CutAtomId)));
+                Op(new Int64Equal());
+                OpenIf();
+                {
+                    // A live setup_call_cleanup handler makes a cut run
+                    // cleanups, and running one is meta-calling a goal
+                    // from inside the cut. That is host work.
+                    LoadSlot32(WasmAbi.CleanupReach);
+                    Op(new Int32Constant(0));
+                    Op(new Int32NotEqual());
+                    MetaGuard(16);
+                    Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                    // X1 is a cell, and a cell can be a REF chain: the
+                    // host reads this barrier through a deref. Taking the
+                    // payload raw yields a heap index, which is a small
+                    // positive number and therefore a plausible-looking
+                    // barrier -- it cuts, just to the wrong place, and
+                    // takes the caller's choice points with it.
+                    //
+                    // Deref works on LC0 and clobbers it. Safe here only
+                    // because both ways out of this arm are exits: the
+                    // $slow branch re-reads the registers in the host.
+                    RegLoad(1);
+                    Op(new LocalSet(LC0));
+                    Deref();
+                    TagOfC0();
+                    Op(new Int32Constant((int)Tag.Int));
+                    Op(new Int32NotEqual());
+                    MetaGuard(12);
+                    Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                    EmitCut(() =>
+                    {
+                        Op(new LocalGet(LC0));
+                        Op(new Int32WrapInt64());
+                    }, pc);
+                    // Symmetry with the calling path: pc + 9 pops a frame.
+                    if (ownFrame)
+                    {
+                        EmitAllocateFrame(0, pc);
+                        _metaFrameResume.Add(pc + 9);
+                    }
+                    // A cut succeeds and execution carries on at the next
+                    // instruction, exactly as the host's does.
+                    GoTo(pc + 9);
+                }
+                CloseNested();
+            }
+
+            // call/1 or '$call'/2 of a control construct, as the host
+            // dispatches it: a tagged construct's two goals take the module,
+            // each one already tagged left as it is, and the prelude's helper
+            // ('$call_conj'/3 and its kin) is entered with the barrier in X2
+            // and B0 = B. An if-then among the goals is distributed into in
+            // turn on the host, which this leaves to it. The goal is the Str
+            // at LT2, the module LT0. Every check comes before the first
+            // write: $slow re-reads the call out of X0 and X1.
+            void EmitConstructCall(bool tagged)
+            {
+                if (appended != 0) return;
+                if (!barrierFromX1)
+                {
+                    CellLoadDyn(LHeapB, LT2);
+                    Op(new LocalSet(LC1));
+                    EmitIsControl(LC1);
+                    OpenIf();
+                    EmitPlainSkeletonCheck();
+                    CloseNested();
+                }
+                foreach (var (construct, helper) in BarrierConstructs)
+                {
+                    CellLoadDyn(LHeapB, LT2);
+                    Op(new Int64Constant(_env.FunctorCell(construct)));
+                    Op(new Int64Equal());
+                    OpenIf();
+                    {
+                        for (int k = 1; k <= 2; k++)
+                        {
+                            CellLoadDyn(LHeapB, LT2, k);
+                            Op(new LocalSet(LC0));
+                            Deref();
+                            TagOfC0();
+                            Op(new Int32Constant((int)Tag.Str));
+                            Op(new Int32Equal());
+                            OpenIf();
+                            {
+                                Op(new LocalGet(LC0));
+                                Op(new Int32WrapInt64());
+                                Op(new LocalSet(LKBR));
+                                CellLoadDyn(LHeapB, LKBR);
+                                Op(new LocalSet(LC1));
+                                Op(new LocalGet(LC1));
+                                Op(new Int64Constant(_env.FunctorCell(IfThenFid)));
+                                Op(new Int64Equal());
+                                Op(new LocalGet(LC1));
+                                Op(new Int64Constant(_env.FunctorCell(SoftIfThenFid)));
+                                Op(new Int64Equal());
+                                Op(new Int32Or());
+                                MetaGuard(36);
+                                Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                            }
+                            CloseNested();
+                        }
+                        if (barrierFromX1)
+                        {
+                            RegLoad(1); Op(new LocalSet(LC0)); Deref();
+                            TagOfC0();
+                            Op(new Int32Constant((int)Tag.Int));
+                            Op(new Int32NotEqual());
+                            MetaGuard(12);
+                            Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                        }
+                        if (tagged)
+                        {
+                            Op(new LocalGet(LH));
+                            Op(new Int32Constant(6));
+                            Op(new Int32Add());
+                            LoadSlot32(WasmAbi.HeapWatermark);
+                            Op(new Int32GreaterThanOrEqualSigned());
+                            MetaGuard(19);
+                            Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                        }
+
+                        // X2: the barrier X1 carries, or B when the goal came
+                        // in a variable -- it is call(V) then (7.6.2), as the
+                        // host's dispatcher has it. call/1's is always B: its
+                        // goal is opaque to a cut inside it.
+                        if (!barrierFromX1)
+                            RegStore(2, () => IntCell(() => Op(new LocalGet(LB))));
+                        else
+                        {
+                            RegLoad(0);
+                            Op(new LocalSet(LC2));
+                            Op(new LocalGet(LC2));
+                            Op(new Int64Constant(60));
+                            Op(new Int64ShiftRightUnsigned());
+                            Op(new Int32WrapInt64());
+                            Op(new LocalSet(LKBW));
+                            Op(new LocalGet(LKBW));
+                            Op(new Int32Constant((int)Tag.Ref));
+                            Op(new Int32Equal());
+                            Op(new LocalGet(LKBW));
+                            Op(new Int32Constant((int)Tag.AttVar));
+                            Op(new Int32Equal());
+                            Op(new Int32Or());
+                            OpenIf();
+                            RegStore(2, () => IntCell(() => Op(new LocalGet(LB))));
+                            OpenElse();
+                            RegStore(2, () => Op(new LocalGet(LC0)));
+                            CloseNested();
+                        }
+
+                        for (int k = 0; k < 2; k++)
+                        {
+                            CellLoadDyn(LHeapB, LT2, k + 1);
+                            Op(new LocalSet(LC2));                  // the goal, raw
+                            if (tagged) EmitTagWithModule();
+                            RegStore(k, () => Op(new LocalGet(LC2)));
+                        }
+                        Op(new Int32Constant(_env.EncodeCallTarget(helper)));
+                        Op(new LocalSet(LAtVal));
+                        EmitMetaTail();
+                    }
+                    CloseNested();
+                }
+            }
+
+            // call/1 converts its goal as a body before any of it runs
+            // (7.6.2, 7.8.3): a variable in a goal position becomes call(V), a
+            // position reached through a REF is normalized, and a goal that is
+            // not callable is a type error of the whole. A skeleton with none
+            // of them converts to itself, so the module may enter the helper;
+            // anything else goes to the host, which converts. Walked down the
+            // right spine, so a construct on the left goes to the host too, as
+            // does a qualifier inside: both would need a stack to follow.
+            // Reads only, LKBR and LKBW and LC1.
+            void EmitPlainSkeletonCheck()
+            {
+                Op(new LocalGet(LT2));
+                Op(new LocalSet(LKBR));                     // the node
+                OpenBlock();                                // $plain
+                OpenLoop();                                 // $node
+                {
+                    // The left goal: an atom, or a compound that is a goal.
+                    CellLoadDyn(LHeapB, LKBR, 1);
+                    Op(new LocalSet(LC1));
+                    EmitLeafTag();
+                    Op(new Int32Constant((int)Tag.Atom));
+                    Op(new Int32NotEqual());
+                    OpenIf();
+                    {
+                        Op(new LocalGet(LKBW));
+                        Op(new Int32Constant((int)Tag.Str));
+                        Op(new Int32NotEqual());
+                        MetaGuard(37);
+                        Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                        Op(new LocalGet(LC1));
+                        Op(new Int32WrapInt64());
+                        Op(new LocalSet(LKBW));
+                        CellLoadDyn(LHeapB, LKBW);
+                        Op(new LocalSet(LC1));
+                        EmitIsControl(LC1);
+                        EmitIsModuleTag(LC1);
+                        Op(new Int32Or());
+                        MetaGuard(37);
+                        Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                    }
+                    CloseNested();
+
+                    // The right goal: an atom ends the walk, a construct
+                    // continues it, any other compound is a goal.
+                    CellLoadDyn(LHeapB, LKBR, 2);
+                    Op(new LocalSet(LC1));
+                    EmitLeafTag();
+                    Op(new Int32Constant((int)Tag.Atom));
+                    Op(new Int32Equal());
+                    Op(new BranchIf(1));                    // -> $plain
+                    Op(new LocalGet(LKBW));
+                    Op(new Int32Constant((int)Tag.Str));
+                    Op(new Int32NotEqual());
+                    MetaGuard(37);
+                    Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                    Op(new LocalGet(LC1));
+                    Op(new Int32WrapInt64());
+                    Op(new LocalSet(LKBR));
+                    CellLoadDyn(LHeapB, LKBR);
+                    Op(new LocalSet(LC1));
+                    EmitIsModuleTag(LC1);
+                    MetaGuard(37);
+                    Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                    EmitIsControl(LC1);
+                    Op(new BranchIf(0));                    // -> $node
+                }
+                CloseNested();                              // $node
+                CloseNested();                              // $plain
+            }
+
+            // LKBW: the tag of the raw cell in LC1.
+            void EmitLeafTag()
+            {
+                Op(new LocalGet(LC1));
+                Op(new Int64Constant(60));
+                Op(new Int64ShiftRightUnsigned());
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LKBW));
+                Op(new LocalGet(LKBW));
+            }
+
+            // LC2 tagged '$mqual'(LT0, LC2), unless it carries a tag: the
+            // innermost one resolves, so another outside it changes nothing
+            // (MetaBodyConvert.TagModule). An attributed variable is
+            // referenced, not copied.
+            void EmitTagWithModule()
+            {
+                Op(new LocalGet(LC2));
+                Op(new LocalSet(LC0));
+                Deref();
+                Op(new Int32Constant(0));
+                Op(new LocalSet(LKBW));                     // tagged already
+                TagOfC0();
+                Op(new Int32Constant((int)Tag.Str));
+                Op(new Int32Equal());
+                OpenIf();
+                {
+                    Op(new LocalGet(LC0));
+                    Op(new Int32WrapInt64());
+                    Op(new LocalSet(LKBR));
+                    CellLoadDyn(LHeapB, LKBR);
+                    Op(new LocalSet(LC1));
+                    EmitIsModuleTag(LC1);
+                    Op(new LocalSet(LKBW));
+                }
+                CloseNested();
+                Op(new LocalGet(LKBW));
+                Op(new Int32EqualZero());
+                OpenIf();
+                {
+                    Op(new LocalGet(LC2));
+                    Op(new Int64Constant(60));
+                    Op(new Int64ShiftRightUnsigned());
+                    Op(new Int64Constant((long)Tag.AttVar));
+                    Op(new Int64Equal());
+                    OpenIf();
+                    {
+                        Op(new LocalGet(LC2));
+                        Op(new Int64Constant(Cell.PayloadMask));
+                        Op(new Int64And());
+                        Op(new LocalSet(LC2));
+                    }
+                    CloseNested();
+                    CellStoreDyn(LHeapB, LH, 0,
+                        () => Op(new Int64Constant(_env.FunctorCell(_env.MqualFunctorId))));
+                    CellStoreDyn(LHeapB, LH, 1, () => TaggedI32(LT0, Tag.Atom));
+                    CellStoreDyn(LHeapB, LH, 2, () => Op(new LocalGet(LC2)));
+                    TaggedI32(LH, Tag.Str);
+                    Op(new LocalSet(LC2));
+                    Op(new LocalGet(LH));
+                    Op(new Int32Constant(3));
+                    Op(new Int32Add());
+                    Op(new LocalSet(LH));
+                }
+                CloseNested();
             }
 
             void EmitMetaTail()
@@ -6038,6 +6923,13 @@ public static class WasmPredicateCompiler
                             body = () => EmitInlineTypeTest(test, pc);
                         else if (_env.IsInlineGetAttr(builtinId))
                             body = () => EmitInlineGetAttr(pc, () => Request(builtinId));
+                        else if (_env.IsInlineArg(builtinId))
+                            body = () => EmitInlineArg(pc, () => Request(builtinId));
+                        else if (_env.IsInlineCompare3(builtinId))
+                            body = () => EmitInlineCompare3(pc, () => Request(builtinId));
+                        else if (_env.ArithCompareOf(builtinId) is var rel
+                                 && rel != WasmArithCompare.None)
+                            body = () => EmitInlineArithCompare(pc, rel, () => Request(builtinId));
                         else
                             continue;
                         Op(new LocalGet(LAtVal));
@@ -6078,6 +6970,7 @@ public static class WasmPredicateCompiler
                 CloseNested();
             }
 
+            EmitQualifyMetaArgs();
             EmitMetaTailOrRequest();
 
             CloseNested();                                  // $slow
@@ -6305,6 +7198,7 @@ public static class WasmPredicateCompiler
             Op(new LocalGet(LT0));
             Op(new Int32Constant(0));
             Op(new Int32Equal());
+            MetaGuard(40);
             Op(new BranchIf(0));                            // -> $slow
 
             // A1 first, and the order is the contract, not a preference.
@@ -6319,6 +7213,7 @@ public static class WasmPredicateCompiler
             TagOfC0();
             Op(new Int32Constant((int)Tag.Atom));
             Op(new Int32NotEqual());
+            MetaGuard(41);
             Op(new BranchIf(0));                            // -> $slow
             Op(new LocalGet(LC0));
             Op(new Int64Constant(Cell.PayloadMask));
@@ -6367,6 +7262,7 @@ public static class WasmPredicateCompiler
                 CloseNested();
                 Op(new LocalGet(LAtPromote));
                 Op(new Int32EqualZero());
+                MetaGuard(42);
                 Op(new BranchIf(1));                        // still bound -> $slow
             }
             CloseNested();
@@ -6799,7 +7695,7 @@ public static class WasmPredicateCompiler
             Op(new Int32Add());
             Op(new LocalSet(LT0Alt));
             EmitUnifyTwo(() => RegLoad(2),
-                         () => CellLoadDyn(LHeapB, LT0Alt), pc);
+                         () => CellLoadDyn(LHeapB, LT0Alt), pc, emitBuiltinExit);
             Op(new Branch(1));                              // -> $done
 
             CloseNested();                                  // $slow
@@ -6833,6 +7729,7 @@ public static class WasmPredicateCompiler
         /// an update.</para></summary>
         private void EmitInlineAttrListWrite(int pc, bool isDelete)
         {
+            MetaGuard(43);
             // Attr keys the walk two ways, and both are the builtin's own.
             // A compound keys on its functor, which the mirror names. Any
             // other bound term keys on itself, and the module can ask that
@@ -6877,6 +7774,7 @@ public static class WasmPredicateCompiler
                 Op(new Int64Load());
                 Op(new Int32WrapInt64());
                 Op(new Int32EqualZero());
+                MetaGuard(44);
                 Op(new BranchIf(1));                        // unmirrored -> $slow
             }
             CloseNested();
@@ -6884,12 +7782,14 @@ public static class WasmPredicateCompiler
             // Neither ring nor trail room is something to discover halfway.
             LoadSlot32(WasmAbi.AttrWriteBase);
             Op(new Int32EqualZero());
+            MetaGuard(45);
             Op(new BranchIf(0));                            // -> $slow
             LoadSlot32(WasmAbi.AttrWriteTop);
             Op(new Int32Constant(1));
             Op(new Int32Add());
             LoadSlot32(WasmAbi.AttrWriteLimit);
             Op(new Int32GreaterThanSigned());
+            MetaGuard(46);
             Op(new BranchIf(0));                            // -> $slow
             // Two entries, because a promotion or a last removal writes
             // the CELL's change beside the attribute's.
@@ -6898,6 +7798,7 @@ public static class WasmPredicateCompiler
             Op(new Int32Add());
             LoadSlot32(WasmAbi.ExtraTrailLimit);
             Op(new Int32GreaterThanOrEqualSigned());
+            MetaGuard(47);
             Op(new BranchIf(0));                            // -> $slow
             LoadSlot32(WasmAbi.ExtraTrailBase);
             Op(new Int32EqualZero());
@@ -6944,6 +7845,7 @@ public static class WasmPredicateCompiler
                 OpenIf();
                 {
                     EmitAttrCountProbe();
+                    MetaGuard(48);
                     Op(new LocalGet(LAtCount));
                     Op(new Int32EqualZero());
                     Op(new Int32EqualZero());
@@ -6959,6 +7861,7 @@ public static class WasmPredicateCompiler
                     Op(new Int32Add());
                     LoadSlot32(WasmAbi.AttrMirrorBudget);
                     Op(new Int32GreaterThanSigned());
+                    MetaGuard(49);
                     Op(new BranchIf(1));                    // -> $slow
                 }
                 CloseNested();
@@ -6981,6 +7884,7 @@ public static class WasmPredicateCompiler
                     LoadSlot32(WasmAbi.AttrMirrorBudget);
                     Op(new Int32Constant(0));
                     Op(new Int32LessThanOrEqualSigned());
+                    MetaGuard(50);
                     Op(new BranchIf(2));                    // -> $slow
                 }
                 CloseNested();
@@ -7007,6 +7911,7 @@ public static class WasmPredicateCompiler
             Op(new Int32Add());
             LoadSlot32(WasmAbi.HeapWatermark);
             Op(new Int32GreaterThanOrEqualSigned());
+            MetaGuard(51);
             Op(new BranchIf(0));                            // -> $slow
 
             Op(new LocalGet(LH));
@@ -8162,6 +9067,806 @@ public static class WasmPredicateCompiler
             CloseNested();                                  // $done
         }
 
+        /// <summary>ADR-056: the callee's meta-arguments take the module the
+        /// goal ran in (LKH), as the host's QualifyMetaArgRegisters wraps
+        /// them, over the positions the meta cache row carries (LKT, a bit
+        /// each): <c>':'(Module, Arg)</c>, an argument already qualified left
+        /// as it is, an attributed variable referenced rather than copied.
+        /// The room was checked before the registers were overwritten.
+        /// </summary>
+        private void EmitQualifyMetaArgs()
+        {
+            OpenBlock();                                    // $qualified
+            OpenLoop();                                     // $next
+            {
+                Op(new LocalGet(LKT));
+                Op(new Int32EqualZero());
+                Op(new BranchIf(1));                        // -> $qualified
+                Op(new LocalGet(LKT));
+                Op(new Int32CountTrailingZeroes());
+                Op(new Int32Constant(3));
+                Op(new Int32ShiftLeft());
+                Op(new LocalGet(LRegsB));
+                Op(new Int32Add());
+                Op(new LocalSet(LKStop));                   // the register's address
+                Op(new LocalGet(LKT));
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant(1));
+                Op(new Int32Subtract());
+                Op(new Int32And());
+                Op(new LocalSet(LKT));
+
+                Op(new LocalGet(LKStop));
+                Op(new Int64Load());
+                Op(new LocalSet(LC2));
+                Op(new LocalGet(LC2));
+                Op(new LocalSet(LC0));
+                Deref();
+                TagOfC0();
+                Op(new Int32Constant((int)Tag.Str));
+                Op(new Int32Equal());
+                OpenIf();
+                {
+                    Op(new LocalGet(LC0));
+                    Op(new Int32WrapInt64());
+                    Op(new LocalSet(LKBR));
+                    CellLoadDyn(LHeapB, LKBR);
+                    Op(new LocalSet(LC1));
+                    EmitIsModuleTag(LC1);
+                    Op(new BranchIf(1));                    // qualified already -> $next
+                }
+                CloseNested();
+
+                Op(new LocalGet(LC2));
+                Op(new Int64Constant(60));
+                Op(new Int64ShiftRightUnsigned());
+                Op(new Int64Constant((long)Tag.AttVar));
+                Op(new Int64Equal());
+                OpenIf();
+                {
+                    Op(new LocalGet(LC2));
+                    Op(new Int64Constant(Cell.PayloadMask));
+                    Op(new Int64And());
+                    Op(new LocalSet(LC2));                  // Ref(home)
+                }
+                CloseNested();
+
+                CellStoreDyn(LHeapB, LH, 0,
+                    () => Op(new Int64Constant(_env.FunctorCell(_env.ColonFunctorId))));
+                CellStoreDyn(LHeapB, LH, 1, () => TaggedI32(LKH, Tag.Atom));
+                CellStoreDyn(LHeapB, LH, 2, () => Op(new LocalGet(LC2)));
+                Op(new LocalGet(LKStop));
+                TaggedI32(LH, Tag.Str);
+                Op(new Int64Store());
+                Op(new LocalGet(LH));
+                Op(new Int32Constant(3));
+                Op(new Int32Add());
+                Op(new LocalSet(LH));
+                Op(new Branch(0));                          // -> $next
+            }
+            CloseNested();                                  // $next
+            CloseNested();                                  // $qualified
+        }
+
+        /// <summary>Pushes whether the functor cell in <paramref name="cell"/>
+        /// is one of the control constructs call/1 converts through: ','/2,
+        /// ';'/2, '->'/2 and '*->'/2.</summary>
+        private void EmitIsControl(uint cell)
+        {
+            for (int i = 0; i < BarrierConstructs.Length; i++)
+            {
+                Op(new LocalGet(cell));
+                Op(new Int64Constant(_env.FunctorCell(BarrierConstructs[i].Construct)));
+                Op(new Int64Equal());
+                if (i > 0) Op(new Int32Or());
+            }
+        }
+
+        /// <summary>Pushes whether the functor cell in <paramref name="cell"/>
+        /// is '$mqual'/2 or ':'/2, the two (Module, Goal) pairs the host
+        /// unwraps alike.</summary>
+        private void EmitIsModuleTag(uint cell)
+        {
+            Op(new LocalGet(cell));
+            Op(new Int64Constant(_env.FunctorCell(_env.MqualFunctorId)));
+            Op(new Int64Equal());
+            Op(new LocalGet(cell));
+            Op(new Int64Constant(_env.FunctorCell(_env.ColonFunctorId)));
+            Op(new Int64Equal());
+            Op(new Int32Or());
+        }
+
+        /// <summary>Asks the host to run the builtin: the env trim rides the
+        /// id (-1 none), and the chain resumes at <paramref name="resumePc"/>,
+        /// or at CP for -1 (a tail call).</summary>
+        private void EmitBuiltinRequest(int builtinId, int envTrim, int resumePc)
+        {
+            StoreSlot64(WasmAbi.BuiltinId,
+                () => Op(new Int64Constant(_env.EncodeBuiltinId(builtinId, envTrim))));
+            StoreSlot64(WasmAbi.Cursor, () => Op(new Int64Constant(
+                resumePc < 0 ? -1 : _env.EncodeAddress(resumePc))));
+            EmitReturn(WasmVerdict.BuiltinRequest);
+        }
+
+        /// <summary>The builtins the four call forms reach through one entry:
+        /// ADR-049's wake driver builtins, compare/3 and findall's collect
+        /// loop, answered in the module when the answer is at hand;
+        /// <paramref name="exit"/> asks the host otherwise. False: the builtin
+        /// is not one of them.</summary>
+        private bool TryEmitWakeSupport(int builtinId, int pc, Action exit)
+        {
+            if (_env.IsInlineCompare3(builtinId))
+            {
+                EmitInlineCompare3(pc, exit);
+                return true;
+            }
+            if (_env.IsInlineGlobalStore(builtinId))
+            {
+                EmitInlineGlobalStore(pc, exit);
+                return true;
+            }
+            var findall = _env.FindallFormOf(builtinId);
+            if (findall == WasmFindallForm.Collect)
+            {
+                EmitInlineFindallCollect(pc, exit);
+                return true;
+            }
+            if (findall != WasmFindallForm.None)
+            {
+                EmitInlineFindall(findall, pc, exit);
+                return true;
+            }
+            switch (_env.WakeSupportOf(builtinId))
+            {
+                case WasmWakeSupport.CutBarrier:
+                    // B0, kept in the mailbox where get_level reads it.
+                    EmitFlagsCheck(pc);
+                    EmitUnifyTwo(() => RegLoad(0),
+                        () => IntCell(() => LoadSlot32(WasmAbi.CutBarrier)), pc, exit);
+                    return true;
+                case WasmWakeSupport.Settle:
+                    // Only a /3 hook's proxy, an attributed variable, has
+                    // anything to settle.
+                    EmitFlagsCheck(pc);
+                    RegLoad(0); Op(new LocalSet(LC0)); Deref();
+                    TagOfC0(); Op(new Int32Constant((int)Tag.AttVar)); Op(new Int32Equal());
+                    OpenIf();
+                    exit();
+                    CloseNested();
+                    return true;
+                case WasmWakeSupport.HookGoal:
+                    EmitFlagsCheck(pc);
+                    EmitInlineWakeHookGoal(pc, exit);
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary><c>'$wake_hook_goal'/7</c> for a module whose hook is a
+        /// <c>verify_attributes/4</c>: the goal the host builds, cell for
+        /// cell and in its order, from the hook pair staged beside the module
+        /// list. A /3 hook needs a proxy carrying an attribute, a module off
+        /// the list needs a lookup, and outputs other than four distinct
+        /// fresh variables need a unification: the host does those. Nothing
+        /// is written before the last check.</summary>
+        private void EmitInlineWakeHookGoal(int pc, Action exit)
+        {
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+
+            // The module, an atom on the list.
+            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            TagOfC0(); Op(new Int32Constant((int)Tag.Atom)); Op(new Int32NotEqual());
+            Op(new BranchIf(0));                            // -> $slow
+            Op(new LocalGet(LC0)); Op(new Int32WrapInt64()); Op(new LocalSet(LAtMod));
+            LoadSlot32(WasmAbi.AttrModuleBase); Op(new Int32EqualZero());
+            Op(new BranchIf(0));                            // -> $slow
+            Op(new Int32Constant(0)); Op(new LocalSet(LAtSlot));
+            OpenBlock();                                    // $found
+            OpenLoop();                                     // $next
+            {
+                Op(new LocalGet(LAtSlot));
+                LoadSlot32(WasmAbi.AttrModuleCount);
+                Op(new Int32GreaterThanOrEqualSigned());
+                Op(new BranchIf(2));                        // -> $slow
+                LoadSlot32(WasmAbi.AttrModuleBase);
+                Op(new LocalGet(LAtSlot)); Op(new Int32Constant(2)); Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int32Load());
+                Op(new LocalGet(LAtMod));
+                Op(new Int32Equal());
+                Op(new BranchIf(1));                        // -> $found
+                Op(new LocalGet(LAtSlot)); Op(new Int32Constant(1)); Op(new Int32Add());
+                Op(new LocalSet(LAtSlot));
+                Op(new Branch(0));                          // -> $next
+            }
+            CloseNested();                                  // $next
+            CloseNested();                                  // $found
+
+            // Its pair: LKT the hook's functor, LKH the goals' module.
+            LoadSlot32(WasmAbi.AttrModuleBase);
+            Op(new LocalGet(LAtSlot)); Op(new Int32Constant(3)); Op(new Int32ShiftLeft());
+            Op(new Int32Add());
+            Op(new LocalSet(LT0));
+            Op(new LocalGet(LT0)); Op(new Int32Load { Offset = (uint)WasmAbi.AttrHookOffset });
+            Op(new LocalSet(LKT));
+            Op(new LocalGet(LT0)); Op(new Int32Load { Offset = (uint)WasmAbi.AttrHookOffset + 4 });
+            Op(new LocalSet(LKH));
+            // A hookless module: the builtin fails, which the driver reads as
+            // nothing to run.
+            Op(new LocalGet(LKT)); Op(new Int32Constant(WasmAbi.AttrHookNone)); Op(new Int32Equal());
+            OpenIf();
+            GoFail();
+            CloseNested();
+            Op(new LocalGet(LKT)); Op(new Int32Constant(0)); Op(new Int32LessThanSigned());
+            Op(new BranchIf(0));                            // a /3 hook -> $slow
+
+            // The outputs: four fresh variables, no two the same. Their homes
+            // in LT0, LT1, LT2, LKStop.
+            uint[] homes = { LT0, LT1, LT2, LKStop };
+            for (int k = 0; k < homes.Length; k++)
+            {
+                RegLoad(3 + k); Op(new LocalSet(LC0)); Deref();
+                TagOfC0(); Op(new Int32Constant((int)Tag.Ref)); Op(new Int32NotEqual());
+                Op(new BranchIf(0));                        // bound or attributed -> $slow
+                Op(new LocalGet(LDa)); Op(new LocalSet(homes[k]));
+                for (int j = 0; j < k; j++)
+                {
+                    Op(new LocalGet(homes[j])); Op(new LocalGet(homes[k])); Op(new Int32Equal());
+                    Op(new BranchIf(0));                    // -> $slow
+                }
+            }
+
+            // Room: a cell for the value, the goals variable, the five-cell
+            // goal; three trail entries.
+            Op(new LocalGet(LH)); Op(new Int32Constant(7)); Op(new Int32Add());
+            LoadSlot32(WasmAbi.HeapWatermark);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf(0));                            // -> $slow
+            Op(new LocalGet(LTR)); Op(new Int32Constant(3)); Op(new Int32Add());
+            LoadSlot32(WasmAbi.TrailLimit);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf(0));                            // -> $slow
+
+            // The value's slot: the Ref the interrupt put in the batch, or a
+            // cell of its own for a value that reached the register directly.
+            RegLoad(1); Op(new LocalSet(LC0));
+            TagOfC0(); Op(new LocalSet(LAtVal));
+            Op(new LocalGet(LAtVal)); Op(new Int32Constant((int)Tag.Ref)); Op(new Int32Equal());
+            Op(new LocalGet(LAtVal)); Op(new Int32Constant((int)Tag.AttVar)); Op(new Int32Equal());
+            Op(new Int32Or());
+            OpenIf();
+            {
+                Op(new LocalGet(LC0)); Op(new Int64Constant(Cell.PayloadMask)); Op(new Int64And());
+                Op(new Int32WrapInt64()); Op(new LocalSet(LAtVal));
+            }
+            OpenElse();
+            {
+                CellStoreDyn(LHeapB, LH, 0, () => Op(new LocalGet(LC0)));
+                Op(new LocalGet(LH)); Op(new LocalSet(LAtVal));
+                Op(new LocalGet(LH)); Op(new Int32Constant(1)); Op(new Int32Add());
+                Op(new LocalSet(LH));
+            }
+            CloseNested();
+
+            // The goals variable at H (LKBR), the goal after it (LKBW):
+            // hook(Module, Value, Other, Goals).
+            Op(new LocalGet(LH)); Op(new LocalSet(LKBR));
+            Op(new LocalGet(LH)); Op(new Int32Constant(1)); Op(new Int32Add());
+            Op(new LocalSet(LKBW));
+            CellStoreDyn(LHeapB, LH, 0, () => { Op(new LocalGet(LKBR)); Op(new Int64ExtendInt32Unsigned()); });
+            CellStoreDyn(LHeapB, LH, 1, () => TaggedI32(LKT, Tag.Functor));
+            CellStoreDyn(LHeapB, LH, 2, () => TaggedI32(LAtMod, Tag.Atom));
+            CellStoreDyn(LHeapB, LH, 3, () => { Op(new LocalGet(LAtVal)); Op(new Int64ExtendInt32Unsigned()); });
+            CellStoreDyn(LHeapB, LH, 4, () => RegLoad(2));
+            CellStoreDyn(LHeapB, LH, 5, () => { Op(new LocalGet(LKBR)); Op(new Int64ExtendInt32Unsigned()); });
+            Op(new LocalGet(LH)); Op(new Int32Constant(6)); Op(new Int32Add());
+            Op(new LocalSet(LH));
+
+            // The outputs, bound as the host binds them: the goal; the goals
+            // variable, the younger of the two, pointing at the caller's;
+            // [] for the proxy; the goals' module.
+            Op(new LocalGet(LT0)); Op(new LocalSet(LDa));
+            EmitBindDa(pc, () => TaggedI32(LKBW, Tag.Str));
+            CellStoreDyn(LHeapB, LKBR, 0, () => { Op(new LocalGet(LT1)); Op(new Int64ExtendInt32Unsigned()); });
+            Op(new LocalGet(LT2)); Op(new LocalSet(LDa));
+            EmitBindDa(pc, () => Op(new Int64Constant(_env.AtomCell(AtomTable.EmptyListId))));
+            Op(new LocalGet(LKStop)); Op(new LocalSet(LDa));
+            EmitBindDa(pc, () => TaggedI32(LKH, Tag.Atom));
+            Op(new Branch(1));                              // -> $done
+            CloseNested();                                  // $slow
+            exit();
+            CloseNested();                                  // $done
+        }
+
+        /// <summary>findall's collect loop, parked for the host in the ring
+        /// WasmAbi.FindallRingBase names: '$findall_push' opens a buffer (a
+        /// zero entry) and '$findall_record_s' of an atom or an integer is
+        /// the cell itself. Anything else, or no room, is the request, after
+        /// which the host has drained what was parked before it.</summary>
+        private void EmitInlineFindall(WasmFindallForm form, int pc, Action exit)
+        {
+            EmitFlagsCheck(pc);
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+            LoadSlot32(WasmAbi.FindallRingBase);
+            Op(new Int32EqualZero());
+            Op(new BranchIf(0));                            // -> $slow
+            LoadSlot32(WasmAbi.FindallRingTop);
+            LoadSlot32(WasmAbi.FindallRingLimit);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf(0));                            // -> $slow
+            if (form == WasmFindallForm.Record)
+            {
+                RegLoad(0); Op(new LocalSet(LC0)); Deref();
+                TagOfC0(); Op(new LocalSet(LT0));
+                Op(new LocalGet(LT0)); Op(new Int32Constant((int)Tag.Atom)); Op(new Int32NotEqual());
+                Op(new LocalGet(LT0)); Op(new Int32Constant((int)Tag.Int)); Op(new Int32NotEqual());
+                Op(new Int32And());
+                Op(new BranchIf(0));                        // a compound, a variable -> $slow
+            }
+            LoadSlot32(WasmAbi.FindallRingBase);
+            LoadSlot32(WasmAbi.FindallRingTop);
+            Op(new Int32Constant(3));
+            Op(new Int32ShiftLeft());
+            Op(new Int32Add());
+            if (form == WasmFindallForm.Record) Op(new LocalGet(LC0));
+            else Op(new Int64Constant(0));
+            Op(new Int64Store());
+            StoreSlot64(WasmAbi.FindallRingTop, () =>
+            {
+                LoadSlot64(WasmAbi.FindallRingTop);
+                Op(new Int64Constant(1));
+                Op(new Int64Add());
+            });
+            Op(new Branch(1));                              // -> $done
+            CloseNested();                                  // $slow
+            exit();
+            CloseNested();                                  // $done
+        }
+
+        /// <summary><c>b_setval(Key, Value)</c> made in the global-variable
+        /// image: the key's row takes the value, so a read later in the chain
+        /// sees it, and the write is parked for the host with the old value
+        /// beside it, under a MutableSet trail entry the module writes with the
+        /// log index the host's record will have. The value is what the
+        /// host's write keeps: a variable as a reference to its home, anything
+        /// else as itself. A key the image lacks (a first write, another
+        /// activation's) or a snapshot is the request, as is a full ring or
+        /// trail.</summary>
+        private void EmitInlineGlobalStore(int pc, Action exit)
+        {
+            EmitFlagsCheck(pc);
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+            LoadSlot32(WasmAbi.GlobalWriteBase);
+            Op(new Int32EqualZero());
+            Op(new BranchIf(0));                            // -> $slow
+            LoadSlot32(WasmAbi.GlobalWriteTop);
+            LoadSlot32(WasmAbi.GlobalWriteLimit);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf(0));                            // -> $slow
+            LoadSlot32(WasmAbi.ExtraTrailBase);
+            Op(new Int32EqualZero());
+            Op(new BranchIf(0));                            // -> $slow
+            LoadSlot32(WasmAbi.ExtraTrailTop);
+            Op(new Int32Constant(1));
+            Op(new Int32Add());
+            LoadSlot32(WasmAbi.ExtraTrailLimit);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf(0));                            // -> $slow
+
+            // The key, an atom, and its row.
+            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            TagOfC0();
+            Op(new Int32Constant((int)Tag.Atom));
+            Op(new Int32NotEqual());
+            Op(new BranchIf(0));                            // -> $slow
+            Op(new LocalGet(LC0));
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LT1));                          // the key's atom id
+            LoadSlot32(WasmAbi.GlobalVarBase);
+            Op(new LocalSet(LT0));                          // the row
+            Op(new LocalGet(LT0));
+            Op(new Int32EqualZero());
+            Op(new BranchIf(0));                            // no image -> $slow
+            LoadSlot32(WasmAbi.GlobalVarCount);
+            Op(new LocalSet(LT2));                          // pairs left
+            OpenBlock();                                    // $found
+            OpenLoop();
+            {
+                Op(new LocalGet(LT2));
+                Op(new Int32Constant(0));
+                Op(new Int32LessThanOrEqualSigned());
+                Op(new BranchIf(2));                        // not there -> $slow
+                Op(new LocalGet(LT0));
+                Op(new Int64Load());
+                Op(new Int32WrapInt64());
+                Op(new LocalGet(LT1));
+                Op(new Int32Equal());
+                Op(new BranchIf(1));                        // -> $found
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant(16));
+                Op(new Int32Add());
+                Op(new LocalSet(LT0));
+                Op(new LocalGet(LT2));
+                Op(new Int32Constant(1));
+                Op(new Int32Subtract());
+                Op(new LocalSet(LT2));
+                Op(new Branch(0));
+            }
+            CloseNested();
+            CloseNested();                                  // $found: LT0
+            Op(new LocalGet(LT0));
+            Op(new Int64Load { Offset = 8 });
+            Op(new LocalSet(LU1));                          // the old value
+            Op(new LocalGet(LU1));
+            Op(new Int64Constant(WasmAbi.GlobalVarPayloadSentinel));
+            Op(new Int64Equal());
+            Op(new BranchIf(0));                            // a snapshot -> $slow
+
+            // The value as the host keeps it.
+            RegLoad(1); Op(new LocalSet(LC0));
+            TagOfC0();
+            Op(new Int32Constant((int)Tag.Ref));
+            Op(new Int32Equal());
+            OpenIf();
+            {
+                Deref();
+                TagOfC0(); Op(new LocalSet(LKT));
+                Op(new LocalGet(LKT)); Op(new Int32Constant((int)Tag.Ref)); Op(new Int32Equal());
+                Op(new LocalGet(LKT)); Op(new Int32Constant((int)Tag.AttVar)); Op(new Int32Equal());
+                Op(new Int32Or());
+                OpenIf();
+                {
+                    Op(new LocalGet(LDa));
+                    Op(new Int64ExtendInt32Unsigned());
+                    Op(new LocalSet(LC0));                  // Ref(home)
+                }
+                CloseNested();
+            }
+            CloseNested();
+
+            // The ring entry, the row, the trail entry.
+            LoadSlot32(WasmAbi.GlobalWriteBase);
+            LoadSlot32(WasmAbi.GlobalWriteTop);
+            Op(new Int32Constant(WasmAbi.GlobalWriteEntryLongs * 8));
+            Op(new Int32Multiply());
+            Op(new Int32Add());
+            Op(new LocalSet(LKH));
+            Op(new LocalGet(LKH));
+            Op(new LocalGet(LT1));
+            Op(new Int64ExtendInt32Unsigned());
+            Op(new Int64Store());
+            Op(new LocalGet(LKH));
+            Op(new LocalGet(LC0));
+            Op(new Int64Store { Offset = 8 });
+            Op(new LocalGet(LKH));
+            Op(new LocalGet(LU1));
+            Op(new Int64Store { Offset = 16 });
+            Op(new LocalGet(LT0));
+            Op(new LocalGet(LC0));
+            Op(new Int64Store { Offset = 8 });
+
+            LoadSlot32(WasmAbi.ExtraTrailBase);
+            LoadSlot32(WasmAbi.ExtraTrailTop);
+            Op(new Int32Constant(WasmAbi.ExtraTrailEntryBytes));
+            Op(new Int32Multiply());
+            Op(new Int32Add());
+            Op(new LocalSet(LKT));
+            Op(new LocalGet(LKT));
+            Op(new Int32Constant((int)Shumway.Core.TrailType.MutableSet));
+            Op(new Int32Store8 { Offset = (uint)WasmAbi.ExtraTrailTypeOffset });
+            Op(new LocalGet(LKT));
+            LoadSlot32(WasmAbi.ExternalTrailLogLength);
+            LoadSlot32(WasmAbi.GlobalWriteTop);
+            Op(new Int32Add());
+            Op(new Int32Store { Offset = (uint)WasmAbi.ExtraTrailHeapIdxOffset });
+            Op(new LocalGet(LKT));
+            Op(new Int64Constant(0));
+            Op(new Int64Store { Offset = (uint)WasmAbi.ExtraTrailOldValueOffset });
+            Op(new LocalGet(LKT));
+            Op(new LocalGet(LTR));
+            Op(new Int32Store { Offset = (uint)WasmAbi.ExtraTrailMarkerOffset });
+            StoreSlot64(WasmAbi.ExtraTrailTop, () =>
+            {
+                LoadSlot64(WasmAbi.ExtraTrailTop);
+                Op(new Int64Constant(1));
+                Op(new Int64Add());
+            });
+            StoreSlot64(WasmAbi.GlobalWriteTop, () =>
+            {
+                LoadSlot64(WasmAbi.GlobalWriteTop);
+                Op(new Int64Constant(1));
+                Op(new Int64Add());
+            });
+            Op(new Branch(1));                              // -> $done
+            CloseNested();                                  // $slow
+            exit();
+            CloseNested();                                  // $done
+        }
+
+        /// <summary><c>'$findall_collect'(List)</c> of a call that is still
+        /// all in the ring: its buffer's zero entry and every solution after
+        /// it. The list is laid out as the host's collect lays it, a pair per
+        /// solution, and the entries are taken back off the ring, so the host
+        /// never sees the call. A call whose buffer the host already holds (a
+        /// request since drained the ring) is the request.</summary>
+        private void EmitInlineFindallCollect(int pc, Action exit)
+        {
+            EmitFlagsCheck(pc);
+            long nil = _env.AtomCell(AtomTable.EmptyListId);
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+            LoadSlot32(WasmAbi.FindallRingBase);
+            Op(new Int32EqualZero());
+            Op(new BranchIf(0));                            // -> $slow
+            // The list goes to a fresh variable, the shape findall/3 has:
+            // a binding that cannot fail. Anything else is the host's to
+            // unify, and a failure there pops the buffer it holds.
+            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            TagOfC0();
+            Op(new Int32Constant((int)Tag.Ref));
+            Op(new Int32NotEqual());
+            Op(new BranchIf(0));                            // -> $slow
+            Op(new LocalGet(LDa));
+            Op(new LocalSet(LAtHome));                      // the variable
+
+            // The innermost buffer still parked: the last zero entry.
+            LoadSlot32(WasmAbi.FindallRingTop);
+            Op(new LocalSet(LKT));
+            OpenBlock();                                    // $found
+            OpenLoop();
+            {
+                Op(new LocalGet(LKT));
+                Op(new Int32EqualZero());
+                Op(new BranchIf(2));                        // none parked -> $slow
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant(1));
+                Op(new Int32Subtract());
+                Op(new LocalSet(LKT));
+                LoadSlot32(WasmAbi.FindallRingBase);
+                Op(new LocalGet(LKT));
+                Op(new Int32Constant(3));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new Int64Load());
+                Op(new Int64EqualZero());
+                Op(new BranchIf(1));                        // -> $found
+                Op(new Branch(0));
+            }
+            CloseNested();
+            CloseNested();                                  // $found: LKT
+
+            // n = top - LKT - 1 solutions, two cells each.
+            LoadSlot32(WasmAbi.FindallRingTop);
+            Op(new LocalGet(LKT));
+            Op(new Int32Subtract());
+            Op(new Int32Constant(1));
+            Op(new Int32Subtract());
+            Op(new LocalSet(LKH));
+            Op(new LocalGet(LH));
+            Op(new LocalGet(LKH));
+            Op(new Int32Constant(1));
+            Op(new Int32ShiftLeft());
+            Op(new Int32Add());
+            LoadSlot32(WasmAbi.HeapWatermark);
+            Op(new Int32GreaterThanOrEqualSigned());
+            Op(new BranchIf(0));                            // -> $slow
+
+            Op(new Int64Constant(nil));
+            Op(new LocalSet(LU0));                          // the list
+            Op(new LocalGet(LKH));
+            OpenIf();
+            {
+                // pair i at H + 2i: the solution, then the next pair or [].
+                Op(new Int32Constant(0));
+                Op(new LocalSet(LKStop));
+                OpenBlock();
+                OpenLoop();
+                {
+                    Op(new LocalGet(LKStop));
+                    Op(new LocalGet(LKH));
+                    Op(new Int32GreaterThanOrEqualSigned());
+                    Op(new BranchIf(1));
+                    Op(new LocalGet(LKStop));
+                    Op(new Int32Constant(1));
+                    Op(new Int32ShiftLeft());
+                    Op(new LocalGet(LH));
+                    Op(new Int32Add());
+                    Op(new LocalSet(LKBR));                 // the pair
+                    CellStoreDyn(LHeapB, LKBR, 0, () =>
+                    {
+                        LoadSlot32(WasmAbi.FindallRingBase);
+                        Op(new LocalGet(LKT));
+                        Op(new LocalGet(LKStop));
+                        Op(new Int32Add());
+                        Op(new Int32Constant(1));
+                        Op(new Int32Add());
+                        Op(new Int32Constant(3));
+                        Op(new Int32ShiftLeft());
+                        Op(new Int32Add());
+                        Op(new Int64Load());
+                    });
+                    Op(new LocalGet(LKStop));
+                    Op(new Int32Constant(1));
+                    Op(new Int32Add());
+                    Op(new LocalSet(LKStop));
+                    CellStoreDyn(LHeapB, LKBR, 1, () =>
+                    {
+                        Op(new LocalGet(LKStop));
+                        Op(new LocalGet(LKH));
+                        Op(new Int32LessThanSigned());
+                        OpenIf(BlockType.Int64);
+                        {
+                            Op(new LocalGet(LKBR));
+                            Op(new Int32Constant(2));
+                            Op(new Int32Add());
+                            Op(new Int64ExtendInt32Unsigned());
+                            Op(new Int64Constant((long)Tag.Lis << Cell.TagShift));
+                            Op(new Int64Or());
+                        }
+                        OpenElse();
+                        Op(new Int64Constant(nil));
+                        CloseNested();
+                    });
+                    Op(new Branch(0));
+                }
+                CloseNested();
+                CloseNested();
+                TaggedI32(LH, Tag.Lis);
+                Op(new LocalSet(LU0));
+                Op(new LocalGet(LH));
+                Op(new LocalGet(LKH));
+                Op(new Int32Constant(1));
+                Op(new Int32ShiftLeft());
+                Op(new Int32Add());
+                Op(new LocalSet(LH));
+            }
+            CloseNested();
+
+            // The call is the module's now: off the ring, then the list bound.
+            StoreSlot64(WasmAbi.FindallRingTop, () =>
+            {
+                Op(new LocalGet(LKT));
+                Op(new Int64ExtendInt32Signed());
+            });
+            Op(new LocalGet(LAtHome));
+            Op(new LocalSet(LDa));
+            EmitBindDa(pc, () => Op(new LocalGet(LU0)));
+            Op(new Branch(1));                              // -> $done
+            CloseNested();                                  // $slow
+            exit();
+            CloseNested();                                  // $done
+        }
+
+        /// <summary><c>compare(Order, A, B)</c> over the module's comparator:
+        /// the order atom unified with X0. An Order bound to anything but the
+        /// three atoms is an error the host raises, and a pair the comparator
+        /// hands back (two atoms, a float, ...) the host orders; so does
+        /// <paramref name="exit"/>, before anything is written.</summary>
+        private void EmitInlineCompare3(int pc, Action exit)
+        {
+            EmitFlagsCheck(pc);
+            long lt = _env.AtomCell(AtomTable.Intern("<", permanent: true).Id);
+            long eq = _env.AtomCell(AtomTable.Intern("=", permanent: true).Id);
+            long gt = _env.AtomCell(AtomTable.Intern(">", permanent: true).Id);
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+
+            // Order: a variable, or one of the three atoms.
+            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            TagOfC0();
+            Op(new Int32Constant((int)Tag.Ref));
+            Op(new Int32NotEqual());
+            OpenIf();
+            {
+                Op(new LocalGet(LC0)); Op(new Int64Constant(lt)); Op(new Int64NotEqual());
+                Op(new LocalGet(LC0)); Op(new Int64Constant(eq)); Op(new Int64NotEqual());
+                Op(new Int32And());
+                Op(new LocalGet(LC0)); Op(new Int64Constant(gt)); Op(new Int64NotEqual());
+                Op(new Int32And());
+                Op(new BranchIf(1));                        // -> $slow
+            }
+            CloseNested();
+
+            // The comparator works above the stack top.
+            StoreSlotFromI32Local(WasmAbi.StackTop, LST);
+            RegLoad(1);
+            RegLoad(2);
+            Op(new LocalGet(0));
+            Op(new WebAssembly.Instructions.Call(UseHelper(CompareIndex)));
+            Op(new LocalSet(LT0));
+            Op(new LocalGet(LT0));
+            Op(new Int32Constant(3));
+            Op(new Int32Equal());
+            Op(new BranchIf(0));                            // -> $slow
+
+            // 0 equal, 1 smaller, 2 greater.
+            Op(new LocalGet(LT0));
+            OpenIf();
+            {
+                Op(new LocalGet(LT0));
+                Op(new Int32Constant(1));
+                Op(new Int32Equal());
+                OpenIf();
+                Op(new Int64Constant(lt)); Op(new LocalSet(LU0));
+                OpenElse();
+                Op(new Int64Constant(gt)); Op(new LocalSet(LU0));
+                CloseNested();
+            }
+            OpenElse();
+            Op(new Int64Constant(eq)); Op(new LocalSet(LU0));
+            CloseNested();
+            EmitUnifyTwo(() => RegLoad(0), () => Op(new LocalGet(LU0)), pc, exit);
+            Op(new Branch(1));                              // -> $done
+            CloseNested();                                  // $slow
+            exit();
+            CloseNested();                                  // $done
+        }
+
+        /// <summary>An arithmetic comparison of X0 and X1 when both are small
+        /// integers. Anything else (an expression to evaluate, a float, a big
+        /// integer, a rational, a variable) is the host's to evaluate or to
+        /// raise on, through <paramref name="exit"/>, before anything is
+        /// decided.</summary>
+        private void EmitInlineArithCompare(int pc, WasmArithCompare rel, Action exit)
+        {
+            EmitFlagsCheck(pc);
+            RegLoad(0); Op(new LocalSet(LC0)); Deref();
+            Op(new LocalGet(LC0)); Op(new LocalSet(LC2));
+            RegLoad(1); Op(new LocalSet(LC0)); Deref();
+            OpenBlock();                                    // $done
+            OpenBlock();                                    // $slow
+
+            // Both Int: xor with the Int tag clears the tag bits of an Int
+            // cell and of no other.
+            long intTag = (long)Tag.Int << 60;
+            Op(new LocalGet(LC2)); Op(new Int64Constant(intTag)); Op(new Int64ExclusiveOr());
+            Op(new LocalGet(LC0)); Op(new Int64Constant(intTag)); Op(new Int64ExclusiveOr());
+            Op(new Int64Or());
+            Op(new Int64Constant(60));
+            Op(new Int64ShiftRightUnsigned());
+            Op(new Int32WrapInt64());
+            Op(new BranchIf(0));                            // -> $slow
+
+            // The same tag on both sides, so shifted past it the cells order
+            // as their values do.
+            Op(new LocalGet(LC2)); Op(new Int64Constant(4)); Op(new Int64ShiftLeft());
+            Op(new LocalGet(LC0)); Op(new Int64Constant(4)); Op(new Int64ShiftLeft());
+            Op(rel switch
+            {
+                WasmArithCompare.Equal => new Int64Equal(),
+                WasmArithCompare.NotEqual => new Int64NotEqual(),
+                WasmArithCompare.Less => new Int64LessThanSigned(),
+                WasmArithCompare.Greater => new Int64GreaterThanSigned(),
+                WasmArithCompare.LessOrEqual => new Int64LessThanOrEqualSigned(),
+                WasmArithCompare.GreaterOrEqual => (Instruction)new Int64GreaterThanOrEqualSigned(),
+                _ => throw new ArgumentOutOfRangeException(nameof(rel)),
+            });
+            Op(new Int32EqualZero());
+            OpenIf();
+            GoFail();
+            CloseNested();
+            Op(new Branch(1));                              // -> $done
+            CloseNested();                                  // $slow
+            exit();
+            CloseNested();                                  // $done
+        }
+
+        /// <summary>A cell of <paramref name="tag"/> whose payload is the i32
+        /// in <paramref name="local"/>.</summary>
+        private void TaggedI32(uint local, Tag tag)
+        {
+            Op(new LocalGet(local));
+            Op(new Int64ExtendInt32Unsigned());
+            Op(new Int64Constant((long)tag << Cell.TagShift));
+            Op(new Int64Or());
+        }
+
         /// <summary>A one-argument test answered by one of the module's
         /// walkers over X0 -- 0 fails, 1 succeeds, 2 declines to the host.
         /// </summary>
@@ -8660,8 +10365,24 @@ public static class WasmPredicateCompiler
 
         private void EmitExecute(Instr ins)
         {
-            EmitFlagsCheck(ins.Pc);
+            EmitExecuteWakePoint(ins, null);
             EmitExecuteTail(ins.Pc);
+        }
+
+        /// <summary>An execute's boundary: a wakeup resumes by dispatching the
+        /// callee, CP untouched; at a builtin callee, at this instruction.
+        /// </summary>
+        private void EmitExecuteWakePoint(Instr ins, Action? beforeRequest)
+        {
+            if (!_callee.TryGetValue(ins.Pc, out int callee)) { EmitFlagsCheck(ins.Pc); return; }
+            if (_env.TryGetBuiltin(callee, out int builtinId))
+            {
+                // Resumed at this instruction, before anything it pops.
+                EmitResumableWakePoint(ins, Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Arity);
+                return;
+            }
+            EmitWakePoint(ins.Pc, FunctorTable.Lookup(callee).Arity,
+                          () => _env.EncodeCallTarget(callee), beforeRequest);
         }
 
         private void EmitExecuteTail(int pc)
@@ -8694,6 +10415,11 @@ public static class WasmPredicateCompiler
                 {
                     EmitFlagsCheck(pc);
                     if (!tailOk) GoFail();
+                    EmitProceedReturn();
+                    return;
+                }
+                if (TryEmitWakeSupport(builtinId, pc, () => EmitBuiltinRequest(builtinId, 0, -1)))
+                {
                     EmitProceedReturn();
                     return;
                 }
@@ -9242,17 +10968,32 @@ public static class WasmPredicateCompiler
             Op(new LocalGet(LT1)); Op(new Int64Load { Offset = 2 * 8 });
             Op(new Int32WrapInt64()); Op(new LocalSet(LCP));        // ctl[1]
 
-            // The extra trail cannot be unwound from here; equal tops means
-            // there is nothing to unwind. Otherwise the host unwinds both
-            // trails (interleaved: an extra entry may restore a cell a binding
-            // entry also names) and re-enters this retry, which then finds
-            // the tops equal. Nothing above has written state the retry does
-            // not write again. Without the builtin, it steps aside.
+            // Equal tops means there is no extra entry to unwind. Entries
+            // that only put a cell back the module unwinds itself, with the
+            // binding trail interleaved (an extra entry may restore a cell a
+            // binding entry also names); any other kind restores managed
+            // state, and then the host unwinds both trails and re-enters this
+            // retry, which finds the tops equal. Nothing above has written
+            // state the retry does not write again. Without the builtin, it
+            // steps aside.
             Op(new LocalGet(LT1)); Op(new Int64Load { Offset = 6 * 8 });
             Op(new Int32WrapInt64());
             LoadSlot32(WasmAbi.ExtraTrailTop);
             Op(new Int32NotEqual());
             OpenIf();
+            Op(new LocalGet(LTR)); Op(new Int64ExtendInt32Unsigned());
+            Op(new Int64Constant(32)); Op(new Int64ShiftLeft());
+            Op(new LocalGet(LT1)); Op(new Int64Load { Offset = 6 * 8 });
+            Op(new Int64Constant(0xFFFF_FFFFL)); Op(new Int64And());
+            Op(new Int64Or());
+            Op(new LocalGet(0));
+            Op(new WebAssembly.Instructions.Call(UseHelper(UnwindIndex)));
+            Op(new LocalTee(LT2));
+            Op(new Int32Constant(0));
+            Op(new Int32GreaterThanOrEqualSigned());
+            OpenIf();
+            Op(new LocalGet(LT2)); Op(new LocalSet(LTR));
+            OpenElse();
             int unwindId = _env.UnwindCpTrailsBuiltinId;
             if (unwindId >= 0)
             {
@@ -9274,6 +11015,7 @@ public static class WasmPredicateCompiler
                 { LoadSlot32(WasmAbi.ExtraTrailTop); Op(new Int64ExtendInt32Signed()); });
                 EmitDeopt(pcForDeopt, 23);
             }
+            CloseNested();                                  // the helper's answer
             CloseNested();
 
             // Unwind the binding trail to the saved top.
@@ -10165,13 +11907,48 @@ public static class WasmPredicateCompiler
                     Op(new Int32Constant((int)Tag.AttVar));
                     Op(new Int32Equal());
                     OpenIf();
-                    EmitDeopt(pc, 24);
-                    CloseNested();
+                    EmitParkAttvarBindStructure(functorCell, pc);
+                    OpenElse();
                     GoFail();
+                    CloseNested();
                 }
                 CloseNested();
             }
             CloseNested();
+        }
+
+        /// <summary>get_structure and unify_structure on an attributed
+        /// variable, as the host lays it out: STR(h+1) at h, the functor at
+        /// h+1, the variable bound to REF(h), the arguments written next.
+        /// </summary>
+        private void EmitParkAttvarBindStructure(long functorCell, int pc)
+        {
+            EmitParkAttvarBind(pc, 2, () =>
+            {
+                CellStoreDyn(LHeapB, LH, 0, () => PushTaggedH(Tag.Str, 1));
+                CellStoreDyn(LHeapB, LH, 1, () => Op(new Int64Constant(functorCell)));
+            }, PushAtIns);
+            Op(new LocalGet(LH)); Op(new LocalSet(LS));
+            Op(new Int32Constant(1)); Op(new LocalSet(LMode));
+        }
+
+        /// <summary>get_list and unify_list on an attributed variable:
+        /// LIS(h+1) at h, the variable bound to REF(h), the pair written
+        /// next.</summary>
+        private void EmitParkAttvarBindList(int pc)
+        {
+            EmitParkAttvarBind(pc, 1,
+                () => CellStoreDyn(LHeapB, LH, 0, () => PushTaggedH(Tag.Lis, 1)),
+                PushAtIns);
+            Op(new LocalGet(LH)); Op(new LocalSet(LS));
+            Op(new Int32Constant(1)); Op(new LocalSet(LMode));
+        }
+
+        /// <summary>REF(LAtIns): where the bound term's cell went.</summary>
+        private void PushAtIns()
+        {
+            Op(new LocalGet(LAtIns));
+            Op(new Int64ExtendInt32Unsigned());
         }
 
         private void EmitGetList(int reg, int pc)
@@ -10203,20 +11980,24 @@ public static class WasmPredicateCompiler
                 }
                 OpenElse();
                 {
-                    // An attributed variable needs its hooks; a packed string
-                    // is a cons but with its own representation. Both step
-                    // aside; everything else plainly fails.
+                    // A packed string is a cons with its own representation,
+                    // and steps aside; everything else plainly fails.
                     Op(new LocalGet(LT0));
                     Op(new Int32Constant((int)Tag.AttVar));
                     Op(new Int32Equal());
-                    Op(new LocalGet(LT0));
-                    Op(new Int32Constant((int)Tag.Pstr));
-                    Op(new Int32Equal());
-                    Op(new Int32Or());
                     OpenIf();
-                    EmitDeopt(pc, 24);
+                    EmitParkAttvarBindList(pc);
+                    OpenElse();
+                    {
+                        Op(new LocalGet(LT0));
+                        Op(new Int32Constant((int)Tag.Pstr));
+                        Op(new Int32Equal());
+                        OpenIf();
+                        EmitDeopt(pc, 24);
+                        CloseNested();
+                        GoFail();
+                    }
                     CloseNested();
-                    GoFail();
                 }
                 CloseNested();
             }
@@ -10409,9 +12190,10 @@ public static class WasmPredicateCompiler
                         Op(new Int32Constant((int)Tag.AttVar));
                         Op(new Int32Equal());
                         OpenIf();
-                        EmitDeopt(pc, 24);
-                        CloseNested();
+                        EmitParkAttvarBindStructure(functorCell, pc);
+                        OpenElse();
                         GoFail();
+                        CloseNested();
                     }
                     CloseNested();
                 }
@@ -10464,14 +12246,19 @@ public static class WasmPredicateCompiler
                         Op(new LocalGet(LT0));
                         Op(new Int32Constant((int)Tag.AttVar));
                         Op(new Int32Equal());
-                        Op(new LocalGet(LT0));
-                        Op(new Int32Constant((int)Tag.Pstr));
-                        Op(new Int32Equal());
-                        Op(new Int32Or());
                         OpenIf();
-                        EmitDeopt(pc, 24);
+                        EmitParkAttvarBindList(pc);
+                        OpenElse();
+                        {
+                            Op(new LocalGet(LT0));
+                            Op(new Int32Constant((int)Tag.Pstr));
+                            Op(new Int32Equal());
+                            OpenIf();
+                            EmitDeopt(pc, 24);
+                            CloseNested();
+                            GoFail();
+                        }
                         CloseNested();
-                        GoFail();
                     }
                     CloseNested();
                 }
@@ -10865,6 +12652,16 @@ public static class WasmPredicateCompiler
 
         private const int AEvalMaxDepth = 8;
         private int _aevalDepth;
+
+        // ADR-049 point 9: a builtin is a goal, and a goal wakes. Inside a
+        // chain the queue starts empty at every entry the module has --
+        // a member's, an alternative's, a call's return -- and only a binding
+        // of an attributed variable fills it, so a builtin needs the test
+        // only behind one, in its run or before a join it reaches. The
+        // other boundaries test the flags word anyway.
+        private bool _wakeMayPend;
+        private readonly HashSet<int> _wakeJoins = new();
+        private readonly HashSet<int> _runsEmitted = new();
         private int _aevalStart;
         // ArithBounds' operand width for the open sequence (0: a check per
         // operation), and whether its is/2 result is then a 60-bit int.
@@ -10948,6 +12745,20 @@ public static class WasmPredicateCompiler
 
         // `!` as an atom. Compared as a relocatable atom cell, never as a
         // baked id: atom ids are per process.
+        // The control constructs '$call'/2 hands to a prelude helper with the
+        // barrier in X2 (the host dispatcher's BarrierHelperJump).
+        private static readonly (int Construct, int Helper)[] BarrierConstructs =
+        {
+            (Fid(",", 2), Fid("$call_conj", 3)),
+            (Fid(";", 2), Fid("$call_disj", 3)),
+            (Fid("->", 2), Fid("$call_arrow", 3)),
+            (Fid("*->", 2), Fid("$call_softarrow", 3)),
+        };
+        private static readonly int IfThenFid = Fid("->", 2);
+        private static readonly int SoftIfThenFid = Fid("*->", 2);
+        private static int Fid(string name, int arity)
+            => FunctorTable.Intern(AtomTable.Intern(name, permanent: true).Id, arity);
+
         private static readonly int CutAtomId =
             Shumway.Core.AtomTable.Intern("!", permanent: true).Id;
         private static readonly int TrueAtomId =
@@ -11669,6 +13480,101 @@ public static class WasmPredicateCompiler
         // divide-by-zero checks, same promotion of a mixed pair to float.
         // Everything else declines, and declining is always sound -- the
         // engine then evaluates the whole expression itself, errors and all.
+
+        // ---- the extra trail's unwind: module function K+8 ----
+        // (packed: i64, mailbox: i32) -> i32. packed = (TR << 32) | target:
+        // the binding trail's top and the extra top a choice point saved.
+        // Returns the binding trail's new top with both trails unwound, in
+        // UnwindTrails' order, or -1 having touched nothing, when an entry
+        // above the target restores managed state rather than a cell.
+
+        private static List<Instruction> BuildUnwindExtraBody()
+        {
+            const uint P = 0, MB = 1;
+            const uint HEAPB = 2, TRB = 3, EXB = 4, TR = 5, TOP = 6, TGT = 7,
+                       E = 8, MARK = 9, DA = 10, K = 11;
+
+            var code = new List<Instruction>();
+            void O(Instruction x) => code.Add(x);
+            void LG(uint n) => O(new LocalGet(n));
+            void LSet(uint n) => O(new LocalSet(n));
+            void I32(int v) => O(new Int32Constant(v));
+            void SlotToI32(int slot, uint local)
+            {
+                LG(MB); O(new Int64Load { Offset = WasmAbi.ByteOffset(slot) });
+                O(new Int32WrapInt64()); LSet(local);
+            }
+            void Entry(uint index, uint into)
+            {
+                LG(EXB); LG(index); I32(WasmAbi.ExtraTrailEntryBytes); O(new Int32Multiply());
+                O(new Int32Add()); LSet(into);
+            }
+            void Decrement(uint n) { LG(n); I32(1); O(new Int32Subtract()); LSet(n); }
+
+            LG(P); O(new Int32WrapInt64()); LSet(TGT);
+            LG(P); O(new Int64Constant(32)); O(new Int64ShiftRightUnsigned());
+            O(new Int32WrapInt64()); LSet(TR);
+            SlotToI32(WasmAbi.HeapBase, HEAPB);
+            SlotToI32(WasmAbi.BindingTrailBase, TRB);
+            SlotToI32(WasmAbi.ExtraTrailBase, EXB);
+            SlotToI32(WasmAbi.ExtraTrailTop, TOP);
+
+            // Pass one: every entry above the target only puts a cell back.
+            LG(TOP); LSet(K);
+            O(new Block(BlockType.Empty));                  // $ok
+            O(new Loop(BlockType.Empty));
+            LG(K); LG(TGT); O(new Int32LessThanOrEqualSigned()); O(new BranchIf(1));
+            Decrement(K);
+            Entry(K, E);
+            LG(E); O(new Int32Load8Unsigned { Offset = (uint)WasmAbi.ExtraTrailTypeOffset });
+            LSet(DA);
+            LG(DA); I32((int)Shumway.Core.TrailType.ValueChange); O(new Int32NotEqual());
+            LG(DA); I32((int)Shumway.Core.TrailType.BigIntAlloc); O(new Int32NotEqual());
+            O(new Int32And());
+            O(new If(BlockType.Empty)); I32(-1); O(new Return()); O(new End());
+            O(new Branch(0));
+            O(new End());
+            O(new End());                                   // $ok
+
+            // Pass two: the binding entries above each extra entry's marker
+            // first, then the entry.
+            O(new Block(BlockType.Empty));                  // $out
+            O(new Loop(BlockType.Empty));
+            LG(TOP); LG(TGT); O(new Int32LessThanOrEqualSigned()); O(new BranchIf(1));
+            Decrement(TOP);
+            Entry(TOP, E);
+            LG(E); O(new Int32Load { Offset = (uint)WasmAbi.ExtraTrailMarkerOffset }); LSet(MARK);
+            O(new Block(BlockType.Empty));
+            O(new Loop(BlockType.Empty));
+            LG(TR); LG(MARK); O(new Int32LessThanOrEqualSigned()); O(new BranchIf(1));
+            Decrement(TR);
+            LG(TRB); LG(TR); I32(2); O(new Int32ShiftLeft()); O(new Int32Add());
+            O(new Int32Load()); LSet(DA);
+            LG(HEAPB); LG(DA); I32(3); O(new Int32ShiftLeft()); O(new Int32Add());
+            LG(DA); O(new Int64ExtendInt32Unsigned());
+            O(new Int64Store());
+            O(new Branch(0));
+            O(new End());
+            O(new End());
+            LG(E); O(new Int32Load8Unsigned { Offset = (uint)WasmAbi.ExtraTrailTypeOffset });
+            I32((int)Shumway.Core.TrailType.ValueChange); O(new Int32Equal());
+            O(new If(BlockType.Empty));
+            LG(HEAPB);
+            LG(E); O(new Int32Load { Offset = (uint)WasmAbi.ExtraTrailHeapIdxOffset });
+            I32(3); O(new Int32ShiftLeft()); O(new Int32Add());
+            LG(E); O(new Int64Load { Offset = (uint)WasmAbi.ExtraTrailOldValueOffset });
+            O(new Int64Store());
+            O(new End());
+            O(new Branch(0));
+            O(new End());
+            O(new End());                                   // $out
+
+            LG(MB); LG(TGT); O(new Int64ExtendInt32Signed());
+            O(new Int64Store { Offset = WasmAbi.ByteOffset(WasmAbi.ExtraTrailTop) });
+            LG(TR);
+            O(new End());
+            return code;
+        }
 
         // ---- ground/1: module function K+5 ----
         // (term: i64, mailbox: i32) -> i32: 1 ground, 0 not, 2 decline.

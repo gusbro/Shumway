@@ -200,9 +200,47 @@ internal static partial class WebShumwayApp
     {
         lock (CompileGate)
         {
+            _bakeSession = null;
+            _bakeSessionRoot = null;
             _compiling = false;
             Monitor.PulseAll(CompileGate);
         }
+    }
+
+    // The baking engine of the compile holding the gate, shared by every
+    // library it compiles: one engine with the prelude and the collection's
+    // libraries loaded once, not one per library.
+    private static WasmBakeSession? _bakeSession;
+    private static string? _bakeSessionRoot;
+
+    // A measurement switch: false bakes each library in an engine of its
+    // own, as before the session, to compare the two in one page.
+    private static bool _sharedBake = true;
+
+    // A Task: the threaded runtime refuses a synchronous export.
+    [JSExport]
+    internal static Task LibraryBakeShared(bool on)
+    {
+        _sharedBake = on;
+        return Task.CompletedTask;
+    }
+
+    // The bake's own account of its phases, beside the compile's.
+    private static void BakeLog(string line)
+    {
+        if (!line.StartsWith("wasm: skipping", StringComparison.Ordinal))
+            _compileLog?.WriteLine("%   " + line);
+    }
+
+    private static WasmBakeSession BakeSessionFor(string root, string? dialect)
+    {
+        if (!_sharedBake) return new WasmBakeSession(e => AddCollection(e, root, dialect));
+        if (_bakeSession is null || _bakeSessionRoot != root)
+        {
+            _bakeSession = new WasmBakeSession(e => AddCollection(e, root, dialect));
+            _bakeSessionRoot = root;
+        }
+        return _bakeSession;
     }
 
     // Libraries compiled on demand since the page last asked: it stores them,
@@ -254,10 +292,15 @@ internal static partial class WebShumwayApp
         EnterCompileGate(onDemand: true);
         try
         {
+            _compileLog = say;
             // The batch may have been compiling this very library.
             failed = File.Exists(target) ? null : CompileLibrary(root, name, library);
         }
-        finally { ExitCompileGate(); }
+        finally
+        {
+            _compileLog = null;
+            ExitCompileGate();
+        }
 
         if (failed is null && File.Exists(target))
         {
@@ -298,6 +341,40 @@ internal static partial class WebShumwayApp
     private static string? CompileLibrary(string root, string name, string library,
                                           HashSet<string>? compiling = null)
     {
+        _dependencySeconds.Push(0);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        double bakeSeconds = 0;
+        try
+        {
+            string? failed = CompileLibrary(root, name, library, compiling,
+                                            s => bakeSeconds = s, out double consultSeconds);
+            double dependencies = _dependencySeconds.Peek();
+            if (failed is null)
+                _compileLog?.WriteLine(
+                    $"% library({library}) compiled in {clock.Elapsed.TotalSeconds:0.0} s: "
+                    + $"consult {consultSeconds - dependencies:0.0} s, wasm module {bakeSeconds:0.0} s"
+                    + (dependencies > 0 ? $", the libraries it imports {dependencies:0.0} s." : "."));
+            return failed;
+        }
+        finally
+        {
+            _dependencySeconds.Pop();
+            if (_dependencySeconds.Count > 0)
+                _dependencySeconds.Push(_dependencySeconds.Pop() + clock.Elapsed.TotalSeconds);
+        }
+    }
+
+    // Where an on-demand compile says how long each library took, and the
+    // time of the libraries each one on the way up compiled first. The
+    // compile gate makes both single-threaded.
+    private static TextWriter? _compileLog;
+    private static readonly Stack<double> _dependencySeconds = new();
+
+    private static string? CompileLibrary(string root, string name, string library,
+                                          HashSet<string>? compiling, Action<double> baked,
+                                          out double consultSeconds)
+    {
+        consultSeconds = 0;
         if (ProvidedNatively(root, library))
             return $"{library} is provided by Shumway itself: there is nothing to compile";
         string sources = Path.Combine(root, SourceDir);
@@ -319,11 +396,13 @@ internal static partial class WebShumwayApp
             var errors = new List<ShmoCompileError>();
             // The root first, as on the page's engine: a bundle there is what
             // library(X) finds.
+            var consultClock = System.Diagnostics.Stopwatch.StartNew();
             var compiled = ShmoViaConsult.CompileMany(
                 new[] { entry }, new[] { root, sources }, ShmoBuildMode.Release, errors,
                 dialect, said,
                 configure: e => e.LibrarySourceResolver =
                     (dep, source) => CompileDependency(root, name, dep, source, compiling));
+            consultSeconds = consultClock.Elapsed.TotalSeconds;
             if (errors.Count > 0)
             {
                 string text = string.Join(
@@ -347,8 +426,15 @@ internal static partial class WebShumwayApp
                 .Select(c => new BundleArchiveMember(
                     c.ModuleName + ".shmo", ShmoWriter.ToBytes(c.Object)))
                 .ToList(),
-                wasm ? b => WasmBundleTier.Bake(b, stdlib: false,
-                                                prepare: e => AddCollection(e, root, dialect))
+                wasm ? b =>
+                     {
+                         var bakeClock = System.Diagnostics.Stopwatch.StartNew();
+                         try
+                         {
+                             return BakeSessionFor(root, dialect).Bake(b, BakeLog);
+                         }
+                         finally { baked(bakeClock.Elapsed.TotalSeconds); }
+                     }
                      : null);
             // Written under a temporary name and moved into place, so what
             // `library(X)` can see is either the old bundle or the new one

@@ -31,12 +31,33 @@ public static class ArithFunctorTable
     private static int _filled;
     private static readonly object Lock = new();
 
-    /// <summary>Rows for every functor id interned so far. The array is
-    /// replaced on growth, so a caller re-reads it per staging.</summary>
-    public static int[] Rows { get { lock (Lock) { Fill(); return _rows; } } }
+    // Rows and fill as one object, so a reader without the lock never takes a
+    // length from after a growth with the array from before it.
+    private sealed record Image(int[] Rows, int Filled);
+    private static Image _image = new(_rows, 0);
+
+    /// <summary>Rows for every functor id interned so far, and how many are
+    /// live, from the same fill. The array is replaced on growth, so a caller
+    /// re-reads it per staging; the lock is taken only when a functor was
+    /// interned since the last fill.</summary>
+    public static int[] Current(out int length)
+    {
+        Image image = Volatile.Read(ref _image);
+        if (image.Filled < FunctorTable.IdLimit)
+        {
+            lock (Lock) { Fill(); image = _image; }
+        }
+        length = image.Filled;
+        return image.Rows;
+    }
+
+    public static int[] Rows => Current(out _);
 
     /// <summary>How many of them are live.</summary>
-    public static int Length { get { lock (Lock) { Fill(); return _filled; } } }
+    public static int Length
+    {
+        get { Current(out int length); return length; }
+    }
 
     /// <summary>The row for one functor, for tests and for the host side of
     /// anything that wants to agree with the module.</summary>
@@ -85,6 +106,7 @@ public static class ArithFunctorTable
             _rowAtoms[id] = atom;
         }
         _filled = limit;
+        Volatile.Write(ref _image, new Image(_rows, limit));
     }
 
     // A row stays as written, and a dead atom's id goes to another name (ADR-003):

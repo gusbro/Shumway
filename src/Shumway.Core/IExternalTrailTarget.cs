@@ -18,3 +18,13 @@ public interface IExternalTrailTarget
     /// the entry).</summary>
     void RestoreExternal(int key, Cell oldValue, bool hadOldValue);
 }
+
+/// <summary>A store a compiled module writes backtrackably, through the host:
+/// the module parks the write, and the host applies it when it takes the
+/// parked writes (WasmAbi.GlobalWriteBase).</summary>
+public interface IBacktrackableStore : IExternalTrailTarget
+{
+    /// <summary>Sets <paramref name="key"/> to <paramref name="value"/> as a
+    /// backtrackable write of activation <paramref name="ownerId"/>.</summary>
+    void SetBacktrackable(int key, Cell value, int ownerId);
+}

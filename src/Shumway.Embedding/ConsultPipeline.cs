@@ -2018,7 +2018,7 @@ internal sealed class ConsultPipeline
                     ? DirectiveImportList("autoload/2", autoDir.Args[1])
                     : null;
                 string? src = E.ExecuteUseModuleDirective(autoDir.Args[0]);
-                RecordImports(src, filter);
+                RecordLibraryLoad(autoDir.Args[0], src, filter);
             }
             else if (body is CompoundTerm { Functor: "non_counted_backtracking", Args.Length: 1 })
             {
@@ -2092,7 +2092,7 @@ internal sealed class ConsultPipeline
                 // stdlib this way; without this the directive was silently
                 // dropped and the imports never loaded.
                 string? src = E.ExecuteUseModuleDirective(umDir.Args[0]);
-                RecordImports(src, filter: null);
+                RecordLibraryLoad(umDir.Args[0], src, filter: null);
             }
             else if (body is CompoundTerm { Functor: "use_module", Args.Length: 2 } umDir2)
             {
@@ -2101,7 +2101,7 @@ internal sealed class ConsultPipeline
                 // read first, so a malformed one loads nothing.
                 var filter = DirectiveImportList("use_module/2", umDir2.Args[1]);
                 string? src = E.ExecuteUseModuleDirective(umDir2.Args[0]);
-                RecordImports(src, filter);
+                RecordLibraryLoad(umDir2.Args[0], src, filter);
             }
             else if (body is CompoundTerm { Functor: "ensure_loaded",
                          Args: [CompoundTerm { Functor: "library", Args.Length: 1 } elLib] })
@@ -2110,7 +2110,7 @@ internal sealed class ConsultPipeline
                 // as on the reference systems: the library's exports are imported
                 // where the directive stands. A file name stays a goal below.
                 string? src = E.ExecuteUseModuleDirective(elLib);
-                RecordImports(src, filter: null);
+                RecordLibraryLoad(elLib, src, filter: null);
             }
             else
             {
@@ -2410,6 +2410,22 @@ internal sealed class ConsultPipeline
         // manifest is replaced at the commit, not extended.
         IReadOnlyDictionary<int, string> ConsultImports()
             => pendingImports ?? (IReadOnlyDictionary<int, string>)new Dictionary<int, string>();
+
+        // ADR-038 §4: a library the engine served from a dialect shim that
+        // defines predicates without a module (library('$project_atts'))
+        // gives nothing to import, but this module still needs it: a bundle
+        // compiled from the module loads it again only if it is a dependency.
+        void RecordLibraryLoad(Term spec, string? src, List<(string Name, int Arity)>? filter)
+        {
+            RecordImports(src, filter);
+            if (src is not null
+                || spec is not CompoundTerm { Functor: "library", Args: [AtomTerm { Name: var lib }] }
+                || LibraryBundles.IsEngineLibrary(lib) || E.TryResolveLibrary(lib, out _)
+                || !DialectRegistry.TryResolve(E.ActiveLibraryDialect, lib, out string shim, out _, out _)
+                || shim.Length == 0)
+                return;
+            if (!(pendingImportedModules ??= new()).Contains(lib)) pendingImportedModules.Add(lib);
+        }
 
         // ADR-038 — record the predicates this consult imported from an
         // export-qualified module `src`: each imported bare functor id maps to

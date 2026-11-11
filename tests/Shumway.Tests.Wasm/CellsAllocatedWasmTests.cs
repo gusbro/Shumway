@@ -50,7 +50,7 @@ public sealed class CellsAllocatedWasmTests
         faildrive 92002 92002
         guards 33 33
         ite 763 763
-        catch 13367 13367
+        catch 13265 13265
         gc 120003 120003
 
         """;

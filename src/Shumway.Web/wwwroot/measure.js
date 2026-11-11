@@ -130,7 +130,9 @@ export async function withTraces(session, channels, label, fn) {
  * tier's timed runs carry those channels and post their dumps. With cps=ab,
  * each round also builds the program as continuation functions (ADR-061)
  * and times that form beside the other, ABBA; with cps=abc, both of their
- * grains (a function per entry point, and per partition). grain=lazy builds
+ * grains (a function per entry point, and per partition). With ab=<switch>,
+ * the same for a compiler switch the tier takes as "<switch> on|off": the
+ * build with it off is tier1, the one with it on is b. grain=lazy builds
  * a module per predicate as each crosses a dispatch threshold (threshold=,
  * default 2) instead of the program as one.
  */
@@ -146,6 +148,7 @@ export async function wasmProbe({ session, libraries, emit, hash }) {
   // option would shadow it.
   const cpsOpt = params.getAll('cps');
   const abcCps = cpsOpt.includes('abc');
+  const abSwitch = params.get('ab');
   const abCps = abcCps || cpsOpt.includes('ab');
   const tierCmd = params.get('grain') === 'lazy' ? (params.get('threshold') ?? '2') : 'all';
   const label = `probe ${file}`;
@@ -175,18 +178,21 @@ export async function wasmProbe({ session, libraries, emit, hash }) {
 
     // A form change needs a rebuild, and only going off and back to all
     // makes one.
-    const forms = { all: 'cps off', cps: 'cps on', cpsb: 'cps budget' };
+    const forms = abSwitch ? { all: `${abSwitch} off`, b: `${abSwitch} on` }
+      : { all: 'cps off', cps: 'cps on', cpsb: 'cps budget' };
     const enter = async (mode) => {
-      if (!abCps) return setTierMode(session, mode === 'off' ? 'off' : tierCmd);
+      if (!abCps && !abSwitch) return setTierMode(session, mode === 'off' ? 'off' : tierCmd);
       await setTierMode(session, 'off');
       if (mode === 'off') return;
       await session.exports().JitCompileControl(forms[mode]);
       await setTierMode(session, tierCmd);
     };
-    const tierModes = abcCps ? ['all', 'cps', 'cpsb'] : abCps ? ['all', 'cps'] : ['all'];
+    const tierModes = abSwitch ? ['all', 'b']
+      : abcCps ? ['all', 'cps', 'cpsb'] : abCps ? ['all', 'cps'] : ['all'];
     const best = {}, ok = {}, counts = {}, times = {};
     for (let r = 0; r < rounds; r++) {
-      const modes = abcCps ? ['off', 'all', 'cps', 'cpsb', 'cpsb', 'cps', 'all', 'off']
+      const modes = abSwitch ? ['off', 'all', 'b', 'b', 'all', 'off']
+        : abcCps ? ['off', 'all', 'cps', 'cpsb', 'cpsb', 'cps', 'all', 'off']
         : abCps ? ['off', 'all', 'cps', 'cps', 'all', 'off'] : ['off', 'all', 'all', 'off'];
       for (const mode of modes) {
         await enter(mode);

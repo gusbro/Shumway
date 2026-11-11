@@ -117,6 +117,24 @@ public sealed class RelocatingCompileEnvTests(ITestOutputHelper o)
         Assert.Contains("sort/2", reason);
     }
 
+    [Fact]
+    public void TheWakeDriversBuiltinsCarryTheirForms()
+    {
+        _ = new PrologEngine();                     // registers the driver's builtins
+        var env = new EngineWasmCompileEnv();
+        WasmInlineForms Forms(string name, int arity)
+        {
+            int fid = Shumway.Core.FunctorTable.Intern(
+                Shumway.Core.AtomTable.Intern(name, permanent: true).Id, arity);
+            Assert.True(env.TryGetBuiltin(fid, out int id), $"{name}/{arity}");
+            return WasmBuiltinEvidence.FormsOf(env, id, out _);
+        }
+        Assert.Equal(WasmInlineForms.CutBarrier, Forms("$get_cut_barrier", 1));
+        Assert.Equal(WasmInlineForms.WakeSettle, Forms("$wake_settle", 2));
+        Assert.Equal(WasmInlineForms.WakeHookGoal, Forms("$wake_hook_goal", 7));
+        Assert.Equal(WasmInlineForms.None, Forms("put_attr", 3));
+    }
+
     private static Dictionary<string, long> Exits(PrologEngine engine)
     {
         Assert.True(engine.Query("go(3).").Success);

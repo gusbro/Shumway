@@ -1183,7 +1183,8 @@ public sealed partial class IlPromotionStore
     /// <paramref name="calleeMap"/> was built at; null when it is current.</param>
     public PredicateDelegate? RecordInvocation(int functorId, CompiledPredicate predicate,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null, int? viewEpoch = null)
-        => RecordInvocation(functorId, predicate, calleeMap, viewEpoch, out _);
+        => RecordInvocation(functorId, predicate, calleeMap is null ? null : () => calleeMap,
+                            viewEpoch, out _);
 
     /// <summary>As above; <paramref name="settled"/> is true when a null
     /// answer holds for the rest of the program view: the predicate is
@@ -1191,9 +1192,11 @@ public sealed partial class IlPromotionStore
     /// predicate with no snapshot this query (no clauses, or mutated since
     /// the query's setup, which makes it stale until the next one). A count
     /// below the threshold, a compile in flight or a churn pin is not
-    /// settled: a later call may promote.</summary>
+    /// settled: a later call may promote. <paramref name="calleeMap"/> is
+    /// asked only for a compile: a map of the whole program built at every
+    /// dispatch that counts made each query pay for the prelude.</summary>
     internal PredicateDelegate? RecordInvocation(int functorId, CompiledPredicate predicate,
-        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, int? viewEpoch, out bool settled)
+        Func<IReadOnlyDictionary<int, CompiledPredicate>>? calleeMap, int? viewEpoch, out bool settled)
     {
         settled = false;
         if (!IlTierOn || !DynamicCodeSupported) return null;
@@ -1233,7 +1236,7 @@ public sealed partial class IlPromotionStore
             // The view's own copy of it predates its new clauses.
             if (ChangedAfter(functorId, epoch)) { settled = true; return null; }
         }
-        return CompileAtThreshold(functorId, predicate, calleeMap, isDynamic, epoch, out settled);
+        return CompileAtThreshold(functorId, predicate, calleeMap?.Invoke(), isDynamic, epoch, out settled);
     }
 
     // Predicates whose compile copied a callee changed after the program view

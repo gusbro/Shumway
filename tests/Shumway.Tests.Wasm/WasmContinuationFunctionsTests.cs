@@ -273,10 +273,10 @@ public sealed class WasmContinuationFunctionsTests(ITestOutputHelper o) : IDispo
             if (ar != 4 || !(Shumway.Core.AtomTable.GetById(aid)?.Name ?? "").EndsWith("tak"))
                 continue;
             var m = new[] { new WasmGroupMember(pred, addr, null) };
-            int budget = FunctionsOf(WasmPredicateCompiler.CompileGroup(m, env, cps: false).Module) - 8;
+            int budget = FunctionsOf(WasmPredicateCompiler.CompileGroup(m, env, cps: false).Module) - 10;
             byte[] module = WasmPredicateCompiler.CompileGroup(m, env, cps: true,
                 grain: WasmCpsGrain.EntryPoint).Module;
-            int cps = FunctionsOf(module) - 9;
+            int cps = FunctionsOf(module) - 10;
             // tak/4 alone fits the budget; under CPS its entry and the returns
             // of its three non-tail calls each start one.
             Assert.Equal(1, budget);
@@ -338,12 +338,12 @@ public sealed class WasmContinuationFunctionsTests(ITestOutputHelper o) : IDispo
             members.Add(m);
         }
         Assert.True(members.Count >= 20, $"only {members.Count} compilable");
-        int partitions = FunctionsOf(WasmPredicateCompiler.CompileGroup(members, env, cps: false).Module) - 8;
+        int partitions = FunctionsOf(WasmPredicateCompiler.CompileGroup(members, env, cps: false).Module) - 10;
         byte[] module = WasmPredicateCompiler.CompileGroup(members, env, cps: true,
             grain: WasmCpsGrain.Budget).Module;
-        int functions = FunctionsOf(module) - 9;
+        int functions = FunctionsOf(module) - 10;
         int perEntry = FunctionsOf(WasmPredicateCompiler.CompileGroup(members, env, cps: true,
-            grain: WasmCpsGrain.EntryPoint).Module) - 9;
+            grain: WasmCpsGrain.EntryPoint).Module) - 10;
         Assert.Equal(partitions, functions);
         Assert.True(perEntry > functions, $"{perEntry} entry functions, {functions} budget ones");
         AssertTransfersAreTailCalls(module, functions, mustTransfer: false);

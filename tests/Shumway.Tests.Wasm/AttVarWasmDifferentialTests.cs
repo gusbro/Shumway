@@ -94,6 +94,17 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
         mkp(Vs, A) :- A =.. [s|Vs].
         :- public attr_args/1.
         attr_args(T) :- T =.. [_|As], attr_all(As).
+        :- public park_k/1.
+        :- public park_s/2.
+        :- public park_l/2.
+        :- public park_n/2.
+        :- public park_nl/2.
+        park_k(a).
+        park_k(b).
+        park_s(f(Y), Y).
+        park_l([H|_], H).
+        park_n(g(f(Y)), Y).
+        park_nl(g([H|_]), H).
         """;
 
     public static TheoryData<string, string> Shapes() => new()
@@ -152,6 +163,24 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
           "a guard's callee walks a frozen list: its tail call wakes" },
         { "findall(R, ('$lazy_freeze'(L, partial_string(\"ab\\n\", L, [])), time_out(wake_cut(L), 3000, R)), Rs).",
           "a guard's callee binds a lazy list: its neck cut wakes" },
+        { "freeze(X, true), park_s(X, 1), X == f(1).",
+          "a head structure binds a frozen variable younger than HB" },
+        { "freeze(X, true), park_l(X, 2), X = [H|_], H == 2.",
+          "a head list binds a frozen variable" },
+        { "freeze(X, true), park_n(g(X), 3), X == f(3).",
+          "a structure nested in a head binds a frozen variable (read mode)" },
+        { "freeze(X, true), park_nl(g(X), 4), X = [H|_], H == 4.",
+          "a list nested in a head binds a frozen variable (read mode)" },
+        { "findall(X, (freeze(X, true), park_k(X)), L), L == [a, b].",
+          "a head constant binds a frozen variable older than HB, and again after the retry" },
+        { "findall(X-W, (freeze(X, W = woke), park_k(X)), L).",
+          "each clause's binding wakes the goal once" },
+        { "freeze(X, fail), ( park_k(X) -> R = yes ; R = no ), R == no.",
+          "the woken goal fails both clauses' bindings" },
+        { "freeze(X, true), put_attr(X, m2, z), findall(X, park_k(X), L), L == [a, b].",
+          "a variable with two modules steps aside, and still wakes" },
+        { "freeze(X, true), park_k(X), '$orphan_attvar'(O), O == -1.",
+          "no orphan after a binding the module made" },
     };
 
     /// <summary>An attvar whose home is a list cell or an argument slot, handed
@@ -245,7 +274,7 @@ public sealed class AttVarWasmDifferentialTests(ITestOutputHelper o)
                 || goal.Contains("unwrap(") || goal.Contains("through(")
                 || goal.Contains("twice(") || goal.Contains("stale_") || goal.Contains("wake_")
                 || goal.Contains("sortp(") || goal.Contains("appendp(") || goal.Contains("univp(")
-                || goal.Contains("mkp(");
+                || goal.Contains("mkp(") || goal.Contains("park_");
             if (callsCorpus) Assert.NotEmpty(members);
         }
         finally { WasmTierDelegate.DiagOrphanScan = false; }

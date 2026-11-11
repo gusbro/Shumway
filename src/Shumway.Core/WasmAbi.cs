@@ -415,6 +415,12 @@ public static class WasmAbi
     /// registered builtin has it.</summary>
     public const int UnifyCellsRequest = 0x7FFFFFF0;
 
+    /// <summary>A builtin request asking for ADR-049's interrupt at a goal
+    /// boundary with a parked wakeup: the high half of <see cref="BuiltinId"/>
+    /// is how many argument registers are live, <see cref="Pc"/> the resume
+    /// marker (-1: the continuation in CP).</summary>
+    public const int WakeRequest = 0x7FFFFFF1;
+
     /// <summary>Where the expression evaluator leaves its answer: the value
     /// (a 60-bit integer, or the bits of a double) and which of the two it
     /// is. It is a function, so it cannot write the caller's locals.
@@ -564,7 +570,62 @@ public static class WasmAbi
     /// the host instead of resuming the choice point in-chain.</summary>
     public const int BacktrackFloor = 83;
 
-    public const int SlotCount = 84;
+    /// <summary>Where a module parks the wakeups of the attributed variables
+    /// it binds, <see cref="WakeEntryInts"/> i32 each: module, the attribute
+    /// value, the term bound to, the variable's home. ADR-049: a binding
+    /// queues its wakeups and the next goal boundary runs them; the queue is
+    /// the host's, so the module parks them, sets
+    /// <see cref="FlagWakeupPending"/>, and the host takes them in order when
+    /// the chain returns, before it restores or interrupts. A zero base means
+    /// binding an attributed variable steps aside.</summary>
+    public const int WakeRingBase = 84;
+    public const int WakeRingTop = 85;
+    public const int WakeRingLimit = 86;
+    public const int WakeEntryInts = 4;
+
+    /// <summary>Base and count of the attribute modules the store has seen,
+    /// one i32 module id each: the keys a module probes the attribute image
+    /// with to learn which modules a variable carries. A variable with more
+    /// than one steps aside, so the order of its wakeups stays the record's.
+    /// The area holds <see cref="AttrModuleCapacity"/> ids, then two i32 per
+    /// module at <see cref="AttrHookOffset"/>: its <c>verify_attributes/4</c>
+    /// hook's functor (<see cref="AttrHookIsVerify3"/> when the module has a
+    /// /3 hook, <see cref="AttrHookNone"/> when it has none) and the module
+    /// the hook's goals run in.</summary>
+    public const int AttrModuleBase = 87;
+    public const int AttrModuleCount = 88;
+    public const int AttrModuleCapacity = 16;
+    public const int AttrHookOffset = AttrModuleCapacity * 4;
+    public const int AttrHookIsVerify3 = -1;
+    public const int AttrHookNone = -2;
+
+    /// <summary>Where a module parks what findall's collect loop hands the
+    /// solution buffers, one i64 each: zero opens a buffer
+    /// ('$findall_push'), an atom or integer cell is a solution
+    /// ('$findall_record_s'). The buffers are the host's, so the host takes
+    /// the entries in order when the chain returns, before any builtin runs.
+    /// A zero base means both are requested.</summary>
+    public const int FindallRingBase = 89;
+    public const int FindallRingTop = 90;
+    public const int FindallRingLimit = 91;
+
+    /// <summary>Where a module parks the backtrackable global writes it made
+    /// in the global-variable image (b_setval/2, Scryer's bb_b_put/2),
+    /// <see cref="GlobalWriteEntryLongs"/> i64 each: the key's atom id, the
+    /// new cell, the old one. The store and the external trail log are the
+    /// host's; the module writes the image row and the MutableSet trail entry,
+    /// whose log index is <see cref="ExternalTrailLogLength"/> plus the
+    /// entry's place in the ring, and the host appends the log record and
+    /// sets the store in that order. A zero base means the write is
+    /// requested.</summary>
+    public const int GlobalWriteBase = 92;
+    public const int GlobalWriteTop = 93;
+    public const int GlobalWriteLimit = 94;
+    public const int GlobalWriteEntryLongs = 3;
+    /// <summary>The external trail log's length as staged.</summary>
+    public const int ExternalTrailLogLength = 95;
+
+    public const int SlotCount = 96;
     public const int SlotSize = 8;
     public const int ByteSize = SlotCount * SlotSize;
 

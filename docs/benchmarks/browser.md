@@ -114,7 +114,7 @@ looks like a hang and is not.
 | `#wasmspike[=NxM]` | Phase-0 spike, kept as the reproducer for `browser-spike.md`. |
 | `#wasmsplit[=hopsxrounds]` | Phase-0 spike (the `return_call_indirect` Go/No-Go), kept as the reproducer for `wasm-split-spike.md`. |
 | `#wasmclpz[=rounds[:case,...]]` | Triska's CLP(Z) examples over Scryer's real `clpz.pl`, Tier-0 against the tier, with an oracle per case; the case list narrows the run. clpz loads from its bundle, compiled on demand. `#wasmclpzsrc=...` loads it from source instead, and a trailing `&bundles_off` has the tier compile the bundles' predicates live (`jit_compile(bundles_off)`). Needs [Scryer's library](#scryers-library). |
-| `#wasmprobe=<file>[&n=N][&rounds=R][&trace=ch,...][&budget=s][&cps=ab|abc][&grain=lazy]` | The generic probe: the goals `wwwroot/probes/<file>.pl` declares, Tier-0 against the tier, best time, ratio and the tier's counters per goal. See [Probes](#probes). |
+| `#wasmprobe=<file>[&n=N][&rounds=R][&trace=ch,...][&budget=s][&cps=ab|abc][&ab=switch][&grain=lazy]` | The generic probe: the goals `wwwroot/probes/<file>.pl` declares, Tier-0 against the tier, best time, ratio and the tier's counters per goal. See [Probes](#probes). |
 
 ### Probes
 
@@ -134,7 +134,11 @@ posts their dumps: `trace`, `attrs`, `shapes`, `cells`, `builtins`,
 them off for a timing. `cps=ab` also builds the program as continuation
 functions (ADR-061) and times that form beside the partitions, ABBA in each
 round, with a `cps/tier1` column; `cps=abc` adds the budget grain
-(`cpsb/tier1`). `grain=lazy` builds a module per predicate as each crosses a
+(`cpsb/tier1`). `ab=<switch>` does the same for a compiler switch the
+page's tier control takes as `<switch> on` and `<switch> off`
+(`fallthrough`, `sharedexit`): off is the tier1 column, on is `b`, with a
+`b/tier1` column. Only what compiles in the page takes the switch; a
+library's bundle was baked before it. `grain=lazy` builds a module per predicate as each crosses a
 dispatch threshold (`threshold=`, default 2) instead of the program as one. `probes/exits.pl` prices one kind of module
 exit per goal (`#wasmprobe=exits&n=100000`); `probes/transfers.pl` one kind of
 transfer between functions (`#wasmprobe=transfers&n=4000000&cps=ab`). The helpers the hooks share (library

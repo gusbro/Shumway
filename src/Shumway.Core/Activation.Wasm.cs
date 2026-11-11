@@ -81,7 +81,23 @@ public sealed partial class Activation
         int AttrDropLimit = 0,
         /// <summary>Base and mask of the reverse functor table.</summary>
         long FunctorReverseBase = 0,
-        int FunctorReverseMask = 0);
+        int FunctorReverseMask = 0,
+        /// <summary>Base and capacity of the parked wakeups. A zero base
+        /// means binding an attributed variable steps aside.</summary>
+        long WakeRingBase = 0,
+        int WakeRingLimit = 0,
+        /// <summary>Base and count of the attribute modules the store has
+        /// seen.</summary>
+        long AttrModuleBase = 0,
+        int AttrModuleCount = 0,
+        /// <summary>Base and capacity of the parked findall entries. A zero
+        /// base means the collect loop's builtins are requested.</summary>
+        long FindallRingBase = 0,
+        int FindallRingLimit = 0,
+        /// <summary>Base and capacity of the parked global writes. A zero
+        /// base means b_setval/2 is requested.</summary>
+        long GlobalWriteBase = 0,
+        int GlobalWriteLimit = 0);
 
     /// <summary>Grows the register bank to at least
     /// <paramref name="count"/> registers, before the runner takes its view:
@@ -105,6 +121,26 @@ public sealed partial class Activation
     /// it back and not just in.</summary>
     public ExtraTrailEntry[] WasmExtraTrailView => _extraTrail;
 
+    /// <summary>Grows the extra trail to leave a module room to append, within
+    /// the configured maximum; a world calls it before it takes the view.
+    /// The host grows the trail only when a push of its own needs room, and a
+    /// module's attribute write reserves two entries it may not write. A
+    /// trail that stopped just short of full sent every such write to the
+    /// host, which on a young variable trailed nothing, grew nothing, and
+    /// left the next write where this one was.</summary>
+    public void ReserveWasmExtraTrail()
+    {
+        int want = _extraTrailTop + WasmExtraTrailHeadroom;
+        int max = _config.MaxExtraTrailSize;
+        if (max > 0 && want > max) want = max;
+        if (want > _extraTrail.Length)
+            GrowIfNeeded(ref _extraTrail, _extraTrailTop, want - _extraTrailTop, max, "extra trail");
+    }
+
+    /// <summary>The entries <see cref="ReserveWasmExtraTrail"/> leaves free,
+    /// the eight a world keeps back included.</summary>
+    public const int WasmExtraTrailHeadroom = 256 + 8;
+
     /// <summary>Where a compaction parks the records it orphaned. Allocated
     /// on first ask, because an engine that never meets a wasm world has no
     /// use for it.</summary>
@@ -125,6 +161,92 @@ public sealed partial class Activation
     public int[] WasmAttrDropRingView => _wasmAttrDrops ??= new int[512];
 
     private int[]? _wasmAttrDrops;
+
+    /// <summary>Where a module parks the wakeups of the attributed variables
+    /// it binds, <see cref="WasmAbi.WakeEntryInts"/> i32 each: module, the
+    /// attribute value, the term bound to, the variable's home.</summary>
+    public int[] WasmWakeRingView
+        => _wasmWakes ??= new int[WasmAbi.WakeEntryInts * 256];
+
+    private int[]? _wasmWakes;
+
+    /// <summary>Where a module parks findall's collect loop
+    /// (<see cref="WasmAbi.FindallRingBase"/>).</summary>
+    public long[] WasmFindallRingView => _wasmFindall ??= new long[256];
+
+    private long[]? _wasmFindall;
+
+    /// <summary>Where a module parks its backtrackable global writes
+    /// (<see cref="WasmAbi.GlobalWriteBase"/>).</summary>
+    public long[] WasmGlobalWriteRingView
+        => _wasmGlobalWrites ??= new long[WasmAbi.GlobalWriteEntryLongs * 256];
+
+    private long[]? _wasmGlobalWrites;
+
+    /// <summary>The store a module's parked global writes go to; the world
+    /// that stages a global write ring sets it.</summary>
+    public IBacktrackableStore? WasmGlobalStore { get; set; }
+
+    /// <summary>A world's state kept between this engine's entries, of the
+    /// world's own type: held here so it lives and dies with the engine.
+    /// </summary>
+    public object? WasmChainCache { get; set; }
+
+    /// <summary>The writes a module parked, each as the host's b_setval/2
+    /// makes it: the log record the module's trail entry already indexes,
+    /// then the store. In ring order, which is the order the indexes were
+    /// handed out in.</summary>
+    private void DrainParkedGlobalWrites(int count)
+    {
+        if (_wasmGlobalWrites is null || count <= 0) return;
+        var store = WasmGlobalStore ?? throw new InvalidOperationException(
+            "a parked global write with no store to apply it to");
+        int w = WasmAbi.GlobalWriteEntryLongs;
+        int n = System.Math.Min(count, _wasmGlobalWrites.Length / w);
+        for (int i = 0; i < n; i++)
+        {
+            int at = i * w;
+            int key = (int)_wasmGlobalWrites[at];
+            var old = new Cell(_wasmGlobalWrites[at + 2]);
+            (_externalTrailLog ??= new List<(IExternalTrailTarget, int, Cell, bool)>())
+                .Add((store, key, old, true));
+            store.SetBacktrackable(key, new Cell(_wasmGlobalWrites[at + 1]), InstanceId);
+        }
+    }
+
+    /// <summary>The buffers a module opened and the solutions it recorded,
+    /// in the order it did. A collect, or any other builtin, runs after this:
+    /// every exit drains first.</summary>
+    private void DrainParkedFindall(int count)
+    {
+        if (_wasmFindall is null || count <= 0) return;
+        int n = System.Math.Min(count, _wasmFindall.Length);
+        for (int i = 0; i < n; i++)
+        {
+            long v = _wasmFindall[i];
+            if (v == 0) PushSolutions(NewSolutions());
+            else (_topSolutions ?? throw new InvalidOperationException(
+                    "a parked findall solution with no call collecting"))
+                .AddToList(this, new Cell(v));
+        }
+    }
+
+    /// <summary>The wakeups a module parked, queued in the order it bound
+    /// them. Nothing else queues inside a chain: an entry with a wakeup
+    /// pending runs on bytecode, and a builtin that queues one closes the
+    /// chain.</summary>
+    private void DrainParkedWakes(int count)
+    {
+        if (_wasmWakes is null || count <= 0) return;
+        int w = WasmAbi.WakeEntryInts;
+        int n = count * w <= _wasmWakes.Length ? count : _wasmWakes.Length / w;
+        for (int i = 0; i < n; i++)
+        {
+            int at = i * w;
+            _pendingWakeups.Add((_wasmWakes[at], _wasmWakes[at + 1],
+                                 _wasmWakes[at + 2], _wasmWakes[at + 3]));
+        }
+    }
 
     // Whether the image staged last is the engine's own array, and the
     // insert budget it was staged with: the difference on the way back is
@@ -253,20 +375,23 @@ public sealed partial class Activation
     ///
     /// <para>Null unless a wasm world is attached, and called only on the
     /// resolution path, which is already the slow one.</para></summary>
-    /// <para>The last argument is the builtin id when the goal resolved to
-    /// a direct builtin (one a module can request), -1 for a predicate.</para>
-    public System.Action<object?, int, int, int, int, bool, int>? MetaResolutionObserver;
+    /// <para>The builtin id follows when the goal resolved to a direct
+    /// builtin (one a module can request), -1 for a predicate; last, the
+    /// argument positions <see cref="QualifyMetaArgRegisters"/> qualified,
+    /// one bit each, which a module reading the row qualifies the same way.
+    /// </para>
+    public System.Action<object?, int, int, int, int, bool, int, int>? MetaResolutionObserver;
 
     /// <summary>Reports a module-tagged meta-call resolution to
-    /// <see cref="MetaResolutionObserver"/>, unless the goal's predicate has
-    /// meta-arguments: a cached row would jump straight to the callee and
-    /// skip their qualification the next time.</summary>
+    /// <see cref="MetaResolutionObserver"/>, with the meta-arguments the
+    /// goal's predicate takes qualified: a row without them would jump
+    /// straight to the callee and skip that the next time.</summary>
     public void PublishMetaResolution(object? addresses, int module, int goalKey,
         int appended, int functorId, bool atomGoal, int builtinId)
     {
-        if (_goalHasMetaArgs) return;
+        if (_goalMetaArgMask < 0) return;
         MetaResolutionObserver?.Invoke(addresses, module, goalKey, appended,
-            functorId, atomGoal, builtinId);
+            functorId, atomGoal, builtinId, _goalMetaArgMask);
     }
 
     /// <summary>ADR-056: the meta-argument positions of the predicate a goal
@@ -275,7 +400,14 @@ public sealed partial class Activation
     /// the module's name. Set by the embedding at query setup.</summary>
     public Func<int, string?, int[]?>? MetaArgSpecOf { get; set; }
 
-    private bool _goalHasMetaArgs;
+    // The positions the last QualifyMetaArgRegisters qualified, a bit each;
+    // -1 when they do not fit the bits, and the resolution is not published.
+    private int _goalMetaArgMask;
+
+    /// <summary>Says the goal being dispatched qualifies no meta-argument,
+    /// before a dispatch that does not call
+    /// <see cref="QualifyMetaArgRegisters"/>.</summary>
+    public void NoGoalMetaArgs() => _goalMetaArgMask = 0;
 
     private static readonly int ColonQualFunctorId =
         FunctorTable.Intern(AtomTable.Intern(":", permanent: true).Id, 2);
@@ -294,7 +426,7 @@ public sealed partial class Activation
     /// ModuleRewrite's meta-argument qualification.</summary>
     public void QualifyMetaArgRegisters(int moduleAtomId, int atomId, int totalArity)
     {
-        _goalHasMetaArgs = false;
+        _goalMetaArgMask = 0;
         if (MetaArgSpecOf is not { } specOf) return;
         if (moduleAtomId == PreludeModuleAtomId) return;
         // user's goals carry user too: what a bare name means there is a
@@ -309,7 +441,6 @@ public sealed partial class Activation
             : null;
         int[]? spec = specOf(FunctorTable.Intern(atomId, totalArity), local);
         if (spec is null || spec.Length != totalArity) return;
-        _goalHasMetaArgs = true;
         bool inUser = moduleAtomId == UserModuleAtomId;
         for (int i = 0; i < totalArity; i++)
         {
@@ -320,6 +451,8 @@ public sealed partial class Activation
             // names the global store. Wrapped, clause(user:p(1), B) takes the
             // qualified path, which enumerates where the bare one indexes.
             if (inUser && code == ModuleQualify.ColonBuiltinArg) continue;
+            _goalMetaArgMask = i < 31 && _goalMetaArgMask >= 0
+                ? _goalMetaArgMask | (1 << i) : -1;
             Cell c = GetRegister(i);
             Cell d = c.Tag == Tag.Ref ? GetHeap(Deref(c.AsHeapIndex)) : c;
             if (d.Tag == Tag.Str)
@@ -420,6 +553,18 @@ public sealed partial class Activation
         m[WasmAbi.AttrDropBase] = bases.AttrDropBase;
         m[WasmAbi.AttrDropLimit] = bases.AttrDropLimit;
         m[WasmAbi.AttrDropTop] = 0;
+        m[WasmAbi.WakeRingBase] = bases.WakeRingBase;
+        m[WasmAbi.WakeRingTop] = 0;
+        m[WasmAbi.WakeRingLimit] = bases.WakeRingLimit;
+        m[WasmAbi.AttrModuleBase] = bases.AttrModuleBase;
+        m[WasmAbi.AttrModuleCount] = bases.AttrModuleCount;
+        m[WasmAbi.FindallRingBase] = bases.FindallRingBase;
+        m[WasmAbi.FindallRingTop] = 0;
+        m[WasmAbi.FindallRingLimit] = bases.FindallRingLimit;
+        m[WasmAbi.GlobalWriteBase] = WasmGlobalStore is null ? 0 : bases.GlobalWriteBase;
+        m[WasmAbi.GlobalWriteTop] = 0;
+        m[WasmAbi.GlobalWriteLimit] = bases.GlobalWriteLimit;
+        m[WasmAbi.ExternalTrailLogLength] = _externalTrailLog?.Count ?? 0;
         m[WasmAbi.ArithTableBase] = bases.ArithTableBase;
         m[WasmAbi.ArithTableLength] = bases.ArithTableLength;
         m[WasmAbi.ArithValue] = 0;
@@ -518,6 +663,9 @@ public sealed partial class Activation
         DrainPendingAttrWrites((int)m[WasmAbi.AttrWriteTop]);
         DrainOrphanedAttrRecords((int)m[WasmAbi.AttrOrphanTop]);
         DrainDroppedAttrRecords((int)m[WasmAbi.AttrDropTop]);
+        DrainParkedWakes((int)m[WasmAbi.WakeRingTop]);
+        DrainParkedFindall((int)m[WasmAbi.FindallRingTop]);
+        DrainParkedGlobalWrites((int)m[WasmAbi.GlobalWriteTop]);
         // The compaction watermark, which a module's walk moves.
         _compactBarrier = (int)m[WasmAbi.CompactBarrier];
         _compactParentBinding = (int)m[WasmAbi.CompactParentBinding];

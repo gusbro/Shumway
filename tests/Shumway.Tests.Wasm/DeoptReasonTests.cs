@@ -28,10 +28,14 @@ public sealed class DeoptReasonTests(ITestOutputHelper o)
         return WasmTierDelegate.DiagMetaGuardHist;
     }
 
-    /// <summary>An attributed variable met by a structure head match steps
-    /// aside for the wakeup, and says so. Through get_value it lands in the
-    /// general unifier instead, whose code covers attvars among its shapes,
-    /// so the corpus goes through the head match on purpose.</summary>
+    private const int FlagSet = 17;
+
+    /// <summary>An attributed variable with two modules, met by a structure
+    /// head match, steps aside for the wakeup and says so: the module binds
+    /// only a variable with one, whose wakeup order cannot differ from the
+    /// record's. Through get_value it lands in the general unifier instead,
+    /// whose code covers attvars among its shapes, so the corpus goes
+    /// through the head match on purpose.</summary>
     [DiagFact]
     public void BindingAnAttvarNamesItsReason()
     {
@@ -40,7 +44,7 @@ public sealed class DeoptReasonTests(ITestOutputHelper o)
             bindall([]).
             bindall([X|Xs]) :- p(X), bindall(Xs).
             mk([], []).
-            mk([X|Xs], [Y|Ys]) :- put_attr(X, m, Y), mk(Xs, Ys).
+            mk([X|Xs], [Y|Ys]) :- put_attr(X, m, Y), put_attr(X, n, Y), mk(Xs, Ys).
             run(N) :- length(L, N), mk(L, _), bindall(L).
             """,
             "run(2).", "run(20).");
@@ -50,6 +54,29 @@ public sealed class DeoptReasonTests(ITestOutputHelper o)
         Assert.True(hist[AttvarBind] >= 20,
             $"{hist[AttvarBind]} at code {AttvarBind}: the attvar bind "
             + "stepped aside without naming itself");
+    }
+
+    /// <summary>ADR-049: with one module the module binds the variable
+    /// itself and parks the wakeup, and the next boundary asks the host for
+    /// the interrupt instead of stepping aside. The same corpus as above, one
+    /// attribute each.</summary>
+    [DiagFact]
+    public void BindingAnAttvarWithOneModuleWakesInTheModule()
+    {
+        var hist = RunAndReadHistogram("""
+            p(f(_)).
+            bindall([]).
+            bindall([X|Xs]) :- p(X), bindall(Xs).
+            mk([], []).
+            mk([X|Xs], [Y|Ys]) :- put_attr(X, m, Y), mk(Xs, Ys).
+            run(N) :- length(L, N), mk(L, _), bindall(L), L = [f(_)|_].
+            """,
+            "run(2).", "run(20).");
+        Assert.Equal(0L, hist[AttvarBind]);
+        Assert.Equal(0L, hist[FlagSet]);
+        Assert.True(WasmTierDelegate.DiagWakeInterrupts >= 20,
+            $"{WasmTierDelegate.DiagWakeInterrupts} interrupts asked for: the bindings "
+            + "did not reach a boundary with the wakeup parked");
     }
 
     /// <summary>A bignum result escalates to the host's evaluator, and says

@@ -378,7 +378,10 @@ public static partial class MetaBuiltins
         // pass through verbatim.)
         if (error is VarTerm)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
-        throw new ShumwayPrologException(error);
+        throw new ShumwayPrologException(error)
+        {
+            Image = Shumway.Core.TermImageCopier.FromHeap(engine, engine.GetRegister(0)),
+        };
     }
 
     // catch/3 is now a prelude predicate built on the catch-frame

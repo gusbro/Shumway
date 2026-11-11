@@ -298,40 +298,29 @@ public static class IlIndexedDispatch
     /// is a WAM-independent <see cref="IndexGraph"/>: built lazily on first call
     /// from the engine's linked code (for a predicate whose WAM is present), or
     /// pre-registered from the bundle (a stripped predicate — see
-    /// <see cref="RegisterModelForEngine"/>). Once cached, the walk reads no
+    /// <see cref="PersistedIndexGraphs"/>). Once cached, the walk reads no
     /// bytecode.</summary>
     public static int ResolveEntryByFunctorId(Activation engine, int functorId)
     {
         var cache = CacheFor(engine);
         if (!cache.TryGetValue(functorId, out var graph))
         {
-            var info = BuildModelFromEngine(engine, functorId)
-                ?? throw new InvalidOperationException(
-                    $"Indexed-dispatch model build failed for functor id {functorId}.");
-            graph = IlIndexGraph.Build(info)
-                ?? throw new InvalidOperationException(
-                    $"Indexed-dispatch graph build failed for functor id {functorId}.");
+            // A persisted graph comes first: a stripped predicate has no WAM
+            // body to build one from.
+            graph = (engine.PersistedIndexGraphs as PersistedIndexGraphs)?.Get(functorId);
+            if (graph is null)
+            {
+                var info = BuildModelFromEngine(engine, functorId)
+                    ?? throw new InvalidOperationException(
+                        $"Indexed-dispatch model build failed for functor id {functorId}.");
+                graph = IlIndexGraph.Build(info)
+                    ?? throw new InvalidOperationException(
+                        $"Indexed-dispatch graph build failed for functor id {functorId}.");
+            }
             cache[functorId] = graph;
         }
         return IlIndexGraph.Resolve(engine, graph);
     }
-
-    /// <summary>Pre-registers a WAM-independent dispatch graph for a functor —
-    /// used by the LoadBundle path for a predicate whose WAM body was stripped
-    /// (--strip-wam): its switch model lives in the bundle as an
-    /// <see cref="IndexGraph"/>, not in the linked code.</summary>
-    internal static void RegisterModelForEngine(Activation engine, int functorId, IndexGraph graph)
-    {
-        var cache = CacheFor(engine);
-        cache[functorId] = graph;
-    }
-
-    /// <summary>Public load-path entry point (the model types stay internal):
-    /// decodes a persisted dispatch graph and registers it for the functor, so a
-    /// stripped predicate dispatches without its WAM body. Keys are interned in
-    /// the current process by the codec.</summary>
-    public static void RegisterPersistedGraph(Activation engine, int functorId, byte[] graphBytes)
-        => RegisterModelForEngine(engine, functorId, IndexGraphCodec.Decode(graphBytes));
 
     private static IlIndexedDispatchInfo? BuildModelFromEngine(Activation engine, int functorId)
     {

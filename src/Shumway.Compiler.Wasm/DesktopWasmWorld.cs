@@ -235,7 +235,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
         /// aside for the host to grow the area (the image has no room past
         /// what is reserved here).</summary>
         private const int ExtraTrailHeadroom = 256;
-        private int _arithAt, _attrWriteAt, _attrDropAt, _funRevAt, _globalAt;
+        private int _arithAt, _attrWriteAt, _attrDropAt, _wakeAt, _attrModAt, _findallAt, _globalWriteAt, _funRevAt, _globalAt;
         private readonly long[] _globalRows = new long[2 * 32];
         // Exactly one side is authoritative: the image (false) or the engine
         // (true, after SyncEngine ran and managed code may have mutated).
@@ -286,14 +286,19 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             long[] metaCache = _w.ResumeTable.MetaCache;
             int[] atomMarkers = _w.ResumeTable.AtomCallMarkers;
             _engine.AttrLogMirrorEnable();
+            _engine.ReserveWasmExtraTrail();
             ExtraTrailEntry[] extraTrail = _engine.WasmExtraTrailView;
             int extraTop = _engine.WasmExtraTrailTop;
             int[] orphanRing = _engine.WasmOrphanRingView;
             int[] attrWrites = _engine.WasmAttrWriteRingView;
             int[] attrDrops = _engine.WasmAttrDropRingView;
-            long[] funRev = FunctorReverseTable.Rows;
-            int[] arithRows = Shumway.Builtins.ArithFunctorTable.Rows;
-            int arithLen = Shumway.Builtins.ArithFunctorTable.Length;
+            int[] wakes = _engine.WasmWakeRingView;
+            int[] attrModules = _engine.WasmAttrModuleView;
+            int attrModuleCount = _engine.WasmAttrModuleCount;
+            long[] findall = _engine.WasmFindallRingView;
+            long[] globalWrites = _engine.WasmGlobalWriteRingView;
+            long[] funRev = FunctorReverseTable.Current(out int funRevMask);
+            int[] arithRows = Shumway.Builtins.ArithFunctorTable.Current(out int arithLen);
             int[] attrLogHomes = _engine.AttrLogHomes;
             int attrLogCount = _engine.AttrLogCount;
             // Rounded up to 8 for speed, not correctness: a wasm i64.load
@@ -316,7 +321,11 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             _arithAt = _orphanAt + orphanRing.Length * 4;
             _attrWriteAt = _arithAt + arithLen * 4;
             _attrDropAt = _attrWriteAt + attrWrites.Length * 4;
-            _funRevAt = (_attrDropAt + attrDrops.Length * 4 + 7) & ~7;
+            _wakeAt = _attrDropAt + attrDrops.Length * 4;
+            _attrModAt = _wakeAt + wakes.Length * 4;
+            _findallAt = (_attrModAt + attrModules.Length * 4 + 7) & ~7;
+            _globalWriteAt = _findallAt + findall.Length * 8;
+            _funRevAt = _globalWriteAt + globalWrites.Length * 8;
             _globalAt = _funRevAt + funRev.Length * 8;
             if (_globalAt + (long)_globalRows.Length * 8 > (long)Pages * 65536)
                 throw new InvalidOperationException("engine areas outgrew the desktop image");
@@ -326,6 +335,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             // it says every key is unset, which the module answers itself.
             int globalPairs = _engine.Host is Shumway.Builtins.IGlobalVarHost gvHost
                 ? gvHost.GlobalVars.WriteLiveCells(_globalRows, _engine.InstanceId) : -1;
+            _engine.WasmGlobalStore = (_engine.Host as Shumway.Builtins.IGlobalVarHost)?.GlobalVars;
             if (_functorAt != _w._space.FunctorAt)
             { _w._space.FunctorAt = _functorAt; _w._space.FunctorSynced = 0; }
 
@@ -361,8 +371,16 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 AttrMirrorBudget: _engine.AttrMirrorInsertBudget,
                 AttrDropBase: _attrDropAt,
                 AttrDropLimit: attrDrops.Length,
+                WakeRingBase: _wakeAt,
+                WakeRingLimit: wakes.Length / WasmAbi.WakeEntryInts,
+                AttrModuleBase: _attrModAt,
+                AttrModuleCount: attrModuleCount,
+                FindallRingBase: _findallAt,
+                FindallRingLimit: findall.Length,
+                GlobalWriteBase: _globalWriteAt,
+                GlobalWriteLimit: globalWrites.Length / WasmAbi.GlobalWriteEntryLongs,
                 FunctorReverseBase: _funRevAt,
-                FunctorReverseMask: FunctorReverseTable.Mask,
+                FunctorReverseMask: funRevMask,
                 GlobalVarBase: globalPairs >= 0 ? _globalAt : 0,
                 GlobalVarCount: globalPairs);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))
@@ -427,6 +445,10 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             if (globalPairs > 0)
                 fixed (long* p = _globalRows)
                     Buffer.MemoryCopy(p, mem + _globalAt, globalPairs * 16L, globalPairs * 16L);
+            if (attrModuleCount > 0)
+                fixed (int* p = attrModules)
+                    Buffer.MemoryCopy(p, mem + _attrModAt, attrModules.Length * 4L,
+                                      attrModules.Length * 4L);
             if (arithLen > 0)
                 fixed (int* p = arithRows)
                     Buffer.MemoryCopy(p, mem + _arithAt, arithLen * 4L, arithLen * 4L);
@@ -547,6 +569,26 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 fixed (int* p = attrDrops)
                     Buffer.MemoryCopy(mem + _attrDropAt, p, attrDrops.Length * 4L,
                                       System.Math.Min(dropped, attrDrops.Length) * 4L);
+            int globalWrote = (int)_mailbox[WasmAbi.GlobalWriteTop];
+            long[] globalWrites = _engine.WasmGlobalWriteRingView;
+            if (globalWrote > 0)
+                fixed (long* p = globalWrites)
+                    Buffer.MemoryCopy(mem + _globalWriteAt, p, globalWrites.Length * 8L,
+                                      System.Math.Min(globalWrote * WasmAbi.GlobalWriteEntryLongs,
+                                                      globalWrites.Length) * 8L);
+            int parked = (int)_mailbox[WasmAbi.FindallRingTop];
+            long[] findall = _engine.WasmFindallRingView;
+            if (parked > 0)
+                fixed (long* p = findall)
+                    Buffer.MemoryCopy(mem + _findallAt, p, findall.Length * 8L,
+                                      System.Math.Min(parked, findall.Length) * 8L);
+            int woke = (int)_mailbox[WasmAbi.WakeRingTop];
+            int[] wakes = _engine.WasmWakeRingView;
+            if (woke > 0)
+                fixed (int* p = wakes)
+                    Buffer.MemoryCopy(mem + _wakeAt, p, wakes.Length * 4L,
+                                      System.Math.Min(
+                                          woke * WasmAbi.WakeEntryInts, wakes.Length) * 4L);
             int orphans = (int)_mailbox[WasmAbi.AttrOrphanTop];
             int[] orphanRing = _engine.WasmOrphanRingView;
             if (orphans > 0)

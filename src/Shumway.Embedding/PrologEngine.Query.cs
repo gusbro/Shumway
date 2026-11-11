@@ -186,7 +186,7 @@ public sealed partial class PrologEngine
                 // engine was not in hand, and the engine still says which
                 // builtin was running.
                 ex.CloseContext(engine);
-                int addr = TryCatch(engine, ex.Term, out _, IsResourceBall(ex.Term));
+                int addr = TryCatch(engine, Ball.Of(ex), out _, IsResourceBall(ex.Term));
                 if (addr < 0) throw;
                 if (CatchDiag)
                     Console.Error.WriteLine(
@@ -197,7 +197,7 @@ public sealed partial class PrologEngine
             {
                 MetaBuiltins.StampContext(ex, engine);
                 Term ball = MetaBuiltins.TranslateRuntimeError(ex);
-                int addr = TryCatch(engine, ball, out bool insideCatch,
+                int addr = TryCatch(engine, new Ball(ball), out bool insideCatch,
                     lowMemory: ex.Kind == "resource_error");
                 if (addr >= 0)
                     step = () => interp.Run(program, addr);
@@ -213,7 +213,7 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>Walks the catch-frame stack from the innermost frame out,
-    /// trial-unifying <paramref name="ballTerm"/> with each active frame's
+    /// trial-unifying the ball with each active frame's
     /// catcher. On the first match it rolls the machine back to that frame,
     /// binds the catcher to the ball for real, loads the recovery goal's
     /// arguments into the registers, and returns the recovery predicate's
@@ -224,9 +224,46 @@ public sealed partial class PrologEngine
     internal static readonly bool CatchDiag =
         System.Environment.GetEnvironmentVariable("SHUMWAY_CATCH_DIAG") == "1";
 
-    private static int TryCatch(Activation engine, Term ballTerm,
+    private static int TryCatch(Activation engine, Ball ball,
         out bool hadActiveFrame, bool lowMemory = false)
-        => TryCatchFrom(engine, ballTerm, 0, out hadActiveFrame, lowMemory);
+        => TryCatchFrom(engine, ball, 0, out hadActiveFrame, lowMemory);
+
+    /// <summary>A ball as catch resolution plants it on the heap: from the
+    /// ADR-063 image throw/1 took of it, or from its term when it has none
+    /// (a runtime error, an atom, a ball an image cannot carry). Planting an
+    /// image is a copy of its cells; a term is materialized node by node,
+    /// which on a ball of any size was most of what a caught throw cost.</summary>
+    private readonly struct Ball
+    {
+        private readonly TermImage? _image;
+        private readonly Term? _term;
+
+        public Ball(Term term) { _term = term; _image = null; }
+        public Ball(TermImage image) { _image = image; _term = null; }
+
+        public static Ball Of(ShumwayPrologException ex)
+            => ex.Image is { } image ? new Ball(image) : new Ball(ex.Term);
+
+        public Cell Plant(Activation engine)
+            => _image is { } image ? engine.BuildImage(image)
+                : Materializer.MaterializeAsCell(engine, _term!);
+    }
+
+    private static readonly int ErrorFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("error", permanent: true).Id, 2);
+    private static readonly int ResourceErrorAtomId =
+        AtomTable.Intern("resource_error", permanent: true).Id;
+
+    /// <summary><see cref="IsResourceBall(Term)"/> on an image's cells.</summary>
+    private static bool IsResourceBall(TermImage image)
+    {
+        var cells = image.Cells;
+        if (image.Root != Tag.Str || cells[0].Data != Cell.Functor(ErrorFunctorId).Data)
+            return false;
+        Cell kind = cells[1];
+        return kind.Tag == Tag.Str
+            && FunctorTable.Lookup(cells[kind.AsHeapIndex].AsFunctorId).AtomId == ResourceErrorAtomId;
+    }
 
     /// <summary>True for an <c>error(resource_error(...), _)</c> ball — the
     /// one shape whose catch resolution must not allocate on the exhausted
@@ -241,7 +278,7 @@ public sealed partial class PrologEngine
     /// frames opened inside itself; anything older belongs to an outer
     /// driver's scope.</summary>
     private static int TryCatchFrom(
-        Activation engine, Term ballTerm, int minFrameIndex, out bool hadActiveFrame,
+        Activation engine, Ball ball, int minFrameIndex, out bool hadActiveFrame,
         bool lowMemory = false)
     {
         hadActiveFrame = false;
@@ -276,7 +313,7 @@ public sealed partial class PrologEngine
                     // further rollback stays monotonic; if nothing matches the
                     // machine was dead regardless.
                     engine.UnwindToCatchFrame(i);
-                    Cell lmBall = Materializer.MaterializeAsCell(engine, ballTerm);
+                    Cell lmBall = ball.Plant(engine);
                     if (!engine.UnifyHeapWithCell(frame.CatcherHeapIdx, lmBall))
                         continue;
                     return SetupRecoveryCall(engine, frame.RecoveryHeapIdx);
@@ -285,7 +322,7 @@ public sealed partial class PrologEngine
                 // A match on the catcher as the goal left it is a match on the
                 // catcher as it was: the goal only instantiated it further.
                 // The binding after the rollback is the last word either way.
-                bool matched = CatcherAdmits(engine, frame, ballTerm);
+                bool matched = CatcherAdmits(engine, frame, ball);
                 if (!matched
                     && (frame.SnapBindingTrailTop < viewBinding || frame.SnapExtraTrailTop < viewExtra))
                 {
@@ -294,7 +331,7 @@ public sealed partial class PrologEngine
                     engine.ViewCellsAsOf(frame.SnapBindingTrailTop, frame.SnapExtraTrailTop,
                         ref viewBinding, ref viewExtra, viewed);
                     // The same trial again only if the view changed a cell.
-                    if (viewed.Count > viewedBefore) matched = CatcherAdmits(engine, frame, ballTerm);
+                    if (viewed.Count > viewedBefore) matched = CatcherAdmits(engine, frame, ball);
                 }
                 if (!matched) continue;
 
@@ -303,8 +340,8 @@ public sealed partial class PrologEngine
                 // The rollback rewrites every viewed cell, so the view is over.
                 viewed = null;
                 engine.UnwindToCatchFrame(i);
-                Cell ball = Materializer.MaterializeAsCell(engine, ballTerm);
-                if (!engine.UnifyHeapWithCell(frame.CatcherHeapIdx, ball))
+                Cell planted = ball.Plant(engine);
+                if (!engine.UnifyHeapWithCell(frame.CatcherHeapIdx, planted))
                 {
                     // Only a cell the goal overwrote in place can get here. The
                     // machine is at this frame's snapshot now, older than any
@@ -330,7 +367,7 @@ public sealed partial class PrologEngine
     // indices point into the trial region truncated right below; flushing
     // them later read garbage cells (clpz's all_distinct crashed on a
     // phantom functor id).
-    private static bool CatcherAdmits(Activation engine, in CatchFrame frame, Term ballTerm)
+    private static bool CatcherAdmits(Activation engine, in CatchFrame frame, Ball ball)
     {
         int savedHeapTop = engine.HeapTop;
         int savedBindingTrail = engine.BindingTrailTop;
@@ -338,7 +375,7 @@ public sealed partial class PrologEngine
         int savedHb = engine.Hb;
         int savedWakeups = engine.PendingWakeupCount;
         engine.SetHb(engine.HeapTop);
-        Cell trialBall = Materializer.MaterializeAsCell(engine, ballTerm);
+        Cell trialBall = ball.Plant(engine);
         bool matched = engine.UnifyHeapWithCell(frame.CatcherHeapIdx, trialBall);
         engine.UnwindTrails(savedBindingTrail, savedExtraTrail);
         engine.SetHeapTop(savedHeapTop);
@@ -2014,14 +2051,12 @@ public sealed partial class PrologEngine
             || (IlPromotion.Wasm?.Threshold ?? 0) > 0
             || HoldsCompiledCode(interp.IlByFunctorId);
 
-        // --strip-wam: register each persisted dispatch graph onto this query's
-        // fresh engine, so a stripped indexed predicate resolves its entry clause
-        // from the graph (its WAM body is gone). The indexed-dispatch cache is
-        // per-engine, so this runs per query.
+        // --strip-wam: a stripped indexed predicate resolves its entry clause
+        // from its persisted graph (its WAM body is gone). A reference, not a
+        // copy: registering every graph at each setup made each query pay for
+        // all of them, the prelude's included.
         if (_persistedIndexGraphs.Count > 0)
-            foreach (var (fid, graphBytes) in _persistedIndexGraphs)
-                Shumway.Compiler.Il.IlIndexedDispatch.RegisterPersistedGraph(
-                    engine, fid, graphBytes);
+            engine.PersistedIndexGraphs = _persistedIndexGraphs;
 
         // wire the direct IL-delegate table (the
         // CallIl opcode reads this) and rewrite every Call site whose
@@ -2048,8 +2083,9 @@ public sealed partial class PrologEngine
         };
         // The versions the interpreter's copies were taken at, so the
         // per-assert refresh (three Snapshot() copies) runs only when a pool
-        // changed since. Per activation (see _interpPoolVersions).
-        _interpPoolVersions.AddOrUpdate(engine, poolVersions);
+        // changed since. Per activation: under the mutation broadcast a
+        // refresh of one activation must not make another's look current.
+        engine.LiteralPoolVersions = poolVersions;
 
         // lets a PrologRuntimeException thrown from a
         // builtin Impl carry the offending term in its error/2 value
@@ -2076,16 +2112,20 @@ public sealed partial class PrologEngine
             if (nestedBall is null) return -1;
             bool nestedLowMem = ex is Shumway.Core.PrologRuntimeException
                 { Kind: "resource_error" } || IsResourceBall(nestedBall);
-            return TryCatchFrom(engine, nestedBall, minFrameIndex, out _, nestedLowMem);
+            Ball planted = ex is ShumwayPrologException thrown ? Ball.Of(thrown) : new Ball(nestedBall);
+            return TryCatchFrom(engine, planted, minFrameIndex, out _, nestedLowMem);
         };
         // Cheap throw: a throw/1 whose catcher was opened in the same dispatch
         // invocation resolves to a PC jump — no .NET exception construction or
         // EH unwinding (clpz's with_local_attributes throws per propagation).
+        // No term either when an image can carry the ball (ADR-063).
         engine.InlineThrowResolver = (ballIdx, minFrameIndex) =>
         {
+            if (TermImageCopier.FromHeap(engine, Cell.Ref(ballIdx)) is { } image)
+                return TryCatchFrom(engine, new Ball(image), minFrameIndex, out _, IsResourceBall(image));
             Term ball = TermReader.Materialize(engine, ballIdx);
             if (ball is Shumway.Compiler.Ast.VarTerm) return -1;   // ISO error path
-            return TryCatchFrom(engine, ball, minFrameIndex, out _, IsResourceBall(ball));
+            return TryCatchFrom(engine, new Ball(ball), minFrameIndex, out _, IsResourceBall(ball));
         };
         engine.MaterializeCellToTerm = cell =>
         {
@@ -2142,7 +2182,7 @@ public sealed partial class PrologEngine
         if (builtPersistentNow)
         {
             // a fresh buffer gets a fresh chain table. Older
-            // tables stay alive through _engineChainTables for any outer
+            // tables stay alive on their activations for any outer
             // (nested-query) engines still running on their buffers.
             ResetDynChains();
             PopulateDynChains(program, addressMap, mergedPredicatesByAddress);

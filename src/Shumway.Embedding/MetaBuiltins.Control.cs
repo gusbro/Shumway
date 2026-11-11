@@ -2140,8 +2140,7 @@ public static partial class MetaBuiltins
             m = engine.GetHeap(engine.Deref(m.AsHeapIndex));
         if (m.Tag != Tag.Atom) return false;
         int moduleId = m.AsAtomId;
-        int v3 = engine.Verify3FunctorId(moduleId);
-        int v4 = v3 >= 0 ? -1 : engine.Verify4FunctorId(moduleId);
+        engine.ResolveAttrHook(moduleId, out int v3, out int v4);
         if (v3 < 0 && v4 < 0) return false;
 
         // The attr-value argument arrives as the Ref the interrupt embedded
@@ -2198,6 +2197,9 @@ public static partial class MetaBuiltins
     {
         Cell p = engine.GetRegister(0);
         if (p.Tag is not (Tag.Ref or Tag.AttVar)) return true;
+        // Nothing to settle (a /4 hook's [] behind a variable, a proxy already
+        // bound): no cell either, as the wasm tier's answer allocates none.
+        if (engine.GetHeap(engine.Deref(p.AsHeapIndex)).Tag != Tag.AttVar) return true;
         Cell o = engine.GetRegister(1);
         int otherIdx;
         if (o.Tag is Tag.Ref or Tag.AttVar) otherIdx = o.AsHeapIndex;

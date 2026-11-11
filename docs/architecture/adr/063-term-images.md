@@ -434,3 +434,21 @@ pool entry while a chunk names it, and marked from the clause store and
 from a retract or clause/2 enumeration that holds a clause the store has
 let go (ADR-003). Tests: `TermImageCopierTests`, `FactImageCompilerTests`,
 `ImageFactTests`.
+
+## Amendment (2026-11-11): a thrown ball is planted from an image
+
+throw/1 copies its ball from the heap into an image (`TermImageCopier`), and
+catch resolution plants that image wherever it planted the ball: at the heap
+top for each catcher it tries, and once more after the rollback to the frame
+that takes it. Before, it planted a term read off the heap, node by node each
+time, joining variables by name. The interpreter's jump to a frame opened in
+the same dispatch takes the image itself; a throw that travels as a .NET
+exception carries it beside the term, which the host still receives when
+nothing catches the ball. A ball an image cannot carry (an atom, an integer,
+a list, a big integer, a rational, a foreign object, a cycle) takes the term
+path as before.
+
+The exception's message is written when it is read, not at the throw. A ball
+deeper than the recursive writer goes took the process down when it was
+thrown out of a nested driver or from compiled code, caught or not. Tests:
+`ThrownBallImageTests`.

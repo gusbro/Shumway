@@ -153,6 +153,59 @@ public sealed class EngineWasmCompileEnv : IWasmCompileEnv
         return entry.Arity == 0 && (succeeds || entry.Name == "fail");
     }
 
+    public WasmFindallForm FindallFormOf(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return (entry.Name, entry.Arity) switch
+        {
+            ("$findall_push", 0) => WasmFindallForm.Push,
+            ("$findall_record_s", 1) => WasmFindallForm.Record,
+            ("$findall_collect", 1) => WasmFindallForm.Collect,
+            _ => WasmFindallForm.None,
+        };
+    }
+
+    public bool IsInlineGlobalStore(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Arity == 2
+            && entry.Name is "b_setval" or "$store_backtrackable_global_var";
+    }
+
+    public bool IsInlineCompare3(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return entry.Name == "compare" && entry.Arity == 3;
+    }
+
+    public WasmArithCompare ArithCompareOf(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        if (entry.Arity != 2) return WasmArithCompare.None;
+        return entry.Name switch
+        {
+            "=:=" => WasmArithCompare.Equal,
+            "=\\=" => WasmArithCompare.NotEqual,
+            "<" => WasmArithCompare.Less,
+            ">" => WasmArithCompare.Greater,
+            "=<" => WasmArithCompare.LessOrEqual,
+            ">=" => WasmArithCompare.GreaterOrEqual,
+            _ => WasmArithCompare.None,
+        };
+    }
+
+    public WasmWakeSupport WakeSupportOf(int builtinId)
+    {
+        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        return (entry.Name, entry.Arity) switch
+        {
+            ("$get_cut_barrier", 1) => WasmWakeSupport.CutBarrier,
+            ("$wake_settle", 2) => WasmWakeSupport.Settle,
+            ("$wake_hook_goal", 7) => WasmWakeSupport.HookGoal,
+            _ => WasmWakeSupport.None,
+        };
+    }
+
     public bool IsInlineAttrListWrite(int builtinId, out bool isDelete)
     {
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);

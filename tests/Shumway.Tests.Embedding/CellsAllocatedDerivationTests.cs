@@ -105,7 +105,7 @@ public sealed class CellsAllocatedDerivationTests
         guards 80 80
         ite 763 763
         cut 24 24
-        catch 13367 13367
+        catch 13265 13265
         colls 326 326
         gc 120005 120005
         autogc 2400061 2400061
@@ -113,7 +113,7 @@ public sealed class CellsAllocatedDerivationTests
         wakeups 573 579
         trials 104 104
         bigs 13 13
-        midquery 8622 8622
+        midquery 8620 8620
 
         """;
 

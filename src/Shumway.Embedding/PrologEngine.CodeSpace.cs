@@ -32,14 +32,6 @@ public sealed partial class PrologEngine
     private Shumway.Compiler.Wam.ClauseCompiler? _assertClauseCompiler;
     private ModuleRewrite.Context? _assertDynCtx;
 
-    /// <summary>The literal pools' versions each activation's copies were
-    /// taken at (query setup, or the last refresh), per activation:
-    /// <see cref="RefreshLiteralPoolsIfChanged"/> compares against these.
-    /// Per activation, not per host: under the mutation broadcast a refresh
-    /// of one activation must not make another's look current.</summary>
-    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<Activation, int[]>
-        _interpPoolVersions = new();
-
     /// <summary>The static program, linked once and reused across queries
     /// (ADR-015 chunk B). Null until the first query builds it; nulled
     /// whenever the static program changes (<see cref="ConsultString"/> /
@@ -319,7 +311,7 @@ public sealed partial class PrologEngine
         // chain state + free-list describe offsets in the
         // now-invalidated buffer; start a fresh table for the rebuild.
         // Live engines still running on the old buffer keep their own
-        // table through _engineChainTables — invalidation never desyncs
+        // table on their activation — invalidation never desyncs
         // an in-flight query's in-place dispatch. Dropped already: the fresh
         // table stands (each mutation of a query after the drop comes here).
         if (!dropped) ResetDynChains();
@@ -517,10 +509,10 @@ public sealed partial class PrologEngine
         _precompiledStaticPredicates = new();
 
     /// <summary>Persisted WAM-independent dispatch graphs (--strip-wam), keyed by
-    /// runtime functor id. Populated at LoadBundle; registered onto each query's
-    /// fresh engine at setup (the indexed-dispatch cache is per-engine), so a
+    /// runtime functor id, decoded at LoadBundle. Each query's activation gets a
+    /// reference and takes a graph on its first dispatch through it, so a
     /// stripped indexed predicate resolves its entry clause without a WAM body.</summary>
-    internal readonly Dictionary<int, byte[]> _persistedIndexGraphs = new();
+    internal readonly Shumway.Compiler.Il.PersistedIndexGraphs _persistedIndexGraphs = new();
 
     /// <summary>Module names already warned about unbindable persisted IL, so
     /// the two load passes that visit an entry warn once, not twice.</summary>

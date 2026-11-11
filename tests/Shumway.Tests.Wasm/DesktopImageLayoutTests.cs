@@ -55,6 +55,15 @@ public sealed class DesktopImageLayoutTests
         Add("orphan ring", WasmAbi.AttrOrphanBase, WasmAbi.AttrOrphanLimit, 4);
         Add("attr write ring", WasmAbi.AttrWriteBase, WasmAbi.AttrWriteLimit, WasmAbi.AttrWriteEntryInts * 4);
         Add("attr drop ring", WasmAbi.AttrDropBase, WasmAbi.AttrDropLimit, 4);
+        Add("wake ring", WasmAbi.WakeRingBase, WasmAbi.WakeRingLimit, WasmAbi.WakeEntryInts * 4);
+        Add("findall ring", WasmAbi.FindallRingBase, WasmAbi.FindallRingLimit, 8);
+        Add("global write ring", WasmAbi.GlobalWriteBase, WasmAbi.GlobalWriteLimit,
+            WasmAbi.GlobalWriteEntryLongs * 8);
+        // Read whole, not by its count: the ids, then each one's hook pair.
+        long modules = cx.ReadSlot(WasmAbi.AttrModuleBase);
+        if (modules != 0)
+            areas.Add(("attr module list", modules,
+                       WasmAbi.AttrHookOffset + WasmAbi.AttrModuleCapacity * 8L));
         Add("attr log", WasmAbi.AttrLogBase, WasmAbi.AttrLogLength, 4);
         Add("arith table", WasmAbi.ArithTableBase, WasmAbi.ArithTableLength, 4);
 
@@ -63,6 +72,8 @@ public sealed class DesktopImageLayoutTests
         Assert.Equal(5, cx.ReadSlot(WasmAbi.ExtraTrailTop));
         Assert.Contains(areas, a => a.Name == "extra trail");
         Assert.Contains(areas, a => a.Name == "orphan ring");
+        Assert.Contains(areas, a => a.Name == "wake ring");
+        Assert.Contains(areas, a => a.Name == "findall ring");
         Assert.True(cx.ReadSlot(WasmAbi.ExtraTrailLimit) > 5,
             "no room above the top: the module could not append an entry at all");
 

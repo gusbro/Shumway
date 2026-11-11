@@ -42,14 +42,14 @@ internal sealed class DynamicCodePatcher
     /// state through this association.</summary>
     public void AssociateEngineWithCurrentChains(Activation engine)
     {
-        if (_engineChainTables.TryGetValue(engine, out var prev))
+        if (engine.HostChainTable is DynChainTable prev)
         {
             if (ReferenceEquals(prev, _dynChainTable)) return;
-            _engineChainTables.Remove(engine);
+            engine.HostChainTable = null;
             Detach(prev);
         }
         _dynChainTable.Attached++;
-        _engineChainTables.Add(engine, _dynChainTable);
+        engine.HostChainTable = _dynChainTable;
     }
 
     // ----- the literals and atoms a buffer's code names -----
@@ -153,7 +153,7 @@ internal sealed class DynamicCodePatcher
         byte[]? program = null;
         for (int i = _liveEngines.Count - 1; i >= 0; i--)
             if (_liveEngines[i].TryGetTarget(out var engine)
-                && _engineChainTables.TryGetValue(engine, out var on) && ReferenceEquals(on, table))
+                && ReferenceEquals(engine.HostChainTable, table))
             {
                 engine.MarkReachedCode(starts, ends, reached);
                 program ??= engine.CurrentProgram;
@@ -392,10 +392,15 @@ internal sealed class DynamicCodePatcher
         Drop(table, new DroppedCode(chunkAddr, chunkAddr + length, body, atoms, recycle));
     }
 
-    /// <summary>The code of each open query (its transient region), released
-    /// when the query ends.</summary>
-    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<Activation, QueryUnits>
-        _activationUnits = new();
+    /// <summary>The code of an open query (its transient region), released
+    /// when the query ends; kept on its activation.</summary>
+    private static QueryUnits UnitsOf(Activation engine)
+    {
+        if (engine.HostQueryUnits is QueryUnits units) return units;
+        var fresh = new QueryUnits();
+        engine.HostQueryUnits = fresh;
+        return fresh;
+    }
 
     private sealed class QueryUnits
     {
@@ -405,10 +410,10 @@ internal sealed class DynamicCodePatcher
 
     internal void NoteQueryUnit(Activation engine, byte[] code, int[] atoms)
     {
-        if (E._literalPools.AddRefs(code)) _activationUnits.GetValue(engine, static _ => new()).Literals.Add(code);
+        if (E._literalPools.AddRefs(code)) UnitsOf(engine).Literals.Add(code);
         if (atoms.Length == 0) return;
         E.RetainCode(atoms);
-        _activationUnits.GetValue(engine, static _ => new()).Atoms.Add(atoms);
+        UnitsOf(engine).Atoms.Add(atoms);
     }
     public DynamicCodePatcher(PrologEngine engine) => E = engine;
 
@@ -1973,14 +1978,11 @@ internal sealed class DynamicCodePatcher
     /// invalidated.</summary>
     private DynChainTable _dynChainTable = new();
 
-    /// <summary>Activation → the chain table for the buffer that engine runs
-    /// on. Registered at query setup; weak so a finished query's engine
-    /// (and, once unshared, its table) is collectable.</summary>
-    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<Activation, DynChainTable>
-        _engineChainTables = new();
-
+    /// <summary>The chain table for the buffer <paramref name="engine"/> runs
+    /// on, registered at query setup and kept on the activation, so a finished
+    /// query's activation (and, once unshared, its table) is collectable.</summary>
     internal DynChainTable? GetChainTable(Activation engine)
-        => _engineChainTables.TryGetValue(engine, out var t) ? t : null;
+        => engine.HostChainTable as DynChainTable;
 
     /// <summary>ADR-041 — dispatch-time clause selection for an unindexed
     /// dynamic chain (the <c>Activation.DynChainSelect</c> hook). Inspects the
@@ -2138,7 +2140,10 @@ internal sealed class DynamicCodePatcher
 
     internal DynChainTable GetOrCreateChainTable(Activation engine)
     {
-        return _engineChainTables.GetValue(engine, static _ => new DynChainTable { Current = false, Attached = 1 });
+        if (engine.HostChainTable is DynChainTable table) return table;
+        var fresh = new DynChainTable { Current = false, Attached = 1 };
+        engine.HostChainTable = fresh;
+        return fresh;
     }
 
     /// <summary>every engine born via SetupQueryFromTerm, weakly
@@ -2200,15 +2205,15 @@ internal sealed class DynamicCodePatcher
         E.ReleaseQueryCode(engine);
         // Its code is dead: the query's region, and the buffer when it was
         // the last activation on a table the host has replaced.
-        if (_activationUnits.TryGetValue(engine, out var units))
+        if (engine.HostQueryUnits is QueryUnits units)
         {
-            _activationUnits.Remove(engine);
+            engine.HostQueryUnits = null;
             foreach (var code in units.Literals) E._literalPools.Release(code);
             foreach (var atoms in units.Atoms) E.DropCode(atoms);
         }
-        if (_engineChainTables.TryGetValue(engine, out var table))
+        if (engine.HostChainTable is DynChainTable table)
         {
-            _engineChainTables.Remove(engine);
+            engine.HostChainTable = null;
             Detach(table);
         }
         E._literalPools.SweepIfDue();

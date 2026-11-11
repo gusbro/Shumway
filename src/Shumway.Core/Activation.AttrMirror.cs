@@ -54,10 +54,10 @@ public sealed partial class Activation
     public int AttrMirrorMask => _attrMirrorMask;
 
     /// <summary>How many rows a module may insert before the load factor
-    /// would want a rebuild. Capped, because a module that inserts a
-    /// great many rows without ever coming out is not a case worth
-    /// optimising for, and a small reserve keeps the arithmetic obvious.
-    /// </summary>
+    /// would want a rebuild: all of the distance to it. Not capped below
+    /// that: a solver that posts constraints promotes variables in long
+    /// chains, and a cap of sixteen sent clp(Z) to the host 757 times in
+    /// one sudoku solve to be given sixteen more.</summary>
     public int AttrMirrorInsertBudget
     {
         get
@@ -66,8 +66,7 @@ public sealed partial class Activation
             // AttrMirrorPut rebuilds at used * 4 >= Length, so this is
             // the distance to that line, read from the same expression.
             int room = (_attrMirror.Length / 4) - _attrMirrorUsed;
-            if (room <= 0) return 0;
-            return room < 16 ? room : 16;
+            return room > 0 ? room : 0;
         }
     }
 
