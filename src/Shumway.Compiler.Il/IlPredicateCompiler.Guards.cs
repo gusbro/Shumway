@@ -1735,7 +1735,8 @@ public sealed partial class IlPredicateCompiler
         Action? markDeadCursors = null,
         Action? dynamicFailDispatch = null,
         Action<IlEmit>? dynamicCursor = null,
-        bool? wakeDeopt = null)
+        bool? wakeDeopt = null,
+        Func<IlEmit, IlLocal>? regionMarker = null)
     {
         // ADR-061: in a continuation method the guard's marks live in the
         // activation (the indexed buckets' next node too), so the cold method
@@ -1821,7 +1822,24 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadConstant(-1);
                 emit.BranchIfEqual(noCp);
             }
-            if (WamCps)
+            if (g.KeepsAlternative && regionMarker is not null)
+            {
+                // In a region, a head fact's match pushes the region's own
+                // choice point: its BP the resume marker of the alternative,
+                // so the region resumes it as one it pushed (ADR-058).
+                var marker = regionMarker(emit);
+                emit.LoadArgument(0);
+                emit.LoadConstant(arity);
+                emit.LoadLocal(marker);
+                if (g.NeedsSnapshot)
+                {
+                    LoadMark(bt, CpsGuardBtField); LoadMark(xt, CpsGuardXtField); LoadMark(h, CpsGuardHField);
+                    LoadMark(hb, CpsGuardHbField); LoadMark(ee, CpsGuardEField);
+                    EmitHelperCall(emit, EnginePushCpWithMarksMethod);
+                }
+                else EmitHelperCall(emit, EnginePushChoicePointMethod);
+            }
+            else if (WamCps)
             {
                 // ADR-061: a WAM choice point, its BP the next alternative's marker.
                 emit.LoadArgument(0);

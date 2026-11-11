@@ -38,9 +38,8 @@ public class Adr031HeadFactTests
         """;
 
     // Tier1Region: runtime promotion, where a multi-clause root is a region
-    // of one and keeps its choice points. Tier1Method: the same with regions
-    // off, a method per predicate as a baked library has. Tier1Bundle: the
-    // persisted IL.
+    // of one. Tier1Method: the same with regions off, a method per predicate
+    // as a baked library has. Tier1Bundle: the persisted IL.
     public enum Mode { Tier0, Tier1Region, Tier1Method, Tier1Bundle }
     public static TheoryData<Mode> Modes => new()
     { Mode.Tier0, Mode.Tier1Region, Mode.Tier1Method, Mode.Tier1Bundle };
@@ -81,10 +80,9 @@ public class Adr031HeadFactTests
                     // Every predicate called once, then promoted, so the asserts run IL.
                     foreach (string g in Warm) e.Query(g);
                     Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
-                    // ANTI-VACUITY: the methods took the head-fact path.
-                    if (m == Mode.Tier1Method)
-                        Assert.True(IlPredicateCompiler.CpFreeGuardStats.HeadFact > heads,
-                            "no head fact compiled without a choice point");
+                    // ANTI-VACUITY: the code took the head-fact path.
+                    Assert.True(IlPredicateCompiler.CpFreeGuardStats.HeadFact > heads,
+                        "no head fact compiled without a choice point");
                     return e;
                 }
                 finally

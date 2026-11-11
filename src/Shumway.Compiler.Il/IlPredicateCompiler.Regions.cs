@@ -1133,7 +1133,8 @@ public sealed partial class IlPredicateCompiler
             if (CpFreeGuardCommit && i < n - 1
                 && TryGetCpFreeGuard(
                     member.BytecodeUnfused, clauses[i].Start, clauses[i].End,
-                    member.Arity, calleeMap, member.CallSites, out var ginfo))
+                    member.Arity, calleeMap, member.CallSites, out var ginfo,
+                    allowKeepAlternative: CpFreeHeadFacts))
             {
                 int guardEnd = ginfo.CutPc;
                 int mi0 = mi, i0 = i;
@@ -1183,6 +1184,13 @@ public sealed partial class IlPredicateCompiler
                     ctx.CursorLabels[ctx.ClauseAltCursor[(mi, i + 1)]], ctx.FailLabel,
                     emitSelf, ctx.ClauseAltCursor[(mi, i + 1)], member.Arity,
                     salt: $"_rm{mi}_c{i}",
+                    regionMarker: e =>
+                    {
+                        var marker = e.DeclareLocal<int>($"hf_marker_rm{mi0}_c{i0}");
+                        EmitResumeMarker(e, ctx.RegionFid, ctx.ResumeCursor[ctx.ClauseAltCursor[(mi0, i0 + 1)]]);
+                        e.StoreLocal(marker);
+                        return marker;
+                    },
                     markDeadCursors: dynFids is { Count: > 0 } ? (Action?)null : () =>
                     {
                         // The plan allocated a forward-resume cursor per Call
@@ -1265,7 +1273,7 @@ public sealed partial class IlPredicateCompiler
         // ADR-031 indexed buckets — see EmitIndexedDispatchBody's twin. The
         // idxnext local holds the next node's region cursor (the same value
         // the bucket CP carries), -1 for a chain tail.
-        var guardPlan = PlanIndexedGuards(member, info, calleeMap);
+        var guardPlan = PlanIndexedGuards(member, info, calleeMap, headFacts: true);
         int K = info.Nodes.Count;
         int N = info.Clauses.Count;
         string salt = $"_rm{mi}";
@@ -1396,7 +1404,32 @@ public sealed partial class IlPredicateCompiler
                         emit.Branch(ctx.FailLabel);
                     },
                     dynamicCursor: e2 => e2.LoadLocal(idxNext!),
-                    wakeDeopt: HasBytecode(member));
+                    wakeDeopt: HasBytecode(member),
+                    regionMarker: e2 =>
+                    {
+                        // The next node is known at run time: one compare per
+                        // node of this clause that has one, each loading its
+                        // marker as written, so a persisted region patches it.
+                        var marker = e2.DeclareLocal<int>($"hf_marker_ridx{mi}_{i0}");
+                        var done = e2.DefineLabel($"hf_marker_done_ridx{mi}_{i0}");
+                        foreach (var node in info.Nodes)
+                        {
+                            if (node.ClauseIndex != i0 || node.NextCursor < 0) continue;
+                            int nextCur = ctx.IndexNodeCursor[(mi, node.NextCursor)];
+                            var skip = e2.DefineLabel($"hf_marker_skip_ridx{mi}_{i0}_{NextLabelSeq()}");
+                            e2.LoadLocal(idxNext!);
+                            e2.LoadConstant(nextCur);
+                            e2.UnsignedBranchIfNotEqual(skip);
+                            EmitResumeMarker(e2, ctx.RegionFid, ctx.ResumeCursor[nextCur]);
+                            e2.StoreLocal(marker);
+                            e2.Branch(done);
+                            e2.MarkLabel(skip);
+                        }
+                        e2.LoadConstant(0);                 // unreachable: a tail is -1
+                        e2.StoreLocal(marker);
+                        e2.MarkLabel(done);
+                        return marker;
+                    });
                 if (dynFb is not null)
                 {
                     emit.MarkLabel(dynFb);

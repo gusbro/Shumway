@@ -432,14 +432,21 @@ The case that motivated it is member/2's helper, `'$member3'(_, X, X)`:
 first-argument indexing leaves a choice point on every element but the
 last, and in a scan most elements fail the head. On a chess sample (Trealla's
 `samples/chess.pl`), member/2 tried 20.7 million elements in one run, 3.5% of
-them matching; the run is 9 to 11% faster (A B B A, processor capped), and a
-scan of a 30-element list with the prelude's member/2, every element failing,
-14 to 18% faster.
+them matching. A scan of a 30-element list with the prelude's member/2, every
+element failing, runs 14 to 18% faster (A B B A, processor capped). The chess
+run gains 2 to 6%, inside its own run-to-run spread of about 5%: what is left
+of member/2 there is the head unification itself, which binds the pattern's
+variables before it meets the argument that fails.
 
-Methods only, outside a region: a region's choice points are its own (a
-marker BP and the retry plan of ADR-057), and the helper push a match makes
-here would be the wrong kind there. At runtime a multi-clause root compiles
-as a region of one, so the shape takes effect where a predicate compiles as
-a method: the libraries' baked IL, the prelude's member/2 among them. The
-wasm tier has no CP-free guards yet. `SHUMWAY_CPFREE_HEADFACT=0` turns it
-off; `SHUMWAY_CPFREE_STATS=1` counts it. Tests: `Adr031HeadFactTests`.
+In a region the choice point a match pushes is the region's own: a WAM
+choice point whose BP is the resume marker of the next alternative
+(`PushChoicePointWithMarks`, ADR-058), so the region resumes it in place as
+one it pushed, and a choice point left when the region's code is retired
+belongs to the region. An indexed member knows its next node at run time;
+the marker is chosen by comparing it with the clause's nodes, each marker
+written as a constant so a persisted region patches it. A method keeps the
+helper push. At runtime a multi-clause root compiles as a region of one, so
+both forms run: regions for the program's code, methods for the libraries'
+baked IL, the prelude's member/2 among them. The wasm tier has no CP-free
+guards yet. `SHUMWAY_CPFREE_HEADFACT=0` turns it off;
+`SHUMWAY_CPFREE_STATS=1` counts it. Tests: `Adr031HeadFactTests`.
