@@ -187,6 +187,11 @@ public sealed partial class Activation
     /// that stages a global write ring sets it.</summary>
     public IBacktrackableStore? WasmGlobalStore { get; set; }
 
+    /// <summary>A world's state kept between this engine's entries, of the
+    /// world's own type: held here so it lives and dies with the engine.
+    /// </summary>
+    public object? WasmChainCache { get; set; }
+
     /// <summary>The writes a module parked, each as the host's b_setval/2
     /// makes it: the log record the module's trail entry already indexes,
     /// then the store. In ring order, which is the order the indexes were

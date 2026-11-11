@@ -165,7 +165,44 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
     {
         if (_table.ModuleCount == 0)
             throw new InvalidOperationException("no module installed");
-        return new Chain(this, engine);
+        // An engine's outermost chain is kept between its entries, pins and
+        // all, so an entry does not pin twenty arrays and free them again. A
+        // nested entry finds it open and gets one of its own, as before.
+        if (engine.WasmChainCache is not ChainKeeper keeper || keeper.World != this)
+        {
+            if (engine.WasmChainCache is ChainKeeper other)
+            {
+                // Another world's: dropping it while its chain runs would let
+                // its finalizer unpin arrays a module is writing to.
+                if (other.Chain is { IsOpen: true })
+                    return new Chain(this, engine, kept: false);
+                other.Release();
+            }
+            keeper = new ChainKeeper(this);
+            engine.WasmChainCache = keeper;
+        }
+        if (keeper.Chain is not { } chain)
+            return keeper.Chain = new Chain(this, engine, kept: true);
+        return chain.TryReopen() ? chain : new Chain(this, engine, kept: false);
+    }
+
+    /// <summary>The kept chain's owner, in the engine's
+    /// <see cref="Activation.WasmChainCache"/>. A pinned handle is a root of
+    /// its own, freed by nobody but its Free: when the engine is gone, this
+    /// finalizer is what frees the kept chain's, or the arrays they pin
+    /// would stay pinned and alive for good.</summary>
+    private sealed class ChainKeeper(BrowserWasmWorld world)
+    {
+        public BrowserWasmWorld World { get; } = world;
+        public Chain? Chain { get; set; }
+
+        public void Release()
+        {
+            Chain?.ReleasePins();
+            GC.SuppressFinalize(this);
+        }
+
+        ~ChainKeeper() => Chain?.ReleasePins();
     }
 
     /// <summary>The rows' address, repinning if the table grew.</summary>
@@ -214,9 +251,10 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         private GCHandle _heapPin, _stackPin, _regsPin, _trailPin, _attrPin;
         // Each pin's address is taken when it is pinned: AddrOfPinnedObject is
         // a runtime call, too dear for a staging, which every crossing pays.
-        // An address is good only while its pin is held, hence _disposed.
+        // An address is good only while its pin is held, hence _open.
         private long _heapPinAddr, _stackPinAddr, _regsPinAddr;
-        private bool _disposed;
+        private readonly bool _kept;
+        private bool _open, _released;
         private long _trailPinAddr;
         private long _attrPinAddr;
         private long[]? _attrRows;
@@ -232,17 +270,39 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         private Cell[]? _heap, _stack, _regs;
         private int[]? _trail;
         private bool _engineAuthoritative;
-        // This thread's module index: a chain lives on the thread it began on.
-        private readonly ThreadIndex _index;
+        // The module index of the thread the chain was opened on: an engine
+        // is thread-agile, so a kept chain takes it again at every opening.
+        private ThreadIndex _index = null!;
 
-        public Chain(BrowserWasmWorld w, Activation engine)
+        public Chain(BrowserWasmWorld w, Activation engine, bool kept)
         {
             _w = w;
             _engine = engine;
-            _index = w._moduleIndex.Value!;
+            _kept = kept;
             _globalImageAddress = (long)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(_globalImage, 0);
             _mailboxAt = (int)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(_mailbox, 0);
-            Stage();
+            Open();
+        }
+
+        public bool IsOpen => _open;
+
+        /// <summary>Opens a kept chain for another entry, or false when it
+        /// is open already (this entry is nested in it).</summary>
+        public bool TryReopen()
+        {
+            if (_open || _released) return false;
+            // As a new chain's: no slot the last entry left is read as this one's.
+            Array.Clear(_mailbox);
+            Open();
+            return true;
+        }
+
+        private void Open()
+        {
+            _index = _w._moduleIndex.Value!;
+            _open = true;
+            try { Stage(); }
+            catch { _open = false; throw; }
         }
 
         /// <summary>Pins the engine areas and fills the mailbox with their
@@ -254,7 +314,8 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         /// visible at the restaging that follows it.</summary>
         private void Stage()
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!_open)
+                throw new InvalidOperationException("staging a chain that is not open");
             // Diagnostic builds only, like every clock read on this path: in
             // a browser one read costs microseconds (the probe's `clock` line
             // measures it), and a chain crosses here and Call on every entry.
@@ -463,6 +524,9 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         private readonly long[] _globalImage = GC.AllocateArray<long>(2 * 32, pinned: true);
         private long _globalImageAddress;
         private int _globalImageVersion = -1, _globalImageOwner = -1, _globalImagePairs;
+        // The store too: a version is a count per store, and a kept chain
+        // outlives entries.
+        private object? _globalImageStore;
 
         private long GlobalVarImageAddress(out int pairs)
         {
@@ -470,11 +534,13 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
             { pairs = 0; _engine.WasmGlobalStore = null; return 0; }
             var store = host.GlobalVars;
             _engine.WasmGlobalStore = store;
-            if (store.Version != _globalImageVersion || _engine.InstanceId != _globalImageOwner)
+            if (store.Version != _globalImageVersion || _engine.InstanceId != _globalImageOwner
+                || !ReferenceEquals(store, _globalImageStore))
             {
                 _globalImagePairs = store.WriteLiveCells(_globalImage, _engine.InstanceId);
                 _globalImageVersion = store.Version;
                 _globalImageOwner = _engine.InstanceId;
+                _globalImageStore = store;
             }
             pairs = _globalImagePairs;
             return _globalImageAddress;
@@ -680,14 +746,25 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
             Stage();
         }
 
+        /// <summary>Ends the entry. A kept chain keeps its pins for the next
+        /// one; any other frees them here.</summary>
         public void Dispose()
         {
-            SyncEngine();
-            _disposed = true;
-            // Every pin this chain took, not only the areas': a chain is
-            // made per entry, and a handle left allocated is never freed --
-            // the handle table grew by one per ring and image per chain,
-            // and the collector scans every pinned handle on every pass.
+            try { SyncEngine(); }
+            finally
+            {
+                _open = false;
+                if (!_kept) ReleasePins();
+            }
+        }
+
+        /// <summary>Every pin this chain took, not only the areas': a handle
+        /// left allocated is never freed, and the collector scans every
+        /// pinned handle on every pass. Final: a released chain does not
+        /// open again, so no address it cached outlives its pin.</summary>
+        public void ReleasePins()
+        {
+            _released = true;
             Unpin(ref _heapPin); Unpin(ref _stackPin);
             Unpin(ref _regsPin); Unpin(ref _trailPin);
             Unpin(ref _attrPin); Unpin(ref _callPin);
