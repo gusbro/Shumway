@@ -44,6 +44,43 @@ public sealed class FunctorReverseTableTests
             Assert.Equal(id, FunctorReverseTable.Lookup(a, n));
     }
 
+    /// <summary>What a world stages: the rows and the mask from one fill,
+    /// read without the lock when nothing is new. A functor interned after a
+    /// read is in the next one, and the mask fits the rows it came with
+    /// across every growth the loop causes.</summary>
+    [Fact]
+    public void CurrentCoversWhatWasInternedSinceTheLastRead()
+    {
+        long[] first = FunctorReverseTable.Current(out _);
+        long[] rows = first;
+        // Until the table has been rebuilt at least once, and a while after.
+        for (int i = 0, after = 0; after < 100; i++)
+        {
+            Assert.True(i < 1_000_000, "the table never grew");
+            int a = AtomTable.Intern($"rev_current_{i}", permanent: true).Id;
+            int id = FunctorTable.Intern(a, 3);
+            rows = FunctorReverseTable.Current(out int mask);
+            Assert.Equal(rows.Length, (mask + 1) * 2);
+            Assert.Equal(id, Probe(rows, mask, a, 3));
+            if (!ReferenceEquals(first, rows)) after++;
+        }
+    }
+
+    // The module's probe, over the rows a world staged.
+    private static int Probe(long[] rows, int mask, int atomId, int arity)
+    {
+        long key = FunctorReverseTable.Key(atomId, arity);
+        int slot = FunctorReverseTable.Hash(atomId, arity, mask);
+        for (int n = mask + 1; n > 0; n--)
+        {
+            long k = rows[slot * 2];
+            if (k == 0) return -1;
+            if (k == key) return (int)rows[slot * 2 + 1];
+            slot = (slot + 1) & mask;
+        }
+        return -1;
+    }
+
     /// <summary>And it agrees with the forward mirror in both directions,
     /// which is the property a module leans on.</summary>
     [Fact]

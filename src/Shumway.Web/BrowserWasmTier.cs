@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.JavaScript;
 using System.Text;
@@ -43,17 +44,37 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
     // when the table grows (an install, never mid-call).
     private long[]? _pinnedRows;
     private GCHandle _rowsPin;
+    private long _rowsPinAddr;
 
     // moduleId -> this thread's table index, -1 where not registered here.
     // Filled at each staging: registering is per thread and costs a compile,
     // so it happens the first time a thread stages a chain over the module,
     // not at install.
-    private readonly ThreadLocal<int[]> _moduleIndex = new(() =>
+    // Covered is how many modules the map is known to be complete for, so a
+    // staging that installed nothing does not walk them all again.
+    private sealed class ThreadIndex
+    {
+        public int[] Map = null!;
+        public long Address;
+        public int Covered;
+    }
+
+    private readonly ThreadLocal<ThreadIndex> _moduleIndex = new(() =>
     {
         var a = GC.AllocateArray<int>(16, pinned: true);
         Array.Fill(a, -1);
-        return a;
+        return new ThreadIndex
+        {
+            Map = a, Address = (long)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(a, 0),
+        };
     });
+
+    /// <summary>The meta-call observer, made once: a method group is a new
+    /// delegate each time it is converted, and staging set it per crossing.
+    /// </summary>
+    internal System.Action<object?, int, int, int, int, bool, int, int> MetaObserver
+        => _metaObserver ??= _modules.NoteMetaResolution;
+    private System.Action<object?, int, int, int, int, bool, int, int>? _metaObserver;
 
     public BrowserWasmWorld()
     {
@@ -148,24 +169,21 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
     }
 
     /// <summary>The rows' address, repinning if the table grew.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private long RowsAddress()
     {
         long[] rows = _table.Rows;
-        if (!ReferenceEquals(_pinnedRows, rows))
-        {
-            if (_rowsPin.IsAllocated) _rowsPin.Free();
-            _rowsPin = GCHandle.Alloc(rows, GCHandleType.Pinned);
-            _pinnedRows = rows;
-        }
-        return (long)_rowsPin.AddrOfPinnedObject();
+        return ReferenceEquals(_pinnedRows, rows) ? _rowsPinAddr
+            : Chain.Repin(ref _rowsPin, ref _pinnedRows, rows, ref _rowsPinAddr);
     }
 
     /// <summary>This thread's module index, brought up to date with every
     /// installed module (registering the ones this thread has not seen).</summary>
-    private long ModuleIndexAddress()
+    private long ModuleIndexAddress(ThreadIndex t)
     {
-        int[] a = _moduleIndex.Value!;
         int count = _registrations.Count;
+        if (t.Covered == count) return t.Address;
+        int[] a = t.Map;
         if (a.Length < count)
         {
             int grown = a.Length;
@@ -173,11 +191,18 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
             var next = GC.AllocateArray<int>(grown, pinned: true);
             Array.Fill(next, -1);
             Array.Copy(a, next, a.Length);
-            _moduleIndex.Value = a = next;
+            t.Map = a = next;
+            t.Address = (long)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(a, 0);
         }
-        for (int i = 0; i < count; i++)
+        int covered = count;
+        for (int i = t.Covered; i < count; i++)
+        {
             if (a[i] < 0) a[i] = _registrations[i].Index.Value;
-        return (long)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(a, 0);
+            // One that did not register is asked again next time.
+            if (a[i] < 0 && covered == count) covered = i;
+        }
+        t.Covered = covered;
+        return t.Address;
     }
 
     private sealed class Chain : IWasmChainContext
@@ -187,21 +212,35 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         private readonly long[] _mailbox = GC.AllocateArray<long>(WasmAbi.SlotCount, pinned: true);
         private readonly int _mailboxAt;
         private GCHandle _heapPin, _stackPin, _regsPin, _trailPin, _attrPin;
+        // Each pin's address is taken when it is pinned: AddrOfPinnedObject is
+        // a runtime call, too dear for a staging, which every crossing pays.
+        // An address is good only while its pin is held, hence _disposed.
+        private long _heapPinAddr, _stackPinAddr, _regsPinAddr;
+        private bool _disposed;
+        private long _trailPinAddr;
+        private long _attrPinAddr;
         private long[]? _attrRows;
         private GCHandle _callPin;
+        private long _callPinAddr;
         private int[]? _callMarkers;
         private GCHandle _metaPin;
+        private long _metaPinAddr;
         private long[]? _metaCache;
         private GCHandle _atomPin;
+        private long _atomPinAddr;
         private int[]? _atomMarkers;
-        private Cell[] _heap = null!, _stack = null!, _regs = null!;
-        private int[] _trail = null!;
+        private Cell[]? _heap, _stack, _regs;
+        private int[]? _trail;
         private bool _engineAuthoritative;
+        // This thread's module index: a chain lives on the thread it began on.
+        private readonly ThreadIndex _index;
 
         public Chain(BrowserWasmWorld w, Activation engine)
         {
             _w = w;
             _engine = engine;
+            _index = w._moduleIndex.Value!;
+            _globalImageAddress = (long)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(_globalImage, 0);
             _mailboxAt = (int)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(_mailbox, 0);
             Stage();
         }
@@ -215,6 +254,7 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         /// visible at the restaging that follows it.</summary>
         private void Stage()
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             // Diagnostic builds only, like every clock read on this path: in
             // a browser one read costs microseconds (the probe's `clock` line
             // measures it), and a chain crosses here and Call on every entry.
@@ -223,33 +263,28 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
 #endif
             _engine.EnsureWasmRegisters(_w._modules.RegisterDemand);
             _engine.AttrMirrorEnable();
-            _engine.MetaResolutionObserver = _w._modules.NoteMetaResolution;
+            _engine.MetaResolutionObserver = _w.MetaObserver;
             var heap = _engine.WasmHeapView;
             var stack = _engine.WasmStackView;
             var regs = _engine.WasmRegistersView;
             var trail = _engine.WasmBindingTrailView;
             _engine.ReserveWasmExtraTrail();
-            RepinIfChanged(ref _heapPin, ref _heap, heap);
-            RepinIfChanged(ref _stackPin, ref _stack, stack);
-            RepinIfChanged(ref _regsPin, ref _regs, regs);
-            if (!ReferenceEquals(_trail, trail))
-            {
-                if (_trailPin.IsAllocated) _trailPin.Free();
-                _trailPin = GCHandle.Alloc(trail, GCHandleType.Pinned);
-                _trail = trail;
-            }
+            if (!ReferenceEquals(_heap, heap)) Repin(ref _heapPin, ref _heap, heap, ref _heapPinAddr);
+            if (!ReferenceEquals(_stack, stack)) Repin(ref _stackPin, ref _stack, stack, ref _stackPinAddr);
+            if (!ReferenceEquals(_regs, regs)) Repin(ref _regsPin, ref _regs, regs, ref _regsPinAddr);
+            if (!ReferenceEquals(_trail, trail)) Repin(ref _trailPin, ref _trail, trail, ref _trailPinAddr);
             var bases = new Activation.WasmMailboxBases(
-                (long)_heapPin.AddrOfPinnedObject(),
-                (long)_stackPin.AddrOfPinnedObject(),
-                (long)_regsPin.AddrOfPinnedObject(),
-                (long)_trailPin.AddrOfPinnedObject(),
+                _heapPinAddr,
+                _stackPinAddr,
+                _regsPinAddr,
+                _trailPinAddr,
                 HeapLimitCells: heap.Length - 8,
                 StackLimitCells: stack.Length - 8,
                 TrailLimitEntries: trail.Length - 8,
                 FunctorTableBase: BrowserWasmTier.FunctorMirrorAddress(),
                 ResumeTableBase: _w.RowsAddress(),
                 ResumeTableRows: _w._table.Length,
-                ModuleIndexBase: _w.ModuleIndexAddress(),
+                ModuleIndexBase: _w.ModuleIndexAddress(_index),
                 TraceBase: TraceRingAddress(),
                 TraceLimit: _traceRing?.Length ?? 0,
                 AttrTableBase: AttrMirrorAddress(),
@@ -267,8 +302,8 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 ExtraTrailBase: ExtraTrailAddress(),
                 AttrOrphanBase: OrphanRingAddress(),
                 AttrOrphanLimit: _engine.WasmOrphanRingView.Length,
-                ArithTableBase: ArithTableAddress(),
-                ArithTableLength: Shumway.Builtins.ArithFunctorTable.Length,
+                ArithTableBase: ArithTableAddress(out int arithLength),
+                ArithTableLength: arithLength,
                 AttrWriteBase: AttrWriteRingAddress(),
                 AttrWriteLimit: _engine.WasmAttrWriteRingView.Length
                                 / WasmAbi.AttrWriteEntryInts,
@@ -284,8 +319,8 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 FindallRingLimit: _engine.WasmFindallRingView.Length,
                 GlobalWriteBase: GlobalWriteRingAddress(),
                 GlobalWriteLimit: _engine.WasmGlobalWriteRingView.Length / WasmAbi.GlobalWriteEntryLongs,
-                FunctorReverseBase: FunctorReverseAddress(),
-                FunctorReverseMask: Shumway.Core.FunctorReverseTable.Mask,
+                FunctorReverseBase: FunctorReverseAddress(out int funRevMask),
+                FunctorReverseMask: funRevMask,
                 GlobalVarBase: GlobalVarImageAddress(out int globalPairs),
                 GlobalVarCount: globalPairs,
                 AttrImageShared: true);
@@ -302,12 +337,14 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         /// once: the contents are interned at startup and never change, so
         /// unlike every other area here there is nothing to repin.</summary>
         private static GCHandle _fdDomPin;
+        private static long _fdDomPinAddr;
 
         /// <summary>Trace MODE's ring, pinned for the module to write into.
         /// Allocated only once something arms the trace, so an ordinary run
         /// carries neither the buffer nor the pin.</summary>
         private static long[]? _traceRing;
         private static GCHandle _tracePin;
+        private static long _tracePinAddr;
 
         private static long TraceRingAddress()
         {
@@ -316,8 +353,9 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
             {
                 _traceRing = new long[64 * 1024];
                 _tracePin = GCHandle.Alloc(_traceRing, GCHandleType.Pinned);
+                _tracePinAddr = (long)_tracePin.AddrOfPinnedObject();
             }
-            return (long)_tracePin.AddrOfPinnedObject();
+            return _tracePinAddr;
         }
 
         /// <summary>Moves whatever the module wrote into the host's trace and
@@ -345,52 +383,43 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         private static long FdDomFunctorAddress()
         {
             if (!_fdDomPin.IsAllocated)
+            {
                 _fdDomPin = GCHandle.Alloc(FdDomFunctorTable.Cells,
                                            GCHandleType.Pinned);
-            return (long)_fdDomPin.AddrOfPinnedObject();
+                _fdDomPinAddr = (long)_fdDomPin.AddrOfPinnedObject();
+            }
+            return _fdDomPinAddr;
         }
 
         /// <summary>The atom marker table's address, repinning when the host
         /// grew it -- same rule as the call markers.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private long AtomMarkerAddress()
         {
             int[] markers = _w._table.AtomCallMarkers;
-            if (!ReferenceEquals(_atomMarkers, markers))
-            {
-                if (_atomPin.IsAllocated) _atomPin.Free();
-                _atomPin = GCHandle.Alloc(markers, GCHandleType.Pinned);
-                _atomMarkers = markers;
-            }
-            return (long)_atomPin.AddrOfPinnedObject();
+            return ReferenceEquals(_atomMarkers, markers) ? _atomPinAddr
+                : Repin(ref _atomPin, ref _atomMarkers, markers, ref _atomPinAddr);
         }
 
         /// <summary>The meta cache's address. It is never replaced once
         /// allocated, so this pins once.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private long MetaCacheAddress()
         {
             long[] rows = _w._table.MetaCache;
-            if (!ReferenceEquals(_metaCache, rows))
-            {
-                if (_metaPin.IsAllocated) _metaPin.Free();
-                _metaPin = GCHandle.Alloc(rows, GCHandleType.Pinned);
-                _metaCache = rows;
-            }
-            return (long)_metaPin.AddrOfPinnedObject();
+            return ReferenceEquals(_metaCache, rows) ? _metaPinAddr
+                : Repin(ref _metaPin, ref _metaCache, rows, ref _metaPinAddr);
         }
 
         /// <summary>The call-marker table's address, repinning when the host
         /// grew it. Same rule as the rows: the array is replaced on growth, so
         /// the address cannot be cached across a staging.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private long CallMarkerAddress()
         {
             int[] markers = _w._table.CallMarkers;
-            if (!ReferenceEquals(_callMarkers, markers))
-            {
-                if (_callPin.IsAllocated) _callPin.Free();
-                _callPin = GCHandle.Alloc(markers, GCHandleType.Pinned);
-                _callMarkers = markers;
-            }
-            return (long)_callPin.AddrOfPinnedObject();
+            return ReferenceEquals(_callMarkers, markers) ? _callPinAddr
+                : Repin(ref _callPin, ref _callMarkers, markers, ref _callPinAddr);
         }
 
         /// <summary>The attribute trail log's home column, pinned the same
@@ -399,6 +428,7 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         /// freed one. Enabling it here is what makes an engine that never
         /// meets a wasm world pay nothing for attribute mutation.</summary>
         private GCHandle _attrLogPin;
+        private long _attrLogPinAddr;
         private int[]? _attrLogHomesPinned;
 
         /// <summary>The extra trail, pinned. The one area the module
@@ -407,24 +437,22 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         /// means the engine's array is the image and there is no copy back
         /// to get wrong.</summary>
         private GCHandle _extraTrailPin;
+        private long _extraTrailPinAddr;
         private ExtraTrailEntry[]? _extraTrailPinned;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private long ExtraTrailAddress()
         {
             ExtraTrailEntry[] t = _engine.WasmExtraTrailView;
             if (t.Length == 0) return 0;
-            if (!ReferenceEquals(_extraTrailPinned, t))
-            {
-                if (_extraTrailPin.IsAllocated) _extraTrailPin.Free();
-                _extraTrailPin = GCHandle.Alloc(t, GCHandleType.Pinned);
-                _extraTrailPinned = t;
-            }
-            return (long)_extraTrailPin.AddrOfPinnedObject();
+            return ReferenceEquals(_extraTrailPinned, t) ? _extraTrailPinAddr
+                : Repin(ref _extraTrailPin, ref _extraTrailPinned, t, ref _extraTrailPinAddr);
         }
 
         /// <summary>The orphaned-record ring, pinned. The module writes,
         /// the host drains on the way out.</summary>
         private GCHandle _orphanPin;
+        private long _orphanPinAddr;
         private int[]? _orphanPinned;
 
         /// <summary>The global-variable image: (atom id, cell) pairs of the
@@ -433,6 +461,7 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         /// staging that follows a b_setval cheap for every staging that does
         /// not.</summary>
         private readonly long[] _globalImage = GC.AllocateArray<long>(2 * 32, pinned: true);
+        private long _globalImageAddress;
         private int _globalImageVersion = -1, _globalImageOwner = -1, _globalImagePairs;
 
         private long GlobalVarImageAddress(out int pairs)
@@ -448,184 +477,155 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
                 _globalImageOwner = _engine.InstanceId;
             }
             pairs = _globalImagePairs;
-            return (long)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(_globalImage, 0);
+            return _globalImageAddress;
         }
 
         /// <summary>The arithmetic functor table, pinned. It is replaced
         /// when it grows with the functor table, so the address is re-taken
         /// rather than cached across a staging.</summary>
         private static GCHandle _arithPin;
+        private static long _arithPinAddr;
         private static int[]? _arithPinned;
 
-        private static long ArithTableAddress()
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static long ArithTableAddress(out int length)
         {
-            int[] r = Shumway.Builtins.ArithFunctorTable.Rows;
+            int[] r = Shumway.Builtins.ArithFunctorTable.Current(out length);
             if (r.Length == 0) return 0;
-            if (!ReferenceEquals(_arithPinned, r))
-            {
-                if (_arithPin.IsAllocated) _arithPin.Free();
-                _arithPin = GCHandle.Alloc(r, GCHandleType.Pinned);
-                _arithPinned = r;
-            }
-            return (long)_arithPin.AddrOfPinnedObject();
+            return ReferenceEquals(_arithPinned, r) ? _arithPinAddr
+                : Repin(ref _arithPin, ref _arithPinned, r, ref _arithPinAddr);
         }
 
         /// <summary>The parked attribute writes, pinned.</summary>
         private GCHandle _attrWritePin;
+        private long _attrWritePinAddr;
         private int[]? _attrWritePinned;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private long AttrWriteRingAddress()
         {
             int[] r = _engine.WasmAttrWriteRingView;
-            if (!ReferenceEquals(_attrWritePinned, r))
-            {
-                if (_attrWritePin.IsAllocated) _attrWritePin.Free();
-                _attrWritePin = GCHandle.Alloc(r, GCHandleType.Pinned);
-                _attrWritePinned = r;
-            }
-            return (long)_attrWritePin.AddrOfPinnedObject();
+            return ReferenceEquals(_attrWritePinned, r) ? _attrWritePinAddr
+                : Repin(ref _attrWritePin, ref _attrWritePinned, r, ref _attrWritePinAddr);
         }
 
         /// <summary>The dropped-record ring, pinned.</summary>
         private GCHandle _attrDropPin;
+        private long _attrDropPinAddr;
         private int[]? _attrDropPinned;
 
         /// <summary>The parked wakeups and the attribute module list, pinned
         /// for the chain like the rings above.</summary>
         private GCHandle _wakePin, _attrModulePin;
+        private long _wakePinAddr;
+        private long _attrModulePinAddr;
         private int[]? _wakePinned, _attrModulePinned;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private long WakeRingAddress()
         {
             int[] r = _engine.WasmWakeRingView;
-            if (!ReferenceEquals(_wakePinned, r))
-            {
-                if (_wakePin.IsAllocated) _wakePin.Free();
-                _wakePin = GCHandle.Alloc(r, GCHandleType.Pinned);
-                _wakePinned = r;
-            }
-            return (long)_wakePin.AddrOfPinnedObject();
+            return ReferenceEquals(_wakePinned, r) ? _wakePinAddr
+                : Repin(ref _wakePin, ref _wakePinned, r, ref _wakePinAddr);
         }
 
         private GCHandle _findallPin;
+        private long _findallPinAddr;
         private long[]? _findallPinned;
         private GCHandle _globalWritePin;
+        private long _globalWritePinAddr;
         private long[]? _globalWritePinned;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private long GlobalWriteRingAddress()
         {
             long[] r = _engine.WasmGlobalWriteRingView;
-            if (!ReferenceEquals(_globalWritePinned, r))
-            {
-                if (_globalWritePin.IsAllocated) _globalWritePin.Free();
-                _globalWritePin = GCHandle.Alloc(r, GCHandleType.Pinned);
-                _globalWritePinned = r;
-            }
-            return (long)_globalWritePin.AddrOfPinnedObject();
+            return ReferenceEquals(_globalWritePinned, r) ? _globalWritePinAddr
+                : Repin(ref _globalWritePin, ref _globalWritePinned, r, ref _globalWritePinAddr);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private long FindallRingAddress()
         {
             long[] r = _engine.WasmFindallRingView;
-            if (!ReferenceEquals(_findallPinned, r))
-            {
-                if (_findallPin.IsAllocated) _findallPin.Free();
-                _findallPin = GCHandle.Alloc(r, GCHandleType.Pinned);
-                _findallPinned = r;
-            }
-            return (long)_findallPin.AddrOfPinnedObject();
+            return ReferenceEquals(_findallPinned, r) ? _findallPinAddr
+                : Repin(ref _findallPin, ref _findallPinned, r, ref _findallPinAddr);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private long AttrModuleAddress()
         {
             int[] r = _engine.WasmAttrModuleView;
-            if (!ReferenceEquals(_attrModulePinned, r))
-            {
-                if (_attrModulePin.IsAllocated) _attrModulePin.Free();
-                _attrModulePin = GCHandle.Alloc(r, GCHandleType.Pinned);
-                _attrModulePinned = r;
-            }
-            return (long)_attrModulePin.AddrOfPinnedObject();
+            return ReferenceEquals(_attrModulePinned, r) ? _attrModulePinAddr
+                : Repin(ref _attrModulePin, ref _attrModulePinned, r, ref _attrModulePinAddr);
         }
 
         /// <summary>The reverse functor table, pinned. Replaced when it
         /// grows, so the address is re-taken rather than cached.</summary>
         private static GCHandle _funRevPin;
+        private static long _funRevPinAddr;
         private static long[]? _funRevPinned;
 
-        private static long FunctorReverseAddress()
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static long FunctorReverseAddress(out int mask)
         {
-            long[] r = Shumway.Core.FunctorReverseTable.Rows;
-            if (!ReferenceEquals(_funRevPinned, r))
-            {
-                if (_funRevPin.IsAllocated) _funRevPin.Free();
-                _funRevPin = GCHandle.Alloc(r, GCHandleType.Pinned);
-                _funRevPinned = r;
-            }
-            return (long)_funRevPin.AddrOfPinnedObject();
+            long[] r = Shumway.Core.FunctorReverseTable.Current(out mask);
+            return ReferenceEquals(_funRevPinned, r) ? _funRevPinAddr
+                : Repin(ref _funRevPin, ref _funRevPinned, r, ref _funRevPinAddr);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private long AttrDropRingAddress()
         {
             int[] r = _engine.WasmAttrDropRingView;
-            if (!ReferenceEquals(_attrDropPinned, r))
-            {
-                if (_attrDropPin.IsAllocated) _attrDropPin.Free();
-                _attrDropPin = GCHandle.Alloc(r, GCHandleType.Pinned);
-                _attrDropPinned = r;
-            }
-            return (long)_attrDropPin.AddrOfPinnedObject();
+            return ReferenceEquals(_attrDropPinned, r) ? _attrDropPinAddr
+                : Repin(ref _attrDropPin, ref _attrDropPinned, r, ref _attrDropPinAddr);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private long OrphanRingAddress()
         {
             int[] r = _engine.WasmOrphanRingView;
-            if (!ReferenceEquals(_orphanPinned, r))
-            {
-                if (_orphanPin.IsAllocated) _orphanPin.Free();
-                _orphanPin = GCHandle.Alloc(r, GCHandleType.Pinned);
-                _orphanPinned = r;
-            }
-            return (long)_orphanPin.AddrOfPinnedObject();
+            return ReferenceEquals(_orphanPinned, r) ? _orphanPinAddr
+                : Repin(ref _orphanPin, ref _orphanPinned, r, ref _orphanPinAddr);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private long AttrLogAddress()
         {
             _engine.AttrLogMirrorEnable();
             if (_engine.AttrLogCount == 0) return 0;
             int[] homes = _engine.AttrLogHomes;
-            if (!ReferenceEquals(_attrLogHomesPinned, homes))
-            {
-                if (_attrLogPin.IsAllocated) _attrLogPin.Free();
-                _attrLogPin = GCHandle.Alloc(homes, GCHandleType.Pinned);
-                _attrLogHomesPinned = homes;
-            }
-            return (long)_attrLogPin.AddrOfPinnedObject();
+            return ReferenceEquals(_attrLogHomesPinned, homes) ? _attrLogPinAddr
+                : Repin(ref _attrLogPin, ref _attrLogHomesPinned, homes, ref _attrLogPinAddr);
         }
 
         /// <summary>The attribute image's address, repinning when the host
         /// replaced the array. It is replaced on every growth and on every
         /// rebuild, so caching the address across a staging would hand the
         /// module a freed one.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private long AttrMirrorAddress()
         {
             long[] rows = _engine.AttrMirrorRows;
             if (rows.Length == 0) return 0;
-            if (!ReferenceEquals(_attrRows, rows))
-            {
-                if (_attrPin.IsAllocated) _attrPin.Free();
-                _attrPin = GCHandle.Alloc(rows, GCHandleType.Pinned);
-                _attrRows = rows;
-            }
-            return (long)_attrPin.AddrOfPinnedObject();
+            return ReferenceEquals(_attrRows, rows) ? _attrPinAddr
+                : Repin(ref _attrPin, ref _attrRows, rows, ref _attrPinAddr);
         }
 
-        private static void RepinIfChanged(ref GCHandle pin, ref Cell[] cached, Cell[] current)
+        /// <summary>The out-of-line half of every area's address: the array
+        /// was replaced, so its old pin goes and the new one is taken. Kept
+        /// apart so the check that nothing moved, which is all a staging
+        /// usually does, inlines into it.</summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static long Repin<T>(ref GCHandle pin, ref T? pinned, T current, ref long address)
+            where T : class
         {
-            if (ReferenceEquals(cached, current)) return;
             if (pin.IsAllocated) pin.Free();
             pin = GCHandle.Alloc(current, GCHandleType.Pinned);
-            cached = current;
+            address = (long)pin.AddrOfPinnedObject();
+            pinned = current;
+            return address;
         }
 
         public WasmVerdict Call(WasmTarget target)
@@ -633,8 +633,10 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
 #if SHUMWAY_DIAG
             long t0 = Stopwatch.GetTimestamp();
 #endif
-            int v = WebShumwayApp.WasmCall(_w._registrations[target.ModuleId].Index.Value,
-                                           _mailboxAt, target.Cursor);
+            int id = target.ModuleId;
+            int index = (uint)id < (uint)_index.Covered ? _index.Map[id] : -1;
+            if (index < 0) index = _w._registrations[id].Index.Value;
+            int v = WebShumwayApp.WasmCall(index, _mailboxAt, target.Cursor);
 #if SHUMWAY_DIAG
             DiagCallTicks += Stopwatch.GetTimestamp() - t0;
 #endif
@@ -681,6 +683,7 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         public void Dispose()
         {
             SyncEngine();
+            _disposed = true;
             // Every pin this chain took, not only the areas': a chain is
             // made per entry, and a handle left allocated is never freed --
             // the handle table grew by one per ring and image per chain,

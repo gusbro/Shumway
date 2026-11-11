@@ -26,11 +26,33 @@ public static class FunctorReverseTable
     private static int _filled;
     private static readonly object Lock = new();
 
-    /// <summary>The rows, for the world that stages them. Replaced on
-    /// growth, so a caller re-reads it per staging.</summary>
-    public static long[] Rows { get { lock (Lock) { Fill(); return _rows; } } }
+    // Rows, mask and fill as one object, so a reader without the lock never
+    // pairs a mask from one rebuild with the rows of another: the probe
+    // would run past the array.
+    private sealed record Image(long[] Rows, int Mask, int Filled);
+    private static Image _image = new(_rows, _mask, 0);
 
-    public static int Mask { get { lock (Lock) { Fill(); return _mask; } } }
+    /// <summary>The rows and their mask, from the same fill, for the world
+    /// that stages them. The rows are replaced on growth, so a caller re-reads
+    /// them per staging; the lock is taken only when a functor was interned
+    /// since the last fill.</summary>
+    public static long[] Current(out int mask)
+    {
+        Image image = Volatile.Read(ref _image);
+        if (image.Filled < FunctorTable.IdLimit)
+        {
+            lock (Lock) { Fill(); image = _image; }
+        }
+        mask = image.Mask;
+        return image.Rows;
+    }
+
+    public static long[] Rows => Current(out _);
+
+    public static int Mask
+    {
+        get { Current(out int mask); return mask; }
+    }
 
     /// <summary>The probe's starting slot. The module recomputes this exact
     /// function, so changing it means changing both.</summary>
@@ -86,6 +108,7 @@ public static class FunctorReverseTable
             Insert(Key(atomId, arity), Hash(atomId, arity, _mask), id);
         }
         _filled = limit;
+        Volatile.Write(ref _image, new Image(_rows, _mask, limit));
     }
 
     private static void Insert(long key, int slot, int id)

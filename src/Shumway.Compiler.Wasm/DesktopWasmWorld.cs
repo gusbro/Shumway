@@ -297,9 +297,8 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
             int attrModuleCount = _engine.WasmAttrModuleCount;
             long[] findall = _engine.WasmFindallRingView;
             long[] globalWrites = _engine.WasmGlobalWriteRingView;
-            long[] funRev = FunctorReverseTable.Rows;
-            int[] arithRows = Shumway.Builtins.ArithFunctorTable.Rows;
-            int arithLen = Shumway.Builtins.ArithFunctorTable.Length;
+            long[] funRev = FunctorReverseTable.Current(out int funRevMask);
+            int[] arithRows = Shumway.Builtins.ArithFunctorTable.Current(out int arithLen);
             int[] attrLogHomes = _engine.AttrLogHomes;
             int attrLogCount = _engine.AttrLogCount;
             // Rounded up to 8 for speed, not correctness: a wasm i64.load
@@ -381,7 +380,7 @@ public sealed class DesktopWasmWorld : IWasmExecutionWorld, IDisposable
                 GlobalWriteBase: _globalWriteAt,
                 GlobalWriteLimit: globalWrites.Length / WasmAbi.GlobalWriteEntryLongs,
                 FunctorReverseBase: _funRevAt,
-                FunctorReverseMask: FunctorReverseTable.Mask,
+                FunctorReverseMask: funRevMask,
                 GlobalVarBase: globalPairs >= 0 ? _globalAt : 0,
                 GlobalVarCount: globalPairs);
             if (!_engine.TryFillWasmMailbox(_mailbox, bases))

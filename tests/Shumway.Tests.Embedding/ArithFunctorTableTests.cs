@@ -19,6 +19,31 @@ public sealed class ArithFunctorTableTests
         Assert.True(atom.IsPermanent);
     }
 
+    /// <summary>What a world stages: the rows and how many are live, from one
+    /// fill, read without the lock when nothing is new. A functor interned
+    /// after a read is covered by the next one, and the length never runs
+    /// past the rows it came with across the growths the loop causes.</summary>
+    [Fact]
+    public void CurrentCoversWhatWasInternedSinceTheLastRead()
+    {
+        int[] first = ArithFunctorTable.Current(out _);
+        int[] rows = first;
+        // Until the rows have been replaced at least once, and a while after.
+        for (int i = 0, after = 0; after < 100; i++)
+        {
+            Assert.True(i < 1_000_000, "the rows never grew");
+            int id = FunctorTable.Intern(AtomTable.Intern($"arith_current_{i}").Id, 2);
+            rows = ArithFunctorTable.Current(out int length);
+            Assert.True(length > id, $"functor {id} past the length {length}");
+            Assert.True(length <= rows.Length, $"length {length} past {rows.Length} rows");
+            Assert.Equal(0, rows[id]);
+            if (!ReferenceEquals(first, rows)) after++;
+        }
+        int max = FunctorTable.Intern(AtomTable.Intern("max", permanent: true).Id, 2);
+        rows = ArithFunctorTable.Current(out _);
+        Assert.NotEqual(0, rows[max]);
+    }
+
     [Fact]
     public void ANameThatIsNotEvaluableStaysTransient()
     {
