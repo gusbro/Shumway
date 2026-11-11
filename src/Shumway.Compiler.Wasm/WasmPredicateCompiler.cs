@@ -193,6 +193,8 @@ public static class WasmPredicateCompiler
         32 => "a cut would leave a catch frame's snapshot to clip",
         33 => "an attribute entry indexes past both the log and the parked rows",
         36 => "a control construct with an if-then goal: the host distributes the module into it",
+        37 => "call/1 of a control construct the host converts first: a variable, a qualifier, "
+              + "a construct on the left or a goal that is not callable in it",
         // Why an attribute read or write went to the host as its builtin.
         40 => "attribute form: no attribute image staged",
         41 => "attribute form: the module is not a bound atom",
@@ -6506,17 +6508,26 @@ public static class WasmPredicateCompiler
                 CloseNested();
             }
 
-            // '$call'/2 of a control construct, as the host dispatches it: a
-            // tagged construct's two goals take the module, each one already
-            // tagged left as it is, and the prelude's helper ('$call_conj'/3
-            // and its kin) is entered with the barrier in X2 and B0 = B. An
-            // if-then among the goals is distributed into in turn on the
-            // host, which this leaves to it. The goal is the Str at LT2, the
-            // module LT0. Every check comes before the first write: $slow
-            // re-reads '$call'(Goal, Barrier) out of X0 and X1.
+            // call/1 or '$call'/2 of a control construct, as the host
+            // dispatches it: a tagged construct's two goals take the module,
+            // each one already tagged left as it is, and the prelude's helper
+            // ('$call_conj'/3 and its kin) is entered with the barrier in X2
+            // and B0 = B. An if-then among the goals is distributed into in
+            // turn on the host, which this leaves to it. The goal is the Str
+            // at LT2, the module LT0. Every check comes before the first
+            // write: $slow re-reads the call out of X0 and X1.
             void EmitConstructCall(bool tagged)
             {
-                if (!barrierFromX1 || appended != 0) return;
+                if (appended != 0) return;
+                if (!barrierFromX1)
+                {
+                    CellLoadDyn(LHeapB, LT2);
+                    Op(new LocalSet(LC1));
+                    EmitIsControl(LC1);
+                    OpenIf();
+                    EmitPlainSkeletonCheck();
+                    CloseNested();
+                }
                 foreach (var (construct, helper) in BarrierConstructs)
                 {
                     CellLoadDyn(LHeapB, LT2);
@@ -6551,12 +6562,15 @@ public static class WasmPredicateCompiler
                             }
                             CloseNested();
                         }
-                        RegLoad(1); Op(new LocalSet(LC0)); Deref();
-                        TagOfC0();
-                        Op(new Int32Constant((int)Tag.Int));
-                        Op(new Int32NotEqual());
-                        MetaGuard(12);
-                        Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                        if (barrierFromX1)
+                        {
+                            RegLoad(1); Op(new LocalSet(LC0)); Deref();
+                            TagOfC0();
+                            Op(new Int32Constant((int)Tag.Int));
+                            Op(new Int32NotEqual());
+                            MetaGuard(12);
+                            Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                        }
                         if (tagged)
                         {
                             Op(new LocalGet(LH));
@@ -6570,26 +6584,32 @@ public static class WasmPredicateCompiler
 
                         // X2: the barrier X1 carries, or B when the goal came
                         // in a variable -- it is call(V) then (7.6.2), as the
-                        // host's dispatcher has it.
-                        RegLoad(0);
-                        Op(new LocalSet(LC2));
-                        Op(new LocalGet(LC2));
-                        Op(new Int64Constant(60));
-                        Op(new Int64ShiftRightUnsigned());
-                        Op(new Int32WrapInt64());
-                        Op(new LocalSet(LKBW));
-                        Op(new LocalGet(LKBW));
-                        Op(new Int32Constant((int)Tag.Ref));
-                        Op(new Int32Equal());
-                        Op(new LocalGet(LKBW));
-                        Op(new Int32Constant((int)Tag.AttVar));
-                        Op(new Int32Equal());
-                        Op(new Int32Or());
-                        OpenIf();
-                        RegStore(2, () => IntCell(() => Op(new LocalGet(LB))));
-                        OpenElse();
-                        RegStore(2, () => Op(new LocalGet(LC0)));
-                        CloseNested();
+                        // host's dispatcher has it. call/1's is always B: its
+                        // goal is opaque to a cut inside it.
+                        if (!barrierFromX1)
+                            RegStore(2, () => IntCell(() => Op(new LocalGet(LB))));
+                        else
+                        {
+                            RegLoad(0);
+                            Op(new LocalSet(LC2));
+                            Op(new LocalGet(LC2));
+                            Op(new Int64Constant(60));
+                            Op(new Int64ShiftRightUnsigned());
+                            Op(new Int32WrapInt64());
+                            Op(new LocalSet(LKBW));
+                            Op(new LocalGet(LKBW));
+                            Op(new Int32Constant((int)Tag.Ref));
+                            Op(new Int32Equal());
+                            Op(new LocalGet(LKBW));
+                            Op(new Int32Constant((int)Tag.AttVar));
+                            Op(new Int32Equal());
+                            Op(new Int32Or());
+                            OpenIf();
+                            RegStore(2, () => IntCell(() => Op(new LocalGet(LB))));
+                            OpenElse();
+                            RegStore(2, () => Op(new LocalGet(LC0)));
+                            CloseNested();
+                        }
 
                         for (int k = 0; k < 2; k++)
                         {
@@ -6604,6 +6624,87 @@ public static class WasmPredicateCompiler
                     }
                     CloseNested();
                 }
+            }
+
+            // call/1 converts its goal as a body before any of it runs
+            // (7.6.2, 7.8.3): a variable in a goal position becomes call(V), a
+            // position reached through a REF is normalized, and a goal that is
+            // not callable is a type error of the whole. A skeleton with none
+            // of them converts to itself, so the module may enter the helper;
+            // anything else goes to the host, which converts. Walked down the
+            // right spine, so a construct on the left goes to the host too, as
+            // does a qualifier inside: both would need a stack to follow.
+            // Reads only, LKBR and LKBW and LC1.
+            void EmitPlainSkeletonCheck()
+            {
+                Op(new LocalGet(LT2));
+                Op(new LocalSet(LKBR));                     // the node
+                OpenBlock();                                // $plain
+                OpenLoop();                                 // $node
+                {
+                    // The left goal: an atom, or a compound that is a goal.
+                    CellLoadDyn(LHeapB, LKBR, 1);
+                    Op(new LocalSet(LC1));
+                    EmitLeafTag();
+                    Op(new Int32Constant((int)Tag.Atom));
+                    Op(new Int32NotEqual());
+                    OpenIf();
+                    {
+                        Op(new LocalGet(LKBW));
+                        Op(new Int32Constant((int)Tag.Str));
+                        Op(new Int32NotEqual());
+                        MetaGuard(37);
+                        Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                        Op(new LocalGet(LC1));
+                        Op(new Int32WrapInt64());
+                        Op(new LocalSet(LKBW));
+                        CellLoadDyn(LHeapB, LKBW);
+                        Op(new LocalSet(LC1));
+                        EmitIsControl(LC1);
+                        EmitIsModuleTag(LC1);
+                        Op(new Int32Or());
+                        MetaGuard(37);
+                        Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                    }
+                    CloseNested();
+
+                    // The right goal: an atom ends the walk, a construct
+                    // continues it, any other compound is a goal.
+                    CellLoadDyn(LHeapB, LKBR, 2);
+                    Op(new LocalSet(LC1));
+                    EmitLeafTag();
+                    Op(new Int32Constant((int)Tag.Atom));
+                    Op(new Int32Equal());
+                    Op(new BranchIf(1));                    // -> $plain
+                    Op(new LocalGet(LKBW));
+                    Op(new Int32Constant((int)Tag.Str));
+                    Op(new Int32NotEqual());
+                    MetaGuard(37);
+                    Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                    Op(new LocalGet(LC1));
+                    Op(new Int32WrapInt64());
+                    Op(new LocalSet(LKBR));
+                    CellLoadDyn(LHeapB, LKBR);
+                    Op(new LocalSet(LC1));
+                    EmitIsModuleTag(LC1);
+                    MetaGuard(37);
+                    Op(new BranchIf((uint)(_extraDepth - slowDepth)));
+                    EmitIsControl(LC1);
+                    Op(new BranchIf(0));                    // -> $node
+                }
+                CloseNested();                              // $node
+                CloseNested();                              // $plain
+            }
+
+            // LKBW: the tag of the raw cell in LC1.
+            void EmitLeafTag()
+            {
+                Op(new LocalGet(LC1));
+                Op(new Int64Constant(60));
+                Op(new Int64ShiftRightUnsigned());
+                Op(new Int32WrapInt64());
+                Op(new LocalSet(LKBW));
+                Op(new LocalGet(LKBW));
             }
 
             // LC2 tagged '$mqual'(LT0, LC2), unless it carries a tag: the
@@ -8975,6 +9076,20 @@ public static class WasmPredicateCompiler
             }
             CloseNested();                                  // $next
             CloseNested();                                  // $qualified
+        }
+
+        /// <summary>Pushes whether the functor cell in <paramref name="cell"/>
+        /// is one of the control constructs call/1 converts through: ','/2,
+        /// ';'/2, '->'/2 and '*->'/2.</summary>
+        private void EmitIsControl(uint cell)
+        {
+            for (int i = 0; i < BarrierConstructs.Length; i++)
+            {
+                Op(new LocalGet(cell));
+                Op(new Int64Constant(_env.FunctorCell(BarrierConstructs[i].Construct)));
+                Op(new Int64Equal());
+                if (i > 0) Op(new Int32Or());
+            }
         }
 
         /// <summary>Pushes whether the functor cell in <paramref name="cell"/>
