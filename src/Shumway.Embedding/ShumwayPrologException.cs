@@ -33,8 +33,16 @@ public sealed class ShumwayPrologException : Exception
     /// <c>resource_error(expansion_depth)</c>).</summary>
     public bool EngineStackIsStale { get; init; }
 
+    /// <summary>ADR-063: the ball as cells, as throw/1 found it on the heap,
+    /// when an image can carry it. Catch resolution plants this rather than
+    /// <see cref="Term"/>, which costs a materialization per catcher tried.</summary>
+    internal Shumway.Core.TermImage? Image { get; init; }
+
+    // Written when asked for: writing the ball is a cost every throw would
+    // pay, and a caught one is never asked.
+    public override string Message => "Prolog throw/1: " + Term;
+
     public ShumwayPrologException(Term term)
-        : base("Prolog throw/1: " + term)
     {
         ArgumentNullException.ThrowIfNull(term);
         Term = term;
