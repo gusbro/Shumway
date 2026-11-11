@@ -22,7 +22,8 @@ namespace Shumway.Tests.Wasm;
 public sealed class PartitionBudgetTests(ITestOutputHelper o)
 {
     /// <summary>Partitions of a compiled module. Its function section holds
-    /// k+9: run, k partitions, and the eight shared functions.</summary>
+    /// k+10: run, k partitions, the eight shared functions and the verdict
+    /// epilogue.</summary>
     private static int PartitionsOf(byte[] module)
     {
         int at = 8;   // magic + version
@@ -35,9 +36,10 @@ public sealed class PartitionBudgetTests(ITestOutputHelper o)
                 int p = at;
                 // run, the fail/proceed resolver, the unifier, the identity
                 // comparator, the expression evaluator, the two walks
-                // (ground, acyclic), the standard-order comparator and the
-                // extra trail's unwind are not partitions.
-                return (int)ReadLeb(module, ref p) - 9;
+                // (ground, acyclic), the standard-order comparator, the
+                // extra trail's unwind and the verdict epilogue are not
+                // partitions.
+                return (int)ReadLeb(module, ref p) - 10;
             }
             at += (int)size;
         }

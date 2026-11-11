@@ -124,7 +124,7 @@ public static class WasmPredicateCompiler
     public static bool FallThrough { get; set; } =
         Environment.GetEnvironmentVariable("SHUMWAY_WASM_FALLTHROUGH") != "0";
 
-    /// <summary>A partition's verdicts leave through one epilogue that
+    /// <summary>A partition's verdicts tail-call one epilogue per module that
     /// spills the machine registers into the mailbox, where each one spilled
     /// them in place: the spill was a third of the code a module carries.
     /// <c>SHUMWAY_WASM_SHAREDEXIT=0</c> turns it off, for measuring.</summary>
@@ -296,9 +296,11 @@ public static class WasmPredicateCompiler
         private int _curFunction;
         // Emitting a partition's cases, whose blocks TryBrForward counts.
         private bool _inPartition;
-        // A verdict branches to the partition's epilogue, the block just
-        // outside the dispatch loop (SharedExit).
+        // A verdict tail-calls the module's epilogue (SharedExit), but for
+        // the flags check's, which spills in place (_spillInPlace).
         private bool _sharedExit;
+        private bool _spillInPlace;
+        private bool _epilogueUsed;
 
         /// <summary>Partition budget in decoded WAM instructions (~40 wasm
         /// instructions each). Two ceilings, and the lower one rules. The
@@ -335,6 +337,7 @@ public static class WasmPredicateCompiler
             return (uint)index;
         }
         private int RouterIndex => _parts.Count + 9;    // CPS only: K+9 the cursor router
+        private int EpilogueIndex => _parts.Count + 9;  // not CPS: K+9 the verdict epilogue
 
         /// <summary>CPS: the locals a transfer carries as arguments, 0 to
         /// <see cref="LCP"/>: the mailbox, the cursor (twice: the entry
@@ -1365,6 +1368,17 @@ public static class WasmPredicateCompiler
                 module.Functions.Add(new Function { Type = 3 });
                 module.Codes.Add(BuildCpsRouterBody());
             }
+            else if (_epilogueUsed)
+            {
+                // The mailbox, the machine registers, the verdict.
+                var args = new List<WebAssemblyValueType> { WebAssemblyValueType.Int32 };
+                foreach (uint l in EpilogueArgs)
+                    args.Add(l == LCells ? WebAssemblyValueType.Int64 : WebAssemblyValueType.Int32);
+                args.Add(WebAssemblyValueType.Int32);
+                module.Types.Add(new WebAssemblyType { Parameters = args.ToArray(), Returns = [WebAssemblyValueType.Int32] });
+                module.Functions.Add(new Function { Type = (uint)(module.Types.Count - 1) });
+                module.Codes.Add(BuildVerdictEpilogueBody());
+            }
 
             // A diagnostic build names its functions, so a browser profile
             // reads "p12:clpz$state/3" instead of "wasm-function[12]".
@@ -1673,6 +1687,7 @@ public static class WasmPredicateCompiler
             names.Add("arith"); names.Add("ground"); names.Add("acyclic");
             names.Add("compare"); names.Add("unwind");
             if (_cps) names.Add("router");
+            else if (_epilogueUsed) names.Add("epilogue");
 
             var payload = new List<byte>();
             static void Leb(List<byte> o, uint v)
@@ -1705,15 +1720,7 @@ public static class WasmPredicateCompiler
             _caseCount = n + 2;                             // + $fail + $out
 
             if (_cps) EmitCpsPrologue(); else EmitPrologue();
-            // The epilogue's block: a verdict branches out of the loop with
-            // the verdict, and the block's end spills and returns it. Not
-            // counted in _extraDepth either: EmitReturn adds it to the loop's.
-            bool shared = SharedExit && !_cps;
-            if (shared)
-            {
-                Op(new Block(BlockType.Int32));
-                _sharedExit = true;
-            }
+            _sharedExit = SharedExit && !_cps;
             OpenLoop();                                     // never popped via CloseNested
             _extraDepth--;                                  // accounted in BrDispatch instead
             if (DebugLoopGuard)
@@ -1811,14 +1818,7 @@ public static class WasmPredicateCompiler
             EmitContinueReturn();
             Op(new End());                                  // the loop
             _sharedExit = false;
-            if (shared)
-            {
-                Op(new Int32Constant((int)WasmVerdict.Fail)); // unreachable fallback
-                Op(new End());                              // the epilogue's block
-                EmitVerdictEpilogue();
-            }
-            else
-                EmitReturn(WasmVerdict.Fail);               // unreachable fallback
+            EmitReturn(WasmVerdict.Fail);                   // unreachable fallback
             Op(new End());                                  // the function
             _inPartition = false;
             var body = new FunctionBody
@@ -1953,46 +1953,70 @@ public static class WasmPredicateCompiler
             Op(new LocalSet(LCells));
         }
 
-        private void StoreScalars()
+        private void StoreScalars() => StoreScalarsFrom(LH, LTR, LE, LB, LHB, LST, LCP, LMode, LS, LCells);
+
+        private void StoreScalarsFrom(uint h, uint tr, uint e, uint b, uint hb, uint st, uint cp,
+                                      uint mode, uint s, uint cells)
         {
             StoreSlot64(WasmAbi.CellsClaimed, () =>
             {
-                Op(new LocalGet(LCells));
-                Op(new LocalGet(LH)); Op(new Int64ExtendInt32Signed());
+                Op(new LocalGet(cells));
+                Op(new LocalGet(h)); Op(new Int64ExtendInt32Signed());
                 Op(new Int64Add());
             });
-            StoreSlotFromI32Local(WasmAbi.HeapTop, LH);
-            StoreSlotFromI32Local(WasmAbi.TrailTop, LTR);
-            StoreSlotFromI32Local(WasmAbi.EnvTop, LE);
-            StoreSlotFromI32Local(WasmAbi.ChoiceTop, LB);
-            StoreSlotFromI32Local(WasmAbi.HeapBacktrack, LHB);
-            StoreSlotFromI32Local(WasmAbi.StackTop, LST);
-            StoreSlotFromI32Local(WasmAbi.ContinuationPc, LCP);
-            StoreSlotFromI32Local(WasmAbi.WriteMode, LMode);
-            StoreSlotFromI32Local(WasmAbi.UnifyPointer, LS);
+            StoreSlotFromI32Local(WasmAbi.HeapTop, h);
+            StoreSlotFromI32Local(WasmAbi.TrailTop, tr);
+            StoreSlotFromI32Local(WasmAbi.EnvTop, e);
+            StoreSlotFromI32Local(WasmAbi.ChoiceTop, b);
+            StoreSlotFromI32Local(WasmAbi.HeapBacktrack, hb);
+            StoreSlotFromI32Local(WasmAbi.StackTop, st);
+            StoreSlotFromI32Local(WasmAbi.ContinuationPc, cp);
+            StoreSlotFromI32Local(WasmAbi.WriteMode, mode);
+            StoreSlotFromI32Local(WasmAbi.UnifyPointer, s);
         }
 
         private void EmitReturn(WasmVerdict v)
         {
+            if (_sharedExit && !_spillInPlace)
+            {
+                // A tail call and not a branch to one epilogue block: a block
+                // that every exit of a partition joins made V8's optimising
+                // tier slower on the hot paths (tak 8%), exits never taken.
+                Op(new LocalGet(0));
+                foreach (uint l in EpilogueArgs) Op(new LocalGet(l));
+                Op(new Int32Constant((int)v));
+                Op(new ReturnCall((uint)EpilogueIndex));
+                _epilogueUsed = true;
+                return;
+            }
+            StoreScalars();
+            EmitModuleIdStore();
             Op(new Int32Constant((int)v));
-            // One past the dispatch loop, whose depth BrDispatch counts.
-            if (_sharedExit)
-                Op(new Branch((uint)(_extraDepth + (_caseCount - 1 - _caseIndex) + 1)));
-            else
-                EmitVerdictEpilogue();
+            Op(new Return());
         }
 
-        /// <summary>Returns the verdict on the stack, the machine registers
-        /// spilled into the mailbox first.</summary>
-        private void EmitVerdictEpilogue()
+        // After in-wasm hops the host cannot know which module it is hearing
+        // from, and a deopt pc or a builtin's return address is in that
+        // module's build space. Every verdict says. Not on the hop path: a
+        // hop reloads nothing from this slot.
+        private void EmitModuleIdStore()
+            => StoreSlot64(WasmAbi.CurrentModuleId, () => Op(new Int64Constant(_env.EncodeModuleId(_moduleId))));
+
+        /// <summary>What a verdict passes the epilogue after the mailbox, in
+        /// the order <see cref="StoreScalarsFrom"/> takes them; the verdict
+        /// comes last.</summary>
+        private static readonly uint[] EpilogueArgs = [LH, LTR, LE, LB, LHB, LST, LCP, LMode, LS, LCells];
+
+        /// <summary>The verdict epilogue: the machine registers its caller
+        /// passed spilled into the mailbox, and the verdict returned.</summary>
+        private FunctionBody BuildVerdictEpilogueBody()
         {
-            StoreScalars();
-            // After in-wasm hops the host cannot know which module it is
-            // hearing from, and a deopt pc or a builtin's return address is
-            // in that module's build space. Every verdict says. Not on the
-            // hop path: a hop reloads nothing from this slot.
-            StoreSlot64(WasmAbi.CurrentModuleId, () => Op(new Int64Constant(_env.EncodeModuleId(_moduleId))));
-            Op(new Return());
+            _code = new List<Instruction>();
+            StoreScalarsFrom(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+            EmitModuleIdStore();
+            Op(new LocalGet((uint)EpilogueArgs.Length + 1));
+            Op(new End());
+            return new FunctionBody { Locals = [], Code = _code };
         }
 
         /// <summary>Spill the scalars and tail-call run with LCur: "not
@@ -3413,7 +3437,12 @@ public static class WasmPredicateCompiler
             // clpr's deopt sites were, and reading them as meta-call
             // declines would have sent the work to the wrong place.
             MetaGuard(17);
+            // Spilled in place, not through the epilogue: this exit sits at
+            // every goal boundary, and with it a tail call V8's optimising
+            // tier ran tak 6% slower, though it is never taken.
+            _spillInPlace = true;
             EmitDeopt(pc, DeoptStamped);
+            _spillInPlace = false;
             CloseNested();
         }
 

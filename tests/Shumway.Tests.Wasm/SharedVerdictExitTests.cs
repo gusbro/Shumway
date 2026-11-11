@@ -5,8 +5,8 @@ using Xunit;
 
 namespace Shumway.Tests.Wasm;
 
-/// <summary>A partition's verdicts leave through one epilogue that spills the
-/// machine registers into the mailbox (<see
+/// <summary>A partition's verdicts tail-call one epilogue per module that
+/// spills the machine registers into the mailbox (<see
 /// cref="WasmPredicateCompiler.SharedExit"/>). Every deopt, builtin request
 /// and wake request used to spill them in place, a third of the code a module
 /// carried. The spill ends by writing the module id, so the stores to that
@@ -37,7 +37,7 @@ public sealed class SharedVerdictExitTests : IDisposable
         """;
 
     [Fact]
-    public void APartitionSpillsTheRegistersOnce()
+    public void TheRegistersAreSpilledInOnePlace()
     {
         var engine = new PrologEngine();
         engine.ConsultString(Corpus);

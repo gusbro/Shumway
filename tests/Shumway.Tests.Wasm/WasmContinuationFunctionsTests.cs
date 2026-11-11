@@ -273,7 +273,7 @@ public sealed class WasmContinuationFunctionsTests(ITestOutputHelper o) : IDispo
             if (ar != 4 || !(Shumway.Core.AtomTable.GetById(aid)?.Name ?? "").EndsWith("tak"))
                 continue;
             var m = new[] { new WasmGroupMember(pred, addr, null) };
-            int budget = FunctionsOf(WasmPredicateCompiler.CompileGroup(m, env, cps: false).Module) - 9;
+            int budget = FunctionsOf(WasmPredicateCompiler.CompileGroup(m, env, cps: false).Module) - 10;
             byte[] module = WasmPredicateCompiler.CompileGroup(m, env, cps: true,
                 grain: WasmCpsGrain.EntryPoint).Module;
             int cps = FunctionsOf(module) - 10;
@@ -338,7 +338,7 @@ public sealed class WasmContinuationFunctionsTests(ITestOutputHelper o) : IDispo
             members.Add(m);
         }
         Assert.True(members.Count >= 20, $"only {members.Count} compilable");
-        int partitions = FunctionsOf(WasmPredicateCompiler.CompileGroup(members, env, cps: false).Module) - 9;
+        int partitions = FunctionsOf(WasmPredicateCompiler.CompileGroup(members, env, cps: false).Module) - 10;
         byte[] module = WasmPredicateCompiler.CompileGroup(members, env, cps: true,
             grain: WasmCpsGrain.Budget).Module;
         int functions = FunctionsOf(module) - 10;
