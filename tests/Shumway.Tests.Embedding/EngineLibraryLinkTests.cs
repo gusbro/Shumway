@@ -81,6 +81,25 @@ public sealed class EngineLibraryLinkTests : IDisposable
         Assert.Equal("woke(b)", RunMain(r.Bytes!));
     }
 
+    /// <summary>library(lists) has no bundle of its own: the dialect serves it,
+    /// and the linker takes it from there as a consult does. A program that
+    /// imports it did not link at all ("library 'lists' ... could not be
+    /// resolved"), so it could not become an executable.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AProgramImportingListsLinks(bool consulted)
+    {
+        const string source = """
+            :- use_module(library(lists)).
+            main(X) :- sum_list([1, 2, 3], S), last([a, b, S], X0), nth0(0, [X0], X).
+            """;
+        var r = consulted
+            ? LinkConsulted(source)
+            : Link(new[] { ShmoCompiler.CompileSource(source, "lst") });
+        Assert.Equal("6", RunMain(r.Bytes!));
+    }
+
     [Fact]
     public void ALibraryThatUsesAnotherLoadsIt()
     {
