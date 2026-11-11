@@ -12,7 +12,8 @@ between the modules of one engine inside wasm. The cleanups of the
 many-modules arc remain open. The full design and the running record live in
 [`docs/design/wasm-tier1-plan.md`](../../design/wasm-tier1-plan.md); this ADR
 records the decisions the policy calls major: a new backend and a new
-external dependency.
+external dependency. Amended 2026-11-11: the module writes state the host
+owns only through rings the host drains in order.
 
 ## Context
 
@@ -150,3 +151,30 @@ own heap/stack/trail under the same rules the interpreter uses, activations
 stay single-threaded internally and thread-agile (the function-table index is
 cached per thread, the state is not), and the atom/functor tables stay global
 and shared (mirrored read-only into the module for the general unifier).
+
+## Amendment (2026-11-11): the module writes host state through rings
+
+D3 keeps the module from calling managed code. Some builtins it now answers
+change state the host owns: the wakeup queue (ADR-049, point 12), findall's
+solution buffers, and the global-variable store with its external trail log.
+The module does not reach into any of them. It does the part that lives in
+linear memory (the heap, the trails, the images the host stages) and parks
+the rest in a ring of the mailbox (`WasmAbi.WakeRingBase`,
+`FindallRingBase`, `GlobalWriteBase`, each with a top and a limit). When the
+chain hands control back, the host takes the entries in order before
+anything reads that state, so it reads as if the builtin had run where the
+module ran it. A ring that is not staged, or is full, makes the module
+request the builtin as before: each ring is a performance decision, as D3
+wants every exclusion to be.
+
+A backtrackable global write is the one with a trail. The module writes the
+image row and the `MutableSet` entry on the extra trail, with the log index
+the host will give the record (the staged log length plus the entry's place
+in the ring), and the host appends the log record and then sets the store.
+The first write of a key stays the host's, since the image has no row for
+it. A findall collect runs in the module only when the whole call is still
+parked and the list goes to a free variable.
+
+No invariant changes. The trails keep their formats and rules (an entry the
+module writes is the one the host would have written), and the managed side
+tables are written only by managed code.

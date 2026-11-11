@@ -1072,6 +1072,115 @@ tests/test-embedding-parallel.ps1`, `dotnet build -p:ShumwayNetFx=true`, and
 `dotnet build src/Shumway.Web/`, which is not in the solution and is covered
 by no other command.
 
+## What leaves the module (the 2026-11 arc)
+
+At the start of this arc (main `c1cbb343`) the tier was ahead of Tier-0 on
+almost every probe, and the time went where a promoted predicate still went
+back to the host: a builtin request, a deopt, a chain closed and opened
+again. One crossing costs some 3 to 5 us in the browser. The arc took the
+crossings in the order the diagnostic counters ranked them; the figures,
+before and after, are in
+[`wasm-tier-baseline.md`](../benchmarks/wasm-tier-baseline.md).
+
+### Wakeups
+
+Binding an attributed variable stepped aside, and the interpreter ran the
+wakeup and the rest of the clause. The module now binds it and parks the
+wakeup (ADR-049, point 12, and ADR-050's amendment). A call, an execute, a
+proceed, and a cut or builtin given a resume point of its own ask the host
+for the interrupt; the driver runs from the chain, and its return follows a
+marker back into the module. A case that ends jumping to the next one falls
+into it, so a resume point that splits a case costs no trip through the
+dispatcher. The
+driver's questions are answered in the module: the cut barrier, the goal of
+a `verify_attributes/4` hook, a proxy with nothing to settle, and the unwind
+of extra-trail entries that only put a cell back. A `/3` hook, which clp(Z)
+has, still asks the host.
+
+### Meta-calls
+
+A meta-call the module could not finish deopted, and a deopt closes the
+chain. In the order of what each removed from a clp(Z) sudoku solve:
+`Module:Goal` reads the meta-call cache under the goal; a `'$call'/2` with an
+integer barrier runs in the module (the read of its barrier sent every one
+to the host); the host publishes a resolved meta-predicate's meta-argument
+mask and the module qualifies those arguments itself; and `'$call'/2` and
+call/1 of a control construct enter the prelude's helper. call/1 converts
+its goal as a body first (ISO 7.6.2 and 7.8.3), so the module takes a
+construct only when that conversion would leave it as it is, and hands the
+host one with a variable, a reference, an inner qualifier, a construct on
+the left or a goal that is not callable. Deopts per solve went from 26,561
+to none.
+
+### Builtins
+
+compare/3 over the module's standard-order comparator, which
+library(assoc) asks once per tree level. arg/3, compare/3 and the six
+arithmetic comparisons when a meta-call resolves to them. A findall over a
+generator in the module, its solutions parked in a ring. b_setval/2 and
+bb_b_put/2 written into the global-variable image and parked. Attribute
+writes given room on the extra trail and an insertion budget up to the
+image's rebuild line. Each form answers the shapes it can decide and
+requests the builtin for the rest, so the errors stay the host's.
+
+### The crossing
+
+The browser's staging of a crossing took locks on the functor tables and
+asked the runtime for every pinned address. The tables are now published
+as one snapshot read without a lock, and an address is taken when its array
+is pinned. An engine keeps its chain, pins included, between entries; a
+finalizer releases them when the engine dies, since a pinned handle is a
+root of its own. A chain frees every pin it takes.
+
+### The code a module carries
+
+The wakeup work put one or two returns to the host at every goal boundary,
+and each return spilled the ten machine registers and the module id into
+the mailbox where it stood: some 47 instructions, a third of all the code.
+Over the arc the modules of the clp(Z) chain had grown 29% over main. A
+return now tail-calls one epilogue per module (function K+9, where a CPS
+module has its router) with the mailbox, the registers and the verdict,
+which cuts the baked chain from 30.9 to 24.9 MB.
+
+Two shapes that look simpler measured slower in V8's optimising tier, on
+hot paths that never take an exit. A block around the dispatch loop that
+every exit branches to, which is smaller still (21.9 MB), cost tak 8% and a
+dynamic call 21%. A tail call from every exit, the flags check included,
+cost tak 6%. The flags check, the exit at every goal boundary, spills in
+place. The effect does not follow the share of exits left in place (a
+variant with the wake points in place as well lost more), so a change to
+how a return is emitted needs the transfer probes measured again.
+
+### catch/3
+
+A caught throw plants its ball from an ADR-063 image, on every tier (that
+ADR's amendment), instead of a term built once per catcher tried. The catch
+frames stay the host's. Moving them into the module was sized against what
+it would buy, 2 to 5% of a sudoku solve, and not done: a predicate dominated
+by catch/3 stays on Tier-0 by the crossing census.
+
+### Loading a library
+
+The first visit to a page that loads clp(Z) compiles it and its imports to
+bundles. A group a member poisons sorts its refusals out before emitting
+anything, the libraries of one on-demand compile bake in one engine, and a
+relocatable module finds the member at an address by binary search. A
+query's setup no longer pays for the whole program: the persisted dispatch
+graphs are decoded once and handed to the activation, and the per-query
+state lives on the activation instead of weak tables.
+
+### What still leaves
+
+One sudoku solve on the tier after the arc, counted in the diagnostic
+desktop build: 874 entries, no deopts, 783 builtin requests, 227 foreign
+exits, and 1.43 million hops inside wasm. The requests are
+`'$put_to_attr_list'/3` (295, making a plain variable attributed, which
+needs the host's attribute record), `'$copy_term_without_attr_vars'/2`
+(227) and the 227 foreign exits (clp(Z)'s `with_local_attributes/3`,
+refused for its catch/3), and four per wakeup of clp(Z)'s `/3` hooks (64
+wakeups). At 3 to 5 us each that is 1 to 2% of the solve: the rest of its
+time is spent inside the module.
+
 ## Risk register
 
 | Risk | Exposure | Mitigation / kill switch |
