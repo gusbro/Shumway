@@ -676,7 +676,9 @@ waits for it.
   leaves. Past the budget a predicate takes its code when its calls have
   paid for compiling it, so a short run of a large program does not spend
   its time compiling code it barely uses. `SHUMWAY_IL_BUNDLE_PROMOTE` tunes
-  this (see [configuration](configuration.md)).
+  this (see [configuration](configuration.md)). The assembly itself loads on
+  a background thread as soon as the bundle does, so the first predicate to
+  take its code does not wait for it.
 - With `--strip-wam` there is no bytecode to start on: each predicate
   compiles at its first call, on the thread that runs the query.
 
