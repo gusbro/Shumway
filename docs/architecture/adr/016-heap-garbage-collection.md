@@ -17,6 +17,9 @@ request reclaims everything genuinely dead. Safe points reached through
 a raw code address (no callee identity in hand) keep the conservative
 full-bank scan, as does the control stack.
 
+Amended 2026-11-11: the trigger places each collection from the log of the
+last ones, within a ceiling (see the amendment at the end).
+
 Adding a heap GC
 is a "major decision" under [the decision policy](../decision-policy.md) (comparable to the atom-GC
 strategy in ADR-003), so the design was settled here before code landed;
@@ -358,3 +361,75 @@ placed at those dispatch points and is correct for both tiers.
 4. Watermark hook in `EnsureHeapCapacity`; `garbage_collect/0` builtin.
 5. Tests: structure/list/cyclic/attvar/PSTR survival and address
    rewrite; GC under deep CP stacks; GC mid-IL; Blint high-water drop.
+
+## Amendment (2026-11-11): an adaptive trigger
+
+The trigger re-armed at twice what survived, with
+`ActivationConfig.GcThreshold` as the floor. It now re-arms from a log of
+the last eight collections (`HeapGcPolicy`), kept per activation. An entry
+holds the heap before the collection, what survived (L), the roots it
+scanned (the control stack and both trails) and the margin it set. Every
+size is in cells, so the decision is deterministic.
+
+The next threshold is L plus a margin. The margin follows the yield, the
+fraction of the heap a collection recovered, averaged over the last two
+collections so that one odd collection does not swing it:
+
+| yield | margin |
+|---|---|
+| 50% or more | max(L, floor) |
+| 20% to under 50% | max(2L, floor) |
+| under 20% | max(2L, roots, floor), and twice the previous margin when the previous collection also recovered under 20% |
+
+A collection that recovers much keeps memory tight: a 1 GB heap that gave
+back 768 MB collects next at 512 MB. One that recovers little spaces the
+next one out: a 1 GB heap that gave back 100 MB collects next at 2.7 GB.
+The roots count only in that band, where a collection that finds the same
+live data under a large stack pays the stack's scan for little.
+
+Four bounds keep the spacing safe:
+
+- The margin is at most 8L.
+- The margin takes at most half the room left below a ceiling T. T is
+  `MaxHeapSize` when one is configured, and otherwise half the memory the
+  runtime reports available to the process, which honours a container's
+  limit. As the live data nears T the collections come closer together,
+  whatever they yield.
+- While L is under 75% of T, the next collection is no later than 75% of T.
+- Once a collection leaves at least 90% of T live, the heap may grow to a
+  configured T, where an allocation that does not fit is
+  `resource_error(memory)`. An estimated T can be passed: past it the heap
+  collects each time it grows by half its live data.
+
+From a heap array of 16 MB on, the heap collects before the array grows.
+The array grows inside an allocation, before the safe point that would
+collect sees the heap past the threshold, so the limit is seven eighths of
+the array. When a collection there cannot leave room for the live data (at
+least the floor), the limit is the same point of the array doubled once.
+The bands alone cost memory and saved no time. On Trealla's chess sample
+the first collection recovers 1.5% under a stack of 4 million words, and
+the poor band moved the next one to 5 million cells. By then the stack had
+grown to 13 million words, so two collections scanned only 6% less than the
+four the old trigger ran, and the heap array doubled to 64 MB.
+
+Measured on chess with the array bound, against the old trigger:
+
+| trigger | collections | stack words scanned | live cells marked | heap array |
+|---|---|---|---|---|
+| old | 4 | 18.3 M | 4.77 M | 32 MB |
+| adaptive | 2 | 12.1 M | 3.15 M | 32 MB |
+
+The wall clock moves within its noise: a median 1.4% faster over four
+A B B A rounds with the processor capped, from 2% slower to 10% faster by
+round, at the same peak working set. What chess pays for collection is the
+scan of a stack that keeps growing, which spacing the collections out
+cannot remove. A loop of temporary lists over 1.6 million live cells
+collects 14 times against 16, in the same 32 MB array.
+
+A collection that did not run (`GcInhibit`) learns nothing and tries again
+once the heap doubles.
+
+Tests: `HeapGcPolicyTests` (the rule, with the examples above and the edge of
+each band and bound) and `HeapGcTriggerTests` (an activation with a small
+`MaxHeapSize`, collected up to 90% of it and then exhausted, and a 16 MB
+array collected before it grows).

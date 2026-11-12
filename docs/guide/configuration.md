@@ -33,12 +33,17 @@ Useful on a stock build, for someone running or embedding Shumway.
 
 ### Heap-GC tuning
 
-The heap garbage collector is self-tuning; these override it, mainly for
-reproducing or bisecting a GC-interaction bug.
+The heap garbage collector is self-tuning: after each collection it places
+the next one from how much the last ones recovered, within the heap's
+ceiling (`ActivationConfig.MaxHeapSize`, or half the memory available to the
+process). From a 16 MB heap on, it collects before the heap's array grows.
+These override it, mainly for reproducing or bisecting a
+GC-interaction bug, and only a diagnostic build (`-p:ShumwayDiag=true`)
+reads them.
 
 | Variable | Effect |
 |---|---|
-| `SHUMWAY_GC_THRESHOLD` | Heap size (in cells) that triggers a collection. Overrides the adaptive watermark. |
+| `SHUMWAY_GC_THRESHOLD` | Heap size (in cells) that triggers the first collection; `0` disables automatic collection. |
 | `SHUMWAY_GC_STRESS` | `=1` collects at every safe point: slow, for flushing out GC-safety bugs. |
 | `SHUMWAY_GC_AT`, `SHUMWAY_GC_UPTO` | Fuzz/bisect bounds: collect only within a range of GC opportunities, to bracket the one that corrupts state. |
 

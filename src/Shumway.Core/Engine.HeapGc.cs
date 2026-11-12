@@ -564,18 +564,54 @@ public sealed partial class Activation
             return;
         }
         if (_gcThreshold <= 0 || _heapTop < _gcThreshold) return;
-        // Watermark crossed (~once per GcThreshold of heap allocation).
+        // Watermark crossed: collect, then re-arm from the log of the last
+        // collections (HeapGcPolicy).
+        long before = _heapTop;
+        long roots = (long)_stackTop + _bindingTrailTop + _extraTrailTop;
+        int runs = HeapGcRuns;
         CollectHeap();
-        // Re-arm: collect again only once the heap doubles past what
-        // survived (bounded below by the configured floor). If the
-        // collection freed nothing (e.g. attvars in use, or a genuinely
-        // large live set), this still pushes the threshold up so we do
-        // not retry on the very next goal.
-        long next = (long)_heapTop * 2;
         int floor = _config.GcThreshold > 0 ? _config.GcThreshold : (1 << 18);
-        _gcThreshold = next > int.MaxValue ? int.MaxValue
-            : (int)System.Math.Max(next, floor);
+        long next;
+        if (HeapGcRuns == runs)
+        {
+            // Inhibited, nothing ran and nothing was learnt: try again once
+            // the heap doubles.
+            next = System.Math.Max(2L * _heapTop, floor);
+        }
+        else
+        {
+            _gcLog ??= new HeapGcPolicy.Entry[HeapGcPolicy.LogSize];
+            var last = new HeapGcPolicy.Entry(before, _heapTop, roots, 0);
+            HeapGcPolicy.Entry? previous = _gcLogCount > 0
+                ? _gcLog[(_gcLogCount - 1) % HeapGcPolicy.LogSize] : null;
+            long margin = HeapGcPolicy.Margin(last, previous, floor);
+            if (_gcCeiling == 0) _gcCeiling = HeapGcPolicy.Ceiling(_config.MaxHeapSize);
+            next = HeapGcPolicy.NextThreshold(_heapTop, margin, _gcCeiling);
+            next = System.Math.Min(next, HeapGcPolicy.ArrayLimit(_heapTop, _heap.Length, floor));
+            _gcLog[_gcLogCount++ % HeapGcPolicy.LogSize] = last with { Margin = next - _heapTop };
+        }
+        _gcThreshold = next > int.MaxValue ? int.MaxValue : (int)next;
     }
+
+    // ADR-016's adaptive trigger: the last collections, oldest first once the
+    // ring wraps, and the heap's ceiling in cells, taken at the first
+    // collection.
+    private HeapGcPolicy.Entry[]? _gcLog;
+    private int _gcLogCount;
+    private long _gcCeiling;
+
+    /// <summary>The collections the trigger remembers, oldest first. Tests.</summary>
+    internal HeapGcPolicy.Entry[] GcLog()
+    {
+        int n = System.Math.Min(_gcLogCount, HeapGcPolicy.LogSize);
+        var result = new HeapGcPolicy.Entry[n];
+        for (int i = 0; i < n; i++)
+            result[i] = _gcLog![(_gcLogCount - n + i) % HeapGcPolicy.LogSize];
+        return result;
+    }
+
+    /// <summary>The heap top at which the next collection triggers. Tests.</summary>
+    internal int GcThresholdCells => _gcThreshold;
 
     /// <summary>ADR-035 D5+ — how many collections have actually run (compacting the heap
     /// and rewriting the trail). The debugger's rewind history records this per mark: a
