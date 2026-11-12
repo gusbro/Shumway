@@ -60,16 +60,17 @@ public sealed class IlCompileWorkerTests
 
     [Theory]
     [InlineData(1, null, 1)]
-    [InlineData(4, null, 1)]
-    [InlineData(7, null, 1)]
-    [InlineData(8, null, 2)]
-    [InlineData(12, null, 3)]
+    [InlineData(2, null, 1)]
+    [InlineData(3, null, 1)]
+    [InlineData(4, null, 2)]
+    [InlineData(6, null, 3)]
+    [InlineData(8, null, 4)]
     [InlineData(16, null, 4)]
     [InlineData(64, null, 4)]
     [InlineData(8, "3", 3)]
     [InlineData(2, "6", 6)]
-    [InlineData(8, "0", 2)]
-    [InlineData(8, "x", 2)]
+    [InlineData(8, "0", 4)]
+    [InlineData(8, "x", 4)]
     public void TheWorkersFollowTheProcessorsOrTheSetting(int processors, string? setting, int workers)
         => Assert.Equal(workers, IlCompileWorker.WorkersFor(processors, setting));
 }

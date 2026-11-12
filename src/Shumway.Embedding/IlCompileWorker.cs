@@ -31,12 +31,12 @@ internal static class IlCompileWorker
     internal static int MaxWorkers { get; set; } = WorkersFor(
         Environment.ProcessorCount, Environment.GetEnvironmentVariable("SHUMWAY_IL_WORKERS"));
 
-    /// <summary>A quarter of the logical processors, between 1 and 4: two
-    /// logical processors share a core under SMT, and the rest of the machine
-    /// belongs to the threads that run Prolog. A positive
+    /// <summary>Half the logical processors, between 1 and 4: a query runs on
+    /// one thread, so while a program warms up the others are free, and two
+    /// logical processors share a core under SMT. A positive
     /// <paramref name="setting"/> overrides it.</summary>
     internal static int WorkersFor(int processors, string? setting)
-        => int.TryParse(setting, out int n) && n > 0 ? n : Math.Max(1, Math.Min(4, processors / 4));
+        => int.TryParse(setting, out int n) && n > 0 ? n : Math.Max(1, Math.Min(4, processors / 2));
 
     private sealed class Item
     {

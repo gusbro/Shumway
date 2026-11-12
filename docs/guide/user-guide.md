@@ -664,8 +664,8 @@ var sol = engine.Query("main(Arg).");
 
 `LoadBundle` consults every module in the bundle and compiles nothing. A
 predicate starts on its WAM bytecode and switches to Tier-1 IL once it is
-hot, and the compiling happens on background threads, at most a quarter of
-the logical processors (1 to 4, `SHUMWAY_IL_WORKERS` sets it): the query never
+hot, and the compiling happens on background threads, at most half the
+logical processors (1 to 4, `SHUMWAY_IL_WORKERS` sets it): the query never
 waits for it.
 
 - In a plain bundle the IL is generated then, once the predicate's call

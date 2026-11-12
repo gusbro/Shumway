@@ -441,9 +441,10 @@ busy 1.26 s, of which 872 ms is .NET compiling the emitted IL to native code,
 ready a predicate runs on Tier-0. A `--with-compiled-il` bundle skips only the
 emitter's part.
 
-The process now runs up to `IlCompileWorker.MaxWorkers` compile threads: a
-quarter of the logical processors it may use, between 1 and 4
-(`SHUMWAY_IL_WORKERS` sets it). One starts with the first compile; another
+The process now runs up to `IlCompileWorker.MaxWorkers` compile threads: half
+the logical processors it may use, between 1 and 4 (`SHUMWAY_IL_WORKERS` sets
+it). A query runs on one thread, so while a program warms up the other cores
+are free; the half leaves room for SMT siblings. One starts with the first compile; another
 only when compiles wait and every started one is busy, so a program that never
 queues two compiles at once runs one. A caller waiting for its compile is
 still taken first. The activation's threading model does not change: the
@@ -465,10 +466,12 @@ inlining), because the engine thread compiles too. Its region caches were not:
 the callers index and the member-eligibility cache are now published whole
 (the latter a concurrent dictionary), and the region cost trace is per thread.
 
-On this note's machine (8 logical processors, so 2 workers) the chess sample's
-first `main` drops from 8.38 to 7.68 s best and 9.55 to 8.08 s median,
-the second and third unchanged at about 6.0 s (processor capped, A B B A, same
-build with `SHUMWAY_IL_WORKERS=1` as the baseline). Tests:
+On this note's machine (8 logical processors, so 4 workers) the chess sample's
+first `main`, one build with `SHUMWAY_IL_WORKERS` at 1, 2 and 4 (processor
+capped, interleaved, four runs each), takes 8.61, 7.59 and 7.61 s best, and
+8.93, 8.02 and 7.64 s median; with four the runs agree within 0.04 s, against
+1.1 s with fewer, whose warm-up depends on the order the compiles land in. The
+second and third `main` stay at about 6.0 s. Tests:
 `IlConcurrentCompileTests` (eight threads compile regions with one compiler;
 red without the cache changes, a `Dictionary` corrupted by a concurrent
 update), `ParallelPromotionTests` (24 regions of one engine compiled at once
