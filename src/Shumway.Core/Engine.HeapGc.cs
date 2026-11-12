@@ -646,6 +646,7 @@ public sealed partial class Activation
     /// number of cells reclaimed (0 if the collector bailed). Safe to
     /// call only at a safe point — between WAM instructions — where the
     /// machine state is consistent (no half-built structure).</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public int CollectHeap()
     {
         // The collector used to bail here whenever an attributed variable or a
@@ -1041,6 +1042,7 @@ public sealed partial class Activation
     /// <summary>Returns <paramref name="c"/> with its heap-index payload
     /// (if any) mapped through <paramref name="forward"/>. Atomic cells
     /// are returned unchanged.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     private static Cell RelocateCell(Cell c, in GcForwarding forward)
     {
         // A valid heap index is in [0, oldTop).
@@ -1080,6 +1082,7 @@ public sealed partial class Activation
     // through Action<int>). Guards bounds defensively — a root should
     // never reference outside [0, _gcOldTop), but a stray value must not
     // crash the collector.
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     private void GcMarkCell(int addr)
     {
         ulong[] bits = _gcBits!;
@@ -1112,6 +1115,7 @@ public sealed partial class Activation
     // leaf default. The worst a stale-but-plausible ref can do is
     // over-retain (keep a still-addressable cell alive) — never crash
     // and never corrupt.
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     private void GcMarkReferents(Cell c)
     {
         int oldTop = _gcOldTop;
@@ -1240,6 +1244,7 @@ public sealed partial class Activation
     /// bare heap indices, so they are marked explicitly. calls
     /// the de-closured <see cref="GcMarkReferents"/> /
     /// <see cref="GcMarkCell"/> directly — no per-slot delegate invoke.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     private void MarkRoots(int oldTop)
     {
         // X registers. With a live bound (a call boundary whose callee arity
@@ -1272,8 +1277,7 @@ public sealed partial class Activation
         // stale environment slot still names them. Making this precise needs a
         // per-frame live-slot count at the current continuation, which the
         // engine does not compute today.
-        for (int i = 0; i < _stackTop; i++)
-            GcMarkReferents(_stack[i]);
+        MarkStackRoots();
 
         // Binding trail: each entry is the heap address of a bound
         // variable that a backtrack will reset, so the cell must stay
@@ -1306,6 +1310,77 @@ public sealed partial class Activation
         }
     }
 
+    // Tags whose cells a root scan must look at; the rest (Int, RawInt control
+    // words, PstrBuffer) are leaves. Atom and Functor join while an atom mark
+    // runs.
+    private const uint GcRootTags =
+        (1u << (int)Tag.Ref) | (1u << (int)Tag.Str) | (1u << (int)Tag.Lis)
+        | (1u << (int)Tag.Float) | (1u << (int)Tag.BigInt) | (1u << (int)Tag.Foreign)
+        | (1u << (int)Tag.AttVar) | (1u << (int)Tag.Pstr) | (1u << (int)Tag.Rational);
+
+    // Tags whose low 32 bits are a heap index: relocating one rewrites those
+    // bits and keeps the tag (and Float's high payload bits), as RelocateCell
+    // does. Pstr packs more than the index and goes through RelocateCell.
+    private const uint GcIndexTags =
+        (1u << (int)Tag.Ref) | (1u << (int)Tag.Str) | (1u << (int)Tag.Lis)
+        | (1u << (int)Tag.Float) | (1u << (int)Tag.BigInt) | (1u << (int)Tag.AttVar);
+
+    /// <summary>The control stack's part of <see cref="MarkRoots"/>: every
+    /// slot, conservatively, as <see cref="GcMarkReferents"/> would see it.
+    /// The stack is mostly control words and references to single cells, so
+    /// leaves are skipped and a reference to a marked cell stops here.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
+    private void MarkStackRoots()
+    {
+        uint tags = GcRootTags;
+        if (_atomMarkSet is not null) tags |= (1u << (int)Tag.Atom) | (1u << (int)Tag.Functor);
+        Cell[] stack = _stack;
+        ulong[] bits = _gcBits!;
+        uint oldTop = (uint)_gcOldTop;
+        int top = System.Math.Min(_stackTop, stack.Length);
+        for (int i = 0; i < top; i++)
+        {
+            Cell c = stack[i];
+            int tag = c.TagId;
+            if ((tags & (1u << tag)) == 0) continue;
+            if (tag == (int)Tag.Ref)
+            {
+                uint a = (uint)c.AsHeapIndex;
+                if (a < oldTop && (bits[a >> 6] & (1UL << (int)(a & 63))) == 0)
+                    GcMarkCell((int)a);
+                continue;
+            }
+            GcMarkReferents(c);
+        }
+    }
+
+    /// <summary>The control stack's part of <see cref="RelocateRoots"/>:
+    /// every reference cell rewritten through the forwarding map, leaves
+    /// untouched.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
+    private void RelocateStackRoots(in GcForwarding forward)
+    {
+        Cell[] stack = _stack;
+        uint oldTop = (uint)forward.OldTop;
+        int top = System.Math.Min(_stackTop, stack.Length);
+        for (int i = 0; i < top; i++)
+        {
+            long data = stack[i].Data;
+            int tag = (int)(data >> Cell.TagShift) & 0xF;
+            if ((GcIndexTags & (1u << tag)) != 0)
+            {
+                uint idx = (uint)data;
+                if (idx >= oldTop) continue;
+                long keep = tag == (int)Tag.Float
+                    ? data & unchecked((long)0xFFFFFFFF00000000L)
+                    : (long)tag << Cell.TagShift;
+                stack[i] = new Cell(keep | (uint)forward.Of((int)idx));
+            }
+            else if (tag == (int)Tag.Pstr)
+                stack[i] = RelocateCell(stack[i], forward);
+        }
+    }
+
     /// <summary>Rewrites every external holder of a heap index through the
     /// forwarding map. The register bank and the whole control stack are
     /// relocated conservatively (matching <see cref="MarkRoots"/>):
@@ -1317,16 +1392,16 @@ public sealed partial class Activation
     /// the CP chain is walked separately to fix exactly those two slots per
     /// frame. Trails and catch frames hold bare indices, relocated
     /// explicitly.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     private void RelocateRoots(GcForwarding forward, int oldTop)
     {
         for (int i = 0; i < _registers.Length; i++)
             _registers[i] = RelocateCell(_registers[i], forward);
 
-        // Whole control stack — conservative. RawInt control words pass
-        // through RelocateCell's leaf default untouched; every real
-        // reference cell (frame Y / CP arg) is relocated in place.
-        for (int i = 0; i < _stackTop; i++)
-            _stack[i] = RelocateCell(_stack[i], forward);
+        // Whole control stack, conservatively: RawInt control words stay as
+        // they are; every real reference cell (frame Y / CP arg) is relocated
+        // in place.
+        RelocateStackRoots(forward);
 
         // CP chain: the only stack slots needing boundary (not cell)
         // relocation are each frame's saved HeapTop / Hb. Re-write them as

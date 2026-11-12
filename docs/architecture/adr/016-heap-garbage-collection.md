@@ -433,3 +433,33 @@ Tests: `HeapGcPolicyTests` (the rule, with the examples above and the edge of
 each band and bound) and `HeapGcTriggerTests` (an activation with a small
 `MaxHeapSize`, collected up to 90% of it and then exhausted, and a 16 MB
 array collected before it grows).
+
+## Amendment (2026-11-11): the stack scan skips its leaves
+
+What chess pays for each collection is the conservative scan of its control
+stack, 3.7 and 7.7 million words in its two collections. Half of those words
+are `RawInt` control words, and each slot paid a call to `GcMarkReferents`
+or `RelocateCell` that did nothing. The stack now has loops of its own
+(`MarkStackRoots`, `RelocateStackRoots`) where a slot's tag decides first:
+
+- leaves (`Int`, `RawInt`, `PstrBuffer`, and `Atom` and `Functor` unless an
+  atom mark runs) are skipped;
+- a `Ref` to a cell already marked stops at the bit test;
+- relocation rewrites the low 32 bits of the six tags that keep a heap index
+  there (`Ref`, `Str`, `Lis`, `AttVar`, `BigInt`, and `Float` with its high
+  payload bits kept) and hands `Pstr` to `RelocateCell`.
+
+What is marked and where it moves do not change.
+
+The collector's methods also compile with full optimization at once
+(`HelperImpl.Fixed`). A program collects a few times per run, so under tiered
+compilation the collector's loops ran mostly in unoptimized code: on chess,
+its two collections took 480 to 680 ms with tiering on and 300 to 410 ms
+with it off.
+
+Measured on chess, phase timers in a temporary build without the processor
+cap: the two collections take 147 to 200 ms, against 480 to 680 ms before.
+Over four A B B A rounds with the processor capped, the run takes a median
+12.02 s against 12.48 s (3.7% faster), at the same peak working set. Test:
+`HeapGcTests.Collect_ScansAndRelocatesEveryTagOfTheControlStack`, one stack
+slot of each kind.
