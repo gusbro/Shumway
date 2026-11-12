@@ -152,7 +152,29 @@ public sealed partial class Activation
     private bool _gcDiagActive;
 
     private void UpdateGcDiagActive()
-        => _gcDiagActive = _gcStressMode || _gcOnlyAt >= 0 || _gcUpTo >= 0;
+    {
+        _gcDiagActive = _gcStressMode || _gcOnlyAt >= 0 || _gcUpTo >= 0;
+        RearmSafePointLimit();
+    }
+
+    // The one value a safe point compares the heap top with: the collection
+    // threshold while nothing else is pending, 0 (every safe point due) while
+    // a cancellation, a deadline, a request from another thread or a diag
+    // mode is. Volatile: a loop of compiled code must not hold it in a
+    // register across iterations, or a cancellation would never reach it.
+    private volatile int _safePointLimit = int.MaxValue;
+
+    /// <summary>Sets the limit from the state the query thread owns, then
+    /// looks again at what other threads set: written before the read, the
+    /// limit cannot overwrite a request that arrived meanwhile, since the
+    /// request lowers the limit after it sets its flag.</summary>
+    private void RearmSafePointLimit()
+    {
+        _safePointLimit = _gcThreshold > 0 ? _gcThreshold : int.MaxValue;
+        Interlocked.MemoryBarrier();
+        if (_cancelRequested || _deadlineAt != 0 || _safePointRequests != 0 || _gcDiagActive)
+            _safePointLimit = 0;
+    }
 
     /// <summary>Called at engine safe points (goal boundaries — see the
     /// interpreter's dispatch / resume-marker sites) to run a collection
@@ -201,7 +223,11 @@ public sealed partial class Activation
     {
         lock (_cancelGate)
         {
-            if (!_tearingDown) _cancelRequested = true;
+            if (!_tearingDown)
+            {
+                _cancelRequested = true;
+                _safePointLimit = 0;
+            }
         }
     }
 
@@ -214,11 +240,16 @@ public sealed partial class Activation
             _tearingDown = true;
             _cancelRequested = false;
         }
+        RearmSafePointLimit();
     }
 
     /// <summary>Clears a pending cancellation request (e.g. before reusing an
     /// engine).</summary>
-    public void ClearCancellation() => _cancelRequested = false;
+    public void ClearCancellation()
+    {
+        _cancelRequested = false;
+        RearmSafePointLimit();
+    }
 
     /// <summary>True once <see cref="RequestCancellation"/> has been called and
     /// not yet cleared.</summary>
@@ -255,6 +286,7 @@ public sealed partial class Activation
         long at = System.Environment.TickCount64 + (long)(seconds * 1000.0);
         _deadlines[_deadlineCount++] = at;
         if (_deadlineAt == 0 || at < _deadlineAt) _deadlineAt = at;
+        RearmSafePointLimit();
     }
 
     /// <summary>Ends the innermost deadline. Idempotent on an empty stack so an
@@ -269,6 +301,7 @@ public sealed partial class Activation
         for (int i = 0; i < _deadlineCount; i++)
             if (_deadlineAt == 0 || _deadlines[i] < _deadlineAt)
                 _deadlineAt = _deadlines[i];
+        RearmSafePointLimit();
     }
 
     /// <summary>True while any <c>call_with_timeout</c> is in progress.</summary>
@@ -332,40 +365,20 @@ public sealed partial class Activation
         if ((_safePointRequests & SafePointAtomMark) != 0) TakeAtomMarkRequest();
     }
 
-    // hot/cold split. The guard is AggressiveInlining so each
-    // safe-point call site inlines to: a volatile _cancelRequested read +
-    // one compare (the diag flag and the watermark, fused into a single
-    // early return on the steady-state path). Everything that can actually
-    // do work — cancellation throw, diag modes, the collection + re-arm —
-    // lives in the NoInlining slow body. NB: when auto-collection is
-    // disabled (_gcThreshold <= 0) the `_heapTop < _gcThreshold` test is
-    // never true, so those (test-only) configurations pay the cold call;
-    // the slow body's threshold check keeps the no-collect behavior.
+    // hot/cold split: each safe point inlines to the heap top against the
+    // limit, and everything that can do work (cancellation, the deadline,
+    // requests from other threads, diag modes, the collection and its re-arm)
+    // is the NoInlining slow body's.
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public void MaybeCollectHeap()
     {
         Diagnostics.AreaTrace.Note(CellsAllocated, _stackTop, _b, _heapTop);
-        // Cooperative cancellation: checked at every safe point (not only at the
-        // GC watermark). Lazy Y-slot allocation made many loops heap-light, so a
-        // watermark-only check left them uncancellable — and the watermark may
-        // now never be crossed. `_cancelRequested` is volatile and the branch is
-        // predicted not-taken, so the steady-state cost is ~one read per safe
-        // point.
-        if (_cancelRequested)
-            ThrowQueryCancelled();
-        // call_with_timeout/2,3 — same cost class as the cancel flag (one field
-        // read, predicted not-taken) whenever no deadline is active.
-        if (_deadlineAt != 0)
-            CheckDeadline();
-        // Work other threads ask of this activation (RequestDebugArm, an atom
-        // collection's mark): done here, on its own thread at a goal boundary,
-        // because no other thread may touch a running activation. Same cost
-        // class as the cancel flag.
-        if (_safePointRequests != 0)
-            ApplySafePointRequests();
-        if (!_gcDiagActive && _heapTop < _gcThreshold) return;
-        MaybeCollectHeapSlow();
+        // One compare: the limit is below the heap top whenever a
+        // cancellation, a deadline, a request from another thread, a diag mode
+        // or a collection is due (RearmSafePointLimit).
+        if (_heapTop < _safePointLimit) return;
+        SafePointDue();
     }
 
     // WAM X registers are caller-saved: at a call boundary the live ones are
@@ -398,8 +411,7 @@ public sealed partial class Activation
 #if SHUMWAY_DIAG
         true;
 #else
-        _cancelRequested || _deadlineAt != 0 || _safePointRequests != 0
-        || _gcDiagActive || _heapTop >= _gcThreshold;
+        _heapTop >= _safePointLimit;
 #endif
     }
 
@@ -414,14 +426,8 @@ public sealed partial class Activation
         // both tiers reach, and the sampler compiles away without the
         // diag symbol, so the steady-state path is unchanged.
         Diagnostics.AreaTrace.Note(CellsAllocated, _stackTop, _b, _heapTop);
-        if (_cancelRequested)
-            ThrowQueryCancelled();
-        if (_deadlineAt != 0)
-            CheckDeadline();
-        if (_safePointRequests != 0)
-            ApplySafePointRequests();
-        if (!_gcDiagActive && _heapTop < _gcThreshold) return;
-        MaybeCollectHeapSlowAtCall(functorId);
+        if (_heapTop < _safePointLimit) return;
+        SafePointDueAtCall(functorId);
     }
 
     /// <summary>Safe point at a dispatch whose target may be a resume marker
@@ -432,17 +438,8 @@ public sealed partial class Activation
     public void MaybeCollectHeapAtDispatch(int target)
     {
         Diagnostics.AreaTrace.Note(CellsAllocated, _stackTop, _b, _heapTop);
-        if (_cancelRequested)
-            ThrowQueryCancelled();
-        if (_deadlineAt != 0)
-            CheckDeadline();
-        if (_safePointRequests != 0)
-            ApplySafePointRequests();
-        if (!_gcDiagActive && _heapTop < _gcThreshold) return;
-        if (IsResumeMarker(target))
-            MaybeCollectHeapSlowAtCall(DecodeResumeMarker(target).FunctorId);
-        else
-            MaybeCollectHeapSlow();
+        if (_heapTop < _safePointLimit) return;
+        SafePointDueAtDispatch(target);
     }
 
     /// <summary>Safe point where a callee has just Proceeded back: no X
@@ -452,14 +449,70 @@ public sealed partial class Activation
     public void MaybeCollectHeapAtReturn()
     {
         Diagnostics.AreaTrace.Note(CellsAllocated, _stackTop, _b, _heapTop);
+        if (_heapTop < _safePointLimit) return;
+        SafePointDueAtReturn();
+    }
+
+    // A safe point the limit sent here: what is pending, in the order the
+    // checks always ran (cancellation, the deadline, requests from other
+    // threads, then the collection), and the limit re-armed after.
+    private bool SafePointPending()
+    {
+        // Cooperative cancellation: checked at every safe point, not only at
+        // the watermark, or a heap-light loop could not be cancelled.
         if (_cancelRequested)
             ThrowQueryCancelled();
         if (_deadlineAt != 0)
             CheckDeadline();
+        // Work other threads ask of this activation (RequestDebugArm, an atom
+        // collection's mark): done on its own thread, at a goal boundary.
         if (_safePointRequests != 0)
             ApplySafePointRequests();
-        if (!_gcDiagActive && _heapTop < _gcThreshold) return;
-        MaybeCollectHeapSlowBounded(0);
+        bool collect = _gcDiagActive || (_gcThreshold > 0 && _heapTop >= _gcThreshold);
+        if (!collect) RearmSafePointLimit();
+        return collect;
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void SafePointDue()
+    {
+        if (!SafePointPending()) return;
+        try { MaybeCollectHeapSlow(); }
+        finally { RearmSafePointLimit(); }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void SafePointDueAtCall(int functorId)
+    {
+        if (!SafePointPending()) return;
+        try { MaybeCollectHeapSlowAtCall(functorId); }
+        finally { RearmSafePointLimit(); }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void SafePointDueAtDispatch(int target)
+    {
+        if (!SafePointPending()) return;
+        try
+        {
+            if (IsResumeMarker(target))
+                MaybeCollectHeapSlowAtCall(DecodeResumeMarker(target).FunctorId);
+            else
+                MaybeCollectHeapSlow();
+        }
+        finally { RearmSafePointLimit(); }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void SafePointDueAtReturn()
+    {
+        if (!SafePointPending()) return;
+        try { MaybeCollectHeapSlowBounded(0); }
+        finally { RearmSafePointLimit(); }
     }
 
     [System.Runtime.CompilerServices.MethodImpl(
@@ -508,6 +561,7 @@ public sealed partial class Activation
         int seen;
         do seen = _safePointRequests;
         while (Interlocked.CompareExchange(ref _safePointRequests, seen | request, seen) != seen);
+        _safePointLimit = 0;
     }
 
     [System.Runtime.CompilerServices.MethodImpl(

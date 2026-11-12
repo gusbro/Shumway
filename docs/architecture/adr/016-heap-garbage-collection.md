@@ -463,3 +463,25 @@ Over four A B B A rounds with the processor capped, the run takes a median
 12.02 s against 12.48 s (3.7% faster), at the same peak working set. Test:
 `HeapGcTests.Collect_ScansAndRelocatesEveryTagOfTheControlStack`, one stack
 slot of each kind.
+
+## Amendment (2026-11-12): one limit for every safe point
+
+A safe point read five fields: the cancellation flag, the deadline, the
+requests from other threads, the diag modes, and the heap top against the
+threshold. It now compares the heap top with one volatile limit
+(`_safePointLimit`): the threshold while nothing else is pending, 0 while
+any of the others is, so the slow path runs and does what it always did,
+in the same order, and re-arms the limit. A cancellation or a request from
+another thread sets its flag and then lowers the limit; the query thread
+re-arms by writing the limit, a full barrier, and reading the flags again,
+so a request that arrives meanwhile is not overwritten. The limit is
+volatile because a compiled loop must not keep it in a register. It is the
+IL form of the wasm tier's watermark compare.
+
+In a compiled call site the check is three instructions where it was
+eleven; member/2's native code shrinks from 5,455 to 5,265 bytes. A member/2
+scan runs 1 to 4% faster and the chess sample about 1% (A B B A, processor
+capped). Tests: `SafePointLimitTests` in Core (a cancellation, an expired
+deadline and a request each reach the next safe point, the threshold alone
+otherwise) and in Embedding (a compiled loop that allocates nothing is
+cancelled and runs out of time).
