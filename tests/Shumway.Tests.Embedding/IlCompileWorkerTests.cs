@@ -6,11 +6,12 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>The process has one IL compile worker. A caller that waits for its
+/// <summary>The process's IL compile workers. A caller that waits for its
 /// compile (a synchronous promotion, a warm-up) is not queued behind the
-/// background compiles every engine has asked for: its wait is the compile in
-/// flight and its own.</summary>
-// Exclusive: the test holds the process's worker while it queues.
+/// background compiles every engine has asked for: the next free worker takes
+/// it first. How many workers the process may run follows the processors it may
+/// use.</summary>
+// Exclusive: the test holds the process's workers while it queues.
 [Collection("exclusive")]
 [Trait("Concurrency", "exclusive")]
 public sealed class IlCompileWorkerTests
@@ -19,35 +20,56 @@ public sealed class IlCompileWorkerTests
     public void AWaitingCallerGoesBeforeTheBackgroundQueue()
     {
         var order = new ConcurrentQueue<string>();
-        using var running = new ManualResetEventSlim();
-        using var release = new ManualResetEventSlim();
-        IlCompileWorker.RunAsync(() => { running.Set(); release.Wait(); return null; }, (_, _) => { });
-        Assert.True(running.Wait(60_000), "the worker did not reach the item that holds it");
-
-        const int background = 20;
-        for (int i = 0; i < background; i++)
-        {
-            string name = $"background {i}";
-            IlCompileWorker.RunAsync(() => { order.Enqueue(name); return null; }, (_, _) => { });
-        }
-        var caller = new Thread(() => IlCompileWorker.RunSync(() => { order.Enqueue("waiting"); return 0; }));
-        caller.Start();
+        var held = IlCompileWorker.Hold();
+        Thread caller;
         var clock = Stopwatch.StartNew();
-        while (IlCompileWorker.WaitingCallers == 0)
+        const int background = 20;
+        try
         {
-            Assert.True(clock.ElapsedMilliseconds < 60_000, "the waiting caller never queued");
-            Thread.Sleep(1);
+            for (int i = 0; i < background; i++)
+            {
+                string name = $"background {i}";
+                IlCompileWorker.RunAsync(() => { order.Enqueue(name); return null; }, (_, _) => { });
+            }
+            caller = new Thread(() => IlCompileWorker.RunSync(() => { order.Enqueue("waiting"); return 0; }));
+            caller.Start();
+            while (IlCompileWorker.WaitingCallers == 0)
+            {
+                Assert.True(clock.ElapsedMilliseconds < 60_000, "the waiting caller never queued");
+                Thread.Sleep(1);
+            }
+            Assert.Empty(order);
+            // One worker free: what it takes first is the waiting caller's item.
+            held.ReleaseOne();
+            Assert.True(caller.Join(60_000), "the waiting caller did not return");
         }
+        finally { held.Dispose(); }
 
-        release.Set();
-        Assert.True(caller.Join(60_000), "the waiting caller did not return");
         while (order.Count < background + 1)
         {
             Assert.True(clock.ElapsedMilliseconds < 120_000, "the background queue did not drain");
             Thread.Sleep(1);
         }
-        var expected = new List<string> { "waiting" };
+        var ran = order.ToArray();
+        Assert.Equal("waiting", ran[0]);
+        var expected = new List<string>();
         for (int i = 0; i < background; i++) expected.Add($"background {i}");
-        Assert.Equal(expected, order.ToArray());
+        Assert.Equal(expected.OrderBy(s => s, StringComparer.Ordinal),
+            ran.Skip(1).OrderBy(s => s, StringComparer.Ordinal));
     }
+
+    [Theory]
+    [InlineData(1, null, 1)]
+    [InlineData(4, null, 1)]
+    [InlineData(7, null, 1)]
+    [InlineData(8, null, 2)]
+    [InlineData(12, null, 3)]
+    [InlineData(16, null, 4)]
+    [InlineData(64, null, 4)]
+    [InlineData(8, "3", 3)]
+    [InlineData(2, "6", 6)]
+    [InlineData(8, "0", 2)]
+    [InlineData(8, "x", 2)]
+    public void TheWorkersFollowTheProcessorsOrTheSetting(int processors, string? setting, int workers)
+        => Assert.Equal(workers, IlCompileWorker.WorkersFor(processors, setting));
 }

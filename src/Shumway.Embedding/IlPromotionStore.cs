@@ -629,6 +629,74 @@ public sealed partial class IlPromotionStore
             return _withCode.TryGetValue(functorId, out var f) && (f & (CodeInstalled | CodeAsMember)) != 0;
     }
 
+    // The background compiles' emission turns, in the order they were queued:
+    // each emission sees what every earlier one emitted, whatever the workers.
+    // A ticket is taken on the engine thread; a turn passes when its emission
+    // ends, skipped, failed or never queued.
+    private long _emitTicketNext;
+    private long _emitTurnNow;
+    private readonly HashSet<long> _emitTurnsDone = new();
+    private readonly object _emitTurnLock = new();
+
+    // A turn that waits this long goes on without it, so a lost turn costs
+    // order, never the workers.
+    private const int EmitTurnPatienceMs = 30_000;
+
+    private void WaitEmitTurn(long turn)
+    {
+        lock (_emitTurnLock)
+        {
+            var waited = System.Diagnostics.Stopwatch.StartNew();
+            while (_emitTurnNow < turn)
+            {
+                int left = EmitTurnPatienceMs - (int)waited.ElapsedMilliseconds;
+                if (left <= 0 || !Monitor.Wait(_emitTurnLock, left))
+                {
+                    if (_emitTurnNow >= turn) return;
+                    Console.Error.WriteLine(
+                        $"[il-worker] emission turn {turn} waited {EmitTurnPatienceMs} ms on turn {_emitTurnNow}; going on");
+                    return;
+                }
+            }
+        }
+    }
+
+    private void PassEmitTurn(long turn)
+    {
+        lock (_emitTurnLock)
+        {
+            _emitTurnsDone.Add(turn);
+            while (_emitTurnsDone.Remove(_emitTurnNow)) _emitTurnNow++;
+            Monitor.PulseAll(_emitTurnLock);
+        }
+    }
+
+    // Completions waiting for an earlier turn's, by turn, and the next to deliver.
+    private readonly Dictionary<long, Action?> _undelivered = new();
+    private long _deliverNext;
+
+    // Runs a completion when every earlier turn's has run; whichever worker
+    // completes the gap runs the ones it unblocks. Never waits.
+    private void DeliverInTurnOrder(long turn, Action? deliver)
+    {
+        lock (_undelivered)
+        {
+            _undelivered[turn] = deliver;
+            while (_undelivered.TryGetValue(_deliverNext, out var next))
+            {
+                _undelivered.Remove(_deliverNext);
+                _deliverNext++;
+                // One that throws must not hold back the ones after it.
+                try { next?.Invoke(); }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine(
+                        $"[il-worker] completion of turn {_deliverNext - 1} threw {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+        }
+    }
+
     // At the drain: the shadow follows what was installed.
     private void ReconcileCode(int functorId, CalleeRecorder? callees)
     {
@@ -1324,43 +1392,71 @@ public sealed partial class IlPromotionStore
                     LeavePools(prevPools);
                 }
             }
-            IlCompileWorker.RunAsync(
-                () => WithContexts(() =>
-                {
-                    // ADR-061: the delegate and its continuation methods push
-                    // the same choice points (WAM, with resume markers).
-                    if (HasCodeComing(functorId)) return null;
-                    using var wam = IlPredicateCompiler.WamChoicePoints(wantCps);
-                    var compiled = Compiled(Compiler.CompileInstrumented(capturedTarget, callees));
-                    NoteMembersEmitted(callees);
-                    return (object?)compiled;
-                }),
-                (result, error) =>
-                {
-                    var r = (IlPredicateCompiler.PgoCompileResult?)result;
-                    _completedCompiles.Enqueue(new CompletedCompile(
-                        functorId, r, stamp, error?.Message, isDynamic, Callees: callees, Epoch: epoch,
-                        Target: capturedTarget));
-                    // ADR-061: the delegate is in use while its continuation
-                    // methods compile, which takes several emissions.
-                    if (!wantCps) return;
-                    if (r is not { ProfileKey: < 0 } plain)
+            long turn = _emitTicketNext++;
+            try
+            {
+                IlCompileWorker.RunAsync(
+                    () =>
                     {
-                        _completedCompiles.Enqueue(new CompletedCompile(
-                            functorId, null, stamp, null, false, CpsOnly: true));
-                        return;
-                    }
-                    var cpsCallees = Recording(capturedCallees);
-                    IlCompileWorker.RunAsync(
-                        () => WithContexts(() => (object?)(plain with
+                        // The emission takes its turn, in queue order, as with one
+                        // worker: whether to skip, and what its region copies or
+                        // calls, read what the earlier ones emitted. Compiling the
+                        // IL to native code is outside the turn, on several workers.
+                        IlPredicateCompiler.PgoCompileResult? emitted;
+                        try
                         {
-                            Cps = TryCompileCps(capturedTarget, cpsCallees, plain.Delegate),
-                        })),
-                        (cpsResult, _) => _completedCompiles.Enqueue(new CompletedCompile(
-                            functorId, (IlPredicateCompiler.PgoCompileResult?)cpsResult, stamp,
-                            null, false, CpsOnly: true, Callees: cpsCallees, Epoch: epoch)),
-                        lowPriority: true);
-                });
+                            WaitEmitTurn(turn);
+                            emitted = WithContexts(() =>
+                            {
+                                if (HasCodeComing(functorId)) return (IlPredicateCompiler.PgoCompileResult?)null;
+                                // ADR-061: the delegate and its continuation methods push
+                                // the same choice points (WAM, with resume markers).
+                                using var wam = IlPredicateCompiler.WamChoicePoints(wantCps);
+                                var r = Compiler.CompileInstrumented(capturedTarget, callees);
+                                NoteMembersEmitted(callees);
+                                return r;
+                            });
+                        }
+                        finally { PassEmitTurn(turn); }
+                        return emitted is { } e ? (object?)Compiled(e) : null;
+                    },
+                    // Delivered in queue order too: the drain of a compile that a
+                    // region's emission skipped must not come before the region's
+                    // own, or it forgets the member the later emissions read.
+                    (result, error) => DeliverInTurnOrder(turn, () =>
+                    {
+                        var r = (IlPredicateCompiler.PgoCompileResult?)result;
+                        _completedCompiles.Enqueue(new CompletedCompile(
+                            functorId, r, stamp, error?.Message, isDynamic, Callees: callees, Epoch: epoch,
+                            Target: capturedTarget));
+                        // ADR-061: the delegate is in use while its continuation
+                        // methods compile, which takes several emissions.
+                        if (!wantCps) return;
+                        if (r is not { ProfileKey: < 0 } plain)
+                        {
+                            _completedCompiles.Enqueue(new CompletedCompile(
+                                functorId, null, stamp, null, false, CpsOnly: true));
+                            return;
+                        }
+                        var cpsCallees = Recording(capturedCallees);
+                        IlCompileWorker.RunAsync(
+                            () => WithContexts(() => (object?)(plain with
+                            {
+                                Cps = TryCompileCps(capturedTarget, cpsCallees, plain.Delegate),
+                            })),
+                            (cpsResult, _) => _completedCompiles.Enqueue(new CompletedCompile(
+                                functorId, (IlPredicateCompiler.PgoCompileResult?)cpsResult, stamp,
+                                null, false, CpsOnly: true, Callees: cpsCallees, Epoch: epoch)),
+                            lowPriority: true);
+                    }));
+            }
+            catch
+            {
+                // Not queued: the later emissions and deliveries must not wait for this turn.
+                PassEmitTurn(turn);
+                DeliverInTurnOrder(turn, null);
+                throw;
+            }
             return null;
         }
 
