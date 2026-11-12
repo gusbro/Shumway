@@ -180,18 +180,34 @@ public sealed partial class IlPredicateCompiler
     private static bool HasBytecode(CompiledPredicate p)
         => !p.IsDynamicSnapshot && _bytecodeShipped?.Contains(p.FunctorId) != false;
 
-    /// <summary>The scope of one predicate's emission.</summary>
+    /// <summary>The scope of one predicate's emission. It starts with no
+    /// construct open and gives back the thread's state as it found it: an
+    /// emission refused from inside a guard leaves its scopes open, and the
+    /// next emission on the thread would take a wake point for one inside
+    /// them.</summary>
     private readonly struct CodeScope : IDisposable
     {
         private readonly bool _prev;
+        private readonly int _prevOpaque, _prevArith;
+        private readonly InlineScope? _prevScope;
 
         public CodeScope(CompiledPredicate predicate)
         {
             _prev = _noBytecode;
             _noBytecode = !HasBytecode(predicate);
+            _prevOpaque = _opaqueDepth;
+            _prevScope = _scope;
+            _prevArith = _arithDepth;
+            ResetWakeEmission();
         }
 
-        public void Dispose() => _noBytecode = _prev;
+        public void Dispose()
+        {
+            _noBytecode = _prev;
+            _opaqueDepth = _prevOpaque;
+            _scope = _prevScope;
+            _arithDepth = _prevArith;
+        }
     }
 
     // The region member whose code is being emitted, or 0 outside a region.
