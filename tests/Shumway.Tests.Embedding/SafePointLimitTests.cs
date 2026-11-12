@@ -59,8 +59,9 @@ public sealed class SafePointLimitTests
     public async Task ACompiledLoopThatAllocatesNothingRunsOutOfTime()
     {
         var e = Promoted();
-        bool timedOut = await OwnThread.Run(() => e.Query("timed.").Success)
-            .WaitAsync(TimeSpan.FromSeconds(30));
-        Assert.True(timedOut);
+        var run = OwnThread.Run(() => e.Query("timed.").Success);
+        // Awaited apart from its result: on net48 WaitAsync gives a plain Task.
+        await run.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.True(await run);
     }
 }
