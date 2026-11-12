@@ -77,6 +77,8 @@ is what ships. Any build honors them.
 | `DOTNET_JitMaxLocalsToTrack` | the runtime's `0x400` | The runtime's own cap on the locals the JIT tracks in one method, past which it inlines nothing more into it. A hexadecimal number, read by the runtime once from the environment the process starts with: set it in the shell or launcher, not from the program or `runtimeconfig.json`. The engine reads the same value and plans its regions to it. Raising it to `0xC00` measured no gain on the corpus; if you try it, `0xC00` to `0x1600` is the sensible range. |
 | `SHUMWAY_CPFREE_IDXBUCKET` | on | `=0` disables the lazy choice-point in indexed-bucket dispatch (ADR-031). |
 | `SHUMWAY_CPFREE_GUARD` | on | `=0` disables CP-free guard-commit (ADR-031). |
+| `SHUMWAY_CPFREE_HEADFACT` | on | `=0` disables the CP-free head of a clause that is its head alone, member/2's helper among them (ADR-031). |
+| `SHUMWAY_IL_GUARD_QUICKREJECT` | on | `=0` disables the look at a guard's two cells before it opens, which sends a head that cannot match to the next clause (ADR-031). |
 | `SHUMWAY_CPFREE_CONT` | off | `=1` enables the opt-in guard-continuation-stack prototype (ADR-033). |
 | `SHUMWAY_INLINE_FACTS` | on | `=0` disables the local-predicate fact inliner. |
 | `SHUMWAY_INLINE_RULES`, `SHUMWAY_INLINE_RULES2` | off | `=1` enables the opt-in local-predicate rule inliners. |

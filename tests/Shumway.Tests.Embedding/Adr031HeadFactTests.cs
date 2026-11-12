@@ -39,6 +39,17 @@ public class Adr031HeadFactTests
         deep(N) :- numlist(1, N, L), mem(N, L).
         % A repeated variable: the first element binds X and then fails.
         twice(X, L) :- mem(g(X, X), L).
+        % The bindings of V for each solution of G, by a failure loop.
+        :- dynamic got/1, woke/1.
+        :- public each/3, fzp/2, fze/2, dfm/2.
+        each(V, G, Vs) :- retractall(got(_)), ( call(G), assertz(got(V)), fail ; true ), findall(X, got(X), Vs).
+        % freeze on the pattern: only the elements that match wake it.
+        fzp(L, Ws) :- retractall(woke(_)), freeze(Y, assertz(woke(Y))),
+            ( mem(p(Y, z), L), fail ; true ), findall(W, woke(W), Ws).
+        % freeze on an element: a constant pattern binds it, and wakes it.
+        fze(Hs, Ws) :- retractall(woke(_)), freeze(E, assertz(woke(E))),
+            each(h, mem(k, [E, k]), Hs), findall(W, woke(W), Ws).
+        dfm(X, L) :- dif(X, a), mem(X, L).
         """;
 
     // Tier1Region: runtime promotion, where a multi-clause root is a region
@@ -71,6 +82,7 @@ public class Adr031HeadFactTests
                 bool regions = IlPredicateCompiler.RegionCompile;
                 bool single = IlPredicateCompiler.OneMemberRegions;
                 long heads = IlPredicateCompiler.CpFreeGuardStats.HeadFact;
+                int quick = IlPredicateCompiler.GuardQuickRejectSites;
                 if (m == Mode.Tier1Method)
                 {
                     IlPredicateCompiler.RegionCompile = false;
@@ -87,6 +99,8 @@ public class Adr031HeadFactTests
                     // ANTI-VACUITY: the code took the head-fact path.
                     Assert.True(IlPredicateCompiler.CpFreeGuardStats.HeadFact > heads,
                         "no head fact compiled without a choice point");
+                    Assert.True(IlPredicateCompiler.GuardQuickRejectSites > quick,
+                        "no head fact compiled with the quick reject");
                     return e;
                 }
                 finally
@@ -135,6 +149,46 @@ public class Adr031HeadFactTests
         var e = Engine(m);
         Assert.Equal(new[] { "3" }, All(e, "twice(X, [g(1, 2), g(3, 3), g(4, 5)]).", "X"));
         Assert.True(e.Query("mem(f(X, Y), [f(1, a), f(2, b)]), X == 2, Y == b.").Success);
+    }
+
+    /// <summary>The quick reject turns away a head whose cells already
+    /// differ, before the guard opens. It must turn away only what the
+    /// unifier fails: each case here has elements it decides (atoms,
+    /// functors, a first argument a level or two down, cells of different
+    /// tags) beside elements it leaves to the unifier (a clash further in,
+    /// numbers kept off-cell, packed strings, a cyclic term).</summary>
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void TheQuickRejectFailsOnlyWhatTheUnifierFails(Mode m)
+    {
+        var e = Engine(m);
+        Assert.False(e.Query(@"mem(zz, [a, b, c]).").Success);
+        Assert.Single(e.QueryAll(@"mem(b, [a, b, c])."));
+        Assert.Equal(new[] { "2", "4" },
+            All(e, @"mem(state(X), [piece(1), state(2), piece(3), state(4)]).", "X"));
+        Assert.Equal(new[] { "b" },
+            All(e, @"mem(piece(z-9, C), [piece(a-1, w), piece(z-9, b), piece(z-8, w), piece(y-9, w)]).", "C"));
+        Assert.Equal(new[] { "1", "3" },
+            All(e, @"mem(f(g(h(k(X)))), [f(g(h(k(1)))), f(g(h(j(2)))), f(g(h(k(3))))]).", "X"));
+        Assert.Equal(new[] { "2" }, All(e, @"mem(p(X, a), [p(1, b), p(2, a)]).", "X"));
+        Assert.Single(e.QueryAll(@"mem(1, [a, 1.0, [0'1], f(1), 1])."));
+        Assert.Single(e.QueryAll(@"mem(100000000000000000000, [1, 100000000000000000001, 100000000000000000000])."));
+        Assert.Equal(2, e.QueryAll(@"mem(2.5, [1.5, 2.5, 2.50]).").Count());
+        Assert.Equal(2, e.QueryAll(@"mem(""ab"", [""ab"", ""cd"", [a, b]]).").Count());
+        Assert.True(e.Query(@"X = f(X), each(s, mem(X, [f(f(a)), X, f(X)]), Ss), Ss == [s, s].").Success);
+    }
+
+    /// <summary>An attributed variable is left to the unifier on either
+    /// side, so its wakeups run as they did: once per element it is bound to
+    /// in a head that matches, and never for a head that fails.</summary>
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void TheQuickRejectLeavesAttributedVariablesToTheUnifier(Mode m)
+    {
+        var e = Engine(m);
+        Assert.True(e.Query(@"fzp([p(1, a), p(2, z), p(3, a), p(4, z)], Ws), Ws == [2, 4].").Success);
+        Assert.True(e.Query(@"fze(Hs, Ws), Hs == [h, h], Ws == [k].").Success);
+        Assert.True(e.Query(@"each(X, dfm(X, [a, b, a, c]), Xs), Xs == [b, c].").Success);
     }
 
     [Theory]

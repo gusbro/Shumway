@@ -1743,6 +1743,16 @@ public sealed partial class IlPredicateCompiler
         // can resume inside it; a guard that saves argument registers keeps
         // them in IL locals and stays opaque up to its commit.
         bool cpsFields = CpsEmitting && !g.NeedsRegSave;
+        // A head whose cells already differ is the next clause's before the
+        // guard opens: nothing to snapshot, nothing to undo.
+        IlLabel? quickReject = null;
+        if (GuardQuickReject && !CpsEmitting && (Opcode)code[clauseStart] == Opcode.GetValueX)
+        {
+            quickReject = dynamicFailDispatch is null
+                ? nextClauseLabel : emit.DefineLabel($"cf_quick{salt}");
+            EmitGetValueSurelyFails(emit, BytecodeIO.ReadInt32(code, clauseStart + 1),
+                BytecodeIO.ReadInt32(code, clauseStart + 5), quickReject, salt);
+        }
         var cpsOpaque = cpsFields ? default : CpsOpaque();
         // ADR-031 indexed buckets — dynamicFailDispatch replaces the static
         // guard-fail branch (the stub ends with a switch over the per-member
@@ -2066,7 +2076,11 @@ public sealed partial class IlPredicateCompiler
                     EmitHelperCall(emit, EngineSetRegisterMethod);
                 }
             }
-            if (dynamicFailDispatch is not null) dynamicFailDispatch();
+            if (dynamicFailDispatch is not null)
+            {
+                if (quickReject is { } quick) emit.MarkLabel(quick);
+                dynamicFailDispatch();
+            }
             else emit.Branch(nextClauseLabel);
         }
     }

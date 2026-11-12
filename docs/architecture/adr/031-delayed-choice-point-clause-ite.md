@@ -450,3 +450,26 @@ both forms run: regions for the program's code, methods for the libraries'
 baked IL, the prelude's member/2 among them. The wasm tier has no CP-free
 guards yet. `SHUMWAY_CPFREE_HEADFACT=0` turns it off;
 `SHUMWAY_CPFREE_STATS=1` counts it. Tests: `Adr031HeadFactTests`.
+
+A guard whose first instruction is `get_value_x` looks at its two cells
+before it opens (`EmitGetValueSurelyFails`), and a head that cannot match
+goes to the next clause with no snapshot, no unifier call and nothing to
+undo. Both cells are dereferenced. The same cell, a variable, an attributed
+variable or a packed string on either side go on to the guard, so bindings
+and wakeups are the unifier's as before. Two cells of different tags, two
+distinct atoms or small integers, or two compounds of different functors
+reject. Two compounds of one functor are compared again in their first
+arguments, two levels down at most: further than that the look would walk
+the terms the unifier walks, and an out-of-line clash test that did so cost
+more on the heads that match than it saved. Each case rejects only where the
+unifier fails at its first test, before it binds anything.
+
+On the chess sample the calls to `UnifyCells` drop from 36.3 to 18.8 million,
+the same successes and bindings; the run takes a median 12.24 s against
+13.36 s over six A B B A rounds with the processor capped, in a noisy spread.
+Micro-benchmarks of member/2 in one process, the switch off and on, A B B A
+with the processor capped (median time ratio): a bound atom absent from 32
+atoms 0.87, a functor that differs 0.60, the chess shape (`piece(z-9, _, _)`
+against `piece(a-1, _, _)`) 0.50, enumeration with the element free 0.97, and
+`p(_, a)` against 32 elements that all match 1.05: the one case that pays
+for the look and gains nothing. `SHUMWAY_IL_GUARD_QUICKREJECT=0` turns it off.
