@@ -248,10 +248,8 @@ public sealed partial class IlPredicateCompiler
     /// := the heap home of the last reference followed, -1 for an inline value. A
     /// plain unbound variable is left as the reference to itself.</summary>
     private static void EmitDerefBits(IlEmit emit, IlLocal heap, IlLocal cell, IlLocal bits, IlLocal home)
-        => EmitDerefBits(emit, heap, cell, bits, home, RegisterFileOf(emit)!.Temp(typeof(long), KU + 4));
-
-    private static void EmitDerefBits(IlEmit emit, IlLocal heap, IlLocal cell, IlLocal bits, IlLocal home, IlLocal t)
     {
+        var t = RegisterFileOf(emit)!.Temp(typeof(long), KU + 4);
         var loop = emit.DefineLabel($"u2_deref_{NextLabelSeq()}");
         var end = emit.DefineLabel($"u2_derefed_{NextLabelSeq()}");
         emit.LoadLocal(cell);
@@ -279,10 +277,6 @@ public sealed partial class IlPredicateCompiler
         emit.MarkLabel(end);
     }
 
-    // A cell the unifier may bind or match with any term, or treats apart:
-    // a quick reject leaves it to the unifier.
-    private const int MayMatchAnyTags = 1 << (int)Tag.Ref | 1 << (int)Tag.AttVar | 1 << (int)Tag.Pstr;
-
     /// <summary>Whether get_value_x guards try <see cref="EmitGetValueSurelyFails"/>
     /// before they open. An off switch for measuring it.</summary>
     internal static bool GuardQuickReject { get; set; } =
@@ -298,13 +292,14 @@ public sealed partial class IlPredicateCompiler
     /// <summary>ADR-031: a guard whose first instruction is get_value_x(Xs, Aa)
     /// branches to <paramref name="reject"/> when its two cells already differ
     /// as terms, seen without binding, so a failing head opens no guard and
-    /// calls no unifier. Both sides dereferenced; the same cell, a variable, an
-    /// attributed variable or a packed string fall through to the guard. Two
-    /// cells of different tags, two distinct immediates, or two compounds of
-    /// different functors reject: the unifier fails each before it binds
-    /// anything or queues a wakeup. Two compounds of one functor are looked at
-    /// again in their first arguments, a few levels down, and nothing else:
-    /// a further look would walk the terms the unifier walks.</summary>
+    /// calls no unifier. Each side is followed one reference at most: a value
+    /// further away, a variable, an attributed variable or a packed string, and
+    /// the same cell, fall through to the guard. Two cells of different tags,
+    /// two distinct immediates, or two compounds of different functors reject:
+    /// the unifier fails each before it binds anything or queues a wakeup. Two
+    /// compounds of one functor are looked at again in their first arguments,
+    /// a few levels down, whatever their arity: a further look would walk the
+    /// terms the unifier walks.</summary>
     private static void EmitGetValueSurelyFails(IlEmit emit, int srcReg, int argReg, IlLabel reject, string salt)
     {
         System.Threading.Interlocked.Increment(ref GuardQuickRejectSites);
@@ -312,50 +307,72 @@ public sealed partial class IlPredicateCompiler
         IlLocal Local<T>(string name, int key)
             => rf is not null ? rf.Temp(typeof(T), KU + key) : emit.DeclareLocal<T>($"qr_{name}{salt}");
         var heap = Local<Cell[]>("heap", 2);
-        var ca = Local<Cell>("ca", 2);
-        var cb = Local<Cell>("cb", 3);
         var a = Local<long>("a", 2);
         var b = Local<long>("b", 3);
-        var ha = Local<int>("ha", 2);
-        var hb = Local<int>("hb", 3);
-        var t = Local<long>("t", 4);
+        var level = Local<int>("level", 2);
         var go = emit.DefineLabel($"qr_go{salt}");
+        var look = emit.DefineLabel($"qr_look{salt}");
         EmitLoadEngineField(emit, EngHeap);
         emit.StoreLocal(heap);
         EmitLoadRegisterConst(emit, srcReg);
-        emit.StoreLocal(ca);
+        emit.LoadField(CellDataField);
+        emit.StoreLocal(a);
         EmitLoadRegisterConst(emit, argReg);
-        emit.StoreLocal(cb);
-        for (int level = 0; level <= QuickRejectFirstArgLevels; level++)
-        {
-            if (level > 0)
-            {
-                // Two compounds of one functor: their first arguments.
-                EmitFirstArgument(emit, heap, a, ca);
-                EmitFirstArgument(emit, heap, b, cb);
-            }
-            EmitDerefBits(emit, heap, ca, a, ha, t);
-            EmitDerefBits(emit, heap, cb, b, hb, t);
-            emit.LoadLocal(a);
-            emit.LoadLocal(b);
-            emit.BranchIfEqual(go);
-            EmitBranchIfTagIn(emit, a, MayMatchAnyTags, go);
-            EmitBranchIfTagIn(emit, b, MayMatchAnyTags, go);
-            emit.LoadLocal(a);
-            emit.LoadConstant(Cell.TagShift);
-            emit.UnsignedShiftRight();
-            emit.LoadLocal(b);
-            emit.LoadConstant(Cell.TagShift);
-            emit.UnsignedShiftRight();
-            emit.UnsignedBranchIfNotEqual(reject);
-            EmitBranchIfTagIn(emit, a, ImmediateTags, reject);
-            EmitTagIs(emit, a, Tag.Str);
-            emit.BranchIfFalse(go);
-            EmitFunctorCellBits(emit, heap, a);
-            EmitFunctorCellBits(emit, heap, b);
-            emit.UnsignedBranchIfNotEqual(reject);
-        }
+        emit.LoadField(CellDataField);
+        emit.StoreLocal(b);
+        emit.LoadConstant(QuickRejectFirstArgLevels);
+        emit.StoreLocal(level);
+        // One look per level, the cells first and then their first arguments.
+        emit.MarkLabel(look);
+        EmitDerefOnce(emit, heap, a, go);
+        EmitDerefOnce(emit, heap, b, go);
+        emit.LoadLocal(a);
+        emit.LoadLocal(b);
+        emit.BranchIfEqual(go);
+        EmitBranchIfTagIn(emit, a, AttVarOrPstrTags, go);
+        EmitBranchIfTagIn(emit, b, AttVarOrPstrTags, go);
+        emit.LoadLocal(a);
+        emit.LoadConstant(Cell.TagShift);
+        emit.UnsignedShiftRight();
+        emit.LoadLocal(b);
+        emit.LoadConstant(Cell.TagShift);
+        emit.UnsignedShiftRight();
+        emit.UnsignedBranchIfNotEqual(reject);
+        EmitBranchIfTagIn(emit, a, ImmediateTags, reject);
+        EmitTagIs(emit, a, Tag.Str);
+        emit.BranchIfFalse(go);
+        EmitFunctorCellBits(emit, heap, a);
+        EmitFunctorCellBits(emit, heap, b);
+        emit.UnsignedBranchIfNotEqual(reject);
+        // Two compounds of one functor: their first arguments, while levels remain.
+        emit.LoadLocal(level);
+        emit.BranchIfFalse(go);
+        emit.LoadLocal(level);
+        emit.LoadConstant(1);
+        emit.Subtract();
+        emit.StoreLocal(level);
+        EmitFirstArgumentBits(emit, heap, a);
+        EmitFirstArgumentBits(emit, heap, b);
+        emit.Branch(look);
         emit.MarkLabel(go);
+    }
+
+    // bits := what the reference in bits points at, when it is one; a
+    // reference again (a variable, or a chain) goes to the guard.
+    private static void EmitDerefOnce(IlEmit emit, IlLocal heap, IlLocal bits, IlLabel guard)
+    {
+        var value = emit.DefineLabel($"qr_value_{NextLabelSeq()}");
+        EmitTagIs(emit, bits, Tag.Ref);
+        emit.BranchIfFalse(value);
+        emit.LoadLocal(heap);
+        emit.LoadLocal(bits);
+        emit.Convert<int>();
+        emit.LoadElement<Cell>();
+        emit.LoadField(CellDataField);
+        emit.StoreLocal(bits);
+        EmitTagIs(emit, bits, Tag.Ref);
+        emit.BranchIfTrue(guard);
+        emit.MarkLabel(value);
     }
 
     // The bits of the functor cell a compound's bits point at.
@@ -368,8 +385,8 @@ public sealed partial class IlPredicateCompiler
         emit.LoadField(CellDataField);
     }
 
-    // cell := the first argument of the compound whose bits are in bits.
-    private static void EmitFirstArgument(IlEmit emit, IlLocal heap, IlLocal bits, IlLocal cell)
+    // bits := the first argument of the compound whose bits are in bits.
+    private static void EmitFirstArgumentBits(IlEmit emit, IlLocal heap, IlLocal bits)
     {
         emit.LoadLocal(heap);
         emit.LoadLocal(bits);
@@ -377,7 +394,8 @@ public sealed partial class IlPredicateCompiler
         emit.LoadConstant(1);
         emit.Add();
         emit.LoadElement<Cell>();
-        emit.StoreLocal(cell);
+        emit.LoadField(CellDataField);
+        emit.StoreLocal(bits);
     }
 
 

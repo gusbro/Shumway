@@ -176,6 +176,9 @@ public class Adr031HeadFactTests
         Assert.Equal(2, e.QueryAll(@"mem(2.5, [1.5, 2.5, 2.50]).").Count());
         Assert.Equal(2, e.QueryAll(@"mem(""ab"", [""ab"", ""cd"", [a, b]]).").Count());
         Assert.True(e.Query(@"X = f(X), each(s, mem(X, [f(f(a)), X, f(X)]), Ss), Ss == [s, s].").Success);
+        // A value two references away is the guard's.
+        Assert.Single(e.QueryAll(@"X = Y, Y = k, mem(X, [a, k, b])."));
+        Assert.Single(e.QueryAll(@"X = Y, Y = p(k), mem(X, [p(a), p(k), q(k)])."));
     }
 
     /// <summary>An attributed variable is left to the unifier on either
