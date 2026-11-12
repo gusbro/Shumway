@@ -692,12 +692,7 @@ public sealed partial class IlPredicateCompiler
                 // X[arg] := X[src]
                 int src = BytecodeIO.ReadInt32(code, pc + 1);
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
-                EmitSetRegisterConst(emit, arg, () =>
-                {
-                    emit.LoadArgument(0);
-                    emit.LoadConstant(src);
-                    EmitHelperCall(emit, EngineGetRegisterMethod);
-                });
+                EmitSetRegisterConst(emit, arg, () => EmitLoadRegisterConst(emit, src));
 #if DEBUG
                 if (DebugMode)
                 {
@@ -3100,9 +3095,7 @@ public sealed partial class IlPredicateCompiler
 
             // ----- Deref the tested argument into cellLoc (one level, exactly
             //       like IlIndexGraph.DerefArg). -----
-            emit.LoadArgument(0);
-            emit.LoadConstant(node.ArgIdx);
-            EmitHelperCall(emit, EngineGetRegisterMethod);
+            EmitLoadRegisterConst(emit, node.ArgIdx);
             emit.StoreLocal(cellLoc);
             // if cellLoc.Tag == Ref: cellLoc = engine.GetHeap(engine.Deref(cellLoc.AsHeapIndex))
             emit.LoadLocalAddress(cellLoc);

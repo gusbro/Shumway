@@ -467,7 +467,7 @@ public sealed partial class IlPredicateCompiler
         emit.StoreLocal(regs);
         EmitLoadEngineField(emit, EngHeap);
         emit.StoreLocal(heap);
-        if (window != ListWindow.Plain)
+        if (window != ListWindow.Plain && Math.Max(s1, s2) >= Activation.MinRegisterCount)
         {
             // The window's registers must exist; growing the bank is the helper's.
             emit.LoadConstant(Math.Max(s1, s2));
@@ -478,9 +478,7 @@ public sealed partial class IlPredicateCompiler
         }
 
         // c := X[arg]; a list is read, a reference is followed one step.
-        emit.LoadLocal(regs);
-        emit.LoadConstant(arg);
-        emit.LoadElement<Cell>();
+        EmitRegisterRef(emit, () => emit.LoadLocal(regs), arg);
         emit.LoadField(CellDataField);
         emit.StoreLocal(c);
         emit.LoadLocal(c);
@@ -650,13 +648,28 @@ public sealed partial class IlPredicateCompiler
         return true;
     }
 
-    /// <summary>X[index] pushed, for a constant index: a plain element load,
-    /// as the register helpers read the bank.</summary>
+    private static readonly MethodInfo RegisterAtMethod =
+        typeof(Activation).GetMethod(nameof(Activation.RegisterAt))!;
+
+    /// <summary>Pushes a reference to X[index] of the bank
+    /// <paramref name="pushBank"/> leaves, for a constant index: below the
+    /// bank's floor (<see cref="Activation.MinRegisterCount"/>) with no bounds
+    /// check (<see cref="Activation.RegisterAt"/>), above it through
+    /// <c>ldelema</c>.</summary>
+    private static void EmitRegisterRef(IlEmit emit, Action pushBank, int index)
+    {
+        pushBank();
+        emit.LoadConstant(index);
+        if ((uint)index < Activation.MinRegisterCount) emit.Call(RegisterAtMethod);
+        else emit.LoadElementAddress(typeof(Cell));
+    }
+
+    /// <summary>X[index] pushed, for a constant index: a plain read of the
+    /// bank, as the register helpers read it.</summary>
     private static void EmitLoadRegisterConst(IlEmit emit, int index)
     {
-        EmitLoadEngineField(emit, EngRegisters);
-        emit.LoadConstant(index);
-        emit.LoadElement<Cell>();
+        EmitRegisterRef(emit, () => EmitLoadEngineField(emit, EngRegisters), index);
+        emit.LoadObject(typeof(Cell));
     }
 
     /// <summary>X[index] := the cell <paramref name="pushValue"/> leaves, for a
@@ -667,10 +680,9 @@ public sealed partial class IlPredicateCompiler
     {
         if (index >= 0 && index < Activation.MinRegisterCount && RegisterFileOf(emit) is not null)
         {
-            EmitLoadEngineField(emit, EngRegisters);
-            emit.LoadConstant(index);
+            EmitRegisterRef(emit, () => EmitLoadEngineField(emit, EngRegisters), index);
             pushValue();
-            emit.StoreElement<Cell>();
+            emit.StoreObject(typeof(Cell));
             return;
         }
         emit.LoadArgument(0);
@@ -1056,14 +1068,9 @@ public sealed partial class IlPredicateCompiler
     private static void EmitRegisterBits(IlEmit emit, IlLocal regs,
         int slot, Action pushBits)
     {
-        var cell = RegisterFileOf(emit)!.Temp(typeof(Cell), KU + 1);
-        emit.LoadLocalAddress(cell);
+        EmitRegisterRef(emit, () => emit.LoadLocal(regs), slot);
         pushBits();
         emit.StoreField(CellDataField);
-        emit.LoadLocal(regs);
-        emit.LoadConstant(slot);
-        emit.LoadLocal(cell);
-        emit.StoreElement<Cell>();
     }
 
     /// <summary>X[slot] := heap[p + offset], a bare ATTVAR taken as a Ref to

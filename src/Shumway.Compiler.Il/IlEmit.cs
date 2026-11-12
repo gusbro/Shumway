@@ -457,6 +457,22 @@ public sealed class IlEmit
         Text("ldelema", t.ToString());
     }
 
+    /// <summary>The value at the address on the stack (<c>ldobj</c>).</summary>
+    public void LoadObject(Type t)
+    {
+        Begin();
+        _il.Emit(OpCodes.Ldobj, t);
+        Text("ldobj", t.ToString());
+    }
+
+    /// <summary>Stores the value on the stack at the address below it (<c>stobj</c>).</summary>
+    public void StoreObject(Type t)
+    {
+        Begin();
+        _il.Emit(OpCodes.Stobj, t);
+        Text("stobj", t.ToString());
+    }
+
     public void LoadElement<T>() => LoadElement(typeof(T));
 
     public void LoadElement(Type t)
