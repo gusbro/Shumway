@@ -16,6 +16,7 @@ namespace Shumway.Tests.Embedding;
 // Reads the process-wide region emission log and toggles a compiler static:
 // it runs alone, in the gate's exclusive pass.
 [Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public sealed class OneMemberRegionTests
 {
     // Each engine names its predicates with a prefix of its own: the

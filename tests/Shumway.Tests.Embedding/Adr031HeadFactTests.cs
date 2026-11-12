@@ -16,6 +16,10 @@ namespace Shumway.Tests.Embedding;
 /// emission must be observationally identical, solutions and their order,
 /// the bindings undone between them, wakeups and cuts.
 /// </summary>
+// Switches compiler statics for some of its tests: it runs alone, in the
+// gate's exclusive pass.
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public class Adr031HeadFactTests
 {
     private const string Program = """

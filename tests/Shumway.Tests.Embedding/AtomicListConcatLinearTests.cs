@@ -10,6 +10,10 @@ namespace Shumway.Tests.Embedding;
 /// folds interned an atom per element (and per separator) and the split
 /// re-enumerated every occurrence of the separator for each part. The
 /// rest pins every mode and error of both predicates.</summary>
+// Counts the process-wide atom table, which another class running beside it
+// grows: it runs alone, in the gate's exclusive pass.
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public class AtomicListConcatLinearTests
 {
     private static bool Holds(string query) => new PrologEngine().Query(query).Success;
