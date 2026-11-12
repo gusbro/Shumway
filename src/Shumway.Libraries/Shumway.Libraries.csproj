@@ -47,13 +47,19 @@
     <LibraryBakeDir>obj\$(Configuration)\lib\</LibraryBakeDir>
     <LibraryBakeDir Condition="'$(ShumwayWasmTier)' == 'true'">obj\$(Configuration)\lib-wasm\</LibraryBakeDir>
     <LibraryBakeDll>..\..\build\Shumway.LibraryBake\bin\$(Configuration)\net10.0\shumway-librarybake.dll</LibraryBakeDll>
-    <LibraryBakeInputs>@(LibrarySource);$(LibraryBakeDll);..\Shumway.Embedding\bin\$(Configuration)\net10.0\Shumway.Embedding.dll;..\Shumway.Compiler.Wasm\bin\$(Configuration)\net10.0\Shumway.Compiler.Wasm.dll</LibraryBakeInputs>
+    <!-- The engine the bakes run, every assembly whose code shapes what they
+         write: Embedding alone is not enough, since a change inside the
+         compiler or the IL emitter leaves its public surface, and so
+         Embedding.dll, as it was. -->
+    <LibraryBakeEngine>..\Shumway.Embedding\bin\$(Configuration)\net10.0\Shumway.Embedding.dll;..\Shumway.Compiler.Il\bin\$(Configuration)\net10.0\Shumway.Compiler.Il.dll;..\Shumway.Compiler\bin\$(Configuration)\net10.0\Shumway.Compiler.dll;..\Shumway.Core\bin\$(Configuration)\net10.0\Shumway.Core.dll;..\Shumway.Builtins\bin\$(Configuration)\net10.0\Shumway.Builtins.dll;..\Shumway.Interpreter\bin\$(Configuration)\net10.0\Shumway.Interpreter.dll</LibraryBakeEngine>
+    <LibraryBakeEngineNetFx>..\Shumway.Embedding\bin\$(Configuration)\net48\Shumway.Embedding.dll;..\Shumway.Compiler.Il\bin\$(Configuration)\net48\Shumway.Compiler.Il.dll;..\Shumway.Compiler\bin\$(Configuration)\net48\Shumway.Compiler.dll;..\Shumway.Core\bin\$(Configuration)\net48\Shumway.Core.dll;..\Shumway.Builtins\bin\$(Configuration)\net48\Shumway.Builtins.dll;..\Shumway.Interpreter\bin\$(Configuration)\net48\Shumway.Interpreter.dll</LibraryBakeEngineNetFx>
+    <LibraryBakeInputs>@(LibrarySource);$(LibraryBakeDll);$(LibraryBakeEngine);..\Shumway.Compiler.Wasm\bin\$(Configuration)\net10.0\Shumway.Compiler.Wasm.dll</LibraryBakeInputs>
     <!-- IL baked by the net10 tool references System.Private.CoreLib, which
          .NET Framework cannot resolve: the net48 flavour embeds bundles the
          tool's own net48 build baked. -->
     <LibraryBakeDirNetFx>obj\$(Configuration)\lib-netfx\</LibraryBakeDirNetFx>
     <LibraryBakeExeNetFx>..\..\build\Shumway.LibraryBake\bin\$(Configuration)\net48\shumway-librarybake.exe</LibraryBakeExeNetFx>
-    <LibraryBakeInputsNetFx>@(LibrarySource);$(LibraryBakeExeNetFx);..\Shumway.Embedding\bin\$(Configuration)\net48\Shumway.Embedding.dll</LibraryBakeInputsNetFx>
+    <LibraryBakeInputsNetFx>@(LibrarySource);$(LibraryBakeExeNetFx);$(LibraryBakeEngineNetFx)</LibraryBakeInputsNetFx>
     <LibraryEmbedDir>$(LibraryBakeDir)</LibraryEmbedDir>
     <LibraryEmbedDir Condition="'$(TargetFramework)' == 'net48'">$(LibraryBakeDirNetFx)</LibraryEmbedDir>
   </PropertyGroup>
@@ -107,7 +113,7 @@
   <Target Name="BakePreludeBundle"
           DependsOnTargets="BuildLibraryBakeTool"
           Condition="'$(ShumwayWasmTier)' != 'true'"
-          Inputs="$(LibraryBakeDll);..\Shumway.Embedding\bin\$(Configuration)\net10.0\Shumway.Embedding.dll"
+          Inputs="$(LibraryBakeDll);$(LibraryBakeEngine)"
           Outputs="$(LibraryBakeDir)prelude.shum">
     <MakeDir Directories="$(LibraryBakeDir)" />
     <Exec Command="dotnet &quot;$(LibraryBakeDll)&quot; --prelude --il -o &quot;$(LibraryBakeDir)prelude.shum&quot;" />
@@ -116,7 +122,7 @@
   <Target Name="BakePreludeBundleNetFx"
           DependsOnTargets="BuildLibraryBakeTool"
           Condition="'$(ShumwayNetFx)' == 'true' and '$(ShumwayWasmTier)' != 'true'"
-          Inputs="$(LibraryBakeExeNetFx);..\Shumway.Embedding\bin\$(Configuration)\net48\Shumway.Embedding.dll"
+          Inputs="$(LibraryBakeExeNetFx);$(LibraryBakeEngineNetFx)"
           Outputs="$(LibraryBakeDirNetFx)prelude.shum">
     <MakeDir Directories="$(LibraryBakeDirNetFx)" />
     <Exec Command="&quot;$(LibraryBakeExeNetFx)&quot; --prelude --il -o &quot;$(LibraryBakeDirNetFx)prelude.shum&quot;" />
