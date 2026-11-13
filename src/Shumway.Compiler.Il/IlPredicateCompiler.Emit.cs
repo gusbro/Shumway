@@ -692,12 +692,7 @@ public sealed partial class IlPredicateCompiler
                 // X[arg] := X[src]
                 int src = BytecodeIO.ReadInt32(code, pc + 1);
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
-                EmitSetRegisterConst(emit, arg, () =>
-                {
-                    emit.LoadArgument(0);
-                    emit.LoadConstant(src);
-                    EmitHelperCall(emit, EngineGetRegisterMethod);
-                });
+                EmitSetRegisterConst(emit, arg, () => EmitLoadRegisterConst(emit, src));
 #if DEBUG
                 if (DebugMode)
                 {
@@ -2809,7 +2804,9 @@ public sealed partial class IlPredicateCompiler
         // ADR-031 indexed buckets — recognise the CP-free guard clauses once
         // (per clause; every node of an accepted clause routes through its
         // shared guard block via the idxnext local).
-        var guardPlan = PlanIndexedGuards(predicate, info, calleeMap);
+        // Head facts only outside a region: there the choice point a match
+        // pushes would have to be the region's own, marker and retry plan.
+        var guardPlan = PlanIndexedGuards(predicate, info, calleeMap, headFacts: true);
         var gcCtx = guardPlan is not null ? new GuardContEmitContext() : null;
         int totalCallSites = CountNonTailCallOpcodes(predicate.BytecodeUnfused)
             + (guardPlan?.ExtraDynSites ?? 0);
@@ -3098,9 +3095,7 @@ public sealed partial class IlPredicateCompiler
 
             // ----- Deref the tested argument into cellLoc (one level, exactly
             //       like IlIndexGraph.DerefArg). -----
-            emit.LoadArgument(0);
-            emit.LoadConstant(node.ArgIdx);
-            EmitHelperCall(emit, EngineGetRegisterMethod);
+            EmitLoadRegisterConst(emit, node.ArgIdx);
             emit.StoreLocal(cellLoc);
             // if cellLoc.Tag == Ref: cellLoc = engine.GetHeap(engine.Deref(cellLoc.AsHeapIndex))
             emit.LoadLocalAddress(cellLoc);

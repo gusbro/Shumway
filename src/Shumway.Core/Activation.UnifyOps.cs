@@ -11,6 +11,24 @@ public sealed partial class Activation
     public const int MinRegisterCount = 64;
 
     public Cell GetRegister(int idx) => _registers[idx];
+
+    /// <summary>Register <paramref name="idx"/> of <paramref name="bank"/> by
+    /// reference, with no bounds check: compiled code passes a constant index
+    /// below <see cref="MinRegisterCount"/>, and the bank is never shorter, so
+    /// the check the JIT would put on every access could never fail.</summary>
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
+    public static ref Cell RegisterAt(Cell[] bank, int idx)
+    {
+        System.Diagnostics.Debug.Assert((uint)idx < MinRegisterCount && bank.Length >= MinRegisterCount);
+#if NETFRAMEWORK
+        return ref bank[idx];
+#else
+        return ref System.Runtime.CompilerServices.Unsafe.Add(
+            ref System.Runtime.InteropServices.MemoryMarshal.GetArrayDataReference(bank), idx);
+#endif
+    }
+
     [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public void SetRegister(int idx, Cell value)
     {

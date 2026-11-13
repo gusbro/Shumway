@@ -412,3 +412,70 @@ ADR-025 (inline ITE + the CP-free region finding + the guard-only-CP follow-up â
 the direct foundation); ADR-030 (redundant-cut elision â€” the last-clause
 counterpart); ADR-028 (indexing handles the first-arg-test guards); ADR-021 /
 ADR-026 (measured-ceiling discipline for rejecting/accepting); [[tier1-register-cost-poc]].
+
+## Amendment (2026-11-11): head facts
+
+A non-last clause that is its head alone (head-unification ops and type
+tests, then `proceed`, no call) runs that head as a tier-B guard with no
+entry choice point. A head that fails is undone (`FailIlGuard`) and the
+next clause runs having pushed nothing. A head that matches cannot commit,
+since the clauses after it are still alternatives: it pushes the skipped
+choice point then, with the clause-entry marks
+(`PushIlChoicePointWithMarks`, the rare path's), so a backtrack into it
+undoes the head as the clause's own choice point would have, and goes on to
+its `proceed`. At an indexed bucket's tail there is nothing to push, and the
+guard commits. The recognizer takes this shape only from the emission sites
+that ask for it (`allowKeepAlternative`); the census and the fail-direct
+analysis see the cut-shaped guards as before.
+
+The case that motivated it is member/2's helper, `'$member3'(_, X, X)`:
+first-argument indexing leaves a choice point on every element but the
+last, and in a scan most elements fail the head. On a chess sample program,
+member/2 tried 20.7 million elements in one run, 3.5% of
+them matching. A scan of a 30-element list with the prelude's member/2, every
+element failing, runs 14 to 18% faster (A B B A, processor capped). The chess
+run gains 2 to 6%, inside its own run-to-run spread of about 5%: what is left
+of member/2 there is the head unification itself, which binds the pattern's
+variables before it meets the argument that fails.
+
+In a region the choice point a match pushes is the region's own: a WAM
+choice point whose BP is the resume marker of the next alternative
+(`PushChoicePointWithMarks`, ADR-058), so the region resumes it in place as
+one it pushed, and a choice point left when the region's code is retired
+belongs to the region. An indexed member knows its next node at run time;
+the marker is chosen by comparing it with the clause's nodes, each marker
+written as a constant so a persisted region patches it. A method keeps the
+helper push. At runtime a multi-clause root compiles as a region of one, so
+both forms run: regions for the program's code, methods for the libraries'
+baked IL, the prelude's member/2 among them. The wasm tier has no CP-free
+guards yet. `SHUMWAY_CPFREE_HEADFACT=0` turns it off;
+`SHUMWAY_CPFREE_STATS=1` counts it. Tests: `Adr031HeadFactTests`.
+
+A guard whose first instruction is `get_value_x` looks at its two cells
+before it opens (`EmitGetValueSurelyFails`), and a head that cannot match
+goes to the next clause with no snapshot, no unifier call and nothing to
+undo. Each cell is followed one reference at most. A value further away, the
+same cell, a variable, an attributed variable or a packed string on either
+side go on to the guard, so bindings and wakeups are the unifier's as before.
+Two cells of different tags, two distinct atoms or small integers, or two
+compounds of different functors reject. Two compounds of one functor are
+compared again in their first arguments, two levels down at most whatever
+their arity: further than that the look would walk the terms the unifier
+walks, and an out-of-line clash test that did so cost more on the heads that
+match than it saved. Each case rejects only where the unifier fails at its
+first test, before it binds anything.
+
+The levels are one loop body with a counter, not unrolled: about 180 bytes of
+IL per site against 460 unrolled, at the same speed. The helpers of `\+`
+carry most of the sites in real code (their first clause is a cut guard on
+the negated unification); Blint's IL grows 0.09%.
+
+On the chess sample the calls to `UnifyCells` drop from 36.3 to 18.8 million,
+the same successes and bindings; the run takes a median 12.24 s against
+13.36 s over six A B B A rounds with the processor capped, in a noisy spread.
+Micro-benchmarks of member/2 in one process, the switch off and on, A B B A
+with the processor capped (median time ratio): a bound atom absent from 32
+atoms 0.84, a functor that differs 0.64, the chess shape (`piece(z-9, _, _)`
+against `piece(a-1, _, _)`) 0.47, enumeration with the element free 0.96, and
+`p(_, a)` against 32 elements that all match 1.08: the one case that pays
+for the look and gains nothing. `SHUMWAY_IL_GUARD_QUICKREJECT=0` turns it off.

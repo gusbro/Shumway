@@ -1505,10 +1505,10 @@ internal sealed class BundleLoader
             return;
         }
         var index = ReadPersistedIndex(table, entry.CompiledIlPatches);
-        // Nothing is compiled at load, nor is the image loaded when no
-        // predicate needs it yet. A predicate whose bytecode the engine has
-        // runs on it until it has earned its code (ADR-061), and the compile
-        // worker loads and binds it then; one with no bytecode (--strip-wam)
+        // Nothing is compiled at load. A predicate whose bytecode the engine
+        // has runs on it until it has earned its code (ADR-061), and the
+        // compile worker binds it then, from the image a worker loaded while
+        // the engine started (PreloadPersistedIl); one with no bytecode (--strip-wam)
         // has its delegate bound now, and so does a region's root that a
         // member with no bytecode enters through its alias. With a threshold
         // of zero every delegate is bound now, except the engine's own
@@ -1530,7 +1530,7 @@ internal sealed class BundleLoader
                 if (!withBytecode.Contains(member))
                     (aliasRoots ??= new()).Add(Activation.DecodeResumeMarker(marker).FunctorId);
         PersistedIlModule? module = null;
-        bool unbindable = false;
+        bool unbindable = false, offered = false;
         foreach (var (functorId, wakes, hasCps, cost, snapshotClauses) in index.Predicates)
         {
             int fid = functorId;
@@ -1548,6 +1548,7 @@ internal sealed class BundleLoader
             {
                 E.IlPromotion.OfferPersisted(fid, wakes, E._dynStore.IsDynamic(fid),
                     () => BindOffered(entry, fid), _ => WarnUnbindable(entry), cost, followsTier);
+                offered |= E.IlPromotion.HasOffer(fid);
                 continue;
             }
             if (unbindable) continue;
@@ -1573,6 +1574,28 @@ internal sealed class BundleLoader
         if (index.RegionAliases is not null)
             foreach (var kv in index.RegionAliases)
                 E._regionMemberAliases[kv.Key] = kv.Value;
+        if (offered) PreloadPersistedIl(entry);
+    }
+
+    // Entries whose image is queued to load ahead (by reference: an engine
+    // pool's engines share the entries).
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<BundleEntry, object>
+        _preloadQueued = new();
+    private static readonly object _preloadLock = new();
+
+    /// <summary>Loads the image of code on offer on a worker, behind every
+    /// compile, while the engine starts: the first predicate to earn its code
+    /// would otherwise wait for it in the middle of the run, about 200 ms for
+    /// the prelude's. A load that fails is reported by the first bind, as
+    /// before.</summary>
+    private static void PreloadPersistedIl(BundleEntry entry)
+    {
+        lock (_preloadLock)
+        {
+            if (_preloadQueued.TryGetValue(entry, out _)) return;
+            _preloadQueued.Add(entry, _preloadLock);
+        }
+        IlCompileWorker.RunAsync(() => GetOrLoadPersistedIl(entry), (_, _) => { }, lowPriority: true);
     }
 
     private bool SnapshotIsWhole(int functorId, int snapshotClauses)

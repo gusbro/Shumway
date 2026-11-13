@@ -26,6 +26,7 @@ Useful on a stock build, for someone running or embedding Shumway.
 |---|---|
 | `SHUMWAY_IL_PROMOTE` | Tier-1 IL promotion threshold: a predicate is compiled to IL after this many calls. Default `32`. `0` or negative disables IL promotion (Tier-0 only). |
 | `SHUMWAY_IL_BUNDLE_PROMOTE` | When a predicate of a bundle linked with `--with-compiled-il` switches to its compiled code: `threshold[,freeBytes[,callsPerByte]]`, default `32,64000,4`. A predicate is considered after `threshold` calls. The first `freeBytes` bytes of IL are taken at once; past them a predicate needs `callsPerByte` calls per byte of its IL. `32,0,0` takes every predicate after 32 calls; a threshold of `0` binds all the code at load, to compile at its first call. |
+| `SHUMWAY_IL_WORKERS` | The most threads that compile promotions, for the whole process. Each one emits a predicate's IL and has .NET compile it to native code. Default: half the logical processors the process may use, between 1 and 4. A second thread starts only when compiles wait and every started one is busy. |
 | `SHUMWAY_LIBRARY_PATH` | Extra directories (OS path-separated) searched to resolve `:- use_module(library(X))`, in addition to the configured `file_search_path(library, _)` and the shipped `lib/`. An entry may name the dialect of the library it holds, as `-L` does: `scryer:C:/Scryer/lib` loads that tree with its compatibility layer (its operators, among others). |
 | `SHUMWAY_TIMING` | `=1` makes the REPL print a per-phase wall-clock breakdown (parse / consult / link / run) to stderr. |
 | `SHUMWAY_LOAD_PROF` | `=1` enables load-profiling counters (time spent per consult phase), printed on exit. |
@@ -33,12 +34,17 @@ Useful on a stock build, for someone running or embedding Shumway.
 
 ### Heap-GC tuning
 
-The heap garbage collector is self-tuning; these override it, mainly for
-reproducing or bisecting a GC-interaction bug.
+The heap garbage collector is self-tuning: after each collection it places
+the next one from how much the last ones recovered, within the heap's
+ceiling (`ActivationConfig.MaxHeapSize`, or half the memory available to the
+process). From a 16 MB heap on, it collects before the heap's array grows.
+These override it, mainly for reproducing or bisecting a
+GC-interaction bug, and only a diagnostic build (`-p:ShumwayDiag=true`)
+reads them.
 
 | Variable | Effect |
 |---|---|
-| `SHUMWAY_GC_THRESHOLD` | Heap size (in cells) that triggers a collection. Overrides the adaptive watermark. |
+| `SHUMWAY_GC_THRESHOLD` | Heap size (in cells) that triggers the first collection; `0` disables automatic collection. |
 | `SHUMWAY_GC_STRESS` | `=1` collects at every safe point: slow, for flushing out GC-safety bugs. |
 | `SHUMWAY_GC_AT`, `SHUMWAY_GC_UPTO` | Fuzz/bisect bounds: collect only within a range of GC opportunities, to bracket the one that corrupts state. |
 
@@ -72,6 +78,8 @@ is what ships. Any build honors them.
 | `DOTNET_JitMaxLocalsToTrack` | the runtime's `0x400` | The runtime's own cap on the locals the JIT tracks in one method, past which it inlines nothing more into it. A hexadecimal number, read by the runtime once from the environment the process starts with: set it in the shell or launcher, not from the program or `runtimeconfig.json`. The engine reads the same value and plans its regions to it. Raising it to `0xC00` measured no gain on the corpus; if you try it, `0xC00` to `0x1600` is the sensible range. |
 | `SHUMWAY_CPFREE_IDXBUCKET` | on | `=0` disables the lazy choice-point in indexed-bucket dispatch (ADR-031). |
 | `SHUMWAY_CPFREE_GUARD` | on | `=0` disables CP-free guard-commit (ADR-031). |
+| `SHUMWAY_CPFREE_HEADFACT` | on | `=0` disables the CP-free head of a clause that is its head alone, member/2's helper among them (ADR-031). |
+| `SHUMWAY_IL_GUARD_QUICKREJECT` | on | `=0` disables the look at a guard's two cells before it opens, which sends a head that cannot match to the next clause (ADR-031). |
 | `SHUMWAY_CPFREE_CONT` | off | `=1` enables the opt-in guard-continuation-stack prototype (ADR-033). |
 | `SHUMWAY_INLINE_FACTS` | on | `=0` disables the local-predicate fact inliner. |
 | `SHUMWAY_INLINE_RULES`, `SHUMWAY_INLINE_RULES2` | off | `=1` enables the opt-in local-predicate rule inliners. |

@@ -13,6 +13,10 @@ namespace Shumway.Tests.Embedding;
 /// These tests pin the semantic differential across Tier-0 (oracle), runtime
 /// promotion and the persisted-IL bundle.
 /// </summary>
+// Switches compiler statics for some of its tests: it runs alone, in the
+// gate's exclusive pass.
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public class Adr031IndexedBucketTests
 {
     public static TheoryData<Adr031CpFreeGuardTests.Mode> Modes => new()

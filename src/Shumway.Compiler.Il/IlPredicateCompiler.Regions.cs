@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Reflection;
 using Shumway.Compiler.Wam;
 using Shumway.Core;
@@ -86,14 +87,18 @@ public sealed partial class IlPredicateCompiler
 
     // The static callers of each predicate of the map, built once per map
     // (the query's view of the program, as the pure-eligibility cache).
-    private Dictionary<int, List<int>>? _callersIndex;
-    private IReadOnlyDictionary<int, CompiledPredicate>? _callersIndexMap;
+    // Published whole and never changed after: compiles run on several
+    // workers at once, and a reader holds one consistent index.
+    private sealed record CallersIndex(
+        IReadOnlyDictionary<int, CompiledPredicate> Map, Dictionary<int, List<int>> Callers);
+    private CallersIndex? _callersIndex;
 
     private IReadOnlyCollection<int>? CallersOf(int fid, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
         var map = CalleeRecorder.Underlying(calleeMap);
         if (map is null) return null;
-        if (!ReferenceEquals(_callersIndexMap, map) || _callersIndex is null)
+        var current = Volatile.Read(ref _callersIndex);
+        if (current is null || !ReferenceEquals(current.Map, map))
         {
             var index = new Dictionary<int, List<int>>();
             foreach (var pred in map.Values)
@@ -107,10 +112,10 @@ public sealed partial class IlPredicateCompiler
                     if (callers.Count == 0 || callers[^1] != pred.FunctorId) callers.Add(pred.FunctorId);
                 }
             }
-            _callersIndex = index;
-            _callersIndexMap = map;
+            current = new CallersIndex(map, index);
+            Volatile.Write(ref _callersIndex, current);
         }
-        return _callersIndex.TryGetValue(fid, out var list) ? list : null;
+        return current.Callers.TryGetValue(fid, out var list) ? list : null;
     }
 
     /// <summary>When non-null, region
@@ -134,7 +139,9 @@ public sealed partial class IlPredicateCompiler
         public int RootFid, Prologue, MembersEnd, MembersEndInlines, MembersEndLocals, PrologueLocals, ResumeCursors, LadderEntries, Attempt = 1;
         public readonly List<(CompiledPredicate Member, int LocalRefs, int Instrs, int Inlines, int Locals, string Ops)> Members = new();
     }
-    private RegionCostTrace? _regionTrace;
+    // Per thread: the emission it traces runs on one thread, and workers emit
+    // regions of the same compiler at once.
+    [ThreadStatic] private static RegionCostTrace? _regionTrace;
 
     /// <summary>The opcodes of a member body as <c>name:count</c> pairs; an
     /// indexed member's clause ranges, since its dispatch tables are not
@@ -471,22 +478,24 @@ public sealed partial class IlPredicateCompiler
         // e.g. the next query's promotion view — resets the cache).
         // A CalleeRecorder is new per compile; the map under it is the view.
         var cacheMap = CalleeRecorder.Underlying(calleeMap);
-        if (!ReferenceEquals(_regionMemberPureCacheMap, cacheMap)
-            || _regionMemberPureCache is null)
+        var cache = Volatile.Read(ref _regionMemberPureCache);
+        if (cache is null || !ReferenceEquals(cache.Map, cacheMap))
         {
-            _regionMemberPureCache = new Dictionary<int, bool>();
-            _regionMemberPureCacheMap = cacheMap;
+            cache = new MemberPureCache(cacheMap, new ConcurrentDictionary<int, bool>());
+            Volatile.Write(ref _regionMemberPureCache, cache);
         }
-        if (_regionMemberPureCache.TryGetValue(p.FunctorId, out bool ok)) return ok;
+        if (cache.Pure.TryGetValue(p.FunctorId, out bool ok)) return ok;
         ok = CanCompileCore(p, calleeMap)
              && RegionMemberOk(p, calleeMap, out _);
-        _regionMemberPureCache[p.FunctorId] = ok;
+        cache.Pure[p.FunctorId] = ok;
         return ok;
     }
 
-    /// <summary>see <see cref="IsRegionMemberEligible"/>.</summary>
-    private Dictionary<int, bool>? _regionMemberPureCache;
-    private IReadOnlyDictionary<int, CompiledPredicate>? _regionMemberPureCacheMap;
+    /// <summary>see <see cref="IsRegionMemberEligible"/>. Concurrent: workers
+    /// compile regions of the same compiler at once.</summary>
+    private sealed record MemberPureCache(
+        IReadOnlyDictionary<int, CompiledPredicate>? Map, ConcurrentDictionary<int, bool> Pure);
+    private MemberPureCache? _regionMemberPureCache;
 
     /// <summary>The set of functor ids a region rooted at <paramref name="root"/> would
     /// absorb as <c>br</c>-members when emitted (Stage 9 input) — the predicates whose
@@ -1133,7 +1142,8 @@ public sealed partial class IlPredicateCompiler
             if (CpFreeGuardCommit && i < n - 1
                 && TryGetCpFreeGuard(
                     member.BytecodeUnfused, clauses[i].Start, clauses[i].End,
-                    member.Arity, calleeMap, member.CallSites, out var ginfo))
+                    member.Arity, calleeMap, member.CallSites, out var ginfo,
+                    allowKeepAlternative: CpFreeHeadFacts))
             {
                 int guardEnd = ginfo.CutPc;
                 int mi0 = mi, i0 = i;
@@ -1183,6 +1193,13 @@ public sealed partial class IlPredicateCompiler
                     ctx.CursorLabels[ctx.ClauseAltCursor[(mi, i + 1)]], ctx.FailLabel,
                     emitSelf, ctx.ClauseAltCursor[(mi, i + 1)], member.Arity,
                     salt: $"_rm{mi}_c{i}",
+                    regionMarker: e =>
+                    {
+                        var marker = e.DeclareLocal<int>($"hf_marker_rm{mi0}_c{i0}");
+                        EmitResumeMarker(e, ctx.RegionFid, ctx.ResumeCursor[ctx.ClauseAltCursor[(mi0, i0 + 1)]]);
+                        e.StoreLocal(marker);
+                        return marker;
+                    },
                     markDeadCursors: dynFids is { Count: > 0 } ? (Action?)null : () =>
                     {
                         // The plan allocated a forward-resume cursor per Call
@@ -1265,7 +1282,7 @@ public sealed partial class IlPredicateCompiler
         // ADR-031 indexed buckets — see EmitIndexedDispatchBody's twin. The
         // idxnext local holds the next node's region cursor (the same value
         // the bucket CP carries), -1 for a chain tail.
-        var guardPlan = PlanIndexedGuards(member, info, calleeMap);
+        var guardPlan = PlanIndexedGuards(member, info, calleeMap, headFacts: true);
         int K = info.Nodes.Count;
         int N = info.Clauses.Count;
         string salt = $"_rm{mi}";
@@ -1396,7 +1413,32 @@ public sealed partial class IlPredicateCompiler
                         emit.Branch(ctx.FailLabel);
                     },
                     dynamicCursor: e2 => e2.LoadLocal(idxNext!),
-                    wakeDeopt: HasBytecode(member));
+                    wakeDeopt: HasBytecode(member),
+                    regionMarker: e2 =>
+                    {
+                        // The next node is known at run time: one compare per
+                        // node of this clause that has one, each loading its
+                        // marker as written, so a persisted region patches it.
+                        var marker = e2.DeclareLocal<int>($"hf_marker_ridx{mi}_{i0}");
+                        var done = e2.DefineLabel($"hf_marker_done_ridx{mi}_{i0}");
+                        foreach (var node in info.Nodes)
+                        {
+                            if (node.ClauseIndex != i0 || node.NextCursor < 0) continue;
+                            int nextCur = ctx.IndexNodeCursor[(mi, node.NextCursor)];
+                            var skip = e2.DefineLabel($"hf_marker_skip_ridx{mi}_{i0}_{NextLabelSeq()}");
+                            e2.LoadLocal(idxNext!);
+                            e2.LoadConstant(nextCur);
+                            e2.UnsignedBranchIfNotEqual(skip);
+                            EmitResumeMarker(e2, ctx.RegionFid, ctx.ResumeCursor[nextCur]);
+                            e2.StoreLocal(marker);
+                            e2.Branch(done);
+                            e2.MarkLabel(skip);
+                        }
+                        e2.LoadConstant(0);                 // unreachable: a tail is -1
+                        e2.StoreLocal(marker);
+                        e2.MarkLabel(done);
+                        return marker;
+                    });
                 if (dynFb is not null)
                 {
                     emit.MarkLabel(dynFb);

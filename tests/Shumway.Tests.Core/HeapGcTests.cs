@@ -219,4 +219,74 @@ public class HeapGcTests
         Assert.False(e.GetHeap(bmpNow).AsPstrIsAstral);
         Assert.Equal("a😀b", e.AsPstrString(astralNow));
     }
+
+    /// <summary>The control stack is scanned conservatively: each reference
+    /// tag roots its cells and is relocated with them, the leaves stay bit for
+    /// bit, a control word whose value would read as a heap index roots
+    /// nothing, and an index past the heap is left alone.</summary>
+    [Fact]
+    public void Collect_ScansAndRelocatesEveryTagOfTheControlStack()
+    {
+        var e = new Activation();
+        ClearRegisters(e);
+        int nil = AtomTable.EmptyListId;
+
+        e.AllocateHeapUnbound();                          // 0 garbage
+        int v = e.AllocateHeapUnbound();                  // 1 unbound variable
+        e.AllocateHeapUnbound();                          // 2 garbage
+        int pair = e.AllocateHeap(2);                     // 3,4 [7]
+        e.SetHeap(pair, Cell.Int(7));
+        e.SetHeap(pair + 1, Cell.Atom(nil));
+        e.AllocateHeapUnbound();                          // 5 garbage
+        int f = e.AllocateHeap(3);                        // 6..8 foo(1, 2)
+        e.SetHeap(f, Cell.Functor(FooFunctor()));
+        e.SetHeap(f + 1, Cell.Int(1));
+        e.SetHeap(f + 2, Cell.Int(2));
+        int named = e.AllocateHeapUnbound();              // 9 garbage a control word names
+        int fl = e.MakeFloat(2.5);                        // 10,11 header (garbage) and paired cell
+        e.AllocateHeapUnbound();                          // 12 garbage
+        int ps = e.MakePstr("stack", TextKind.Chars);     // 13 header (garbage), 14,15 buffers, 16 tail
+        e.AllocateHeapUnbound();                          // 17 garbage
+        int top = e.HeapTop;
+        long paired = e.GetHeap(fl + 1).Data;
+        long buffer0 = e.GetHeap(ps + 1).Data, buffer1 = e.GetHeap(ps + 2).Data;
+
+        Cell[] slots =
+        {
+            Cell.Ref(v), Cell.RawInt(named), Cell.Lis(pair), Cell.Int(named), Cell.Str(f),
+            Cell.Atom(nil), e.GetHeap(fl), e.GetHeap(ps), Cell.Ref(top + 100),
+        };
+        for (int i = 0; i < slots.Length; i++) e._stack[i] = slots[i];
+        e._stackTop = slots.Length;
+
+        e.CollectHeap();
+
+        // The variable, the pair, foo/2, the float's paired cell, the string's
+        // two buffers and its tail.
+        Assert.Equal(10, e.HeapTop);
+        Cell[] s = e._stack;
+
+        Assert.Equal(Tag.Ref, s[0].Tag);
+        Assert.Equal(s[0].Data, e.GetHeap(s[0].AsHeapIndex).Data);
+        Assert.Equal(slots[1].Data, s[1].Data);
+        Assert.Equal(Tag.Lis, s[2].Tag);
+        Assert.Equal(7, e.GetHeap(s[2].AsHeapIndex).AsInt);
+        Assert.Equal(Cell.Atom(nil).Data, e.GetHeap(s[2].AsHeapIndex + 1).Data);
+        Assert.Equal(slots[3].Data, s[3].Data);
+        Assert.Equal(Tag.Str, s[4].Tag);
+        Assert.Equal(FooFunctor(), e.GetHeap(s[4].AsHeapIndex).AsFunctorId);
+        Assert.Equal(1, e.GetHeap(s[4].AsHeapIndex + 1).AsInt);
+        Assert.Equal(2, e.GetHeap(s[4].AsHeapIndex + 2).AsInt);
+        Assert.Equal(slots[5].Data, s[5].Data);
+        Assert.Equal(Tag.Float, s[6].Tag);
+        Assert.Equal(slots[6].Data >> 32, s[6].Data >> 32);
+        Assert.Equal(paired, e.GetHeap(s[6].FloatPairedIndex).Data);
+        Assert.Equal(Tag.Pstr, s[7].Tag);
+        Assert.Equal(slots[7].AsPstrLength, s[7].AsPstrLength);
+        Assert.Equal(slots[7].AsPstrOffset, s[7].AsPstrOffset);
+        Assert.Equal(slots[7].AsPstrKind, s[7].AsPstrKind);
+        Assert.Equal(buffer0, e.GetHeap(s[7].AsPstrBufferIndex).Data);
+        Assert.Equal(buffer1, e.GetHeap(s[7].AsPstrBufferIndex + 1).Data);
+        Assert.Equal(slots[8].Data, s[8].Data);
+    }
 }

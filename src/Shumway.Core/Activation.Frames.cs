@@ -66,6 +66,7 @@ public sealed partial class Activation
         // because the test suite also drives them programmatically
         // (GcStressMode / ActivationConfig).
         DiagReadGcOverrides();
+        RearmSafePointLimit();
     }
 
     /// <summary>diag-build-only env overrides for the ADR-016 GC:

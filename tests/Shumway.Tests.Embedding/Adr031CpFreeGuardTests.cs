@@ -15,6 +15,10 @@ namespace Shumway.Tests.Embedding;
 /// across runtime promotion (regions), the persisted-IL bundle, and Tier-0
 /// (which is untouched by this ADR and serves as the oracle).
 /// </summary>
+// Switches compiler statics for some of its tests: it runs alone, in the
+// gate's exclusive pass.
+[Collection("exclusive")]
+[Trait("Concurrency", "exclusive")]
 public class Adr031CpFreeGuardTests
 {
     private const string Program =

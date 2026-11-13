@@ -397,6 +397,7 @@ public sealed partial class IlPredicateCompiler
         Row(EngineMaybeCollectHeapMethod, MachineRegs.All, MachineRegs.All);
         Row(EngineNeckCutMethod, MachineRegs.All, MachineRegs.All);
         Row(EngineOccursModeGetter, MachineRegs.None, MachineRegs.None);
+        Row(RegisterAtMethod, MachineRegs.None, MachineRegs.None);
         Row(EngineTrailBindMethod, MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.TrailArray, MachineRegs.TrailTop | MachineRegs.TrailArray);
         Row(EngineUnifyHeapWithCellMethod, MachineRegs.B | MachineRegs.HeapTop | MachineRegs.Hb | MachineRegs.TrailTop | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.TrailArray, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray | MachineRegs.TrailArray);
         Row(EnginePopGuardContFailMethod, MachineRegs.None, MachineRegs.None);

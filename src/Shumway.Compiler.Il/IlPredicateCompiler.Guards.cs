@@ -25,6 +25,7 @@ public sealed partial class IlPredicateCompiler
     public static class CpFreeGuardStats
     {
         public static long TierA, TierB, TierGLeaf, TierG2;
+        public static long HeadFact;               // a fact-shaped clause, its CP pushed on a match
         public static long RejectGuardShape;       // non-whitelist op in a cut-shaped guard
         public static long RejectCalleeUnresolved; // no calleeMap / fid unresolved
         public static long RejectCalleeCalls;      // callee body calls others → G3 candidate
@@ -100,6 +101,7 @@ public sealed partial class IlPredicateCompiler
             sb.AppendLine("cp-free guard clauses (ADR-031):");
             sb.AppendLine($"  accepted {AcceptTotal}: tierA(cmp)={TierA} tierB(bind)={TierB} "
                 + $"tierG(leaf-call)={TierGLeaf} tierG2(fail-direct-call)={TierG2}");
+            sb.AppendLine($"  head facts (CP pushed on a match): {HeadFact}");
             sb.AppendLine($"  rejected {RejectTotal} (cut-shaped clauses keeping their CP):");
             sb.AppendLine($"    guard op outside whitelist        : {RejectGuardShape}");
             sb.AppendLine($"    callee unresolved                 : {RejectCalleeUnresolved}");
@@ -144,6 +146,15 @@ public sealed partial class IlPredicateCompiler
     /// must graduate to the ADR-033 continuation stack.</summary>
     public static bool CpFreeIndexedBuckets { get; set; } =
         System.Environment.GetEnvironmentVariable("SHUMWAY_CPFREE_IDXBUCKET") != "0";
+
+    /// <summary>ADR-031 head facts: a non-last clause that is its head alone
+    /// (<c>'$member3'(_, X, X).</c>) runs that head as a guard with no entry
+    /// choice point. A head that fails goes to the next clause having pushed
+    /// nothing; one that matches pushes the choice point then, with the
+    /// clause-entry marks, since the alternatives stay. Set
+    /// <c>SHUMWAY_CPFREE_HEADFACT=0</c> to disable (A/B lever).</summary>
+    public static bool CpFreeHeadFacts { get; set; } =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_CPFREE_HEADFACT") != "0";
 
     /// <summary>ADR-031 indexed-bucket sizing census, opt-in
     /// (<c>SHUMWAY_CPFREE_IDXCENSUS=1</c>): at the two indexed emit sites,
@@ -191,7 +202,8 @@ public sealed partial class IlPredicateCompiler
 
     private static IndexedGuardPlan? PlanIndexedGuards(
         CompiledPredicate pred, IlIndexedDispatchInfo info,
-        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        bool headFacts = false)
     {
         if (!CpFreeIndexedBuckets || !CpFreeGuardCommit) return null;
         int N = info.Clauses.Count;
@@ -212,7 +224,7 @@ public sealed partial class IlPredicateCompiler
             if (!hasCpNode[i]) continue;
             var (s, e) = info.Clauses[i];
             if (!TryGetCpFreeGuard(code, s, e, pred.Arity, calleeMap,
-                    pred.CallSites, out plan.Info[i]))
+                    pred.CallSites, out plan.Info[i], allowKeepAlternative: headFacts && CpFreeHeadFacts))
                 continue;
             plan.GuardOk[i] = true;
             any = true;
@@ -342,6 +354,10 @@ public sealed partial class IlPredicateCompiler
         /// <summary>The clause allocated an environment frame before the cut —
         /// the fail path must <c>Deallocate</c> before branching on.</summary>
         public bool Framed { get; init; }
+        /// <summary>A head fact: <see cref="CutPc"/> is its <c>proceed</c>, and
+        /// the commit pushes the skipped choice point instead of cutting it,
+        /// since the clauses after it are still alternatives.</summary>
+        public bool KeepsAlternative { get; init; }
         /// <summary>ADR-034 — functor ids of the dynamic snapshots this
         /// clause's guard (transitively, through fail-direct callees and
         /// shared copies) inlines. Non-null → the emit prefixes the clause
@@ -404,7 +420,8 @@ public sealed partial class IlPredicateCompiler
         IReadOnlyList<CallSite> callSites,
         out CpFreeGuardInfo info,
         bool analysisOnly = false,
-        bool suppressStats = false)
+        bool suppressStats = false,
+        bool allowKeepAlternative = false)
     {
         info = default;
         bool snapshot = false, regSave = false, framed = false, sawRealOp = false;
@@ -478,6 +495,21 @@ public sealed partial class IlPredicateCompiler
                         EmbeddedDynamicFids = extras.DynFids,
                     };
                     CountAccept();
+                    return true;
+                case Opcode.Proceed:
+                    // A head fact: its head is the guard, and a match keeps the
+                    // clauses after it, so the commit pushes the choice point
+                    // instead of cutting. Calls stay out: the commit could not
+                    // retry a callee's other solutions.
+                    if (!allowKeepAlternative || framed || sawCall || !sawRealOp || CpsEmitting)
+                        return false;
+                    info = new CpFreeGuardInfo
+                    {
+                        CutPc = pc, KeepsAlternative = true,
+                        NeedsSnapshot = snapshot, NeedsRegSave = regSave,
+                    };
+                    if (!suppressStats)
+                        System.Threading.Interlocked.Increment(ref CpFreeGuardStats.HeadFact);
                     return true;
                 case Opcode.Cut:
                     if (!framed) return false;          // deep cut needs the frame's Y slot
@@ -1703,13 +1735,24 @@ public sealed partial class IlPredicateCompiler
         Action? markDeadCursors = null,
         Action? dynamicFailDispatch = null,
         Action<IlEmit>? dynamicCursor = null,
-        bool? wakeDeopt = null)
+        bool? wakeDeopt = null,
+        Func<IlEmit, IlLocal>? regionMarker = null)
     {
         // ADR-061: in a continuation method the guard's marks live in the
         // activation (the indexed buckets' next node too), so the cold method
         // can resume inside it; a guard that saves argument registers keeps
         // them in IL locals and stays opaque up to its commit.
         bool cpsFields = CpsEmitting && !g.NeedsRegSave;
+        // A head whose cells already differ is the next clause's before the
+        // guard opens: nothing to snapshot, nothing to undo.
+        IlLabel? quickReject = null;
+        if (GuardQuickReject && !CpsEmitting && (Opcode)code[clauseStart] == Opcode.GetValueX)
+        {
+            quickReject = dynamicFailDispatch is null
+                ? nextClauseLabel : emit.DefineLabel($"cf_quick{salt}");
+            EmitGetValueSurelyFails(emit, BytecodeIO.ReadInt32(code, clauseStart + 1),
+                BytecodeIO.ReadInt32(code, clauseStart + 5), quickReject, salt);
+        }
         var cpsOpaque = cpsFields ? default : CpsOpaque();
         // ADR-031 indexed buckets — dynamicFailDispatch replaces the static
         // guard-fail branch (the stub ends with a switch over the per-member
@@ -1789,7 +1832,24 @@ public sealed partial class IlPredicateCompiler
                 emit.LoadConstant(-1);
                 emit.BranchIfEqual(noCp);
             }
-            if (WamCps)
+            if (g.KeepsAlternative && regionMarker is not null)
+            {
+                // In a region, a head fact's match pushes the region's own
+                // choice point: its BP the resume marker of the alternative,
+                // so the region resumes it as one it pushed (ADR-058).
+                var marker = regionMarker(emit);
+                emit.LoadArgument(0);
+                emit.LoadConstant(arity);
+                emit.LoadLocal(marker);
+                if (g.NeedsSnapshot)
+                {
+                    LoadMark(bt, CpsGuardBtField); LoadMark(xt, CpsGuardXtField); LoadMark(h, CpsGuardHField);
+                    LoadMark(hb, CpsGuardHbField); LoadMark(ee, CpsGuardEField);
+                    EmitHelperCall(emit, EnginePushCpWithMarksMethod);
+                }
+                else EmitHelperCall(emit, EnginePushChoicePointMethod);
+            }
+            else if (WamCps)
             {
                 // ADR-061: a WAM choice point, its BP the next alternative's marker.
                 emit.LoadArgument(0);
@@ -1879,6 +1939,29 @@ public sealed partial class IlPredicateCompiler
             }
         }
 
+        if (g.KeepsAlternative)
+        {
+            // The head matched and the clauses after it stay alternatives: push
+            // the choice point the entry skipped, with the entry's marks, so a
+            // backtrack into it undoes the head as the clause's own would have.
+            // At a bucket's tail there is none to push, and the guard commits.
+            if (dynamicCursor is not null && g.NeedsSnapshot)
+            {
+                var push = emit.DefineLabel($"cf_keep{salt}");
+                dynamicCursor(emit);
+                emit.LoadConstant(-1);
+                emit.UnsignedBranchIfNotEqual(push);
+                emit.LoadArgument(0);
+                LoadMark(bt, CpsGuardBtField); LoadMark(xt, CpsGuardXtField); LoadMark(hb, CpsGuardHbField);
+                EmitHelperCall(emit, EngineCommitIlGuardMethod);
+                emit.Branch(after);
+                emit.MarkLabel(push);
+            }
+            EmitMaterializeCp();
+            emit.MarkLabel(after);
+        }
+        else
+        {
         // ---- Commit (replaces the cut opcode). ----
         // ADR-061: a point to resume at; its slow paths leave from here.
         if (cpsFields) CpsInstructionBoundary(emit, false);
@@ -1938,10 +2021,12 @@ public sealed partial class IlPredicateCompiler
         }
         emit.MarkLabel(after);
         WakeTested();
+        }
         // Committed: the guard's locals are dead, its body has boundaries.
         cpsOpaque.Dispose();
 
-        emitSlice(g.CutPc + OpcodeTable.Get((Opcode)code[g.CutPc]).Size,
+        // A head fact's proceed is its body: the cut a guard commits with is not.
+        emitSlice(g.KeepsAlternative ? g.CutPc : g.CutPc + OpcodeTable.Get((Opcode)code[g.CutPc]).Size,
             clauseEnd, failLabel);                          // post-commit body
 
         // Region mode: the plan allocated forward-resume cursors for the guard's
@@ -1991,7 +2076,11 @@ public sealed partial class IlPredicateCompiler
                     EmitHelperCall(emit, EngineSetRegisterMethod);
                 }
             }
-            if (dynamicFailDispatch is not null) dynamicFailDispatch();
+            if (dynamicFailDispatch is not null)
+            {
+                if (quickReject is { } quick) emit.MarkLabel(quick);
+                dynamicFailDispatch();
+            }
             else emit.Branch(nextClauseLabel);
         }
     }

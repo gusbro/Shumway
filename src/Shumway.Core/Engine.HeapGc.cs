@@ -152,7 +152,29 @@ public sealed partial class Activation
     private bool _gcDiagActive;
 
     private void UpdateGcDiagActive()
-        => _gcDiagActive = _gcStressMode || _gcOnlyAt >= 0 || _gcUpTo >= 0;
+    {
+        _gcDiagActive = _gcStressMode || _gcOnlyAt >= 0 || _gcUpTo >= 0;
+        RearmSafePointLimit();
+    }
+
+    // The one value a safe point compares the heap top with: the collection
+    // threshold while nothing else is pending, 0 (every safe point due) while
+    // a cancellation, a deadline, a request from another thread or a diag
+    // mode is. Volatile: a loop of compiled code must not hold it in a
+    // register across iterations, or a cancellation would never reach it.
+    private volatile int _safePointLimit = int.MaxValue;
+
+    /// <summary>Sets the limit from the state the query thread owns, then
+    /// looks again at what other threads set: written before the read, the
+    /// limit cannot overwrite a request that arrived meanwhile, since the
+    /// request lowers the limit after it sets its flag.</summary>
+    private void RearmSafePointLimit()
+    {
+        _safePointLimit = _gcThreshold > 0 ? _gcThreshold : int.MaxValue;
+        Interlocked.MemoryBarrier();
+        if (_cancelRequested || _deadlineAt != 0 || _safePointRequests != 0 || _gcDiagActive)
+            _safePointLimit = 0;
+    }
 
     /// <summary>Called at engine safe points (goal boundaries — see the
     /// interpreter's dispatch / resume-marker sites) to run a collection
@@ -201,7 +223,11 @@ public sealed partial class Activation
     {
         lock (_cancelGate)
         {
-            if (!_tearingDown) _cancelRequested = true;
+            if (!_tearingDown)
+            {
+                _cancelRequested = true;
+                _safePointLimit = 0;
+            }
         }
     }
 
@@ -214,11 +240,16 @@ public sealed partial class Activation
             _tearingDown = true;
             _cancelRequested = false;
         }
+        RearmSafePointLimit();
     }
 
     /// <summary>Clears a pending cancellation request (e.g. before reusing an
     /// engine).</summary>
-    public void ClearCancellation() => _cancelRequested = false;
+    public void ClearCancellation()
+    {
+        _cancelRequested = false;
+        RearmSafePointLimit();
+    }
 
     /// <summary>True once <see cref="RequestCancellation"/> has been called and
     /// not yet cleared.</summary>
@@ -255,6 +286,7 @@ public sealed partial class Activation
         long at = System.Environment.TickCount64 + (long)(seconds * 1000.0);
         _deadlines[_deadlineCount++] = at;
         if (_deadlineAt == 0 || at < _deadlineAt) _deadlineAt = at;
+        RearmSafePointLimit();
     }
 
     /// <summary>Ends the innermost deadline. Idempotent on an empty stack so an
@@ -269,6 +301,7 @@ public sealed partial class Activation
         for (int i = 0; i < _deadlineCount; i++)
             if (_deadlineAt == 0 || _deadlines[i] < _deadlineAt)
                 _deadlineAt = _deadlines[i];
+        RearmSafePointLimit();
     }
 
     /// <summary>True while any <c>call_with_timeout</c> is in progress.</summary>
@@ -332,40 +365,20 @@ public sealed partial class Activation
         if ((_safePointRequests & SafePointAtomMark) != 0) TakeAtomMarkRequest();
     }
 
-    // hot/cold split. The guard is AggressiveInlining so each
-    // safe-point call site inlines to: a volatile _cancelRequested read +
-    // one compare (the diag flag and the watermark, fused into a single
-    // early return on the steady-state path). Everything that can actually
-    // do work — cancellation throw, diag modes, the collection + re-arm —
-    // lives in the NoInlining slow body. NB: when auto-collection is
-    // disabled (_gcThreshold <= 0) the `_heapTop < _gcThreshold` test is
-    // never true, so those (test-only) configurations pay the cold call;
-    // the slow body's threshold check keeps the no-collect behavior.
+    // hot/cold split: each safe point inlines to the heap top against the
+    // limit, and everything that can do work (cancellation, the deadline,
+    // requests from other threads, diag modes, the collection and its re-arm)
+    // is the NoInlining slow body's.
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public void MaybeCollectHeap()
     {
         Diagnostics.AreaTrace.Note(CellsAllocated, _stackTop, _b, _heapTop);
-        // Cooperative cancellation: checked at every safe point (not only at the
-        // GC watermark). Lazy Y-slot allocation made many loops heap-light, so a
-        // watermark-only check left them uncancellable — and the watermark may
-        // now never be crossed. `_cancelRequested` is volatile and the branch is
-        // predicted not-taken, so the steady-state cost is ~one read per safe
-        // point.
-        if (_cancelRequested)
-            ThrowQueryCancelled();
-        // call_with_timeout/2,3 — same cost class as the cancel flag (one field
-        // read, predicted not-taken) whenever no deadline is active.
-        if (_deadlineAt != 0)
-            CheckDeadline();
-        // Work other threads ask of this activation (RequestDebugArm, an atom
-        // collection's mark): done here, on its own thread at a goal boundary,
-        // because no other thread may touch a running activation. Same cost
-        // class as the cancel flag.
-        if (_safePointRequests != 0)
-            ApplySafePointRequests();
-        if (!_gcDiagActive && _heapTop < _gcThreshold) return;
-        MaybeCollectHeapSlow();
+        // One compare: the limit is below the heap top whenever a
+        // cancellation, a deadline, a request from another thread, a diag mode
+        // or a collection is due (RearmSafePointLimit).
+        if (_heapTop < _safePointLimit) return;
+        SafePointDue();
     }
 
     // WAM X registers are caller-saved: at a call boundary the live ones are
@@ -398,8 +411,7 @@ public sealed partial class Activation
 #if SHUMWAY_DIAG
         true;
 #else
-        _cancelRequested || _deadlineAt != 0 || _safePointRequests != 0
-        || _gcDiagActive || _heapTop >= _gcThreshold;
+        _heapTop >= _safePointLimit;
 #endif
     }
 
@@ -414,14 +426,8 @@ public sealed partial class Activation
         // both tiers reach, and the sampler compiles away without the
         // diag symbol, so the steady-state path is unchanged.
         Diagnostics.AreaTrace.Note(CellsAllocated, _stackTop, _b, _heapTop);
-        if (_cancelRequested)
-            ThrowQueryCancelled();
-        if (_deadlineAt != 0)
-            CheckDeadline();
-        if (_safePointRequests != 0)
-            ApplySafePointRequests();
-        if (!_gcDiagActive && _heapTop < _gcThreshold) return;
-        MaybeCollectHeapSlowAtCall(functorId);
+        if (_heapTop < _safePointLimit) return;
+        SafePointDueAtCall(functorId);
     }
 
     /// <summary>Safe point at a dispatch whose target may be a resume marker
@@ -432,17 +438,8 @@ public sealed partial class Activation
     public void MaybeCollectHeapAtDispatch(int target)
     {
         Diagnostics.AreaTrace.Note(CellsAllocated, _stackTop, _b, _heapTop);
-        if (_cancelRequested)
-            ThrowQueryCancelled();
-        if (_deadlineAt != 0)
-            CheckDeadline();
-        if (_safePointRequests != 0)
-            ApplySafePointRequests();
-        if (!_gcDiagActive && _heapTop < _gcThreshold) return;
-        if (IsResumeMarker(target))
-            MaybeCollectHeapSlowAtCall(DecodeResumeMarker(target).FunctorId);
-        else
-            MaybeCollectHeapSlow();
+        if (_heapTop < _safePointLimit) return;
+        SafePointDueAtDispatch(target);
     }
 
     /// <summary>Safe point where a callee has just Proceeded back: no X
@@ -452,14 +449,70 @@ public sealed partial class Activation
     public void MaybeCollectHeapAtReturn()
     {
         Diagnostics.AreaTrace.Note(CellsAllocated, _stackTop, _b, _heapTop);
+        if (_heapTop < _safePointLimit) return;
+        SafePointDueAtReturn();
+    }
+
+    // A safe point the limit sent here: what is pending, in the order the
+    // checks always ran (cancellation, the deadline, requests from other
+    // threads, then the collection), and the limit re-armed after.
+    private bool SafePointPending()
+    {
+        // Cooperative cancellation: checked at every safe point, not only at
+        // the watermark, or a heap-light loop could not be cancelled.
         if (_cancelRequested)
             ThrowQueryCancelled();
         if (_deadlineAt != 0)
             CheckDeadline();
+        // Work other threads ask of this activation (RequestDebugArm, an atom
+        // collection's mark): done on its own thread, at a goal boundary.
         if (_safePointRequests != 0)
             ApplySafePointRequests();
-        if (!_gcDiagActive && _heapTop < _gcThreshold) return;
-        MaybeCollectHeapSlowBounded(0);
+        bool collect = _gcDiagActive || (_gcThreshold > 0 && _heapTop >= _gcThreshold);
+        if (!collect) RearmSafePointLimit();
+        return collect;
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void SafePointDue()
+    {
+        if (!SafePointPending()) return;
+        try { MaybeCollectHeapSlow(); }
+        finally { RearmSafePointLimit(); }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void SafePointDueAtCall(int functorId)
+    {
+        if (!SafePointPending()) return;
+        try { MaybeCollectHeapSlowAtCall(functorId); }
+        finally { RearmSafePointLimit(); }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void SafePointDueAtDispatch(int target)
+    {
+        if (!SafePointPending()) return;
+        try
+        {
+            if (IsResumeMarker(target))
+                MaybeCollectHeapSlowAtCall(DecodeResumeMarker(target).FunctorId);
+            else
+                MaybeCollectHeapSlow();
+        }
+        finally { RearmSafePointLimit(); }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void SafePointDueAtReturn()
+    {
+        if (!SafePointPending()) return;
+        try { MaybeCollectHeapSlowBounded(0); }
+        finally { RearmSafePointLimit(); }
     }
 
     [System.Runtime.CompilerServices.MethodImpl(
@@ -508,6 +561,7 @@ public sealed partial class Activation
         int seen;
         do seen = _safePointRequests;
         while (Interlocked.CompareExchange(ref _safePointRequests, seen | request, seen) != seen);
+        _safePointLimit = 0;
     }
 
     [System.Runtime.CompilerServices.MethodImpl(
@@ -564,18 +618,54 @@ public sealed partial class Activation
             return;
         }
         if (_gcThreshold <= 0 || _heapTop < _gcThreshold) return;
-        // Watermark crossed (~once per GcThreshold of heap allocation).
+        // Watermark crossed: collect, then re-arm from the log of the last
+        // collections (HeapGcPolicy).
+        long before = _heapTop;
+        long roots = (long)_stackTop + _bindingTrailTop + _extraTrailTop;
+        int runs = HeapGcRuns;
         CollectHeap();
-        // Re-arm: collect again only once the heap doubles past what
-        // survived (bounded below by the configured floor). If the
-        // collection freed nothing (e.g. attvars in use, or a genuinely
-        // large live set), this still pushes the threshold up so we do
-        // not retry on the very next goal.
-        long next = (long)_heapTop * 2;
         int floor = _config.GcThreshold > 0 ? _config.GcThreshold : (1 << 18);
-        _gcThreshold = next > int.MaxValue ? int.MaxValue
-            : (int)System.Math.Max(next, floor);
+        long next;
+        if (HeapGcRuns == runs)
+        {
+            // Inhibited, nothing ran and nothing was learnt: try again once
+            // the heap doubles.
+            next = System.Math.Max(2L * _heapTop, floor);
+        }
+        else
+        {
+            _gcLog ??= new HeapGcPolicy.Entry[HeapGcPolicy.LogSize];
+            var last = new HeapGcPolicy.Entry(before, _heapTop, roots, 0);
+            HeapGcPolicy.Entry? previous = _gcLogCount > 0
+                ? _gcLog[(_gcLogCount - 1) % HeapGcPolicy.LogSize] : null;
+            long margin = HeapGcPolicy.Margin(last, previous, floor);
+            if (_gcCeiling == 0) _gcCeiling = HeapGcPolicy.Ceiling(_config.MaxHeapSize);
+            next = HeapGcPolicy.NextThreshold(_heapTop, margin, _gcCeiling);
+            next = System.Math.Min(next, HeapGcPolicy.ArrayLimit(_heapTop, _heap.Length, floor));
+            _gcLog[_gcLogCount++ % HeapGcPolicy.LogSize] = last with { Margin = next - _heapTop };
+        }
+        _gcThreshold = next > int.MaxValue ? int.MaxValue : (int)next;
     }
+
+    // ADR-016's adaptive trigger: the last collections, oldest first once the
+    // ring wraps, and the heap's ceiling in cells, taken at the first
+    // collection.
+    private HeapGcPolicy.Entry[]? _gcLog;
+    private int _gcLogCount;
+    private long _gcCeiling;
+
+    /// <summary>The collections the trigger remembers, oldest first. Tests.</summary>
+    internal HeapGcPolicy.Entry[] GcLog()
+    {
+        int n = System.Math.Min(_gcLogCount, HeapGcPolicy.LogSize);
+        var result = new HeapGcPolicy.Entry[n];
+        for (int i = 0; i < n; i++)
+            result[i] = _gcLog![(_gcLogCount - n + i) % HeapGcPolicy.LogSize];
+        return result;
+    }
+
+    /// <summary>The heap top at which the next collection triggers. Tests.</summary>
+    internal int GcThresholdCells => _gcThreshold;
 
     /// <summary>ADR-035 D5+ — how many collections have actually run (compacting the heap
     /// and rewriting the trail). The debugger's rewind history records this per mark: a
@@ -610,6 +700,7 @@ public sealed partial class Activation
     /// number of cells reclaimed (0 if the collector bailed). Safe to
     /// call only at a safe point — between WAM instructions — where the
     /// machine state is consistent (no half-built structure).</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     public int CollectHeap()
     {
         // The collector used to bail here whenever an attributed variable or a
@@ -1005,6 +1096,7 @@ public sealed partial class Activation
     /// <summary>Returns <paramref name="c"/> with its heap-index payload
     /// (if any) mapped through <paramref name="forward"/>. Atomic cells
     /// are returned unchanged.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     private static Cell RelocateCell(Cell c, in GcForwarding forward)
     {
         // A valid heap index is in [0, oldTop).
@@ -1044,6 +1136,7 @@ public sealed partial class Activation
     // through Action<int>). Guards bounds defensively — a root should
     // never reference outside [0, _gcOldTop), but a stray value must not
     // crash the collector.
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.FixedInline)]
     private void GcMarkCell(int addr)
     {
         ulong[] bits = _gcBits!;
@@ -1076,6 +1169,7 @@ public sealed partial class Activation
     // leaf default. The worst a stale-but-plausible ref can do is
     // over-retain (keep a still-addressable cell alive) — never crash
     // and never corrupt.
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     private void GcMarkReferents(Cell c)
     {
         int oldTop = _gcOldTop;
@@ -1204,6 +1298,7 @@ public sealed partial class Activation
     /// bare heap indices, so they are marked explicitly. calls
     /// the de-closured <see cref="GcMarkReferents"/> /
     /// <see cref="GcMarkCell"/> directly — no per-slot delegate invoke.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     private void MarkRoots(int oldTop)
     {
         // X registers. With a live bound (a call boundary whose callee arity
@@ -1236,8 +1331,7 @@ public sealed partial class Activation
         // stale environment slot still names them. Making this precise needs a
         // per-frame live-slot count at the current continuation, which the
         // engine does not compute today.
-        for (int i = 0; i < _stackTop; i++)
-            GcMarkReferents(_stack[i]);
+        MarkStackRoots();
 
         // Binding trail: each entry is the heap address of a bound
         // variable that a backtrack will reset, so the cell must stay
@@ -1270,6 +1364,77 @@ public sealed partial class Activation
         }
     }
 
+    // Tags whose cells a root scan must look at; the rest (Int, RawInt control
+    // words, PstrBuffer) are leaves. Atom and Functor join while an atom mark
+    // runs.
+    private const uint GcRootTags =
+        (1u << (int)Tag.Ref) | (1u << (int)Tag.Str) | (1u << (int)Tag.Lis)
+        | (1u << (int)Tag.Float) | (1u << (int)Tag.BigInt) | (1u << (int)Tag.Foreign)
+        | (1u << (int)Tag.AttVar) | (1u << (int)Tag.Pstr) | (1u << (int)Tag.Rational);
+
+    // Tags whose low 32 bits are a heap index: relocating one rewrites those
+    // bits and keeps the tag (and Float's high payload bits), as RelocateCell
+    // does. Pstr packs more than the index and goes through RelocateCell.
+    private const uint GcIndexTags =
+        (1u << (int)Tag.Ref) | (1u << (int)Tag.Str) | (1u << (int)Tag.Lis)
+        | (1u << (int)Tag.Float) | (1u << (int)Tag.BigInt) | (1u << (int)Tag.AttVar);
+
+    /// <summary>The control stack's part of <see cref="MarkRoots"/>: every
+    /// slot, conservatively, as <see cref="GcMarkReferents"/> would see it.
+    /// The stack is mostly control words and references to single cells, so
+    /// leaves are skipped and a reference to a marked cell stops here.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
+    private void MarkStackRoots()
+    {
+        uint tags = GcRootTags;
+        if (_atomMarkSet is not null) tags |= (1u << (int)Tag.Atom) | (1u << (int)Tag.Functor);
+        Cell[] stack = _stack;
+        ulong[] bits = _gcBits!;
+        uint oldTop = (uint)_gcOldTop;
+        int top = System.Math.Min(_stackTop, stack.Length);
+        for (int i = 0; i < top; i++)
+        {
+            Cell c = stack[i];
+            int tag = c.TagId;
+            if ((tags & (1u << tag)) == 0) continue;
+            if (tag == (int)Tag.Ref)
+            {
+                uint a = (uint)c.AsHeapIndex;
+                if (a < oldTop && (bits[a >> 6] & (1UL << (int)(a & 63))) == 0)
+                    GcMarkCell((int)a);
+                continue;
+            }
+            GcMarkReferents(c);
+        }
+    }
+
+    /// <summary>The control stack's part of <see cref="RelocateRoots"/>:
+    /// every reference cell rewritten through the forwarding map, leaves
+    /// untouched.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
+    private void RelocateStackRoots(in GcForwarding forward)
+    {
+        Cell[] stack = _stack;
+        uint oldTop = (uint)forward.OldTop;
+        int top = System.Math.Min(_stackTop, stack.Length);
+        for (int i = 0; i < top; i++)
+        {
+            long data = stack[i].Data;
+            int tag = (int)(data >> Cell.TagShift) & 0xF;
+            if ((GcIndexTags & (1u << tag)) != 0)
+            {
+                uint idx = (uint)data;
+                if (idx >= oldTop) continue;
+                long keep = tag == (int)Tag.Float
+                    ? data & unchecked((long)0xFFFFFFFF00000000L)
+                    : (long)tag << Cell.TagShift;
+                stack[i] = new Cell(keep | (uint)forward.Of((int)idx));
+            }
+            else if (tag == (int)Tag.Pstr)
+                stack[i] = RelocateCell(stack[i], forward);
+        }
+    }
+
     /// <summary>Rewrites every external holder of a heap index through the
     /// forwarding map. The register bank and the whole control stack are
     /// relocated conservatively (matching <see cref="MarkRoots"/>):
@@ -1281,16 +1446,16 @@ public sealed partial class Activation
     /// the CP chain is walked separately to fix exactly those two slots per
     /// frame. Trails and catch frames hold bare indices, relocated
     /// explicitly.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(HelperImpl.Fixed)]
     private void RelocateRoots(GcForwarding forward, int oldTop)
     {
         for (int i = 0; i < _registers.Length; i++)
             _registers[i] = RelocateCell(_registers[i], forward);
 
-        // Whole control stack — conservative. RawInt control words pass
-        // through RelocateCell's leaf default untouched; every real
-        // reference cell (frame Y / CP arg) is relocated in place.
-        for (int i = 0; i < _stackTop; i++)
-            _stack[i] = RelocateCell(_stack[i], forward);
+        // Whole control stack, conservatively: RawInt control words stay as
+        // they are; every real reference cell (frame Y / CP arg) is relocated
+        // in place.
+        RelocateStackRoots(forward);
 
         // CP chain: the only stack slots needing boundary (not cell)
         // relocation are each frame's saved HeapTop / Hb. Re-write them as

@@ -432,6 +432,55 @@ The interpreter (or higher-level engine code) checks `_pendingException` after e
 - **PersistedAssemblyBuilder roundtrip**: compile a bundle to .dll, load it in a fresh engine, verify queries work.
 - **Native AOT**: build the project with AOT, verify it runs (Tier 0 only).
 
+## Amendment (2026-11-12): several compile workers
+
+Promotions compiled on one background thread per process, and most of a
+compile is .NET's: the first run of a chess sample program keeps that thread
+busy 1.26 s, of which 872 ms is .NET compiling the emitted IL to native code,
+268 ms the emitter and 112 ms the prelude's persisted IL. Until its code is
+ready a predicate runs on Tier-0. A `--with-compiled-il` bundle skips only the
+emitter's part.
+
+The process now runs up to `IlCompileWorker.MaxWorkers` compile threads: half
+the logical processors it may use, between 1 and 4 (`SHUMWAY_IL_WORKERS` sets
+it). A query runs on one thread, so while a program warms up the other cores
+are free; the half leaves room for SMT siblings. One starts with the first compile; another
+only when compiles wait and every started one is busy, so a program that never
+queues two compiles at once runs one. A caller waiting for its compile is
+still taken first. The activation's threading model does not change: the
+workers compile, the engine thread installs what they finish, as before.
+
+The code a predicate gets is what one worker gives it. An emission decides
+from what the earlier ones emitted: a predicate a region absorbed since it was
+queued skips its own compile, and a region calls a callee with code of its
+own, or coming, instead of copying it. So each engine's background emissions
+take turns, in the order they were queued, and only the compile to native
+code runs on several workers; their completions reach the engine thread in
+that order too, or the drain of a skipped member, before its region's, forgets
+the member the later emissions read. A turn that waits 30 s goes on without
+it, with a line on stderr, so a lost turn costs order, never the workers.
+
+Compiles of one engine run at once on one `IlPredicateCompiler`. Its ambient
+state was already per thread (literal pools, region roots and scope, native
+inlining), because the engine thread compiles too. Its region caches were not:
+the callers index and the member-eligibility cache are now published whole
+(the latter a concurrent dictionary), and the region cost trace is per thread.
+
+On this note's machine (8 logical processors, so 4 workers) the chess sample's
+first `main`, one build with `SHUMWAY_IL_WORKERS` at 1, 2 and 4 (processor
+capped, interleaved, four runs each), takes 8.61, 7.59 and 7.61 s best, and
+8.93, 8.02 and 7.64 s median; with four the runs agree within 0.04 s, against
+1.1 s with fewer, whose warm-up depends on the order the compiles land in. The
+second and third `main` stay at about 6.0 s. Tests:
+`IlConcurrentCompileTests` (eight threads compile regions with one compiler;
+red without the cache changes, a `Dictionary` corrupted by a concurrent
+update), `ParallelPromotionTests` (24 regions of one engine compiled at once
+answer as on Tier-0, and two compiles overlapped), `IlCompileWorkerTests`
+(with every worker held, the one released takes the waiting caller first; the
+worker count rule), and `RegionInstalledRootsTests`, unchanged, which pin what
+one worker emits: red with free emission, and with turns but completions in
+any order.
+
 ## Related ADRs
 
 - ADR-006 (Bytecode Encoding): the IL compiler consumes bytecode.

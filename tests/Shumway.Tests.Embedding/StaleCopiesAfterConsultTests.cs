@@ -104,17 +104,14 @@ public sealed class StaleBackgroundCompileTests : IDisposable
         e.IlPromotion.Threshold = 1;
         e.ConsultFile(prog);
 
-        using var running = new ManualResetEventSlim();
-        using var release = new ManualResetEventSlim();
-        IlCompileWorker.RunAsync(() => { running.Set(); release.Wait(); return null; }, (_, _) => { });
-        Assert.True(running.Wait(60_000), "the worker did not reach the item that holds it");
+        var held = IlCompileWorker.Hold();
         try
         {
             // Queues loop/1's compile, which copies q/1 as it is now.
             Assert.False(e.Query("loop(10).").Success);
             e.ConsultFile(extra);
         }
-        finally { release.Set(); }
+        finally { held.Dispose(); }
 
         Assert.True(e.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
         Assert.True(e.Query("loop(10).").Success);

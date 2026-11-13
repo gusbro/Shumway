@@ -277,6 +277,128 @@ public sealed partial class IlPredicateCompiler
         emit.MarkLabel(end);
     }
 
+    /// <summary>Whether get_value_x guards try <see cref="EmitGetValueSurelyFails"/>
+    /// before they open. An off switch for measuring it.</summary>
+    internal static bool GuardQuickReject { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_IL_GUARD_QUICKREJECT") != "0";
+
+    /// <summary>Guards emitted with the quick reject, over every method compiled in this process.</summary>
+    public static int GuardQuickRejectSites;
+
+    // How many first arguments down the quick reject follows two compounds of
+    // one functor.
+    private const int QuickRejectFirstArgLevels = 2;
+
+    /// <summary>ADR-031: a guard whose first instruction is get_value_x(Xs, Aa)
+    /// branches to <paramref name="reject"/> when its two cells already differ
+    /// as terms, seen without binding, so a failing head opens no guard and
+    /// calls no unifier. Each side is followed one reference at most: a value
+    /// further away, a variable, an attributed variable or a packed string, and
+    /// the same cell, fall through to the guard. Two cells of different tags,
+    /// two distinct immediates, or two compounds of different functors reject:
+    /// the unifier fails each before it binds anything or queues a wakeup. Two
+    /// compounds of one functor are looked at again in their first arguments,
+    /// a few levels down, whatever their arity: a further look would walk the
+    /// terms the unifier walks.</summary>
+    private static void EmitGetValueSurelyFails(IlEmit emit, int srcReg, int argReg, IlLabel reject, string salt)
+    {
+        System.Threading.Interlocked.Increment(ref GuardQuickRejectSites);
+        var rf = RegisterFileOf(emit);
+        IlLocal Local<T>(string name, int key)
+            => rf is not null ? rf.Temp(typeof(T), KU + key) : emit.DeclareLocal<T>($"qr_{name}{salt}");
+        var heap = Local<Cell[]>("heap", 2);
+        var a = Local<long>("a", 2);
+        var b = Local<long>("b", 3);
+        var level = Local<int>("level", 2);
+        var go = emit.DefineLabel($"qr_go{salt}");
+        var look = emit.DefineLabel($"qr_look{salt}");
+        EmitLoadEngineField(emit, EngHeap);
+        emit.StoreLocal(heap);
+        EmitLoadRegisterConst(emit, srcReg);
+        emit.LoadField(CellDataField);
+        emit.StoreLocal(a);
+        EmitLoadRegisterConst(emit, argReg);
+        emit.LoadField(CellDataField);
+        emit.StoreLocal(b);
+        emit.LoadConstant(QuickRejectFirstArgLevels);
+        emit.StoreLocal(level);
+        // One look per level, the cells first and then their first arguments.
+        emit.MarkLabel(look);
+        EmitDerefOnce(emit, heap, a, go);
+        EmitDerefOnce(emit, heap, b, go);
+        emit.LoadLocal(a);
+        emit.LoadLocal(b);
+        emit.BranchIfEqual(go);
+        EmitBranchIfTagIn(emit, a, AttVarOrPstrTags, go);
+        EmitBranchIfTagIn(emit, b, AttVarOrPstrTags, go);
+        emit.LoadLocal(a);
+        emit.LoadConstant(Cell.TagShift);
+        emit.UnsignedShiftRight();
+        emit.LoadLocal(b);
+        emit.LoadConstant(Cell.TagShift);
+        emit.UnsignedShiftRight();
+        emit.UnsignedBranchIfNotEqual(reject);
+        EmitBranchIfTagIn(emit, a, ImmediateTags, reject);
+        EmitTagIs(emit, a, Tag.Str);
+        emit.BranchIfFalse(go);
+        EmitFunctorCellBits(emit, heap, a);
+        EmitFunctorCellBits(emit, heap, b);
+        emit.UnsignedBranchIfNotEqual(reject);
+        // Two compounds of one functor: their first arguments, while levels remain.
+        emit.LoadLocal(level);
+        emit.BranchIfFalse(go);
+        emit.LoadLocal(level);
+        emit.LoadConstant(1);
+        emit.Subtract();
+        emit.StoreLocal(level);
+        EmitFirstArgumentBits(emit, heap, a);
+        EmitFirstArgumentBits(emit, heap, b);
+        emit.Branch(look);
+        emit.MarkLabel(go);
+    }
+
+    // bits := what the reference in bits points at, when it is one; a
+    // reference again (a variable, or a chain) goes to the guard.
+    private static void EmitDerefOnce(IlEmit emit, IlLocal heap, IlLocal bits, IlLabel guard)
+    {
+        var value = emit.DefineLabel($"qr_value_{NextLabelSeq()}");
+        EmitTagIs(emit, bits, Tag.Ref);
+        emit.BranchIfFalse(value);
+        emit.LoadLocal(heap);
+        emit.LoadLocal(bits);
+        emit.Convert<int>();
+        emit.LoadElement<Cell>();
+        emit.LoadField(CellDataField);
+        emit.StoreLocal(bits);
+        EmitTagIs(emit, bits, Tag.Ref);
+        emit.BranchIfTrue(guard);
+        emit.MarkLabel(value);
+    }
+
+    // The bits of the functor cell a compound's bits point at.
+    private static void EmitFunctorCellBits(IlEmit emit, IlLocal heap, IlLocal bits)
+    {
+        emit.LoadLocal(heap);
+        emit.LoadLocal(bits);
+        emit.Convert<int>();
+        emit.LoadElement<Cell>();
+        emit.LoadField(CellDataField);
+    }
+
+    // bits := the first argument of the compound whose bits are in bits.
+    private static void EmitFirstArgumentBits(IlEmit emit, IlLocal heap, IlLocal bits)
+    {
+        emit.LoadLocal(heap);
+        emit.LoadLocal(bits);
+        emit.Convert<int>();
+        emit.LoadConstant(1);
+        emit.Add();
+        emit.LoadElement<Cell>();
+        emit.LoadField(CellDataField);
+        emit.StoreLocal(bits);
+    }
+
+
     /// <summary>Pushes what a variable is bound to for the value in
     /// <paramref name="bits"/>: a reference to <paramref name="home"/> for a
     /// compound reached through a reference, the cell itself otherwise.</summary>
@@ -345,7 +467,7 @@ public sealed partial class IlPredicateCompiler
         emit.StoreLocal(regs);
         EmitLoadEngineField(emit, EngHeap);
         emit.StoreLocal(heap);
-        if (window != ListWindow.Plain)
+        if (window != ListWindow.Plain && Math.Max(s1, s2) >= Activation.MinRegisterCount)
         {
             // The window's registers must exist; growing the bank is the helper's.
             emit.LoadConstant(Math.Max(s1, s2));
@@ -356,9 +478,7 @@ public sealed partial class IlPredicateCompiler
         }
 
         // c := X[arg]; a list is read, a reference is followed one step.
-        emit.LoadLocal(regs);
-        emit.LoadConstant(arg);
-        emit.LoadElement<Cell>();
+        EmitRegisterRef(emit, () => emit.LoadLocal(regs), arg);
         emit.LoadField(CellDataField);
         emit.StoreLocal(c);
         emit.LoadLocal(c);
@@ -528,13 +648,28 @@ public sealed partial class IlPredicateCompiler
         return true;
     }
 
-    /// <summary>X[index] pushed, for a constant index: a plain element load,
-    /// as the register helpers read the bank.</summary>
+    private static readonly MethodInfo RegisterAtMethod =
+        typeof(Activation).GetMethod(nameof(Activation.RegisterAt))!;
+
+    /// <summary>Pushes a reference to X[index] of the bank
+    /// <paramref name="pushBank"/> leaves, for a constant index: below the
+    /// bank's floor (<see cref="Activation.MinRegisterCount"/>) with no bounds
+    /// check (<see cref="Activation.RegisterAt"/>), above it through
+    /// <c>ldelema</c>.</summary>
+    private static void EmitRegisterRef(IlEmit emit, Action pushBank, int index)
+    {
+        pushBank();
+        emit.LoadConstant(index);
+        if ((uint)index < Activation.MinRegisterCount) emit.Call(RegisterAtMethod);
+        else emit.LoadElementAddress(typeof(Cell));
+    }
+
+    /// <summary>X[index] pushed, for a constant index: a plain read of the
+    /// bank, as the register helpers read it.</summary>
     private static void EmitLoadRegisterConst(IlEmit emit, int index)
     {
-        EmitLoadEngineField(emit, EngRegisters);
-        emit.LoadConstant(index);
-        emit.LoadElement<Cell>();
+        EmitRegisterRef(emit, () => EmitLoadEngineField(emit, EngRegisters), index);
+        emit.LoadObject(typeof(Cell));
     }
 
     /// <summary>X[index] := the cell <paramref name="pushValue"/> leaves, for a
@@ -545,10 +680,9 @@ public sealed partial class IlPredicateCompiler
     {
         if (index >= 0 && index < Activation.MinRegisterCount && RegisterFileOf(emit) is not null)
         {
-            EmitLoadEngineField(emit, EngRegisters);
-            emit.LoadConstant(index);
+            EmitRegisterRef(emit, () => EmitLoadEngineField(emit, EngRegisters), index);
             pushValue();
-            emit.StoreElement<Cell>();
+            emit.StoreObject(typeof(Cell));
             return;
         }
         emit.LoadArgument(0);
@@ -934,14 +1068,9 @@ public sealed partial class IlPredicateCompiler
     private static void EmitRegisterBits(IlEmit emit, IlLocal regs,
         int slot, Action pushBits)
     {
-        var cell = RegisterFileOf(emit)!.Temp(typeof(Cell), KU + 1);
-        emit.LoadLocalAddress(cell);
+        EmitRegisterRef(emit, () => emit.LoadLocal(regs), slot);
         pushBits();
         emit.StoreField(CellDataField);
-        emit.LoadLocal(regs);
-        emit.LoadConstant(slot);
-        emit.LoadLocal(cell);
-        emit.StoreElement<Cell>();
     }
 
     /// <summary>X[slot] := heap[p + offset], a bare ATTVAR taken as a Ref to
