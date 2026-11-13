@@ -1755,8 +1755,8 @@ public sealed partial class IlPredicateCompiler
         }
         var cpsOpaque = cpsFields ? default : CpsOpaque();
         // ADR-031 indexed buckets — dynamicFailDispatch replaces the static
-        // guard-fail branch (the stub ends with a switch over the per-member
-        // next-node local instead of `br nextClauseLabel`), and dynamicCursor
+        // guard-fail branch (the stub ends at the method's one switch over the
+        // per-member next-node local instead of `br nextClauseLabel`), and dynamicCursor
         // replaces the constant lazy-CP cursor with a load of that local
         // (value -1 = chain tail → the rare paths skip the CP push).
         IlLocal? bt = null, xt = null, h = null, hb = null, ee = null;

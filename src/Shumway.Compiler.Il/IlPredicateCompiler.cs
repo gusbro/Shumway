@@ -123,8 +123,15 @@ public sealed partial class IlPredicateCompiler
             return NoteArtifactDelegate(cpsBase, emit.Literals);
         DumpIl(emit, header);
         DumpRegionCost(emit);
+        LastEmitShape = new EmitShape(emit.InstructionCount, emit.SwitchTargetCount, emit.BlockCount);
         return NoteArtifactDelegate(emit.CreateDelegate(initLocals: ZeroLocals), emit.Literals);
     }
+
+    /// <summary>The size of a method as the JIT sees it.</summary>
+    internal readonly record struct EmitShape(int Instructions, int SwitchTargets, int Blocks);
+
+    /// <summary>For tests: the last method this thread finished emitting.</summary>
+    [ThreadStatic] internal static EmitShape? LastEmitShape;
 
     /// <summary>The method's IL to <c>SHUMWAY_IL_DUMP</c>, as finished.</summary>
     private static void DumpIl(IlEmit emit, string header)
@@ -1148,7 +1155,7 @@ public sealed partial class IlPredicateCompiler
                 }
                 IlRegionCost.Log(new IlRegionCost.Emission(predicate.FunctorId, region.MemberCount,
                     emit.LocalRefCount, emit.Size, emit.InstructionCount, emit.LocalCount, 1, Persisted: true,
-                    emit.InlineCount, emit.BlockCount));
+                    emit.InlineCount, emit.BlockCount, emit.SwitchTargetCount));
                 return FinishPersistedEmit(emit,
                     $"persist region root fid={predicate.FunctorId} {FidName(predicate.FunctorId)}"
                     + $"/{predicate.Arity} members={region.MemberCount} "

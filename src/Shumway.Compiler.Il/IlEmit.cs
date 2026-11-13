@@ -161,6 +161,10 @@ public sealed class IlEmit
     /// <summary>Instructions emitted so far, a pending call included.</summary>
     public int InstructionCount { get; private set; }
 
+    /// <summary>The targets of every <c>switch</c> emitted so far: the JIT
+    /// works per edge of the flow graph, and these are most of them.</summary>
+    public int SwitchTargetCount { get; private set; }
+
     /// <summary>Loads and stores of arguments and locals emitted so far,
     /// address loads included: what the JIT counts against the threshold
     /// past which it stops optimizing (<see cref="IlJitLimits"/>).</summary>
@@ -582,6 +586,7 @@ public sealed class IlEmit
     public void Switch(params IlLabel[] labels)
     {
         Begin();
+        SwitchTargetCount += labels.Length;
         foreach (var l in labels) { Own(l); l.Used = true; }
         _il.Emit(OpCodes.Switch, labels.Select(l => l.Label).ToArray());
         if (_text is not null) Text("switch", string.Join(", ", labels.Select(l => l.Name)));
