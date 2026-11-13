@@ -964,7 +964,7 @@ shumway-link -o app.shum \
 | `--dump-il <path>` | Append the Tier-1 IL the bundle **ships** to `<path>` (implies `--with-compiled-il`). See [below](#dumping-the-shipped-il--wam-from-the-linker). |
 | `-e, --exe <path>` | Emit a single-file native executable. See [step 3a](#step-3a-producing-a-runnable-executable). |
 | `-g, --goal Term` | The goal the `--exe` runs at startup. Trailing `.` optional. |
-| `--self-contained` | Used with `--exe`: bake the .NET runtime into the binary (~70 MB exe, runs on machines without .NET). Default is framework-dependent (~5-10 MB exe, requires .NET 10 runtime on the target). |
+| `--self-contained` | Used with `--exe`: bake the .NET runtime into the binary (~70 MB exe, runs on machines without .NET). Default is framework-dependent (~5-10 MB exe, requires the .NET 10 runtime on the target, or a later major version when 10 is not installed). |
 | `--debug` | Used with `--exe`: build the executable debuggable, so its modules compile debuggable and it materialises their embedded source at startup, so a debugger attached to the process sets breakpoints and steps (see [`debugger.md`](debugger.md)). Requires the bundle to carry source (compile inputs with `shumway-compile --debug`; not with `--strip`). |
 | `--debug-wait` | Like `--debug`, but the executable also blocks at startup until a debugger has attached and armed its breakpoints, so the first goal can be stopped in. Implies `--debug`. |
 | `--dap-port <port>` | With `--exe --debug`: bake a VS Code (DAP) debug endpoint into the executable: it listens on `127.0.0.1:<port>` whenever it runs. At run time `SHUMWAY_DAP_PORT` overrides the baked port (`0` disables). Implies `--debug`. See [`debugger-vscode.md`](debugger-vscode.md). |
@@ -1078,7 +1078,8 @@ root, so `--goal` alone is enough: `--entry` is optional in the
 **Deployment modes:**
 
 - **Default (framework-dependent)**: ~5-10 MB single file. Requires
-  .NET 10 runtime to be installed on the target machine.
+  the .NET 10 runtime on the target machine, or a later major version
+  when 10 is not installed (the executable rolls forward to it).
 - **`--self-contained`**: ~70 MB single file. The .NET runtime is
   baked in; the binary runs on machines with nothing installed.
 
