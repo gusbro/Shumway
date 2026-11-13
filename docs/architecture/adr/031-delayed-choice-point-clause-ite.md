@@ -201,7 +201,11 @@ ISO 277.
   clause's ONE shared guard block; guard failure restores and dispatches on
   the local (an IL `switch` over the method's cursor labels — the −1
   sentinel falls through the unsigned switch to the method fail), replacing
-  the push + engine round trip. The rare paths (pending-wakeup lazy CP,
+  the push + engine round trip. That switch is emitted once per method and
+  every guard's failure branches to it; in a region, once per region, on a
+  cursor local each member stores its `idxnext` into. A switch in every
+  guard made the flow graph quadratic in the clauses: the JIT took 17 s
+  on a table of 500 facts, 0.5 s with the one switch. The rare paths (pending-wakeup lazy CP,
   ADR-034 staleness fallback) materialize the skipped CP FROM the local,
   skipping the push on the sentinel. ONE local per indexed member suffices:
   its live range is [node entry → guard resolution] and fail-direct guards

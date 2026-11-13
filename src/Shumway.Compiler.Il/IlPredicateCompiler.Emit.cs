@@ -2939,6 +2939,7 @@ public sealed partial class IlPredicateCompiler
 
         // ---- Clause bodies, emitted once and shared across nodes. ----
         int siteCounter = 0;
+        IlLabel? guardFailDispatch = null;
         for (int i = 0; i < N; i++)
         {
             if (CpsPrunedAway(info.Clauses[i].Start, info.Clauses[i].End)) continue;
@@ -2995,6 +2996,15 @@ public sealed partial class IlPredicateCompiler
                         // the engine cursor in idxnext indexes the same label
                         // array the method's cursor dispatch uses; the tail
                         // sentinel (-1) falls through the unsigned switch.
+                        // One dispatch for every guard: a switch per clause
+                        // makes the JIT's flow graph quadratic in the clauses.
+                        if (guardFailDispatch is not null)
+                        {
+                            emit.Branch(guardFailDispatch);
+                            return;
+                        }
+                        guardFailDispatch = emit.DefineLabel("idx_guard_fail");
+                        emit.MarkLabel(guardFailDispatch);
                         LoadNext(emit);
                         emit.Switch(cursorLabels);
                         emit.Branch(failLabel);

@@ -224,6 +224,11 @@ public sealed partial class IlPredicateCompiler
         // calls the methods (it holds no registers, or it is compiled for
         // verification or for the debugger).
         public FrameLocals? Frames;
+        // ADR-031: the one dispatch every indexed member's guard failure goes
+        // through, on the cursor it stores; a switch over the region's cursors
+        // per clause makes the JIT's flow graph quadratic.
+        public IlLabel? GuardFailDispatch;
+        public IlLocal? GuardFailCursor;
     }
 
     /// <summary>Stage-3 eligibility: a region this minimal emit can handle — at
@@ -753,7 +758,8 @@ public sealed partial class IlPredicateCompiler
             }
             int regionFid = region.Root.FunctorId;
             IlRegionCost.Log(new IlRegionCost.Emission(regionFid, region.MemberCount, emit.LocalRefCount,
-                emit.Size, emit.InstructionCount, emit.LocalCount, attempt, Persisted: false, emit.InlineCount, emit.BlockCount));
+                emit.Size, emit.InstructionCount, emit.LocalCount, attempt, Persisted: false, emit.InlineCount, emit.BlockCount,
+                emit.SwitchTargetCount));
             finalPlan = plan;
             return FinishEmit(emit,
                 $"region root={regionFid} {FidName(regionFid)} members=["
@@ -1408,7 +1414,17 @@ public sealed partial class IlPredicateCompiler
                         // idxnext (the region-wide label table — the same
                         // mapping the method's cursor switch uses); the tail
                         // sentinel (-1) falls through to the region fail.
+                        ctx.GuardFailCursor ??= emit.DeclareLocal<int>("ridx_guard_fail_cursor");
                         emit.LoadLocal(idxNext!);
+                        emit.StoreLocal(ctx.GuardFailCursor);
+                        if (ctx.GuardFailDispatch is not null)
+                        {
+                            emit.Branch(ctx.GuardFailDispatch);
+                            return;
+                        }
+                        ctx.GuardFailDispatch = emit.DefineLabel("ridx_guard_fail");
+                        emit.MarkLabel(ctx.GuardFailDispatch);
+                        emit.LoadLocal(ctx.GuardFailCursor);
                         emit.Switch(ctx.CursorLabels);
                         emit.Branch(ctx.FailLabel);
                     },
