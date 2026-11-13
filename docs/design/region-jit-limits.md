@@ -425,8 +425,8 @@ restores the old form; 0 copies only the owned.
 
 ## A region in several methods
 
-**Status**: in progress (2026-11), stages 1 and 2 of the plan below. Off
-by default until stage 4 measures it.
+**Status**: in progress (2026-11), stages 1 to 3 of the plan below, the
+runtime's promotions only. Off by default until stage 4 measures it.
 
 A region is one method, and the target bounds it: a member is copied only
 if its block fits beside the others, and a predicate whose own block is
@@ -488,19 +488,18 @@ cursors and resume cursors after all of them, in member order. A partition
 of consecutive members therefore holds three runs of consecutive cursors,
 and its resume entries are tested against one range.
 
-Then a member past the target alone, between its clauses (a chain) or
-its index nodes, in their order. An alternative's cursor, its resume entry
-and its clause or node go to the same partition, and the member's entry
-(the index's resolve) to the partition of its first piece. A node runs a
-clause body that nodes of other buckets run too (a clause with a variable
-key is in every bucket), so a body is emitted in each partition holding a
-node that runs it, and the cursors of its sites are held by each: a return
-to one of them continues in whichever copy the method has, and a partition
-without one routes to the first. The nodes of one bucket's chain stay
-together when the chain fits a partition of its own, so its backtracking
-stays in one method. A clause is never cut, since its code holds values in
-locals from one instruction to the next: a member of one large clause stays
-whole.
+Then a member past the target alone, between its clauses, in their order.
+An alternative's cursor, its resume entry and its clause go to the same
+partition, and the member's entry (an index's resolve) to the partition of
+its first clause. An index node goes with the clause body it runs: no body
+is emitted twice, a bucket of consecutive clauses backtracks in one method,
+and the chain of the clauses with a variable key crosses only where the
+clauses are cut. Cut by node instead, the chain of every clause took the
+bodies first and each bucket copied its own again, twice the code. A
+partition's resume cursors are then not one run, and the test before the
+restore is a switch over them. A clause is never cut, since its code holds
+values in locals from one instruction to the next: a member of one large
+clause stays whole.
 
 Every partition emits a route to every other, so the routes of a region
 grow with the square of its partitions; the planner keeps them few.
@@ -527,11 +526,15 @@ grow with the square of its partitions; the planner keeps them few.
    transfers between them ran (`IlPredicateCompiler.CountPartitionTransfers`,
    read when the stubs are emitted).
 1. Cuts between members, for runtime promotions, behind the switch.
-2. Cuts between the clauses of one member and between the nodes of an
-   index, its clause bodies copied into each method that runs them.
-3. The planner plans regions past one method's target, in as many methods
-   as the members need; bundles persist the partitions as methods of their
-   type.
+2. Cuts between the clauses of one member, a chain or an index.
+3. The planner plans a region that may be emitted in several methods under
+   `IlRegionCost.MaxPartitions` (`SHUMWAY_REGION_PARTITIONS`, 4) targets,
+   in local references and in bytecode bytes, and a root alone past one
+   method's budget is a region of one member when it fits them; a
+   partition past a limit of the JIT, or past the locals target, cuts the
+   region again under a lower target, up to three times, before one method
+   plans it again. Still to do: bundles persisting the partitions as
+   methods of their type.
 4. Measured on the chess program, Blint and a `member/2` loop, ABBA, before
    it is on by default.
 

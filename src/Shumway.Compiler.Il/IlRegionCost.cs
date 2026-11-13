@@ -114,6 +114,18 @@ internal static class IlRegionCost
         int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_REGION_PARTITION_LVREFS"), out var pr) && pr >= 0
             ? pr : 0;
 
+    /// <summary>The methods a region may need, with <see cref="PartitionRefs"/>
+    /// set: the region is planned under this many partitions' targets.
+    /// <c>SHUMWAY_REGION_PARTITIONS</c>.</summary>
+    public static int MaxPartitions { get; set; } =
+        int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_REGION_PARTITIONS"), out var mp) && mp >= 1
+            ? mp : 4;
+
+    /// <summary>What a region's members may add up to when it may be emitted
+    /// in several methods: <see cref="MaxPartitions"/> partitions' targets,
+    /// and never less than one method's budget.</summary>
+    public static int PartitionedPlanBudget => Math.Max(PlanBudget, MaxPartitions * PartitionRefs);
+
     /// <summary>The shared tail of a region with that many resume entries and
     /// ladder entries.</summary>
     public static int TailCost(int resumeCursors, int ladderEntries)

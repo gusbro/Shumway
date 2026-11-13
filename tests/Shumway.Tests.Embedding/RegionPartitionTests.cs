@@ -43,13 +43,13 @@ public sealed class RegionPartitionTests
     /// region was emitted in several methods and transfers between them ran.
     /// The first Tier-1 run compiles the region; the second runs it.</summary>
     private static string SameOnBothTiers(string program, (string Name, int Arity) root, string goal,
-        bool pieces = false)
+        bool pieces = false, int target = 1, Action<List<IlRegionCost.Emission>>? methodsCheck = null)
     {
         int partitionRefs = IlRegionCost.PartitionRefs;
         bool counting = IlPredicateCompiler.CountPartitionTransfers;
         try
         {
-            IlRegionCost.PartitionRefs = 1;
+            IlRegionCost.PartitionRefs = target;
             IlPredicateCompiler.CountPartitionTransfers = true;
             IlRegionCost.ResetDiagnostics();
             string expected = Answer(Engine(program, 0), goal);
@@ -65,6 +65,7 @@ public sealed class RegionPartitionTests
             Assert.True(methods.Any(r => r.Partitions >= 2),
                 $"{root.Name}/{root.Arity}: no region in several methods ("
                 + string.Join(", ", methods.Select(r => $"{r.Members} members, partition {r.Partition} of {r.Partitions}")) + ")");
+            methodsCheck?.Invoke(methods);
 
             long before = Interlocked.Read(ref IlPredicateCompiler.PartitionTransfers);
             Assert.Equal(expected, Answer(e, goal));
@@ -317,6 +318,67 @@ dg_pick(_, big).
             + "findall(X-R, (member(X, [1, 7]), dg_run(X, R)), L2), retract(dg_lim(10)), assertz(dg_lim(5)), L = L1/L2.",
             pieces: true);
         Assert.Equal("[1-small,7-big]/[1-small,7-small]", answer.Replace(" ", ""));
+    }
+
+    // A root whose block alone is past one method's budget: keys k1..kN, two
+    // clauses each, every clause some arithmetic and a call to a small helper.
+    private static string BigRoot(string p, int keys)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($":- public {p}_big/3.");
+        for (int i = 1; i <= keys; i++)
+        {
+            sb.AppendLine($"{p}_big(k{i}, X, R) :- X > {i}, Y is X * {i} + 1, {p}_inc(Y, Z), R = r({i}, Z).");
+            sb.AppendLine($"{p}_big(k{i}, X, R) :- X =< {i}, {p}_inc(X, Z), R = s({i}, Z).");
+        }
+        sb.AppendLine($"{p}_inc(X, Y) :- Y is X + 1.");
+        return sb.ToString();
+    }
+
+    // About 600 local references a key: past one method's budget alone, under
+    // four partitions of the target the test sets.
+    private const int BigKeys = 16;
+
+    [Fact]
+    public void ARootPastOneMethodsBudgetIsARegionInSeveralMethods()
+    {
+        // Planned under several methods' budgets, the root is a region with
+        // its helper, cut in pieces, each method inside the JIT's limits.
+        string answer = SameOnBothTiers(BigRoot("bp", BigKeys), ("bp_big", 3),
+            "findall(K-R, (member(K, [k1, k7, k12, k16, kz]), member(X, [0, 3, 50]), bp_big(K, X, R)), L).",
+            pieces: true, target: 4000, methodsCheck: methods =>
+            {
+                var last = methods.Where(r => r.Partitions >= 2).GroupBy(r => r.Partitions).Last().ToList();
+                Assert.Contains(last, r => r.Members >= 2);
+                foreach (var r in last)
+                {
+                    Assert.True(r.LocalRefs <= IlJitLimits.LocalRefs, $"partition {r.Partition}: {r.LocalRefs} local refs");
+                    Assert.True(r.Blocks <= IlJitLimits.BasicBlocks, $"partition {r.Partition}: {r.Blocks} blocks");
+                    Assert.True(r.IlBytes <= IlJitLimits.IlBytes, $"partition {r.Partition}: {r.IlBytes} IL bytes");
+                }
+            });
+        Assert.StartsWith("[k1-s(1,1),k1-r(1,5),k1-r(1,52)", answer.Replace(" ", ""));
+    }
+
+    [Fact]
+    public void WithoutPartitionsTheSameRootIsNoRegion()
+    {
+        // The control: one method's budget leaves the root alone, past it,
+        // and alone it is no region.
+        int partitionRefs = IlRegionCost.PartitionRefs;
+        try
+        {
+            IlRegionCost.PartitionRefs = 0;
+            IlRegionCost.ResetDiagnostics();
+            var e = Engine(BigRoot("bq", BigKeys), 1);
+            Assert.Equal("[s(1,2)]", Answer(e, "findall(R, bq_big(k1, 1, R), L).").Replace(" ", ""));
+            Assert.True(e.IlPromotion.IsPromoted(Fid("bq_big", 3)));
+            Assert.DoesNotContain(IlRegionCost.Emissions, r => r.RootFid == Fid("bq_big", 3));
+        }
+        finally
+        {
+            IlRegionCost.PartitionRefs = partitionRefs;
+        }
     }
 
     [Fact]

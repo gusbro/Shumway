@@ -798,7 +798,7 @@ public sealed partial class IlPredicateCompiler
         if (EffectiveRegionCompile && !CpsMode && !_noBytecode && calleeMap is not null)   // ADR-061: no regions
         {
             var region = PlanRegion(predicate, calleeMap);
-            if (IsRegionEmittable(region, calleeMap, out var why))
+            if (RegionEmittable(region, calleeMap, out var why))
             {
                 DiagShape("1", true, () =>
                     $"[region-emit] root fid={predicate.FunctorId} members={region.MemberCount}"
