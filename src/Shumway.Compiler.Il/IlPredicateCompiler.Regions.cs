@@ -694,6 +694,12 @@ public sealed partial class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, SelfDelegateEmitter emitSelf,
         out IlRegionPlan finalPlan)
     {
+        if (RegionPartitionsOf(region, calleeMap) is { } memberPartition
+            && CompilePartitions(region, plan, calleeMap, emitSelf, memberPartition) is { } partitioned)
+        {
+            finalPlan = plan;
+            return partitioned;
+        }
         for (int attempt = 1; ; attempt++)
         {
             var emit = IlEmit.NewDynamicMethod(
@@ -768,6 +774,109 @@ public sealed partial class IlPredicateCompiler
         }
     }
 
+    /// <summary>Per member, the partition that holds it, when the region is
+    /// emitted in several methods (<see cref="IlRegionCost.PartitionRefs"/>):
+    /// members whole, consecutive in the plan's order, each partition under
+    /// the target. Null for one method.</summary>
+    private int[]? RegionPartitionsOf(IlRegion region, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    {
+        int target = IlRegionCost.PartitionRefs;
+        if (target <= 0 || region.MemberCount < 2 || DebugMode || CpsMode
+            || _persistPatches is not null || _persistScratch) return null;
+        var result = new int[region.MemberCount];
+        int p = 0, used = 0;
+        for (int mi = 0; mi < region.MemberCount; mi++)
+        {
+            int cost = RegionMemberCost(region.Members[mi], calleeMap) + IlRegionCost.PerMemberReturn;
+            if (mi > 0 && used + cost > target) { p++; used = 0; }
+            result[mi] = p;
+            used += cost;
+        }
+        return p == 0 ? null : result;
+    }
+
+    /// <summary>Per cursor of the plan, resume cursors included, the partition
+    /// of the member it belongs to. Resume cursors are numbered as
+    /// <see cref="EmitRegionInto"/> numbers them, in the plan's order.</summary>
+    private static int[] CursorPartitions(IlRegionPlan plan, int[] memberPartition, out int resumeCount)
+    {
+        resumeCount = 0;
+        foreach (var s in plan.Sites)
+            if (s.Kind == RegionCursorKind.ClauseAlt || s.Kind == RegionCursorKind.IndexNode)
+                resumeCount++;
+        var result = new int[plan.TotalCursors + resumeCount];
+        result[0] = memberPartition[0];
+        int r = plan.TotalCursors;
+        foreach (var s in plan.Sites)
+        {
+            int p = memberPartition[s.MemberIndex];
+            result[s.Cursor] = p;
+            if (s.Kind == RegionCursorKind.ClauseAlt || s.Kind == RegionCursorKind.IndexNode)
+                result[r++] = p;
+        }
+        return result;
+    }
+
+    /// <summary>The region as several methods over its one cursor space, the
+    /// first the delegate it registers; null when one of them would be past a
+    /// limit of the JIT or cannot be emitted, and the region is one method.</summary>
+    private PredicateDelegate? CompilePartitions(IlRegion region, IlRegionPlan plan,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, SelfDelegateEmitter emitSelf,
+        int[] memberPartition)
+    {
+        int k = memberPartition[memberPartition.Length - 1] + 1;
+        int regionFid = region.Root.FunctorId;
+        var cursorPartition = CursorPartitions(plan, memberPartition, out int resumeCount);
+        int markerRunReserve = (plan.TotalCursors + resumeCount - 1 + 15) & ~15;
+        int runBase = Activation.ReserveResumeMarkerRange(regionFid, 1, markerRunReserve);
+        System.Threading.Interlocked.Increment(
+            ref runBase >= 0 ? ref RegionMarkerRuns : ref RegionMarkerRunMisses);
+        var emits = IlEmit.NewDynamicMethods($"ShumwayIlRegion_{regionFid}_{region.Root.Arity}", k,
+            record: IlDumpPath is not null);
+        string header = $"region root={regionFid} {FidName(regionFid)} members=["
+            + string.Join(",", region.Members.Select(m => $"{m.FunctorId}:{FidName(m.FunctorId)}/{m.Arity}x{m.ClauseCount}"))
+            + "]";
+        _streamSites = new List<(byte[] Code, int Pc)>();
+        try
+        {
+            for (int p = 0; p < k; p++)
+            {
+                var part = new RegionPartition
+                {
+                    Index = p, Methods = emits, MemberPartition = memberPartition,
+                    CursorPartition = cursorPartition, MarkerRunBase = runBase,
+                };
+                EmitRegionInto(emits[p], emitSelf, region, plan, calleeMap,
+                    typeof(Func<Activation, int, bool>), part);
+                EmitRegionTail(emits[p]);
+                if (_regionTrace is { } tr) tr.Attempt = 1;
+                DumpIl(emits[p], $"{header} partition {p} of {k}");
+                DumpRegionCost(emits[p]);
+            }
+        }
+        catch (Exception ex) when (ex is NotSupportedException or IlEmitException)
+        {
+            _regionTrace = null;
+            return null;
+        }
+        finally { _streamSites = null; }
+        foreach (var e in emits)
+            if (IlJitLimits.Exceeded(e, out _)) return null;
+        for (int p = 0; p < k; p++)
+        {
+            var e = emits[p];
+            IlRegionCost.Log(new IlRegionCost.Emission(regionFid, region.MemberCount, e.LocalRefCount, e.Size,
+                e.InstructionCount, e.LocalCount, 1, Persisted: false, e.InlineCount, e.BlockCount, e.SwitchTargetCount, p, k));
+        }
+        System.Threading.Interlocked.Increment(ref PartitionedRegions);
+        var dels = IlEmit.CreateDelegates(emits, ZeroLocals);
+        foreach (var d in dels) NoteArtifactDelegate(d, emits[0].Literals);
+        var others = new PredicateDelegate[k - 1];
+        Array.Copy(dels, 1, others, 0, k - 1);
+        _otherPartitions.Add(dels[0], others);
+        return dels[0];
+    }
+
     /// <summary>Emit a region's body into <paramref name="emit"/> — shared by the runtime
     /// DynamicMethod path (<see cref="CompileRegionUnlocked"/>) and the persisted-IL
     /// TypeBuilder path (<see cref="EmitPersistedMethod"/>, prereq-i for the bundle
@@ -780,7 +889,7 @@ public sealed partial class IlPredicateCompiler
         IlEmit emit, SelfDelegateEmitter emitSelf,
         IlRegion region, IlRegionPlan plan,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
-        System.Type selfDelType)
+        System.Type selfDelType, RegionPartition? part = null)
     {
         int regionFid = region.Root.FunctorId;
         _emitOwnerFid = regionFid;
@@ -824,6 +933,21 @@ public sealed partial class IlPredicateCompiler
         var dispatchLabel = emit.DefineLabel("rdispatch");
         var curLoc = emit.DeclareLocal<int>("rcur");
 
+        // A region in several methods: a cursor another partition holds goes
+        // to the route that tail-calls that partition, the cursor in rcur.
+        IlLabel?[]? route = null;
+        if (part is not null)
+        {
+            var routes = new IlLabel?[part.Methods.Length];
+            for (int q = 0; q < routes.Length; q++)
+                if (q != part.Index) routes[q] = emit.DefineLabel($"rroute_p{q}");
+            route = routes;
+            var ws = WakeStateOf(emit);
+            ws.Base = part.Index << WakePartitionShift;
+            ws.Foreign = () => EmitForeignWakeRoute(emit, routes, curLoc);
+        }
+        bool Foreign(int cursor) => part is not null && part.CursorPartition[cursor] != part.Index;
+
         var memberEntry = new Dictionary<int, IlLabel>();
         foreach (var m in region.Members)
             memberEntry[m.FunctorId] = emit.DefineLabel($"rmember_{m.FunctorId}");
@@ -844,11 +968,17 @@ public sealed partial class IlPredicateCompiler
         // Not for the linker's warm pass: its scratch method runs nowhere, and
         // the building process must not hold the runs the loader will reserve.
         bool runtimeRun = _persistPatches is null && !_persistScratch;
-        int markerRunBase = runtimeRun
-            ? Activation.ReserveResumeMarkerRange(regionFid, 1, markerRunReserve) : -1;
-        if (runtimeRun)
-            System.Threading.Interlocked.Increment(
-                ref markerRunBase >= 0 ? ref RegionMarkerRuns : ref RegionMarkerRunMisses);
+        int markerRunBase;
+        if (part is not null)
+            markerRunBase = part.MarkerRunBase;   // reserved once for every partition
+        else
+        {
+            markerRunBase = runtimeRun
+                ? Activation.ReserveResumeMarkerRange(regionFid, 1, markerRunReserve) : -1;
+            if (runtimeRun)
+                System.Threading.Interlocked.Increment(
+                    ref markerRunBase >= 0 ? ref RegionMarkerRuns : ref RegionMarkerRunMisses);
+        }
         void EmitRunBase(IlEmit e)
             => EmitResumeMarkerRunBase(e, regionFid, 1, markerRunReserve, markerRunBase);
         var memberReturn = ReturnSitesByMember(region, plan, RegionReturnCompares);
@@ -916,11 +1046,40 @@ public sealed partial class IlPredicateCompiler
             frameResume = emit.DefineLabel("rframe_resume");
             emit.LoadLocal(curLoc);
             emit.LoadConstant(plan.TotalCursors);
-            emit.BranchIfGreaterOrEqual(frameResume);
+            if (part is null)
+                emit.BranchIfGreaterOrEqual(frameResume);
+            else
+            {
+                // The restore leaves locals the resume entry reads: a resume or
+                // wake cursor another partition holds is routed before it.
+                emit.BranchIfLess(dispatchLabel);
+                var (resLo, resCount) = part.ResumeRange(plan.TotalCursors);
+                if (resCount > 0)
+                {
+                    emit.LoadLocal(curLoc);
+                    emit.LoadConstant(resLo);
+                    emit.Subtract();
+                    emit.LoadConstant(resCount);
+                    emit.UnsignedBranchIfLess(frameResume);
+                }
+                emit.LoadLocal(curLoc);
+                emit.LoadConstant(WakeCursorBase + (part.Index << WakePartitionShift));
+                emit.Subtract();
+                emit.LoadConstant(WakePartitionStride);
+                emit.UnsignedBranchIfLess(frameResume);
+            }
         }
         emit.MarkLabel(dispatchLabel);
         emit.LoadLocal(curLoc);
-        emit.Switch(cursorLabels);
+        if (part is null)
+            emit.Switch(cursorLabels);
+        else
+        {
+            var switchLabels = new IlLabel[cursorLabels.Length];
+            for (int c = 0; c < switchLabels.Length; c++)
+                switchLabels[c] = Foreign(c) ? route![part.CursorPartition[c]]! : cursorLabels[c];
+            emit.Switch(switchLabels);
+        }
         EmitWakeCursorCheck(emit, () => emit.LoadLocal(curLoc));
         emit.Branch(failLabel);                              // out of range (unreachable)
 
@@ -931,6 +1090,7 @@ public sealed partial class IlPredicateCompiler
         {
             for (int mi = 0; mi < region.Members.Count; mi++)
             {
+                if (part is not null && part.MemberPartition[mi] != part.Index) continue;
                 var member = region.Members[mi];
                 ctx.CurrentMemberIndex = mi;
                 ctx.MemberRetLabel = memberRetLabel.TryGetValue(mi, out var mrl) ? mrl : retLabel;
@@ -977,6 +1137,7 @@ public sealed partial class IlPredicateCompiler
         // a direct branch each, before the general return.
         foreach (var (mi, sites) in memberReturn)
         {
+            if (part is not null && part.MemberPartition[mi] != part.Index) continue;
             emit.MarkLabel(memberRetLabel[mi]);
             foreach (int c in sites)
             {
@@ -1056,6 +1217,7 @@ public sealed partial class IlPredicateCompiler
         // named this cursor, then run the alternative from its own label.
         foreach (var (alt, r) in resumeCursor)
         {
+            if (Foreign(r)) continue;
             emit.MarkLabel(cursorLabels[r]);
             bool retrying = ctx.RetryPlan.TryGetValue(alt, out var retry);
             if (frames is not null)
@@ -1090,7 +1252,118 @@ public sealed partial class IlPredicateCompiler
             EmitFramePushLadder(emit, frames);
             trace.LadderEntries = frames.Entries.Count;
         }
+
+        if (part is not null)
+        {
+            // A branch the members took to a label another partition holds:
+            // the label's cursor, to that partition's route.
+            for (int c = 0; c < cursorLabels.Length; c++)
+            {
+                if (!Foreign(c) || !cursorLabels[c].Used || cursorLabels[c].Marked) continue;
+                emit.MarkLabel(cursorLabels[c]);
+                emit.LoadConstant(c);
+                emit.StoreLocal(curLoc);
+                emit.Branch(route![part.CursorPartition[c]]!);
+                System.Threading.Interlocked.Increment(ref PartitionStubs);
+            }
+            for (int q = 0; q < route!.Length; q++)
+                if (route[q] is { } to) EmitPartitionRoute(emit, part, q, to, regionFid, curLoc);
+        }
     }
+
+    /// <summary>One method of a region emitted in several
+    /// (region-jit-limits.md, "A region in several methods").</summary>
+    private sealed class RegionPartition
+    {
+        public required int Index;
+        /// <summary>The region's methods, by partition; 0 is the root's.</summary>
+        public required IlEmit[] Methods;
+        /// <summary>Per member index, the partition that holds the member.</summary>
+        public required int[] MemberPartition;
+        /// <summary>Per cursor of the region (its wake cursors apart), the
+        /// partition that holds its label.</summary>
+        public required int[] CursorPartition;
+        /// <summary>The region's run of markers, reserved once for all.</summary>
+        public required int MarkerRunBase;
+
+        /// <summary>The resume cursors this partition holds, one run.</summary>
+        public (int Lo, int Count) ResumeRange(int totalCursors)
+        {
+            int lo = -1, hi = -1;
+            for (int c = totalCursors; c < CursorPartition.Length; c++)
+            {
+                if (CursorPartition[c] != Index) continue;
+                if (lo < 0) lo = c;
+                else if (hi != c) throw new NotSupportedException("a partition's resume cursors are not one run");
+                hi = c + 1;
+            }
+            return lo < 0 ? (0, 0) : (lo, hi - lo);
+        }
+    }
+
+    /// <summary>The route to partition <paramref name="to"/>: a tail call with
+    /// the cursor in <paramref name="cur"/>. Where the runtime may not honour
+    /// the tail call (ADR-061 item 11), every 64th transfer goes through the
+    /// dispatch loop instead, which enters the region at the cursor's marker.</summary>
+    private static void EmitPartitionRoute(IlEmit emit, RegionPartition part, int to, IlLabel label,
+        int regionFid, IlLocal cur)
+    {
+        emit.MarkLabel(label);
+        if (CountPartitionTransfers)
+        {
+            // Not atomic: a count for tests, which a race may cost one.
+            emit.LoadField(PartitionTransfersField);
+            emit.LoadConstant(1L);
+            emit.Add();
+            emit.StoreField(PartitionTransfersField);
+        }
+#if NETFRAMEWORK
+        var jump = emit.DefineLabel($"rroute_jump_p{to}");
+        emit.LoadArgument(0);
+        EmitFunctorId(emit, regionFid);
+        emit.LoadLocal(cur);
+        EmitHelperCall(emit, EnginePartitionHopToLoopMethod);
+        emit.BranchIfFalse(jump);
+        emit.LoadConstant(true);
+        EmitReturn(emit);
+        emit.MarkLabel(jump);
+#endif
+        emit.LoadLiteralTable();
+        emit.LoadArgument(0);
+        emit.LoadLocal(cur);
+        emit.Call(part.Methods[to]);
+        EmitReturn(emit);
+    }
+
+    /// <summary>A wake cursor of another partition, after the method's own
+    /// switch: the partition its base names.</summary>
+    private static void EmitForeignWakeRoute(IlEmit emit, IlLabel?[] route, IlLocal cur)
+    {
+        var own = emit.DefineLabel("rwake_own");
+        var targets = new IlLabel[route.Length];
+        for (int q = 0; q < targets.Length; q++) targets[q] = route[q] ?? own;
+        emit.LoadArgument(1);
+        emit.StoreLocal(cur);
+        emit.LoadLocal(cur);
+        emit.LoadConstant(WakeCursorBase);
+        emit.Subtract();
+        emit.LoadConstant(WakePartitionShift);
+        emit.UnsignedShiftRight();
+        emit.Switch(targets);
+        emit.MarkLabel(own);
+    }
+
+    private static readonly FieldInfo PartitionTransfersField =
+        typeof(IlPredicateCompiler).GetField(nameof(PartitionTransfers))!;
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Delegate, PredicateDelegate[]>
+        _otherPartitions = new();
+
+    /// <summary>The other methods of the region whose first method is
+    /// <paramref name="del"/>, for a caller that compiles a delegate's native
+    /// code before its first call: the first reaches them by direct calls.</summary>
+    public static IReadOnlyList<PredicateDelegate> OtherPartitions(Delegate del)
+        => _otherPartitions.TryGetValue(del, out var others) ? others : Array.Empty<PredicateDelegate>();
 
     /// <summary>ADR-058: push a plain choice point for the alternative at
     /// <paramref name="altCursor"/>, its BP the region marker of that
@@ -1759,6 +2032,18 @@ public sealed partial class IlPredicateCompiler
     /// <c>SHUMWAY_REGION_RET_COMPARES</c> sets it.</summary>
     public static int RegionReturnCompares =
         int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_REGION_RET_COMPARES"), out int n) ? n : 4;
+
+    /// <summary>Regions emitted in several methods, and the stubs by which
+    /// one of their methods leaves for another, over every region compiled
+    /// in this process (<see cref="IlRegionCost.PartitionRefs"/>).</summary>
+    public static int PartitionedRegions, PartitionStubs;
+
+    /// <summary>Read when a partitioned region is emitted: its stubs count
+    /// the transfers they make in <see cref="PartitionTransfers"/>. For
+    /// tests; off, a stub is the tail call alone.</summary>
+    internal static bool CountPartitionTransfers { get; set; }
+
+    public static long PartitionTransfers;
 
     /// <summary>Per member (by index), the cursors of the intra-region sites
     /// whose continuation its proceed may return to: the sites that call it,

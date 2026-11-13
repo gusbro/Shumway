@@ -1152,6 +1152,20 @@ public sealed partial class Activation
         return del;
     }
 
+    /// <summary>A transfer from one method of a region to another where the
+    /// runtime may not honour the tail call: true on every
+    /// <see cref="ReturnHopBound"/>-th, with Pc set to the region's marker of
+    /// <paramref name="cursor"/> as a tail call pending, and the caller
+    /// returns true to the dispatch loop, which continues there.</summary>
+    public bool PartitionHopToLoop(int regionFunctorId, int cursor)
+    {
+        if (++_returnHops < ReturnHopBound) return false;
+        _returnHops = 0;
+        SetPc(EncodeResumeMarker(regionFunctorId, cursor));
+        IlTailCallPending = true;
+        return true;
+    }
+
     // ----- ADR-061: continuation methods -----
 
     /// <summary>ADR-061: native code of each predicate's continuation-method

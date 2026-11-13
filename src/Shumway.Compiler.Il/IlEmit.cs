@@ -103,7 +103,8 @@ public sealed class IlEmit
     private int _pendingTextAt;
 
     private IlEmit(ILGenerator il, DynamicMethod? dynamic, MethodBuilder? method, bool record,
-        int argShift, FieldInfo? literalsField, List<object>? literals)
+        int argShift, FieldInfo? literalsField, List<object>? literals,
+        Dictionary<object, int>? literalIndex = null)
     {
         _il = il;
         _dynamic = dynamic;
@@ -112,7 +113,9 @@ public sealed class IlEmit
         _argShift = argShift;
         _literalsField = literalsField;
         _literals = literals;
-        if (literals is not null)
+        if (literalIndex is not null)
+            _literalIndex = literalIndex;
+        else if (literals is not null)
         {
             _literalIndex = new Dictionary<object, int>(ReferenceComparer.Instance);
             for (int i = 0; i < literals.Count; i++) _literalIndex[literals[i]] = i;
@@ -125,6 +128,23 @@ public sealed class IlEmit
     {
         var dm = new DynamicMethod(name, ReturnType, LiteralParameterTypes, DynamicModule, skipVisibility: true);
         return new IlEmit(dm.GetILGenerator(), dm, null, record, argShift: 1, null, new List<object>());
+    }
+
+    /// <summary>Dynamic methods that call each other, the partitions of a
+    /// region: one literal table, which a call from one to another passes on
+    /// (<see cref="LoadLiteralTable"/>), and their delegates made together
+    /// (<see cref="CreateDelegates"/>).</summary>
+    public static IlEmit[] NewDynamicMethods(string name, int count, bool record)
+    {
+        var literals = new List<object>();
+        var index = new Dictionary<object, int>(ReferenceComparer.Instance);
+        var emits = new IlEmit[count];
+        for (int i = 0; i < count; i++)
+        {
+            var dm = new DynamicMethod($"{name}_p{i}", ReturnType, LiteralParameterTypes, DynamicModule, skipVisibility: true);
+            emits[i] = new IlEmit(dm.GetILGenerator(), dm, null, record, argShift: 1, null, literals, index);
+        }
+        return emits;
     }
 
     /// <summary>The method is a <see cref="DynamicMethod"/>, which may reach any
@@ -605,9 +625,31 @@ public sealed class IlEmit
 
     public void CallVirtual(MethodInfo method) => CallOp(OpCodes.Callvirt, method);
 
-    /// <summary>A call to the method <paramref name="emit"/> builds.</summary>
+    /// <summary>A call to the method <paramref name="emit"/> builds, or to a
+    /// dynamic method of this one's unit (<see cref="NewDynamicMethods"/>),
+    /// whose arguments start with <see cref="LoadLiteralTable"/>.</summary>
     public void Call(IlEmit emit)
-        => CallOp(OpCodes.Call, emit._method ?? throw new InvalidOperationException("only a built method can be called"), built: true);
+    {
+        if (emit._method is { } built)
+        {
+            CallOp(OpCodes.Call, built, built: true);
+            return;
+        }
+        if (emit._dynamic is not { } dynamic || !ReferenceEquals(emit._literals, _literals))
+            throw new InvalidOperationException("only a built method or a method of the unit can be called");
+        CallOp(OpCodes.Call, dynamic, built: true);
+    }
+
+    /// <summary>The first argument of a call to a dynamic method of the unit:
+    /// the literal table, this method's own.</summary>
+    public void LoadLiteralTable()
+    {
+        if (_dynamic is null) return;
+        Begin();
+        LocalRefCount++;
+        _il.Emit(OpCodes.Ldarg_0);
+        Text("ldarg.0");
+    }
 
     private void CallOp(OpCode op, MethodInfo method, bool built = false)
     {
@@ -735,6 +777,26 @@ public sealed class IlEmit
         dm.InitLocals = initLocals;
         object[] table = _literals is { Count: > 0 } ? _literals.ToArray() : NoLiterals;
         return (PredicateDelegate)dm.CreateDelegate(typeof(PredicateDelegate), table);
+    }
+
+    /// <summary>The delegates of the methods of a unit
+    /// (<see cref="NewDynamicMethods"/>), closed over one literal table: one
+    /// method passes its own to another.</summary>
+    public static PredicateDelegate[] CreateDelegates(IReadOnlyList<IlEmit> emits, bool initLocals)
+    {
+        foreach (var e in emits) e.Finish();
+        var literals = emits[0]._literals;
+        object[] table = literals is { Count: > 0 } ? literals.ToArray() : NoLiterals;
+        var result = new PredicateDelegate[emits.Count];
+        for (int i = 0; i < emits.Count; i++)
+        {
+            var dm = emits[i]._dynamic ?? throw new InvalidOperationException("not a dynamic method");
+            if (!ReferenceEquals(emits[i]._literals, literals))
+                throw new InvalidOperationException("not the methods of one unit");
+            dm.InitLocals = initLocals;
+            result[i] = (PredicateDelegate)dm.CreateDelegate(typeof(PredicateDelegate), table);
+        }
+        return result;
     }
 
     /// <summary>The built method, its body complete.</summary>

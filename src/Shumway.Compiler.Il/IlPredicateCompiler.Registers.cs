@@ -413,6 +413,9 @@ public sealed partial class IlPredicateCompiler
         Row(EngineRegionReturnCursorMethod, MachineRegs.Cp, MachineRegs.None);
         Row(EngineContinuationMethod, MachineRegs.HeapTop, MachineRegs.None);
         Row(ContinuationInvokeMethod, MachineRegs.All, MachineRegs.All);
+#if NETFRAMEWORK
+        Row(EnginePartitionHopToLoopMethod, MachineRegs.None, MachineRegs.None);
+#endif
         Row(ArithTryFusedBinIntMethod, MachineRegs.E | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray, MachineRegs.None);
         Row(ArithTryFusedCmpIntMethod, MachineRegs.E | MachineRegs.StackArray | MachineRegs.HeapArray | MachineRegs.RegisterArray, MachineRegs.None);
         Row(EngineTryFailIlGuardQuickMethod, MachineRegs.HeapTop | MachineRegs.TrailTop | MachineRegs.HeapArray, MachineRegs.HeapTop | MachineRegs.Hb);

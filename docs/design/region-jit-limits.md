@@ -423,6 +423,102 @@ The limit is in local references, the planner's measure
 block is cheaper to copy than to call through. Setting it very large
 restores the old form; 0 copies only the owned.
 
+## A region in several methods
+
+**Status**: in progress (2026-11), stage 1 of the plan below. Off by
+default until stage 4 measures it.
+
+A region is one method, and the target bounds it: a member is copied only
+if its block fits beside the others, and a predicate whose own block is
+past the target is a member of no region. It compiles on its own (a root
+alone past a limit), and every call it makes to a small predicate leaves
+its method through the trampoline. In a chess move generator the two
+predicates that enumerate the moves come to 7,355 and 17,032 local
+references; one search makes 8.5 million such transfers, two thirds of
+them to four arithmetic helpers of one clause each.
+
+The emitter can cut a region where it writes it, without changing what the
+planner plans or what the program says: the region becomes several methods
+of the region's signature over its one cursor space, each under the target.
+Two properties of a region make the cut cheap:
+
+- Every label a cursor names is an entry point already. The engine enters a
+  region at a member's entry, at a return site and at a resume entry, in a
+  fresh invocation, and the code there reads its state from the activation.
+- The state is in the activation at every point. The machine registers a
+  region holds in locals are written through (ADR-060), and the frames it
+  pushes are on the stack.
+
+So a branch to a label another method holds becomes a tail call into that
+method with the label's cursor. Nothing is spilled, nothing but the cursor
+is passed, and the stack does not grow.
+
+### Layout
+
+- The partitions are numbered from 0, and partition 0 holds the root. It
+  is the delegate the region registers, the delegate its choice points
+  carry, and the method the engine enters for every marker of the region's
+  run.
+- Each partition's dispatch switch spans every cursor of the region. A
+  cursor another partition holds goes to a stub that tail-calls the
+  partition holding it: a marker resolved for a cursor of partition 2
+  enters partition 0 and costs one more tail call.
+- A direct branch to a label in another partition (a call or a tail call to
+  a member there, a member's return comparing `Cp` with a site there) goes
+  to a stub that loads the label's cursor and tail-calls.
+- A resume cursor another partition holds is routed before the common
+  restore. The restore leaves the base of the frame's control words in
+  locals that the resume entry reads, so the two run in the partition that
+  holds the alternative.
+- A partition numbers its wake points (ADR-049) from a base of its own,
+  `WakeCursorBase + p * 2^14`; a wake cursor outside the method's range
+  goes to the partition its base names.
+- The partitions share one literal table, the first argument of a dynamic
+  method, and a stub passes its own on.
+
+### Where a region is cut
+
+Between members first, whole and in the planner's order, each partition
+under the target. The planner numbers a member's cursors together (its
+clause alternatives or index nodes, then its body sites), and the entry
+cursors and resume cursors after all of them, in member order. A partition
+of consecutive members therefore holds three runs of consecutive cursors,
+and its resume entries are tested against one range.
+
+Then between the clauses of one member. An alternative's cursor, its
+resume entry and its clause go to the same partition; an indexed member's
+index stays with its entry, and its nodes are cut where a bucket ends. A
+clause is never cut, since its code holds values in locals from one
+instruction to the next: a member of one large clause stays whole.
+
+### What does not change
+
+- Choice points (ADR-058) carry the region's marker. Resumed by the engine,
+  one enters partition 0; resumed locally (ADR-057), it is decoded against
+  the region's run in whichever partition failed.
+- Cut: `B0` is a machine register, written through like the others.
+- The marker run, the members' aliases and the eviction of the region's
+  code are per region, as before.
+
+### Stages
+
+0. Tests: synthetic programs run on Tier-0 and on Tier-1 with the partition
+   target low enough that every member is a partition of its own
+   (`IlRegionCost.PartitionRefs`, `SHUMWAY_REGION_PARTITION_LVREFS`, 0 by
+   default, off): backtracking across partitions, an index into a later
+   partition, a cut in a late clause, wakes, exceptions, a recursion across
+   partitions deep enough to overflow the stack if a transfer stacked. Each
+   asserts that the region was emitted in several methods and that
+   transfers between them ran (`IlPredicateCompiler.CountPartitionTransfers`,
+   read when the stubs are emitted).
+1. Cuts between members, for runtime promotions, behind the switch.
+2. Cuts between the clauses of one member.
+3. The planner plans regions past one method's target, in as many methods
+   as the members need; bundles persist the partitions as methods of their
+   type.
+4. Measured on the chess program, Blint and a `member/2` loop, ABBA, before
+   it is on by default.
+
 ## The wasm tier
 
 Not mirrored: the wasm tier emits one function per predicate and the browser

@@ -105,6 +105,15 @@ internal static class IlRegionCost
         int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_REGION_REINLINE"), out var r) && r >= 0
             ? r : 150;
 
+    /// <summary>The local references a partition of a region is planned to
+    /// stay under: a region past it is emitted as several methods over its
+    /// one cursor space (region-jit-limits.md, "A region in several
+    /// methods"). 0 emits every region as one method.
+    /// <c>SHUMWAY_REGION_PARTITION_LVREFS</c>.</summary>
+    public static int PartitionRefs { get; set; } =
+        int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_REGION_PARTITION_LVREFS"), out var pr) && pr >= 0
+            ? pr : 0;
+
     /// <summary>The shared tail of a region with that many resume entries and
     /// ladder entries.</summary>
     public static int TailCost(int resumeCursors, int ladderEntries)
@@ -384,10 +393,12 @@ internal static class IlRegionCost
         _ => 0,
     };
 
-    /// <summary>One region emission, for diagnostics and tests.</summary>
+    /// <summary>One region method emitted, for diagnostics and tests: the
+    /// region's one method, or one of its <paramref name="Partitions"/>, with
+    /// the region's members.</summary>
     public readonly record struct Emission(int RootFid, int Members, int LocalRefs, int IlBytes,
         int Instructions, int Locals, int Attempt, bool Persisted, int Inlines, int Blocks,
-        int SwitchTargets)
+        int SwitchTargets, int Partition = 0, int Partitions = 1)
     {
         /// <summary>The method's locals in the JIT's count (<see cref="IlRegionCost.Locals"/>).</summary>
         public int JitLocals => IlRegionCost.Locals(Locals, Inlines);

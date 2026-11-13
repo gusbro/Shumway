@@ -257,6 +257,10 @@ public sealed partial class IlPredicateCompiler
         public readonly List<IlLabel> Labels = new();
         public IlLabel? Dispatch;
         public readonly List<Action> Alternatives = new();
+        /// <summary>A partition's first wake cursor, past <see cref="WakeCursorBase"/>.</summary>
+        public int Base;
+        /// <summary>A partition's route for a wake cursor of another, after its own switch.</summary>
+        public Action? Foreign;
     }
 
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IlEmit, WakeState> WakeStates = new();
@@ -437,12 +441,25 @@ public sealed partial class IlPredicateCompiler
         if (s.Labels.Count > 0)
         {
             emit.LoadArgument(1);
-            emit.LoadConstant(WakeCursorBase);
+            emit.LoadConstant(WakeCursorBase + s.Base);
             emit.Subtract();
             emit.Switch(s.Labels.ToArray());
         }
+        s.Foreign?.Invoke();
         emit.LoadConstant(false);
         EmitReturn(emit);
+    }
+
+    /// <summary>The wake cursors of one partition of a region: partition
+    /// <c>p</c> numbers its own from <c>WakeCursorBase + p * WakePartitionStride</c>.</summary>
+    internal const int WakePartitionShift = 14, WakePartitionStride = 1 << WakePartitionShift;
+
+    private static int NextWakeCursor(WakeState s)
+    {
+        int k = s.Labels.Count - 1;
+        if (s.Base != 0 && k >= WakePartitionStride)
+            throw new NotSupportedException("ADR-049: more wake points in a partition than its range of cursors.");
+        return WakeCursorBase + s.Base + k;
     }
 
     /// <summary>A point the dispatch loop can re-enter this predicate at: an
@@ -467,7 +484,7 @@ public sealed partial class IlPredicateCompiler
             throw new InvalidOperationException("ADR-049: a re-entry in a method with no wake cursor check.");
         label = emit.DefineLabel($"reentry_w{s.Labels.Count}");
         s.Labels.Add(label);
-        return WakeCursorBase + s.Labels.Count - 1;
+        return NextWakeCursor(s);
     }
 
     /// <summary>The wake point in front of a builtin or an inlined call, its
@@ -502,7 +519,7 @@ public sealed partial class IlPredicateCompiler
             var label = emit.DefineLabel($"wake_{k}");
             s.Labels.Add(label);
             emit.MarkLabel(label);
-            cursor = WakeCursorBase + k;
+            cursor = NextWakeCursor(s);
         }
         emit.LoadArgument(0);
         emit.LoadConstant(arity);

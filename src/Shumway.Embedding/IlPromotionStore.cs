@@ -475,17 +475,25 @@ public sealed partial class IlPromotionStore
     private readonly Dictionary<int, string> _unpromotableReason = new();
 
     // On the worker: a delegate's method compiles here, not at its first call
-    // on the engine's thread.
+    // on the engine's thread, and so do the other methods of a region emitted
+    // in several, which the first reaches by direct calls.
     private static PredicateDelegate Compiled(PredicateDelegate del)
     {
-        RuntimeHelpers.PrepareDelegate(del);
+        Prepare(del);
         return del;
     }
 
     private static IlPredicateCompiler.PgoCompileResult Compiled(IlPredicateCompiler.PgoCompileResult result)
     {
-        RuntimeHelpers.PrepareDelegate(result.Delegate);
+        Prepare(result.Delegate);
         return result;
+    }
+
+    private static void Prepare(Delegate del)
+    {
+        RuntimeHelpers.PrepareDelegate(del);
+        foreach (var other in IlPredicateCompiler.OtherPartitions(del))
+            RuntimeHelpers.PrepareDelegate(other);
     }
 
     private void MarkUnpromotable(int functorId, string reason)

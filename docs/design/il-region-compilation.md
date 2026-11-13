@@ -145,6 +145,11 @@ switch is one indirect jump for every return of the region. In one process, tak
 (three recursive sites and the driver's) -24% on both minimum and median; crypt
 and sendmore, whose facts return to more sites than the cap, unchanged.
 
+**A region in several methods.** A region past one method's limits can be
+emitted as several methods over its one cursor space, a branch to a label in
+another of them a tail call with the label's cursor:
+[region-jit-limits.md](region-jit-limits.md#a-region-in-several-methods).
+
 **Cross-region call / backtrackable builtin**: unchanged — the Phase-16 threaded
 trampoline (set `Cp` = region resume marker, set `Pc` = callee marker, return to
 loop), with the resume cursor in this region's space. **Deterministic builtin**:

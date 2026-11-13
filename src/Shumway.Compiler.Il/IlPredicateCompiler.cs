@@ -471,6 +471,10 @@ public sealed partial class IlPredicateCompiler
         typeof(Activation).GetMethod(nameof(Activation.Continuation))!;
     private static readonly MethodInfo ContinuationInvokeMethod =
         typeof(Func<Activation, int, bool>).GetMethod("Invoke")!;
+#if NETFRAMEWORK
+    private static readonly MethodInfo EnginePartitionHopToLoopMethod =
+        typeof(Activation).GetMethod(nameof(Activation.PartitionHopToLoop))!;
+#endif
 
     /// <summary>A region returning to another region's continuation runs it
     /// with a tail call instead of returning to the dispatch loop.</summary>
