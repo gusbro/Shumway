@@ -48,6 +48,10 @@ internal static class IlCompileWorker
         public Exception? Error;
     }
 
+    // DIAG (temporary): what each worker runs, since when; and what waits.
+    internal static readonly ConcurrentDictionary<int, (Delegate Work, long Started)> ZzRunning = new();
+    internal static Delegate[] ZzQueued() => _queue.ToArray().Select(i => (Delegate)i.Work).ToArray();
+
     // Callers blocked on their result. Not behind _queue: the background compiles
     // of every engine in the process, dead ones included, can take seconds there.
     private static readonly ConcurrentQueue<Item> _syncQueue = new();
@@ -225,8 +229,10 @@ internal static class IlCompileWorker
                 for (int peak = Volatile.Read(ref _peakBusy); busy > peak; peak = Volatile.Read(ref _peakBusy))
                     if (Interlocked.CompareExchange(ref _peakBusy, busy, peak) == peak) break;
             }
+            ZzRunning[Environment.CurrentManagedThreadId] = (item.Work, System.Diagnostics.Stopwatch.GetTimestamp());
             try { item.Result = item.Work(); }
             catch (Exception ex) { item.Error = ex; }
+            ZzRunning.TryRemove(Environment.CurrentManagedThreadId, out _);
             if (!item.Holds) Interlocked.Decrement(ref _busy);
             Interlocked.Increment(ref _processed);
             if (item.Done is not null) item.Done.Set();

@@ -1082,7 +1082,11 @@ public sealed partial class IlPromotionStore
         {
             DrainCompletedCompiles();
             if (_pendingCompiles.Count == 0 && _pendingCps.Count == 0) return true;
-            if (deadline.ElapsedMilliseconds > timeoutMs) return false;
+            if (deadline.ElapsedMilliseconds > timeoutMs)
+            {
+                ZzPromotionDiag.Report(this, timeoutMs);   // DIAG (temporary)
+                return false;
+            }
             System.Threading.Thread.Sleep(1);
         }
     }
