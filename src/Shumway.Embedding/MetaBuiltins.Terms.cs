@@ -349,9 +349,11 @@ public static partial class MetaBuiltins
     /// <item><c>unknown</c>, <c>occurs_check</c> — informational
     /// flag state (engine doesn't yet vary behaviour on them).</item>
     /// <item><c>max_arity</c> — <c>unbounded</c>; <c>max_procedure_arity</c> — 1023 (stc#70).</item>
-    /// <item><c>version_data</c> — <c>shumway(Major, Minor, Patch, [])</c>,
+    /// <item><c>version_data</c> — <c>shumway(Major, Minor, Patch, Build)</c>,
     /// the engine version (the GProlog/SWI convention consumers like the
-    /// Logtalk adapter query).</item>
+    /// Logtalk adapter query); <c>Build</c> lists <c>Name-Value</c> pairs,
+    /// <c>git</c>, <c>runtime</c> and <c>arch</c>
+    /// (<see cref="PrologEngine.BuildInfo"/>).</item>
     /// </list>
     /// With Flag unbound, every flag is enumerated on backtracking
     /// (ISO §8.17.2).</summary>
@@ -417,12 +419,21 @@ public static partial class MetaBuiltins
 
             case "version_data":
             {
+                // The values are atoms: a hash of digits alone is not a number.
+                Term build = new AtomTerm("[]");
+                var info = PrologEngine.BuildInfo;
+                for (int i = info.Count - 1; i >= 0; i--)
+                    build = new CompoundTerm(".", new Term[]
+                    {
+                        new CompoundTerm("-", new Term[] { new AtomTerm(info[i].Name), new AtomTerm(info[i].Value) }),
+                        build,
+                    });
                 Term versionTerm = new CompoundTerm("shumway", new Term[]
                 {
                     new IntTerm(PrologEngine.VersionMajor),
                     new IntTerm(PrologEngine.VersionMinor),
                     new IntTerm(PrologEngine.VersionPatch),
-                    new AtomTerm("[]"),
+                    build,
                 });
                 Cell versionCell = Materializer.MaterializeAsCell(engine, versionTerm);
                 return engine.UnifyRegisterWithCell(1, versionCell);
