@@ -435,7 +435,7 @@ The interpreter (or higher-level engine code) checks `_pendingException` after e
 ## Amendment (2026-11-12): several compile workers
 
 Promotions compiled on one background thread per process, and most of a
-compile is .NET's: the first run of Trealla's chess sample keeps that thread
+compile is .NET's: the first run of a chess sample program keeps that thread
 busy 1.26 s, of which 872 ms is .NET compiling the emitted IL to native code,
 268 ms the emitter and 112 ms the prelude's persisted IL. Until its code is
 ready a predicate runs on Tier-0. A `--with-compiled-il` bundle skips only the

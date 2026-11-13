@@ -406,7 +406,7 @@ The array grows inside an allocation, before the safe point that would
 collect sees the heap past the threshold, so the limit is seven eighths of
 the array. When a collection there cannot leave room for the live data (at
 least the floor), the limit is the same point of the array doubled once.
-The bands alone cost memory and saved no time. On Trealla's chess sample
+The bands alone cost memory and saved no time. On a chess sample program
 the first collection recovers 1.5% under a stack of 4 million words, and
 the poor band moved the next one to 5 million cells. By then the stack had
 grown to 13 million words, so two collections scanned only 6% less than the

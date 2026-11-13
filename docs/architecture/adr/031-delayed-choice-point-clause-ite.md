@@ -430,8 +430,8 @@ analysis see the cut-shaped guards as before.
 
 The case that motivated it is member/2's helper, `'$member3'(_, X, X)`:
 first-argument indexing leaves a choice point on every element but the
-last, and in a scan most elements fail the head. On a chess sample (Trealla's
-`samples/chess.pl`), member/2 tried 20.7 million elements in one run, 3.5% of
+last, and in a scan most elements fail the head. On a chess sample program,
+member/2 tried 20.7 million elements in one run, 3.5% of
 them matching. A scan of a 30-element list with the prelude's member/2, every
 element failing, runs 14 to 18% faster (A B B A, processor capped). The chess
 run gains 2 to 6%, inside its own run-to-run spread of about 5%: what is left
