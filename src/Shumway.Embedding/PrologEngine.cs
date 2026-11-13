@@ -32,7 +32,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
 
     /// <summary>Shumway's version. The single source: the
     /// <c>version_data</c> Prolog flag (<c>shumway(Major, Minor, Patch,
-    /// [])</c>), the top-level banner and the assembly stamp all derive from
+    /// Build)</c>), the top-level banner and the assembly stamp all derive from
     /// these three numbers, so they can never disagree.</summary>
     public const int VersionMajor = 0;
     public const int VersionMinor = 9;
@@ -50,6 +50,55 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     public static string VersionBanner =>
         $"Shumway Prolog {VersionString} "
         + $"({(Environment.Is64BitProcess ? 64 : 32)} bits)";
+
+    /// <summary>What the <c>version_data</c> flag's fourth argument lists, as
+    /// name-value pairs: <c>git</c>, the short hash of the commit the engine
+    /// was built from (left out for a build outside a git checkout);
+    /// <c>runtime</c>, the version of the .NET runtime running it, which a
+    /// framework-dependent build takes from the machine; <c>arch</c>, the
+    /// process's architecture (<c>x64</c>, <c>x86</c>, <c>arm64</c>,
+    /// <c>wasm</c> in the browser).</summary>
+    public static IReadOnlyList<(string Name, string Value)> BuildInfo => _buildInfo ??= ReadBuildInfo();
+    private static IReadOnlyList<(string Name, string Value)>? _buildInfo;
+
+    private static IReadOnlyList<(string Name, string Value)> ReadBuildInfo()
+    {
+        var info = new List<(string, string)>(3);
+        // The SDK stamps "<version>+<commit>" when the build ran in a git checkout.
+        string? stamp = System.Reflection.CustomAttributeExtensions
+            .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(PrologEngine).Assembly)
+            ?.InformationalVersion;
+        if (GitShortHash(stamp) is { } hash) info.Add(("git", hash));
+        info.Add(("runtime", RuntimeVersion(System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription)));
+        info.Add(("arch", ArchName(System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture)));
+        return info;
+    }
+
+    /// <summary>The first seven hex digits after the <c>+</c> of an
+    /// informational version; null when there is no commit in it.</summary>
+    internal static string? GitShortHash(string? informationalVersion)
+    {
+        int plus = informationalVersion?.IndexOf('+') ?? -1;
+        if (plus < 0 || informationalVersion!.Length < plus + 1 + 7) return null;
+        string hash = informationalVersion.Substring(plus + 1, 7);
+        foreach (char c in hash)
+            if (!Uri.IsHexDigit(c)) return null;
+        return hash.ToLowerInvariant();
+    }
+
+    /// <summary>The version in a runtime's description, its last word:
+    /// <c>.NET 10.0.15</c> gives <c>10.0.15</c>, <c>.NET Framework
+    /// 4.8.9221.0</c> gives <c>4.8.9221.0</c> (where <c>Environment.Version</c>
+    /// says 4.0.30319.42000 for every 4.x).</summary>
+    internal static string RuntimeVersion(string frameworkDescription)
+    {
+        string d = frameworkDescription.Trim();
+        int space = d.LastIndexOf(' ');
+        return space < 0 ? d : d.Substring(space + 1);
+    }
+
+    internal static string ArchName(System.Runtime.InteropServices.Architecture architecture)
+        => architecture.ToString().ToLowerInvariant();
 
     /// <summary>Per-engine global-variable store backing
     /// the SWI <c>nb_setval/2</c> / <c>nb_getval/2</c> family.
