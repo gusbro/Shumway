@@ -14,7 +14,8 @@ you have the right to license this way.
 ## Getting started
 
 You need the **.NET 10 SDK** (the build targets .NET 10; the engine runs on
-.NET 9+).
+.NET 9+). `global.json` holds the build to the newest 10.0 SDK installed, also
+on a machine that has a newer major version.
 
 ```
 dotnet restore
