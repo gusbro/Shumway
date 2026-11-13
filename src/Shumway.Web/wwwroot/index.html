@@ -158,8 +158,13 @@ par(b, c)."></div>
       <p id="status" class="status" aria-live="polite"></p>
       <form id="query-form" autocomplete="off">
         <label for="query" class="prompt">?-</label>
-        <input id="query" type="text" spellcheck="false" autocapitalize="off"
-               placeholder="anc(a, X)." />
+        <!-- The goal boxes are textareas of one line, not inputs: Chrome on
+             Android offers its autofill bar (passwords, cards, addresses) on
+             a text input whatever its autocomplete says, and on a textarea it
+             does not (oneline.js). -->
+        <textarea id="query" class="oneline" rows="1" wrap="off" spellcheck="false" autocapitalize="off"
+                  autocorrect="off" autocomplete="off" enterkeyhint="go"
+                  placeholder="anc(a, X)."></textarea>
         <button type="submit" class="primary">Run</button>
         <button id="stop" type="button" title="abandon the running query">Stop</button>
       </form>
@@ -191,8 +196,9 @@ par(b, c)."></div>
         <div id="tab-watches" class="tab-panel" hidden>
           <div id="debug-watches" class="debug-list"></div>
           <form id="watch-form" autocomplete="off">
-            <input id="watch-input" type="text" spellcheck="false" autocapitalize="off"
-                   placeholder="goal to watch, e.g. length(Xs, N)" />
+            <textarea id="watch-input" class="oneline" rows="1" wrap="off" spellcheck="false"
+                      autocapitalize="off" autocorrect="off" autocomplete="off" enterkeyhint="done"
+                      placeholder="goal to watch, e.g. length(Xs, N)"></textarea>
             <button type="submit">Add</button>
           </form>
         </div>
@@ -202,8 +208,9 @@ par(b, c)."></div>
         <div id="tab-immediate" class="tab-panel" hidden>
           <pre id="immediate-log" class="debug-list"></pre>
           <form id="immediate-form" autocomplete="off">
-            <input id="immediate-input" type="text" spellcheck="false" autocapitalize="off"
-                   placeholder="goal on the frame — ! binds for real, ; next solution" />
+            <textarea id="immediate-input" class="oneline" rows="1" wrap="off" spellcheck="false"
+                      autocapitalize="off" autocorrect="off" autocomplete="off" enterkeyhint="go"
+                      placeholder="goal on the frame — ! binds for real, ; next solution"></textarea>
             <button type="submit">Eval</button>
           </form>
         </div>
