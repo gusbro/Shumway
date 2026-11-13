@@ -45,7 +45,8 @@ featuring the same set of debugging capabilities provided in VS Code / VS.
 
 Shumway runs wherever .NET 10 runs (Windows, Linux, macOS), plus any modern
 browser via WebAssembly, and .NET Framework 4.8 hosts through an opt-in
-multi-target build. The test gate currently runs on Windows.
+multi-target build. Its tools run on .NET 10, or on a later major version
+when 10 is not installed. The test gate currently runs on Windows.
 
 ## Try it online: [gusbro.github.io/Shumway](https://gusbro.github.io/Shumway/)
 

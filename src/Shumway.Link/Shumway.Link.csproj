@@ -18,6 +18,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <RollForward>Major</RollForward>
     <!-- Multi-targeted for the .NET Framework spike (branch netfx-target): a
          net48 build of the toolchain links WITH the Framework persisted-IL
          emitter, so its "with compiled il" bundles carry mscorlib-referencing

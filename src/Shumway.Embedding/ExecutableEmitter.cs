@@ -476,7 +476,7 @@ internal static class Program
 ";
     }
 
-    private static string GenerateProjectFile(string assemblyName, string rid,
+    internal static string GenerateProjectFile(string assemblyName, string rid,
         ExecutableDeploymentMode mode, IReadOnlyList<string> resourceNames,
         IReadOnlyList<string> extraReferences)
     {
@@ -535,6 +535,7 @@ internal static class Program
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
+    <RollForward>Major</RollForward>
     <AssemblyName>{assemblyName}</AssemblyName>
     <RuntimeIdentifier>{rid}</RuntimeIdentifier>
     <SelfContained>{selfContained}</SelfContained>
