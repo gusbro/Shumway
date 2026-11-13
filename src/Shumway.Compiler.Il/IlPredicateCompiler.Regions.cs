@@ -203,6 +203,10 @@ public sealed partial class IlPredicateCompiler
         public IlLabel FailLabel = null!;
         public IReadOnlyDictionary<int, IlLabel> MemberEntry = null!;
         public IlLabel[] CursorLabels = null!;
+        // A region in several methods: the dispatch switch's labels, a cursor
+        // another partition holds at the route to it. A switch on a cursor
+        // known only at run time takes these.
+        public IlLabel[]? SwitchLabels;
         public Dictionary<(int Member, int Pc), int> CursorBySite = null!;
         // (member index, clause index 1..N-1) → the clause-alternative cursor.
         public Dictionary<(int Member, int Clause), int> ClauseAltCursor = null!;
@@ -694,8 +698,8 @@ public sealed partial class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, SelfDelegateEmitter emitSelf,
         out IlRegionPlan finalPlan)
     {
-        if (RegionPartitionsOf(region, calleeMap) is { } memberPartition
-            && CompilePartitions(region, plan, calleeMap, emitSelf, memberPartition) is { } partitioned)
+        if (CutRegion(region, plan, calleeMap) is { } cut
+            && CompilePartitions(region, plan, calleeMap, emitSelf, cut) is { } partitioned)
         {
             finalPlan = plan;
             return partitioned;
@@ -774,47 +778,230 @@ public sealed partial class IlPredicateCompiler
         }
     }
 
-    /// <summary>Per member, the partition that holds it, when the region is
-    /// emitted in several methods (<see cref="IlRegionCost.PartitionRefs"/>):
-    /// members whole, consecutive in the plan's order, each partition under
-    /// the target. Null for one method.</summary>
-    private int[]? RegionPartitionsOf(IlRegion region, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    /// <summary>Where a region emitted in several methods is cut
+    /// (<see cref="IlRegionCost.PartitionRefs"/>): whole members in the
+    /// plan's order, each partition under the target; a member past the
+    /// target alone is cut between its clauses (a chain) or its index nodes,
+    /// in their order and where a bucket's chain ends when the chain fits a
+    /// partition of its own. Null for one method.</summary>
+    private RegionCut? CutRegion(IlRegion region, IlRegionPlan plan,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
         int target = IlRegionCost.PartitionRefs;
-        if (target <= 0 || region.MemberCount < 2 || DebugMode || CpsMode
-            || _persistPatches is not null || _persistScratch) return null;
-        var result = new int[region.MemberCount];
-        int p = 0, used = 0;
-        for (int mi = 0; mi < region.MemberCount; mi++)
+        if (target <= 0 || DebugMode || CpsMode || _persistPatches is not null || _persistScratch) return null;
+        int members = region.MemberCount;
+        var cut = new RegionCut(members);
+        int k = 0, used = 0;
+        for (int mi = 0; mi < members; mi++)
         {
-            int cost = RegionMemberCost(region.Members[mi], calleeMap) + IlRegionCost.PerMemberReturn;
-            if (mi > 0 && used + cost > target) { p++; used = 0; }
-            result[mi] = p;
-            used += cost;
+            var member = region.Members[mi];
+            int cost = RegionMemberCost(member, calleeMap) + IlRegionCost.PerMemberReturn;
+            IlIndexedDispatchInfo? info = null;
+            IReadOnlyList<(int Start, int End)>? ranges = null;
+            if (cost > target && member.ClauseCount > 1)
+            {
+                if (TryDescribeIndexed(member, calleeMap, out var ii)) { info = ii; ranges = ii!.Clauses; }
+                else if (TryDescribeTryMeElseChain(member, calleeMap, out var chain) && chain is not null)
+                    ranges = chain.Clauses;
+            }
+            if (ranges is null)
+            {
+                if (mi > 0 && used > 0 && used + cost > target) { k++; used = 0; }
+                cut.MemberPart[mi] = cut.EntryPart[mi] = k;
+                used += cost;
+                continue;
+            }
+            // The member's cost shared among its clause bodies by the opcode
+            // model; a node of an index costs its resume entry, and a body
+            // its share in each partition that holds a copy.
+            int nodes = info?.Nodes.Count ?? 0;
+            int bodiesCost = Math.Max(0, cost - nodes * IlRegionCost.PerResumeCursor);
+            var est = new long[ranges.Count];
+            long estSum = 0;
+            for (int i = 0; i < ranges.Count; i++)
+            {
+                est[i] = Math.Max(1, IlRegionCost.Estimate(member.BytecodeUnfused, new[] { ranges[i] }));
+                estSum += est[i];
+            }
+            int Body(int i) => (int)(bodiesCost * est[i] / estSum);
+            var here = new HashSet<int>();
+            void NewPartition() { k++; used = 0; here.Clear(); }
+            int pieceCount = info is null ? ranges.Count : nodes;
+            var pieces = new int[pieceCount];
+            if (info is null)
+            {
+                for (int i = 0; i < ranges.Count; i++)
+                {
+                    int c = Body(i) + (i > 0 ? IlRegionCost.PerResumeCursor : 0);
+                    if (used > 0 && used + c > target && (mi > 0 || i > 0)) NewPartition();
+                    pieces[i] = k;
+                    used += c;
+                }
+            }
+            else
+            {
+                int NodeCost(int n, HashSet<int> held)
+                    => IlRegionCost.PerResumeCursor + (held.Contains(info.Nodes[n].ClauseIndex) ? 0 : Body(info.Nodes[n].ClauseIndex));
+                for (int n = 0; n < nodes;)
+                {
+                    // A bucket's chain: nodes linked to the next by NextCursor.
+                    int end = n;
+                    while (end + 1 < nodes && info.Nodes[end].NextCursor == end + 1) end++;
+                    int chainHere = 0, chainAlone = 0;
+                    var alone = new HashSet<int>();
+                    var held = new HashSet<int>(here);
+                    for (int x = n; x <= end; x++)
+                    {
+                        chainHere += NodeCost(x, held);
+                        held.Add(info.Nodes[x].ClauseIndex);
+                        chainAlone += NodeCost(x, alone);
+                        alone.Add(info.Nodes[x].ClauseIndex);
+                    }
+                    if (used > 0 && used + chainHere > target && chainAlone <= target && (mi > 0 || n > 0))
+                        NewPartition();
+                    for (int x = n; x <= end; x++)
+                    {
+                        int c = NodeCost(x, here);
+                        if (used > 0 && used + c > target && (mi > 0 || x > 0)) { NewPartition(); c = NodeCost(x, here); }
+                        pieces[x] = k;
+                        used += c;
+                        here.Add(info.Nodes[x].ClauseIndex);
+                    }
+                    n = end + 1;
+                }
+            }
+            cut.MemberPart[mi] = -1;
+            cut.EntryPart[mi] = pieces[0];
+            cut.Pieces[mi] = pieces;
+            cut.Ranges[mi] = ranges;
+            if (info is not null) cut.Index[mi] = info;
         }
-        return p == 0 ? null : result;
+        cut.Count = k + 1;
+        if (cut.Count == 1) return null;
+        cut.Place(plan);
+        return cut;
     }
 
-    /// <summary>Per cursor of the plan, resume cursors included, the partition
-    /// of the member it belongs to. Resume cursors are numbered as
-    /// <see cref="EmitRegionInto"/> numbers them, in the plan's order.</summary>
-    private static int[] CursorPartitions(IlRegionPlan plan, int[] memberPartition, out int resumeCount)
+    /// <summary>A region cut into partitions: which partition holds each
+    /// member, each piece of a member cut in pieces, and each cursor.</summary>
+    private sealed class RegionCut
     {
-        resumeCount = 0;
-        foreach (var s in plan.Sites)
-            if (s.Kind == RegionCursorKind.ClauseAlt || s.Kind == RegionCursorKind.IndexNode)
-                resumeCount++;
-        var result = new int[plan.TotalCursors + resumeCount];
-        result[0] = memberPartition[0];
-        int r = plan.TotalCursors;
-        foreach (var s in plan.Sites)
+        public RegionCut(int members)
         {
-            int p = memberPartition[s.MemberIndex];
-            result[s.Cursor] = p;
-            if (s.Kind == RegionCursorKind.ClauseAlt || s.Kind == RegionCursorKind.IndexNode)
-                result[r++] = p;
+            MemberPart = new int[members];
+            EntryPart = new int[members];
         }
-        return result;
+
+        public int Count;
+        /// <summary>Per member index, its partition; -1 for a member in pieces.</summary>
+        public readonly int[] MemberPart;
+        /// <summary>Per member index, the partition of its entry.</summary>
+        public readonly int[] EntryPart;
+        /// <summary>Per member in pieces, the partition of each clause of a
+        /// chain or each node of an index.</summary>
+        public readonly Dictionary<int, int[]> Pieces = new();
+        /// <summary>Per member in pieces, its clause bodies' byte ranges.</summary>
+        public readonly Dictionary<int, IReadOnlyList<(int Start, int End)>> Ranges = new();
+        /// <summary>Per member in pieces that is indexed, its index.</summary>
+        public readonly Dictionary<int, IlIndexedDispatchInfo> Index = new();
+        /// <summary>Per cursor, resume cursors included, the partition a
+        /// route to it goes to.</summary>
+        public int[] Home = Array.Empty<int>();
+        /// <summary>Per partition, per cursor: whether the partition holds
+        /// its label. A clause body of an index is copied into each partition
+        /// holding a node that runs it, so its cursors are held by each.</summary>
+        public bool[][] Held = Array.Empty<bool[]>();
+
+        /// <summary>Whether partition <paramref name="p"/> emits any part of member <paramref name="mi"/>.</summary>
+        public bool Emits(int p, int mi)
+        {
+            if (MemberPart[mi] >= 0) return MemberPart[mi] == p;
+            if (EntryPart[mi] == p) return true;
+            foreach (int q in Pieces[mi]) if (q == p) return true;
+            return false;
+        }
+
+        /// <summary>Whether partition <paramref name="p"/> emits clause body
+        /// <paramref name="clause"/> of member <paramref name="mi"/>: the
+        /// clause of a chain where it was placed, a body of an index in each
+        /// partition with a node that runs it, and one no node runs with the entry.</summary>
+        public bool EmitsBody(int p, int mi, int clause)
+        {
+            if (MemberPart[mi] >= 0) return MemberPart[mi] == p;
+            var pieces = Pieces[mi];
+            if (!Index.TryGetValue(mi, out var info)) return pieces[clause] == p;
+            bool any = false;
+            for (int n = 0; n < pieces.Length; n++)
+            {
+                if (info.Nodes[n].ClauseIndex != clause) continue;
+                any = true;
+                if (pieces[n] == p) return true;
+            }
+            return !any && EntryPart[mi] == p;
+        }
+
+        /// <summary>The partitions holding each cursor, from the plan's sites;
+        /// resume cursors are numbered as <see cref="EmitRegionInto"/> numbers
+        /// them, in the plan's order.</summary>
+        public void Place(IlRegionPlan plan)
+        {
+            int resumeCount = 0;
+            foreach (var s in plan.Sites)
+                if (s.Kind == RegionCursorKind.ClauseAlt || s.Kind == RegionCursorKind.IndexNode)
+                    resumeCount++;
+            int cursors = plan.TotalCursors + resumeCount;
+            Home = new int[cursors];
+            Held = new bool[Count][];
+            for (int p = 0; p < Count; p++) Held[p] = new bool[cursors];
+            void Hold(int cursor, int p)
+            {
+                if (!Held[p][cursor] && (Home[cursor] < 0 || p < Home[cursor])) Home[cursor] = p;
+                Held[p][cursor] = true;
+            }
+            for (int c = 0; c < cursors; c++) Home[c] = -1;
+            Hold(0, EntryPart[0]);
+            int r = plan.TotalCursors;
+            foreach (var s in plan.Sites)
+            {
+                int mi = s.MemberIndex;
+                bool resume = s.Kind == RegionCursorKind.ClauseAlt || s.Kind == RegionCursorKind.IndexNode;
+                if (MemberPart[mi] >= 0)
+                {
+                    Hold(s.Cursor, MemberPart[mi]);
+                    if (resume) Hold(r++, MemberPart[mi]);
+                    continue;
+                }
+                switch (s.Kind)
+                {
+                    case RegionCursorKind.ClauseAlt:
+                    case RegionCursorKind.IndexNode:
+                        // The clause or node rides in ClauseIndex.
+                        Hold(s.Cursor, Pieces[mi][s.ClauseIndex]);
+                        Hold(r++, Pieces[mi][s.ClauseIndex]);
+                        break;
+                    case RegionCursorKind.MemberEntry:
+                        Hold(s.Cursor, EntryPart[mi]);
+                        break;
+                    default:
+                        int clause = ClauseAt(mi, s.Pc);
+                        bool any = false;
+                        for (int p = 0; p < Count; p++)
+                            if (clause >= 0 ? EmitsBody(p, mi, clause) : EntryPart[mi] == p) { Hold(s.Cursor, p); any = true; }
+                        if (!any) Hold(s.Cursor, EntryPart[mi]);
+                        break;
+                }
+            }
+            for (int c = 0; c < cursors; c++)
+                if (Home[c] < 0) Hold(c, 0);
+        }
+
+        private int ClauseAt(int mi, int pc)
+        {
+            var ranges = Ranges[mi];
+            for (int i = 0; i < ranges.Count; i++)
+                if (pc >= ranges[i].Start && pc < ranges[i].End) return i;
+            return -1;
+        }
     }
 
     /// <summary>The region as several methods over its one cursor space, the
@@ -822,12 +1009,11 @@ public sealed partial class IlPredicateCompiler
     /// limit of the JIT or cannot be emitted, and the region is one method.</summary>
     private PredicateDelegate? CompilePartitions(IlRegion region, IlRegionPlan plan,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, SelfDelegateEmitter emitSelf,
-        int[] memberPartition)
+        RegionCut cut)
     {
-        int k = memberPartition[memberPartition.Length - 1] + 1;
+        int k = cut.Count;
         int regionFid = region.Root.FunctorId;
-        var cursorPartition = CursorPartitions(plan, memberPartition, out int resumeCount);
-        int markerRunReserve = (plan.TotalCursors + resumeCount - 1 + 15) & ~15;
+        int markerRunReserve = (cut.Home.Length - 1 + 15) & ~15;
         int runBase = Activation.ReserveResumeMarkerRange(regionFid, 1, markerRunReserve);
         System.Threading.Interlocked.Increment(
             ref runBase >= 0 ? ref RegionMarkerRuns : ref RegionMarkerRunMisses);
@@ -841,11 +1027,7 @@ public sealed partial class IlPredicateCompiler
         {
             for (int p = 0; p < k; p++)
             {
-                var part = new RegionPartition
-                {
-                    Index = p, Methods = emits, MemberPartition = memberPartition,
-                    CursorPartition = cursorPartition, MarkerRunBase = runBase,
-                };
+                var part = new RegionPartition { Index = p, Methods = emits, Cut = cut, MarkerRunBase = runBase };
                 EmitRegionInto(emits[p], emitSelf, region, plan, calleeMap,
                     typeof(Func<Activation, int, bool>), part);
                 EmitRegionTail(emits[p]);
@@ -869,6 +1051,7 @@ public sealed partial class IlPredicateCompiler
                 e.InstructionCount, e.LocalCount, 1, Persisted: false, e.InlineCount, e.BlockCount, e.SwitchTargetCount, p, k));
         }
         System.Threading.Interlocked.Increment(ref PartitionedRegions);
+        System.Threading.Interlocked.Add(ref MembersInPieces, cut.Pieces.Count);
         var dels = IlEmit.CreateDelegates(emits, ZeroLocals);
         foreach (var d in dels) NoteArtifactDelegate(d, emits[0].Literals);
         var others = new PredicateDelegate[k - 1];
@@ -946,7 +1129,7 @@ public sealed partial class IlPredicateCompiler
             ws.Base = part.Index << WakePartitionShift;
             ws.Foreign = () => EmitForeignWakeRoute(emit, routes, curLoc);
         }
-        bool Foreign(int cursor) => part is not null && part.CursorPartition[cursor] != part.Index;
+        bool Foreign(int cursor) => part is not null && !part.Holds(cursor);
 
         var memberEntry = new Dictionary<int, IlLabel>();
         foreach (var m in region.Members)
@@ -1077,8 +1260,9 @@ public sealed partial class IlPredicateCompiler
         {
             var switchLabels = new IlLabel[cursorLabels.Length];
             for (int c = 0; c < switchLabels.Length; c++)
-                switchLabels[c] = Foreign(c) ? route![part.CursorPartition[c]]! : cursorLabels[c];
+                switchLabels[c] = Foreign(c) ? route![part.Home(c)]! : cursorLabels[c];
             emit.Switch(switchLabels);
+            ctx.SwitchLabels = switchLabels;
         }
         EmitWakeCursorCheck(emit, () => emit.LoadLocal(curLoc));
         emit.Branch(failLabel);                              // out of range (unreachable)
@@ -1090,7 +1274,12 @@ public sealed partial class IlPredicateCompiler
         {
             for (int mi = 0; mi < region.Members.Count; mi++)
             {
-                if (part is not null && part.MemberPartition[mi] != part.Index) continue;
+                // A member in pieces is emitted, in part, by every partition
+                // that holds one; its entry label by the partition of its entry.
+                if (part is not null && !part.Cut.Emits(part.Index, mi)) continue;
+                var cut = part?.Cut;
+                bool inPieces = cut is not null && cut.MemberPart[mi] < 0;
+                int partIndex = part?.Index ?? 0;
                 var member = region.Members[mi];
                 ctx.CurrentMemberIndex = mi;
                 ctx.MemberRetLabel = memberRetLabel.TryGetValue(mi, out var mrl) ? mrl : retLabel;
@@ -1098,7 +1287,9 @@ public sealed partial class IlPredicateCompiler
                 int refsBefore = emit.LocalRefCount, instrsBefore = emit.InstructionCount,
                     inlinesBefore = emit.InlineCount, localsBefore = emit.LocalCount;
                 string ops;
-                emit.MarkLabel(memberEntry[member.FunctorId]);   // clause 0 / single-clause entry
+                bool entryHere = !inPieces || cut!.EntryPart[mi] == partIndex;
+                if (entryHere)
+                    emit.MarkLabel(memberEntry[member.FunctorId]);   // clause 0 / single-clause entry
                 if (member.ClauseCount == 1)
                 {
                     EmitClauseBody(emit, member.BytecodeUnfused, 0, member.BytecodeUnfused.Length,
@@ -1108,16 +1299,22 @@ public sealed partial class IlPredicateCompiler
                 }
                 else if (TryDescribeIndexed(member, calleeMap, out var idxInfo))
                 {
-                    EmitRegionIndexedMember(emit, member, mi, idxInfo!, ctx, effectiveSelf, calleeMap, gcCtx);
+                    EmitRegionIndexedMember(emit, member, mi, idxInfo!, ctx, effectiveSelf, calleeMap, gcCtx,
+                        inPieces ? new IndexPieces(entryHere,
+                            n => cut!.Pieces[mi][n] == partIndex,
+                            i => cut!.EmitsBody(partIndex, mi, i)) : null);
                     ops = OpcodeHistogram(member.BytecodeUnfused, idxInfo!.Clauses);
                 }
                 else
                 {
-                    EmitRegionMultiClauseMember(emit, member, mi, ctx, effectiveSelf, calleeMap, gcCtx);
+                    EmitRegionMultiClauseMember(emit, member, mi, ctx, effectiveSelf, calleeMap, gcCtx,
+                        inPieces ? i => cut!.Pieces[mi][i] == partIndex : null);
                     ops = OpcodeHistogram(member.BytecodeUnfused, null);
                 }
-                IlRegionCost.Record(member, emit.LocalRefCount - refsBefore, emit.InlineCount - inlinesBefore,
-                    emit.LocalCount - localsBefore);
+                // A piece's cost is not the member's: the first measure stays.
+                if (!inPieces)
+                    IlRegionCost.Record(member, emit.LocalRefCount - refsBefore, emit.InlineCount - inlinesBefore,
+                        emit.LocalCount - localsBefore);
                 trace.Members.Add((member, emit.LocalRefCount - refsBefore, emit.InstructionCount - instrsBefore,
                     emit.InlineCount - inlinesBefore, emit.LocalCount - localsBefore, ops));
             }
@@ -1137,7 +1334,7 @@ public sealed partial class IlPredicateCompiler
         // a direct branch each, before the general return.
         foreach (var (mi, sites) in memberReturn)
         {
-            if (part is not null && part.MemberPartition[mi] != part.Index) continue;
+            if (part is not null && !part.Cut.Emits(part.Index, mi)) continue;
             emit.MarkLabel(memberRetLabel[mi]);
             foreach (int c in sites)
             {
@@ -1263,7 +1460,7 @@ public sealed partial class IlPredicateCompiler
                 emit.MarkLabel(cursorLabels[c]);
                 emit.LoadConstant(c);
                 emit.StoreLocal(curLoc);
-                emit.Branch(route![part.CursorPartition[c]]!);
+                emit.Branch(route![part.Home(c)]!);
                 System.Threading.Interlocked.Increment(ref PartitionStubs);
             }
             for (int q = 0; q < route!.Length; q++)
@@ -1278,21 +1475,24 @@ public sealed partial class IlPredicateCompiler
         public required int Index;
         /// <summary>The region's methods, by partition; 0 is the root's.</summary>
         public required IlEmit[] Methods;
-        /// <summary>Per member index, the partition that holds the member.</summary>
-        public required int[] MemberPartition;
-        /// <summary>Per cursor of the region (its wake cursors apart), the
-        /// partition that holds its label.</summary>
-        public required int[] CursorPartition;
+        public required RegionCut Cut;
         /// <summary>The region's run of markers, reserved once for all.</summary>
         public required int MarkerRunBase;
+
+        /// <summary>Whether this partition holds the label of <paramref name="cursor"/>
+        /// (its wake cursors apart).</summary>
+        public bool Holds(int cursor) => Cut.Held[Index][cursor];
+
+        /// <summary>The partition a route to <paramref name="cursor"/> goes to.</summary>
+        public int Home(int cursor) => Cut.Home[cursor];
 
         /// <summary>The resume cursors this partition holds, one run.</summary>
         public (int Lo, int Count) ResumeRange(int totalCursors)
         {
             int lo = -1, hi = -1;
-            for (int c = totalCursors; c < CursorPartition.Length; c++)
+            for (int c = totalCursors; c < Cut.Home.Length; c++)
             {
-                if (CursorPartition[c] != Index) continue;
+                if (!Holds(c)) continue;
                 if (lo < 0) lo = c;
                 else if (hi != c) throw new NotSupportedException("a partition's resume cursors are not one run");
                 hi = c + 1;
@@ -1300,6 +1500,11 @@ public sealed partial class IlPredicateCompiler
             return lo < 0 ? (0, 0) : (lo, hi - lo);
         }
     }
+
+    /// <summary>The part of an indexed member in pieces one partition emits:
+    /// the index's resolve with the member's entry, its nodes, and the clause
+    /// bodies they run.</summary>
+    private sealed record IndexPieces(bool Entry, Func<int, bool> Node, Func<int, bool> Body);
 
     /// <summary>The route to partition <paramref name="to"/>: a tail call with
     /// the cursor in <paramref name="cur"/>. Where the runtime may not honour
@@ -1395,7 +1600,7 @@ public sealed partial class IlPredicateCompiler
         IlEmit emit, CompiledPredicate member, int mi,
         RegionEmitContext ctx, SelfDelegateEmitter emitSelf,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
-        GuardContEmitContext? gcCtx = null)
+        GuardContEmitContext? gcCtx = null, Func<int, bool>? clauseHere = null)
     {
         if (!TryDescribeTryMeElseChain(member, calleeMap, out var chain) || chain is null)
             throw new InvalidOperationException(
@@ -1404,6 +1609,8 @@ public sealed partial class IlPredicateCompiler
         int n = clauses.Count;
         for (int i = 0; i < n; i++)
         {
+            // A member in pieces: the clauses this partition holds.
+            if (clauseHere is not null && !clauseHere(i)) continue;
             if (i > 0)
                 emit.MarkLabel(ctx.CursorLabels[ctx.ClauseAltCursor[(mi, i)]]);
 
@@ -1554,7 +1761,7 @@ public sealed partial class IlPredicateCompiler
         IlEmit emit, CompiledPredicate member, int mi,
         IlIndexedDispatchInfo info, RegionEmitContext ctx, SelfDelegateEmitter emitSelf,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
-        GuardContEmitContext? gcCtx = null)
+        GuardContEmitContext? gcCtx = null, IndexPieces? pieces = null)
     {
         if (CpFreeIndexedCensus)
             AnalyzeIndexedBucketGuards(member, info, calleeMap);
@@ -1577,7 +1784,8 @@ public sealed partial class IlPredicateCompiler
 
         // ---- Resolve (member entry, forward): pick the entry node from the indexed
         //      argument. Inline when the graph builds; else the runtime resolver. ----
-        if (!TryEmitInlineIndexResolve(emit, info, nodeLabels, salt))
+        if (pieces is { Entry: false }) { }
+        else if (!TryEmitInlineIndexResolve(emit, info, nodeLabels, salt))
         {
             var entry = emit.DeclareLocal<int>($"ridx_entry{salt}");
             emit.LoadArgument(0);
@@ -1600,6 +1808,7 @@ public sealed partial class IlPredicateCompiler
             ? emit.DeclareLocal<int>($"idxnext{salt}") : null;
         for (int n = 0; n < K; n++)
         {
+            if (pieces is not null && !pieces.Node(n)) continue;
             emit.MarkLabel(nodeLabels[n]);
             int next = info.Nodes[n].NextCursor;
             if (guardPlan is not null && guardPlan.GuardOk[info.Nodes[n].ClauseIndex])
@@ -1620,6 +1829,7 @@ public sealed partial class IlPredicateCompiler
         // ---- Clause bodies, region-aware, emitted once and shared across nodes. ----
         for (int i = 0; i < N; i++)
         {
+            if (pieces is not null && !pieces.Body(i)) continue;
             emit.MarkLabel(bodyLabels[i]);
             if (guardPlan is not null && guardPlan.GuardOk[i])
             {
@@ -1687,8 +1897,16 @@ public sealed partial class IlPredicateCompiler
                         // idxnext (the region-wide label table — the same
                         // mapping the method's cursor switch uses); the tail
                         // sentinel (-1) falls through to the region fail.
-                        ctx.GuardFailCursor ??= emit.DeclareLocal<int>("ridx_guard_fail_cursor");
                         emit.LoadLocal(idxNext!);
+                        if (ctx.SwitchLabels is not null)
+                        {
+                            // A region in several methods: through the dispatch
+                            // switch, whose routes read the cursor from rcur.
+                            emit.StoreLocal(ctx.CursorLocal!);
+                            emit.Branch(ctx.DispatchLabel);
+                            return;
+                        }
+                        ctx.GuardFailCursor ??= emit.DeclareLocal<int>("ridx_guard_fail_cursor");
                         emit.StoreLocal(ctx.GuardFailCursor);
                         if (ctx.GuardFailDispatch is not null)
                         {
@@ -2033,10 +2251,11 @@ public sealed partial class IlPredicateCompiler
     public static int RegionReturnCompares =
         int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_REGION_RET_COMPARES"), out int n) ? n : 4;
 
-    /// <summary>Regions emitted in several methods, and the stubs by which
-    /// one of their methods leaves for another, over every region compiled
-    /// in this process (<see cref="IlRegionCost.PartitionRefs"/>).</summary>
-    public static int PartitionedRegions, PartitionStubs;
+    /// <summary>Regions emitted in several methods, the members of theirs cut
+    /// in pieces, and the stubs by which one of their methods leaves for
+    /// another, over every region compiled in this process
+    /// (<see cref="IlRegionCost.PartitionRefs"/>).</summary>
+    public static int PartitionedRegions, MembersInPieces, PartitionStubs;
 
     /// <summary>Read when a partitioned region is emitted: its stubs count
     /// the transfers they make in <see cref="PartitionTransfers"/>. For

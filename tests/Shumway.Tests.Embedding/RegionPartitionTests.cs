@@ -8,10 +8,11 @@ namespace Shumway.Tests.Embedding;
 /// <summary>A region emitted as several methods over its one cursor space
 /// (region-jit-limits.md, "A region in several methods") computes what the
 /// interpreter computes. The partition target is set so low that every
-/// member is a partition of its own, and every call, return, backtrack, cut
-/// and wake between members crosses from one method to another. Each test
-/// checks that the region was emitted in several methods and that transfers
-/// between them ran.</summary>
+/// member is a partition of its own, and every clause of a member and every
+/// node of an index too: every call, return, backtrack, cut and wake
+/// crosses from one method to another. Each test checks that the region was
+/// emitted in several methods and that transfers between them ran; the
+/// tests of members in pieces, that a member was cut.</summary>
 // Sets the partition target and the transfer counter, process statics: it
 // runs alone, in the gate's exclusive pass.
 [Collection("exclusive")]
@@ -41,7 +42,8 @@ public sealed class RegionPartitionTests
     /// rooted at <paramref name="root"/> cut into partitions, the same; the
     /// region was emitted in several methods and transfers between them ran.
     /// The first Tier-1 run compiles the region; the second runs it.</summary>
-    private static string SameOnBothTiers(string program, (string Name, int Arity) root, string goal)
+    private static string SameOnBothTiers(string program, (string Name, int Arity) root, string goal,
+        bool pieces = false)
     {
         int partitionRefs = IlRegionCost.PartitionRefs;
         bool counting = IlPredicateCompiler.CountPartitionTransfers;
@@ -53,7 +55,10 @@ public sealed class RegionPartitionTests
             string expected = Answer(Engine(program, 0), goal);
 
             var e = Engine(program, 1);
+            int piecesBefore = Volatile.Read(ref IlPredicateCompiler.MembersInPieces);
             Assert.Equal(expected, Answer(e, goal));
+            if (pieces)
+                Assert.True(Volatile.Read(ref IlPredicateCompiler.MembersInPieces) > piecesBefore, "no member cut in pieces");
             int rootFid = Fid(root.Name, root.Arity);
             Assert.True(e.IlPromotion.IsPromoted(rootFid), $"{root.Name}/{root.Arity} not promoted");
             var methods = IlRegionCost.Emissions.Where(r => r.RootFid == rootFid).ToList();
@@ -237,6 +242,81 @@ nt_b([X|T], R) :- nt_a(T, R0), R is R0 + 2 * X.
         long expected = 0;
         for (long i = 1; i <= 100000; i++) expected += i % 2 == 1 ? i : 2 * i;
         Assert.Equal(expected.ToString(System.Globalization.CultureInfo.InvariantCulture), answer);
+    }
+
+    [Fact]
+    public void AChainOfClausesIsCutBetweenItsClauses()
+    {
+        // Heads of variables only: a try_me_else chain, each clause a piece.
+        const string program = @"
+:- public ch_alt/2.
+ch_alt(X, Y) :- Y is X + 1.
+ch_alt(X, Y) :- X > 1, Y is X * 10.
+ch_alt(X, Y) :- ch_more(X, Y).
+ch_alt(X, Y) :- Y = neg(X).
+ch_more(X, Y) :- X > 2, Y = more(X).
+";
+        string answer = SameOnBothTiers(program, ("ch_alt", 2),
+            "findall(X-Y, (member(X, [1, 2, 3]), ch_alt(X, Y)), L).", pieces: true);
+        Assert.Equal("[1-2,1-neg(1),2-3,2-20,2-neg(2),3-4,3-30,3-more(3),3-neg(3)]", answer.Replace(" ", ""));
+    }
+
+    [Fact]
+    public void AGuardThatFailsInOnePieceGoesOnInTheNextPiece()
+    {
+        // A guard clause commits without a choice point (ADR-031); failing,
+        // it goes on at the next node of its bucket, in another method.
+        const string program = @"
+:- public gp_run/2.
+gp_run(X, Y) :- gp_pick(X, Y).
+gp_pick(X, Y) :- X < 0, !, Y = neg.
+gp_pick(X, Y) :- X > 10, !, Y = big.
+gp_pick(_, mid).
+";
+        string answer = SameOnBothTiers(program, ("gp_run", 2),
+            "findall(X-Y, (member(X, [-1, 5, 20]), gp_run(X, Y)), L).", pieces: true);
+        Assert.Equal("[-1-neg,5-mid,20-big]", answer.Replace(" ", ""));
+    }
+
+    [Fact]
+    public void AClauseBodyTwoBucketsShareRunsInTheMethodsOfBoth()
+    {
+        // The clauses with a variable key are in every bucket; cut by node,
+        // their bodies are copied into each method that runs them.
+        const string program = @"
+:- public sb_run/2.
+sb_run(K, N) :- sb_tab(K, N).
+sb_tab(a, 1).
+sb_tab(X, 2) :- sb_any(X).
+sb_tab(b, 3).
+sb_tab(X, 4) :- sb_any(X), X \== c.
+sb_tab(c, 5).
+sb_any(_).
+";
+        string answer = SameOnBothTiers(program, ("sb_run", 2),
+            "findall(K-N, (member(K, [a, b, c, d]), sb_run(K, N)), L1), "
+            + "findall(K-N, (sb_run(K0, N), (var(K0) -> K = v ; K = K0)), L2), L = L1/L2.", pieces: true);
+        Assert.Equal("[a-1,a-2,a-4,b-2,b-3,b-4,c-2,c-5,d-2,d-4]/[a-1,v-2,b-3,v-4,c-5]", answer.Replace(" ", ""));
+    }
+
+    [Fact]
+    public void ADynamicPredicateAGuardInlinedChangesInItsPiece()
+    {
+        // The guard inlines the dynamic predicate's clauses (ADR-034); once
+        // it changes, the clause takes its fallback, in its own method.
+        const string program = @"
+:- dynamic(dg_lim/1).
+:- public dg_run/2.
+dg_lim(5).
+dg_run(X, R) :- dg_pick(X, R).
+dg_pick(X, R) :- dg_lim(L), X < L, !, R = small.
+dg_pick(_, big).
+";
+        string answer = SameOnBothTiers(program, ("dg_run", 2),
+            "findall(X-R, (member(X, [1, 7]), dg_run(X, R)), L1), retract(dg_lim(5)), assertz(dg_lim(10)), "
+            + "findall(X-R, (member(X, [1, 7]), dg_run(X, R)), L2), retract(dg_lim(10)), assertz(dg_lim(5)), L = L1/L2.",
+            pieces: true);
+        Assert.Equal("[1-small,7-big]/[1-small,7-small]", answer.Replace(" ", ""));
     }
 
     [Fact]
