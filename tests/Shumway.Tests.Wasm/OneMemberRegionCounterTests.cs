@@ -1,3 +1,4 @@
+using Shumway.Compiler.Il;
 using Shumway.Core;
 using Shumway.Embedding;
 using Xunit;
@@ -39,22 +40,54 @@ public sealed class OneMemberRegionCounterTests(ITestOutputHelper o)
     [DiagFact]
     public void ARegionOfOnePushesInlineAndResumesItsOwnAlternatives()
     {
+        // What is counted is the clause-entry choice point, which find/2's
+        // first clause, a head and a test, does not push with head facts on
+        // (the test below): they are off here.
+        bool headFacts = IlPredicateCompiler.CpFreeHeadFacts;
+        IlPredicateCompiler.CpFreeHeadFacts = false;
+        try
+        {
+            var engine = new PrologEngine();
+            engine.IlPromotion.Threshold = 1;
+            engine.ConsultString(Corpus);
+
+            // 100 elements: 95 guard failures resumed in the method, then the
+            // five answers failed into by findall, through the marker path.
+            var d = Run(engine, "numlist(1, 100, L), findall(X, omc_find(X, L), Xs), length(Xs, 5).");
+            o.WriteLine($"find: pushes={d.Pushes} local={d.Local} side={d.Side} marker={d.Marker}");
+            Assert.Equal(0, d.Pushes);
+            Assert.True(d.Local >= 95, $"{d.Local} local resumptions");
+            Assert.Equal(0, d.Side);
+
+            d = Run(engine, "numlist(1, 100, L), findall(X, omc_mem(X, L), Xs), length(Xs, 100).");
+            o.WriteLine($"mem: pushes={d.Pushes} local={d.Local} side={d.Side} marker={d.Marker}");
+            Assert.Equal(0, d.Pushes);
+            Assert.Equal(0, d.Side);
+            Assert.True(d.Marker >= 99, $"{d.Marker} resumptions through the marker path");
+        }
+        finally
+        {
+            IlPredicateCompiler.CpFreeHeadFacts = headFacts;
+        }
+    }
+
+    [DiagFact]
+    public void AClauseOfAHeadAndATestPushesNothingWhereItFails()
+    {
+        // ADR-031 head facts: find/2's first clause runs as a guard with no
+        // entry choice point, so its 95 failures go to the next clause with
+        // nothing to push or resume; the five matches push theirs, which
+        // findall fails into through the marker path.
+        Assert.True(IlPredicateCompiler.CpFreeHeadFacts, "head facts are off in this process");
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(Corpus);
+        engine.ConsultString(Corpus.Replace("omc_", "omh_"));
 
-        // 100 elements: 95 guard failures resumed in the method, then the
-        // five answers failed into by findall, through the marker path.
-        var d = Run(engine, "numlist(1, 100, L), findall(X, omc_find(X, L), Xs), length(Xs, 5).");
+        var d = Run(engine, "numlist(1, 100, L), findall(X, omh_find(X, L), Xs), length(Xs, 5).");
         o.WriteLine($"find: pushes={d.Pushes} local={d.Local} side={d.Side} marker={d.Marker}");
         Assert.Equal(0, d.Pushes);
-        Assert.True(d.Local >= 95, $"{d.Local} local resumptions");
+        Assert.Equal(0, d.Local);
         Assert.Equal(0, d.Side);
-
-        d = Run(engine, "numlist(1, 100, L), findall(X, omc_mem(X, L), Xs), length(Xs, 100).");
-        o.WriteLine($"mem: pushes={d.Pushes} local={d.Local} side={d.Side} marker={d.Marker}");
-        Assert.Equal(0, d.Pushes);
-        Assert.Equal(0, d.Side);
-        Assert.True(d.Marker >= 99, $"{d.Marker} resumptions through the marker path");
+        Assert.True(d.Marker >= 5, $"{d.Marker} resumptions through the marker path");
     }
 }
