@@ -227,6 +227,7 @@ public sealed partial class IlPredicateCompiler
         // ADR-031: the one dispatch every indexed member's guard failure goes
         // through, on the cursor it stores; a switch over the region's cursors
         // per clause makes the JIT's flow graph quadratic.
+        public IlLabel? TrustSlow;
         public IlLabel? GuardFailDispatch;
         public IlLocal? GuardFailCursor;
     }
@@ -1062,7 +1063,23 @@ public sealed partial class IlPredicateCompiler
             {
                 int nextResume = retrying ? resumeCursor[retry.Next] : -1;
                 EmitFrameResumeTail(emit, frames,
-                    retrying ? () => EmitResumeMarker(emit, regionFid, nextResume) : null);
+                    retrying ? () => EmitResumeMarker(emit, regionFid, nextResume) : null,
+                    retrying ? null : () =>
+                    {
+                        // One slow trust for the region: it goes on at the
+                        // alternative through the dispatch switch.
+                        emit.LoadConstant(alt);
+                        emit.StoreLocal(curLoc);
+                        if (ctx.TrustSlow is null)
+                        {
+                            ctx.TrustSlow = emit.DefineLabel("rtrust_slow");
+                            emit.MarkLabel(ctx.TrustSlow);
+                            emit.LoadArgument(0);
+                            EmitHelperCall(emit, EngineTrustMeMethod);
+                            emit.Branch(dispatchLabel);
+                        }
+                        else emit.Branch(ctx.TrustSlow);
+                    });
             }
             else if (retrying)
             {
@@ -1201,7 +1218,7 @@ public sealed partial class IlPredicateCompiler
                     salt: $"_rm{mi}_c{i}",
                     regionMarker: e =>
                     {
-                        var marker = e.DeclareLocal<int>($"hf_marker_rm{mi0}_c{i0}");
+                        var marker = e.RentLocal<int>($"hf_marker_rm{mi0}_c{i0}");
                         EmitResumeMarker(e, ctx.RegionFid, ctx.ResumeCursor[ctx.ClauseAltCursor[(mi0, i0 + 1)]]);
                         e.StoreLocal(marker);
                         return marker;
@@ -1429,13 +1446,14 @@ public sealed partial class IlPredicateCompiler
                         emit.Branch(ctx.FailLabel);
                     },
                     dynamicCursor: e2 => e2.LoadLocal(idxNext!),
+                    failShare: idxNext,
                     wakeDeopt: HasBytecode(member),
                     regionMarker: e2 =>
                     {
                         // The next node is known at run time: one compare per
                         // node of this clause that has one, each loading its
                         // marker as written, so a persisted region patches it.
-                        var marker = e2.DeclareLocal<int>($"hf_marker_ridx{mi}_{i0}");
+                        var marker = e2.RentLocal<int>($"hf_marker_ridx{mi}_{i0}");
                         var done = e2.DefineLabel($"hf_marker_done_ridx{mi}_{i0}");
                         foreach (var node in info.Nodes)
                         {
@@ -1585,13 +1603,14 @@ public sealed partial class IlPredicateCompiler
         {
             EmitHelperCall(emit, EngineWakeBoundaryProceedMethod);
         }
-        var verdict = emit.DeclareLocal<int>($"wake_v_{NextLabelSeq()}");
+        var verdict = emit.RentLocal<int>($"wake_v_{NextLabelSeq()}");
         emit.StoreLocal(verdict);
         emit.LoadLocal(verdict);
         emit.LoadConstant(2);
         emit.BranchIfEqual(failLabel);
         var goOn = emit.DefineLabel($"wake_go_{NextLabelSeq()}");
         emit.LoadLocal(verdict);
+        emit.ReturnLocal(verdict);
         emit.LoadConstant(0);
         emit.BranchIfEqual(goOn);
         emit.LoadConstant(true);   // verdict 1: suspended — the loop takes P

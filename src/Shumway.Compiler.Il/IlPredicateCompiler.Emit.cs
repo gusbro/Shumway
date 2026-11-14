@@ -741,7 +741,7 @@ public sealed partial class IlPredicateCompiler
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
                 // Allocate fresh unbound, save its REF cell in a local, then
                 // assign it to both X[dest] and X[arg].
-                var refLocal = emit.DeclareLocal<Cell>($"freshRef_pc{pc}{lt}");
+                var refLocal = emit.RentLocal<Cell>($"freshRef_pc{pc}{lt}");
                 emit.LoadArgument(0);
                 EmitHelperCall(emit, EngineAllocateHeapUnboundMethod);
                 EmitHelperCall(emit, CellRefMethod);
@@ -750,6 +750,7 @@ public sealed partial class IlPredicateCompiler
                 EmitSetRegisterConst(emit, dest, () => emit.LoadLocal(refLocal));
                 // X[arg] = local
                 EmitSetRegisterConst(emit, arg, () => emit.LoadLocal(refLocal));
+                emit.ReturnLocal(refLocal);
 #if DEBUG
                 if (DebugMode)
                 {
@@ -769,13 +770,14 @@ public sealed partial class IlPredicateCompiler
                 // Y[slot] := X[arg] := Cell.Ref(engine.AllocateHeapUnbound())
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
-                var refLocal = emit.DeclareLocal<Cell>($"freshRefY_pc{pc}{lt}");
+                var refLocal = emit.RentLocal<Cell>($"freshRefY_pc{pc}{lt}");
                 emit.LoadArgument(0);
                 EmitHelperCall(emit, EngineAllocateHeapUnboundMethod);
                 EmitHelperCall(emit, CellRefMethod);
                 emit.StoreLocal(refLocal);
                 EmitStoreY(emit, slot, () => emit.LoadLocal(refLocal));
                 EmitSetRegisterConst(emit, arg, () => emit.LoadLocal(refLocal));
+                emit.ReturnLocal(refLocal);
 #if DEBUG
                 if (DebugMode)
                 {
@@ -3010,6 +3012,7 @@ public sealed partial class IlPredicateCompiler
                         emit.Branch(failLabel);
                     },
                     dynamicCursor: LoadNext,
+                    failShare: idxNext,
                     wakeDeopt: HasBytecode(predicate));
                 if (dynFb is not null)
                 {

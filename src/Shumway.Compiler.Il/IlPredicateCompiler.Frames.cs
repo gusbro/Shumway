@@ -726,7 +726,7 @@ public sealed partial class IlPredicateCompiler
     /// the next alternative), TrustMe's otherwise (HB and B as before the
     /// push, the frame popped).</summary>
     private static void EmitFrameResumeTail(IlEmit emit, FrameLocals l,
-        System.Action? nextMarker)
+        System.Action? nextMarker, System.Action? trustSlow = null)
     {
         System.Threading.Interlocked.Increment(ref InlineFrameSites);
         var slow = emit.DefineLabel($"crest_slow_{NextLabelSeq()}");
@@ -754,14 +754,19 @@ public sealed partial class IlPredicateCompiler
         emit.Branch(done);
 
         emit.MarkLabel(slow);
-        emit.LoadArgument(0);
         if (nextMarker is not null)
         {
+            emit.LoadArgument(0);
             nextMarker();
             EmitHelperCall(emit, EngineRetryMeElseMethod);
         }
+        else if (trustSlow is not null)
+        {
+            trustSlow();   // leaves
+        }
         else
         {
+            emit.LoadArgument(0);
             EmitHelperCall(emit, EngineTrustMeMethod);
         }
         emit.MarkLabel(done);

@@ -238,6 +238,38 @@ public sealed class IlEmit
         return new(_il.DeclareLocal(type), name ?? $"_local{_localSeq++}");
     }
 
+    /// <summary>Blocks a method emits once and branches to from every place
+    /// that would emit the same code, by what makes them the same.</summary>
+    internal Dictionary<object, IlLabel> SharedBlocks => _sharedBlocks ??= new();
+    private Dictionary<object, IlLabel>? _sharedBlocks;
+
+    // Locals given back, by type. The JIT counts every local declared, so
+    // one whose value is dead serves the next stretch of code.
+    private Dictionary<Type, Stack<IlLocal>>? _freeLocals;
+
+    /// <summary>A local for a stretch of code that ends at
+    /// <see cref="ReturnLocal"/>: one given back when there is one of the
+    /// type. Unassigned as far as the caller knows.</summary>
+    public IlLocal RentLocal<T>(string? name = null) => RentLocal(typeof(T), name);
+
+    public IlLocal RentLocal(Type type, string? name = null)
+    {
+        if (_freeLocals is not null && _freeLocals.TryGetValue(type, out var free) && free.Count > 0)
+            return free.Pop();
+        return DeclareLocal(type, name);
+    }
+
+    /// <summary>Gives a rented local back. Nothing emitted before reads it
+    /// after code emitted later has run.</summary>
+    public void ReturnLocal(IlLocal? local)
+    {
+        if (local is null) return;
+        _freeLocals ??= new();
+        if (!_freeLocals.TryGetValue(local.LocalType, out var free))
+            _freeLocals[local.LocalType] = free = new();
+        free.Push(local);
+    }
+
     // ---- the instruction stream ----
 
     private void Begin()
