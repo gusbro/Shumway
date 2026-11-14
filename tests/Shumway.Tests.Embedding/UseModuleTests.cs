@@ -40,7 +40,7 @@ public class UseModuleTests
         Assert.True(engine.Query(
             "catch(use_module(library(nope)), "
             + "error(existence_error(library, nope), _), true).").Success);
-        Assert.Throws<PrologRuntimeException>(
+        HostError.Raised(
             () => engine.Query("use_module(library(nope))."));
     }
 
@@ -48,7 +48,7 @@ public class UseModuleTests
     public void UseModule_UnboundArg_RaisesInstantiationError()
     {
         var engine = new PrologEngine();
-        var ex = Assert.Throws<PrologRuntimeException>(
+        var ex = HostError.Raised(
             () => engine.Query("use_module(_).") );
         Assert.Contains("instantiation_error", ex.Message);
     }

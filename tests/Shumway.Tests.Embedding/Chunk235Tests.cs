@@ -104,7 +104,7 @@ public class Chunk235Tests
     public void Consult_UnboundArg_ThrowsInstantiationError()
     {
         var engine = new PrologEngine();
-        var ex = Assert.Throws<PrologRuntimeException>(
+        var ex = HostError.Raised(
             () => engine.QueryAll("consult(X).").ToList());
         Assert.Contains("instantiation_error", ex.Message);
     }
@@ -117,7 +117,7 @@ public class Chunk235Tests
         var engine = new PrologEngine();
         Assert.True(engine.Query(
             "catch(consult(42), error(type_error(atom, 42), _), true).").Success);
-        Assert.Throws<PrologRuntimeException>(
+        HostError.Raised(
             () => engine.QueryAll("consult(42).").ToList());
     }
 
@@ -128,7 +128,7 @@ public class Chunk235Tests
         // Path almost certainly doesn't exist.
         var missing = Path.Combine(Path.GetTempPath(), "shumway_chunk235_no_such.pl");
         if (File.Exists(missing)) File.Delete(missing);
-        var ex = Assert.Throws<PrologRuntimeException>(
+        var ex = HostError.Raised(
             () => engine.QueryAll($"consult('{missing.Replace("\\", "\\\\")}').").ToList());
         Assert.Contains("existence_error", ex.Message);
         Assert.Contains("source_sink", ex.Message);

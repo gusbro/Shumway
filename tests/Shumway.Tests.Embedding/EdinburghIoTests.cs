@@ -198,7 +198,7 @@ public class EdinburghIoTests
     public void See_NonexistentFile_ExistenceError()
     {
         var engine = new PrologEngine();
-        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        var ex = HostError.Raised(
             () => engine.Query("see('/no/such/path/file.txt')."));
         Assert.Contains("existence_error", ex.Message);
     }

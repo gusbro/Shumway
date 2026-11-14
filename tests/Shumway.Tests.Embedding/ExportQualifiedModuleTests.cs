@@ -302,7 +302,7 @@ public class ExportQualifiedModuleTests
             """);
         Assert.True(Holds(e, "hello(world)"));
         // Non-exported predicates stay module-local.
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        HostError.Raised(
             () => e.Query("secret(_)."));
     }
 
@@ -320,7 +320,7 @@ public class ExportQualifiedModuleTests
         var e = EngineWith(libs);
         e.ConsultString(":- use_module(library(depa)).");
         Assert.True(Holds(e, "pa(from_b)"));
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        HostError.Raised(
             () => e.Query("pb(_)."));
     }
 

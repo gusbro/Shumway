@@ -147,7 +147,7 @@ public class IntrospectionTests
         // Predicate is gone: it's no longer in the dynamic registry, and
         // asserting again must re-declare it dynamic first. Phase-9
         // chunk 131e: raises catchable permission_error now.
-        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        var ex = HostError.Raised(
             () => engine.Query("assertz(counter(99))."));
         Assert.Equal("permission_error", ex.Kind);
     }

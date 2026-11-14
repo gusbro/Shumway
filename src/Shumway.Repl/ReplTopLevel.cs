@@ -498,15 +498,14 @@ internal static class ReplTopLevel
     }
 
     /// <summary>REPL-side error renderer. Distinguishes
-    /// the three exception families a query can surface:
+    /// the exception families a query can surface:
     ///
     /// <list type="bullet">
-    /// <item><see cref="ShumwayPrologException"/> — user-thrown via
-    ///   <c>throw/1</c>. The carried <c>Term</c> renders with the
+    /// <item><see cref="ShumwayPrologException"/> — an uncaught ball. A
+    ///   builtin's error (its <see cref="Shumway.Core.PrologRuntimeException"/>
+    ///   is the inner exception) prints in the standard error/2 shape
+    ///   naming the builtin; a <c>throw/1</c> ball renders with the
     ///   operator-aware printer the bindings use.</item>
-    /// <item><see cref="Shumway.Core.PrologRuntimeException"/> —
-    ///   ISO-shaped error from a builtin. <c>Kind</c> +
-    ///   <c>Detail</c> compose into the standard error/2 shape.</item>
     /// <item>Any other .NET exception — parse failure, embedding
     ///   misuse, internal bug. Type name + message.</item>
     /// </list>

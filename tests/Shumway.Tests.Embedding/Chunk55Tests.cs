@@ -35,7 +35,7 @@ public class Chunk55Tests
             ":- public divider/2.\n" +
             "divider(zero, _) :- true.\n" +     // line 2: matches divider(zero, _).
             "divider(nz, X) :- _ is 10 / X.\n"); // line 3: matches divider(nz, _).
-        Assert.Throws<PrologRuntimeException>(
+        HostError.Raised(
             () => engine.Query("divider(nz, 0)."));
         var frames = engine.LastErrorStackTraceWithPositions;
         var dividerFrame = frames.First(f => f.Name == "divider");
@@ -54,7 +54,7 @@ public class Chunk55Tests
             ":- public divider/2.\n" +
             "divider(zero, X) :- _ is X / 0.\n" + // line 2
             "divider(nz, X) :- _ is 10 / X.\n");  // line 3
-        Assert.Throws<PrologRuntimeException>(
+        HostError.Raised(
             () => engine.Query("divider(zero, 5)."));
         var frames = engine.LastErrorStackTraceWithPositions;
         var dividerFrame = frames.First(f => f.Name == "divider");
@@ -72,7 +72,7 @@ public class Chunk55Tests
             :- public single/1.
             single(X) :- _ is X / 0.
             """);      // line 2
-        Assert.Throws<PrologRuntimeException>(
+        HostError.Raised(
             () => engine.Query("single(7)."));
         var frames = engine.LastErrorStackTraceWithPositions;
         var frame = frames.First(f => f.Name == "single");

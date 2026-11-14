@@ -47,4 +47,14 @@ public sealed class ShumwayPrologException : Exception
         ArgumentNullException.ThrowIfNull(term);
         Term = term;
     }
+
+    /// <summary>The ball of an error a builtin or a foreign predicate raised
+    /// as a <see cref="Shumway.Core.PrologRuntimeException"/>, which stays
+    /// the <see cref="Exception.InnerException"/>.</summary>
+    public ShumwayPrologException(Term term, Shumway.Core.PrologRuntimeException raised)
+        : base(null, raised)
+    {
+        ArgumentNullException.ThrowIfNull(term);
+        Term = term;
+    }
 }

@@ -63,7 +63,7 @@ public class ModuleSystemTests
             :- module(parser).
             p(a).
             """);
-        var ex = Assert.Throws<PrologRuntimeException>(() => engine.Query("p(X)."));
+        var ex = HostError.Raised(() => engine.Query("p(X)."));
         Assert.Equal("existence_error", ex.Kind);
     }
 

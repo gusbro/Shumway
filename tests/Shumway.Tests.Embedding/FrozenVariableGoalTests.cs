@@ -106,7 +106,7 @@ public class FrozenVariableGoalTests
         Bounded(() =>
         {
             var e = Coroutining();
-            var re = Assert.Throws<PrologRuntimeException>(
+            var re = HostError.Raised(
                 () => e.Query("freeze(X, Y), X = 1."));
             Assert.Equal("instantiation_error", re.Kind);
         });
@@ -147,7 +147,7 @@ public class FrozenVariableGoalTests
             // Waking X runs the inner freeze, which suspends on Y; waking
             // Y then calls the still-unbound W.
             Assert.True(e.Query("freeze(X, freeze(Y, _W)), X = 1.").Success);
-            var re = Assert.Throws<PrologRuntimeException>(
+            var re = HostError.Raised(
                 () => e.Query("freeze(X, freeze(Y, _W)), X = 1, Y = 2."));
             Assert.Equal("instantiation_error", re.Kind);
         });
