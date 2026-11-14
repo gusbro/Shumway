@@ -82,12 +82,9 @@ const isSource = (path) => /\.(pl|pro|prolog)$/i.test(path);
 // --- importing from a URL -------------------------------------------------
 // The point is not having to clone a whole Prolog system to get one library.
 //
-// Two hosts are involved and they behave differently, which is the whole story
-// of why this works: the FILES come from raw.githubusercontent.com, which sends
-// `Cross-Origin-Resource-Policy: cross-origin` and so is readable even from a
-// cross-origin-isolated page; the LISTING comes from api.github.com, which
-// sends CORS but no CORP — readable only because this app asks for
-// `credentialless` isolation rather than `require-corp`.
+// Two hosts are involved: the files come from raw.githubusercontent.com and
+// the listing from api.github.com. Both answer a CORS fetch, which a
+// cross-origin-isolated page may read under `require-corp`.
 
 /** Somewhere to start from, for the systems whose libraries are worth having. */
 export const SUGGESTED = [

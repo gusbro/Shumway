@@ -34,8 +34,11 @@
 //
 // Versioned by cache name: bumping it discards the previous generation on
 // activate, which is how a republished app stops serving yesterday's runtime.
+// Only this app's generations: the origin is shared with other sites, and
+// their caches are not ours to delete.
 
-const CACHE = 'webshumway-v10';
+const CACHE_PREFIX = 'webshumway-';
+const CACHE = CACHE_PREFIX + 'v10';
 
 /** A promise, or a rejection after `ms` — cache ops must never park a request. */
 const bounded = (promise, ms) => Promise.race([
@@ -58,8 +61,10 @@ const cached = (request) =>
 /**
  * The response the page should get, isolated.
  *
- * `credentialless` rather than `require-corp` so the library importer can read
- * GitHub's listing API, which sends CORS but no Cross-Origin-Resource-Policy.
+ * `require-corp`, the value every engine implements: WebKit ignores
+ * `credentialless`, and a page it ignores it on is not isolated and cannot
+ * boot. The library importer's cross-origin reads are CORS fetches, which
+ * `require-corp` allows.
  * A response whose body cannot be re-read (an opaque cross-origin one) is
  * returned untouched — it is not ours to relabel.
  */
@@ -68,7 +73,7 @@ function isolated(response) {
     return response;
   const headers = new Headers(response.headers);
   headers.set('Cross-Origin-Opener-Policy', 'same-origin');
-  headers.set('Cross-Origin-Embedder-Policy', 'credentialless');
+  headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
   // Same-origin subresources need this to be embeddable in an isolated
   // document; the server sends it where it can, and this covers where it
   // cannot.
@@ -112,7 +117,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     await bounded((async () => {
       for (const name of await caches.keys()) {
-        if (name !== CACHE) await caches.delete(name);
+        if (name !== CACHE && name.startsWith(CACHE_PREFIX)) await caches.delete(name);
       }
     })(), 5000).catch(() => { });
     await self.clients.claim();
