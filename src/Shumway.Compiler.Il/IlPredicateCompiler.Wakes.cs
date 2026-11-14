@@ -525,13 +525,14 @@ public sealed partial class IlPredicateCompiler
         emit.LoadConstant(arity);
         EmitResumeMarker(emit, _emitOwnerFid, cursor);
         EmitHelperCall(emit, EngineWakeBoundaryAtMethod);
-        var verdict = emit.DeclareLocal<int>($"wake_at_v_{NextLabelSeq()}");
+        var verdict = emit.RentLocal<int>($"wake_at_v_{NextLabelSeq()}");
         emit.StoreLocal(verdict);
         emit.LoadLocal(verdict);
         emit.LoadConstant(2);
         emit.BranchIfEqual(failLabel);
         var goOn = emit.DefineLabel($"wake_at_go_{NextLabelSeq()}");
         emit.LoadLocal(verdict);
+        emit.ReturnLocal(verdict);
         emit.BranchIfFalse(goOn);
         emit.LoadConstant(true);   // armed: the dispatch loop runs the driver from P
         EmitReturn(emit);
@@ -814,12 +815,13 @@ public sealed partial class IlPredicateCompiler
         emit.LoadConstant(0);
         EmitResumeMarker(emit, window.Fid, window.Cursor);
         EmitHelperCall(emit, EngineWakeBoundaryAtMethod);
-        var verdict = emit.DeclareLocal<int>($"wwake_v_{NextLabelSeq()}");
+        var verdict = emit.RentLocal<int>($"wwake_v_{NextLabelSeq()}");
         emit.StoreLocal(verdict);
         emit.LoadLocal(verdict);
         emit.BranchIfFalse(skip);
         // 2: the drain failed; else armed, and the dispatch loop runs the driver.
         emit.LoadLocal(verdict);
+        emit.ReturnLocal(verdict);
         emit.LoadConstant(1);
         emit.CompareEqual();
         EmitReturn(emit);

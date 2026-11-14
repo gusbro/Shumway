@@ -1736,7 +1736,8 @@ public sealed partial class IlPredicateCompiler
         Action? dynamicFailDispatch = null,
         Action<IlEmit>? dynamicCursor = null,
         bool? wakeDeopt = null,
-        Func<IlEmit, IlLocal>? regionMarker = null)
+        Func<IlEmit, IlLocal>? regionMarker = null,
+        object? failShare = null)
     {
         // ADR-061: in a continuation method the guard's marks live in the
         // activation (the indexed buckets' next node too), so the cold method
@@ -1769,7 +1770,7 @@ public sealed partial class IlPredicateCompiler
             regs = new IlLocal[arity];
             for (int r = 0; r < arity; r++)
             {
-                regs[r] = emit.DeclareLocal<Cell>($"cf_r{r}{salt}");
+                regs[r] = emit.RentLocal<Cell>($"cf_r{r}{salt}");
                 emit.LoadArgument(0);
                 emit.LoadConstant(r);
                 EmitHelperCall(emit, EngineGetRegisterMethod);
@@ -1793,11 +1794,11 @@ public sealed partial class IlPredicateCompiler
         }
         else if (g.NeedsSnapshot)
         {
-            bt = emit.DeclareLocal<int>($"cf_bt{salt}");
-            xt = emit.DeclareLocal<int>($"cf_xt{salt}");
-            h = emit.DeclareLocal<int>($"cf_h{salt}");
-            hb = emit.DeclareLocal<int>($"cf_hb{salt}");
-            ee = emit.DeclareLocal<int>($"cf_e{salt}");
+            bt = emit.RentLocal<int>($"cf_bt{salt}");
+            xt = emit.RentLocal<int>($"cf_xt{salt}");
+            h = emit.RentLocal<int>($"cf_h{salt}");
+            hb = emit.RentLocal<int>($"cf_hb{salt}");
+            ee = emit.RentLocal<int>($"cf_e{salt}");
             emit.LoadArgument(0); EmitHelperCall(emit, EngineBindingTrailTopGetter); emit.StoreLocal(bt);
             emit.LoadArgument(0); EmitHelperCall(emit, EngineExtraTrailTopGetter); emit.StoreLocal(xt);
             emit.LoadArgument(0); EmitHelperCall(emit, EngineHeapTopGetter); emit.StoreLocal(h);
@@ -1848,6 +1849,7 @@ public sealed partial class IlPredicateCompiler
                     EmitHelperCall(emit, EnginePushCpWithMarksMethod);
                 }
                 else EmitHelperCall(emit, EnginePushChoicePointMethod);
+                emit.ReturnLocal(marker);
             }
             else if (WamCps)
             {
@@ -2035,8 +2037,24 @@ public sealed partial class IlPredicateCompiler
         markDeadCursors?.Invoke();
 
         using var stubOpaque = cpsFields ? default : CpsOpaque();
-        if (needsStub)
+        // The undo of a guard whose marks are in the same locals as another's
+        // and whose failure dispatches the same way is that guard's stub.
+        object? shareKey = failShare is not null && dynamicFailDispatch is not null
+            && g.NeedsSnapshot && !cpsFields && !g.Framed && regs is null
+            ? (failShare, bt, xt, h, hb) : null;
+        if (shareKey is not null && emit.SharedBlocks.TryGetValue(shareKey, out var sharedStub))
         {
+            emit.MarkLabel(guardFail);
+            emit.Branch(sharedStub);
+            if (quickReject is { } quick)
+            {
+                emit.MarkLabel(quick);
+                dynamicFailDispatch!();
+            }
+        }
+        else if (needsStub)
+        {
+            if (shareKey is not null) emit.SharedBlocks[shareKey] = guardFail;
             // Guard-fail restore stub: undo the guard, then fall to the next
             // clause. Reached only by the guard prefix's fail branches.
             emit.MarkLabel(guardFail);
@@ -2083,6 +2101,12 @@ public sealed partial class IlPredicateCompiler
             }
             else emit.Branch(nextClauseLabel);
         }
+        // The marks are read by this clause's guard, commit and stub only.
+        // Given back last first, so the next guard's are the same locals.
+        emit.ReturnLocal(ee); emit.ReturnLocal(hb); emit.ReturnLocal(h);
+        emit.ReturnLocal(xt); emit.ReturnLocal(bt);
+        if (regs is not null)
+            for (int r = regs.Length - 1; r >= 0; r--) emit.ReturnLocal(regs[r]);
     }
 
 }
