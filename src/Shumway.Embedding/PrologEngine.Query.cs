@@ -1080,6 +1080,10 @@ public sealed partial class PrologEngine
                 var usedTransforms = new HashSet<string>();
                 var transformed = TransformClauses(unfolded, name, EnableInlineIte, usedTransforms);
                 PruneRuleTransforms(name, usedTransforms);
+                // Not under debug codegen: a run's predicate would be a frame
+                // the source does not have.
+                if (!_flags.DebugCodegen)
+                    transformed = Shumway.Compiler.Parsing.KeySplit.Apply(transformed);
 
                 var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
                 // fold in the bare local fids contributed by a

@@ -857,12 +857,24 @@ public sealed partial class IlPredicateCompiler
                 estSum += est[i];
             }
             var pieces = new int[ranges.Count];
+            var costs = new int[ranges.Count];
+            for (int i = 0; i < ranges.Count; i++)
+                costs[i] = (int)(bodiesCost * est[i] / estSum) + resumes[i] * IlRegionCost.PerResumeCursor;
+            // By key: a run of consecutive clauses in the same buckets is
+            // not cut while it fits a partition of its own, so the chain of
+            // one key backtracks in one method.
+            int[]? run = info is not null && IlRegionCost.CutByKey ? KeyRuns(info) : null;
             for (int i = 0; i < ranges.Count; i++)
             {
-                int c = (int)(bodiesCost * est[i] / estSum) + resumes[i] * IlRegionCost.PerResumeCursor;
-                if (used > 0 && used + c > target) { k++; used = 0; }
+                if (run is not null && (i == 0 || run[i] != run[i - 1]))
+                {
+                    int runCost = 0;
+                    for (int j = i; j < ranges.Count && run[j] == run[i]; j++) runCost += costs[j];
+                    if (used > 0 && used + runCost > target) { k++; used = 0; }
+                }
+                else if (used > 0 && used + costs[i] > target) { k++; used = 0; }
                 pieces[i] = k;
-                used += c;
+                used += costs[i];
             }
             cut.MemberPart[mi] = -1;
             cut.EntryPart[mi] = pieces[0];
@@ -874,6 +886,32 @@ public sealed partial class IlPredicateCompiler
         if (cut.Count == 1) return null;
         cut.Place(plan);
         return cut;
+    }
+
+    /// <summary>Per clause of an index, the number of its run: consecutive
+    /// clauses that the same bucket chains run.</summary>
+    private static int[] KeyRuns(IlIndexedDispatchInfo info)
+    {
+        int n = info.Clauses.Count;
+        var sig = new List<int>[n];
+        for (int i = 0; i < n; i++) sig[i] = new List<int>();
+        // A chain's head is a node no other node goes on to.
+        var heads = new SortedSet<int>();
+        for (int c = 0; c < info.Nodes.Count; c++) heads.Add(c);
+        foreach (var node in info.Nodes) heads.Remove(node.NextCursor);
+        foreach (int head in heads)
+            for (int c = head, steps = 0; c >= 0 && c < info.Nodes.Count && steps <= info.Nodes.Count; c = info.Nodes[c].NextCursor, steps++)
+                sig[info.Nodes[c].ClauseIndex].Add(head);
+        var run = new int[n];
+        for (int i = 1; i < n; i++)
+        {
+            bool same = sig[i].Count == sig[i - 1].Count;
+            for (int j = 0; same && j < sig[i].Count; j++) same = sig[i][j] == sig[i - 1][j];
+            run[i] = same ? run[i - 1] : run[i - 1] + 1;
+        }
+        if (Environment.GetEnvironmentVariable("SHUMWAY_REGION_CUT_TRACE") == "1")
+            Console.Error.WriteLine($"[cut] clauses={n} heads={heads.Count} nodes={info.Nodes.Count} runs={string.Join(",", run)} sigs={string.Join(" | ", System.Linq.Enumerable.Select(sig, x => string.Join("/", x)))}");
+        return run;
     }
 
     /// <summary>A region cut into partitions: which partition holds each

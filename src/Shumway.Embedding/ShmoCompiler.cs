@@ -691,6 +691,9 @@ public static class ShmoCompiler
         var preMeta = DcgTransform.Apply(MetaWrapperUnfold.Apply(lowered),
             failFast: buildMode != ShmoBuildMode.Debuggable);
         var clauses = PhraseTransform.Apply(MetaTransform.Apply(preMeta));
+        // As the consult path does, and not for a debuggable build.
+        if (buildMode != ShmoBuildMode.Debuggable)
+            clauses = KeySplit.Apply(clauses);
 
         // module-wide direct / meta reference sets. A
         // target lands in metaRefs when referenced from inside a

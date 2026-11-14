@@ -105,6 +105,11 @@ internal static class IlRegionCost
         int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_REGION_REINLINE"), out var r) && r >= 0
             ? r : 150;
 
+    /// <summary>Whether an index is cut between the runs of its keys and not
+    /// by size alone. <c>SHUMWAY_REGION_CUT=key</c>, for the measurement.</summary>
+    public static bool CutByKey { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_REGION_CUT") == "key";
+
     /// <summary>The local references a partition of a region is planned to
     /// stay under: a region past it is emitted as several methods over its
     /// one cursor space (region-jit-limits.md, "A region in several
