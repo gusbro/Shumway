@@ -58,7 +58,7 @@ public class SaveRestoreStateTests
         // q/1 from the pre-restore consult is gone; p/1 from the
         // snapshot is in.
         Assert.True(dst.Query("p(a).").Success);
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(() => dst.Query("q(z)."));
+        HostError.Raised(() => dst.Query("q(z)."));
     }
 
     [Fact]
@@ -178,7 +178,7 @@ public class SaveRestoreStateTests
     public void RestoreState_MissingFile_RaisesExistenceError()
     {
         var engine = new PrologEngine();
-        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        var ex = HostError.Raised(
             () => engine.Query("restore_state('does/not/exist.shum')."));
         Assert.Contains("existence_error", ex.Message);
     }

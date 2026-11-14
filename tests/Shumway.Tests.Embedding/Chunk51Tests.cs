@@ -40,7 +40,7 @@ public class Chunk51Tests
             :- public compute/1.
             compute(X) :- _ is X / 0.
             """);
-        Assert.Throws<PrologRuntimeException>(
+        HostError.Raised(
             () => engine.Query("compute(5)."));
         var trace = engine.LastErrorStackTrace;
         Assert.Contains(trace, frame => frame.Name == "compute" && frame.Arity == 1);

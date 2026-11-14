@@ -627,16 +627,22 @@ the importer's table and stays invisible at the top level.
 
 ### Catching runtime exceptions
 
-A Prolog `throw(Ball)` that the engine does not catch surfaces as a
-`PrologRuntimeException`:
+An error the program does not catch surfaces from a query or a load as a
+`Shumway.Embedding.ShumwayPrologException`, whose `Term` is the ball `catch/3`
+would have unified with. It is the same for a `throw/1` of the program and for
+an error a builtin raised:
 
 ```csharp
 try { engine.Query("X is 1 / 0."); }
-catch (Shumway.Core.PrologRuntimeException ex)
+catch (Shumway.Embedding.ShumwayPrologException ex)
 {
-    Console.WriteLine(ex.Ball);   // error(evaluation_error(zero_divisor), _)
+    Console.WriteLine(ex.Term);   // error(evaluation_error(zero_divisor), /(is, 2))
 }
 ```
+
+When a builtin or a foreign predicate raised the error, the
+`Shumway.Core.PrologRuntimeException` it threw is the `InnerException`, with
+the error's kind and detail as strings.
 
 When a query calls `abort/0`, your code gets a
 `Shumway.Core.PrologAbortException` instead:

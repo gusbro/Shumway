@@ -98,7 +98,7 @@ public class CyclicCulpritTests
         // One line has no room for the named-equation idiom; the infinite
         // tail shows as `...` and the internal _C marker never leaks.
         var e = NewEngine();
-        var re = Assert.Throws<PrologRuntimeException>(
+        var re = HostError.Raised(
             () => e.Query("L = ['1'|L], number_chars(N, L)."));
         string msg = ErrorRendering.FormatRuntimeError(re);
         Assert.Contains("type_error(list, ['1' | ...])", msg);

@@ -108,7 +108,7 @@ public class Chunk237Tests
     {
         var engine = new PrologEngine();
         engine.RegisterPredicates(typeof(ThrowingPreds));
-        var ex = Assert.Throws<PrologRuntimeException>(
+        var ex = HostError.Raised(
             () => engine.QueryAll("c237_explode.").ToList());
         Assert.Contains("type_error", ex.Message);
     }

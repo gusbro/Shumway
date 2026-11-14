@@ -33,6 +33,9 @@ public static class ErrorRendering
         {
             ex switch
             {
+                // A builtin's error keeps the spelling that names the builtin.
+                ShumwayPrologException { InnerException: PrologRuntimeException raised } =>
+                    $"error: {FormatRuntimeError(raised)}",
                 ShumwayPrologException pex =>
                     $"error: {TryRender(pex.Term) ?? "..."}",
                 PrologRuntimeException re => $"error: {FormatRuntimeError(re)}",

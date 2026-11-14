@@ -42,7 +42,7 @@ public class AttVarCellIdentityTests
                 foreach (var _ in e.QueryAll(goal)) break;
             }
             catch (System.Collections.Generic.KeyNotFoundException ex) { failure = ex; }
-            catch (Exception ex) when (ex is not Shumway.Core.PrologRuntimeException)
+            catch (Exception ex) when (ex is not ShumwayPrologException { InnerException: Shumway.Core.PrologRuntimeException })
             { failure = ex; }
         })
         { IsBackground = true };

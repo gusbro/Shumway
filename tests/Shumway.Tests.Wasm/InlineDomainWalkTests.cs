@@ -275,9 +275,9 @@ public sealed class InlineDomainWalkTests(ITestOutputHelper o)
     public void AForgedDomainIsNotWalked(string goal)
     {
         var (tier, _) = Tier();
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        HostError.Raised(
             () => tier.Query($"{goal}.").Success);
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        HostError.Raised(
             () => Plain().Query($"{goal}.").Success);
     }
 }

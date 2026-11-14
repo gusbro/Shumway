@@ -197,17 +197,14 @@ public sealed partial class PrologEngine
             {
                 MetaBuiltins.StampContext(ex, engine);
                 Term ball = MetaBuiltins.TranslateRuntimeError(ex);
-                int addr = TryCatch(engine, new Ball(ball), out bool insideCatch,
+                int addr = TryCatch(engine, new Ball(ball), out _,
                     lowMemory: ex.Kind == "resource_error");
                 if (addr >= 0)
                     step = () => interp.Run(program, addr);
-                else if (insideCatch)
-                    // It passed through a catch (just no catcher matched),
-                    // so it propagates as the Prolog-visible error/2 term.
-                    throw new ShumwayPrologException(ball);
                 else
-                    // No catch at all — keep the raw Core exception.
-                    throw;
+                    // The host gets the ball catch/3 would have unified with,
+                    // whether or not a catch/3 was on the way.
+                    throw new ShumwayPrologException(ball, ex);
             }
         }
     }
