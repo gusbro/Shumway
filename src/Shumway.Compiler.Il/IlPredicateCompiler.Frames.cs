@@ -92,6 +92,9 @@ public sealed partial class IlPredicateCompiler
         public IlLocal? Frame, CtlRef, Regs;
         public readonly Dictionary<int, IlLabel> Entries = new();
         public readonly Dictionary<int, IlLabel> Slows = new();
+        // Per arity: the check every push site of it shares.
+        public readonly Dictionary<int, IlLabel> Checks = new();
+        public IlLabel? RetrySlow;
         public readonly List<IlLabel> Returns = new();
         public IlLabel? Dispatch;
         public IlLabel Restore = null!;
@@ -338,6 +341,17 @@ public sealed partial class IlPredicateCompiler
         emit.LoadConstant(l.Returns.Count);
         emit.StoreLocal(l.Return);
         l.Returns.Add(back);
+        // What every site of the arity does before the ladder is the
+        // arity's, after the method's code: a site is its marker, its
+        // return and a branch.
+        if (!l.Checks.TryGetValue(arity, out var check))
+            l.Checks[arity] = check = emit.DefineLabel($"cpush_check{arity}_{NextLabelSeq()}");
+        emit.Branch(check);
+        emit.MarkLabel(back);
+    }
+
+    private static void EmitFramePushCheck(IlEmit emit, FrameLocals l, int arity, IlLabel slow)
+    {
         emit.LoadLocal(l.Slow);
         emit.BranchIfTrue(slow);
         // The frame must fit: growing the stack replaces the array.
@@ -371,7 +385,6 @@ public sealed partial class IlPredicateCompiler
         emit.LoadConstant(arity);
         emit.StoreLocal(l.Arity);
         emit.Branch(l.Entries[arity]);
-        emit.MarkLabel(back);
     }
 
     /// <summary>The push ladder, after the method's code: the entry for arity
@@ -382,7 +395,12 @@ public sealed partial class IlPredicateCompiler
         if (l.Returns.Count == 0) return;
         var st = Reg(emit, MachineRegs.StackTop);
         var stack = Reg(emit, MachineRegs.StackArray);
-        l.Dispatch = emit.DefineLabel($"cpush_dispatch_{NextLabelSeq()}");
+        l.Dispatch ??= emit.DefineLabel($"cpush_dispatch_{NextLabelSeq()}");
+        foreach (var (arity, check) in l.Checks)
+        {
+            emit.MarkLabel(check);
+            EmitFramePushCheck(emit, l, arity, l.Slows[arity]);
+        }
         foreach (var (arity, slow) in l.Slows)
         {
             emit.MarkLabel(slow);
@@ -756,9 +774,24 @@ public sealed partial class IlPredicateCompiler
         emit.MarkLabel(slow);
         if (nextMarker is not null)
         {
-            emit.LoadArgument(0);
+            // One slow retry for the method: the marker in the push's local,
+            // and back here through the push ladder's return switch.
             nextMarker();
-            EmitHelperCall(emit, EngineRetryMeElseMethod);
+            emit.StoreLocal(l.Marker);
+            emit.LoadConstant(l.Returns.Count);
+            emit.StoreLocal(l.Return);
+            l.Returns.Add(done);
+            if (l.RetrySlow is null)
+            {
+                l.RetrySlow = emit.DefineLabel($"crest_retry_slow_{NextLabelSeq()}");
+                l.Dispatch ??= emit.DefineLabel($"cpush_dispatch_{NextLabelSeq()}");
+                emit.MarkLabel(l.RetrySlow);
+                emit.LoadArgument(0);
+                emit.LoadLocal(l.Marker);
+                EmitHelperCall(emit, EngineRetryMeElseMethod);
+                emit.Branch(l.Dispatch);
+            }
+            else emit.Branch(l.RetrySlow);
         }
         else if (trustSlow is not null)
         {

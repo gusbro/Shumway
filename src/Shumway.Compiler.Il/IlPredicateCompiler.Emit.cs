@@ -170,6 +170,39 @@ public sealed partial class IlPredicateCompiler
         emit.LoadConstant(sentinel);
     }
 
+    /// <summary>A constant atom's cell pushed, its word built in a local:
+    /// a call to <c>Cell.Atom</c> is inlined by the JIT, and the temporaries
+    /// of every inline count against the method's locals.</summary>
+    private static void EmitAtomCell(IlEmit emit, int atomId, bool patch = true)
+    {
+        var cell = emit.RentLocal<Cell>("const_cell");
+        emit.LoadLocalAddress(cell);
+        if (patch && _persistPatches is not null)
+        {
+            EmitAtomId(emit, atomId);   // patched at load: the id is not known here
+            emit.Convert<ulong>();
+            emit.LoadConstant((long)Tag.Atom << Cell.TagShift);
+            emit.Or();
+        }
+        else emit.LoadConstant(((long)Tag.Atom << Cell.TagShift) | (uint)atomId);
+        emit.StoreField(CellDataField);
+        emit.LoadLocal(cell);
+        emit.ReturnLocal(cell);
+    }
+
+    /// <summary>A constant integer's cell pushed, as <see cref="EmitAtomCell"/>.</summary>
+    private static void EmitIntCell(IlEmit emit, long value)
+    {
+        if (value < Cell.MinInt60 || value > Cell.MaxInt60)
+            throw new NotSupportedException($"integer {value} is not a small integer");
+        var cell = emit.RentLocal<Cell>("const_cell");
+        emit.LoadLocalAddress(cell);
+        emit.LoadConstant(((long)Tag.Int << Cell.TagShift) | (value & Cell.PayloadMask));
+        emit.StoreField(CellDataField);
+        emit.LoadLocal(cell);
+        emit.ReturnLocal(cell);
+    }
+
     private static void EmitFunctorId(IlEmit emit, int functorId)
     {
         if (_persistPatches is null) { emit.LoadConstant(functorId); return; }
@@ -486,8 +519,7 @@ public sealed partial class IlPredicateCompiler
                 int regIdx = BytecodeIO.ReadInt32(code, pc + 5);
                 emit.LoadArgument(0);
                 emit.LoadConstant(regIdx);
-                EmitAtomId(emit, atomId);
-                EmitHelperCall(emit, CellAtomMethod);
+                EmitAtomCell(emit, atomId);
                 EmitHelperCall(emit, EngineUnifyMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
@@ -499,8 +531,7 @@ public sealed partial class IlPredicateCompiler
                 int regIdx = BytecodeIO.ReadInt32(code, pc + 5);
                 emit.LoadArgument(0);
                 emit.LoadConstant(regIdx);
-                emit.LoadConstant((long)value);
-                EmitHelperCall(emit, CellIntMethod);
+                EmitIntCell(emit, value);
                 EmitHelperCall(emit, EngineUnifyMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
@@ -529,8 +560,7 @@ public sealed partial class IlPredicateCompiler
                 int regIdx = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
                 emit.LoadConstant(regIdx);
-                emit.LoadConstant(AtomTable.EmptyListId);
-                EmitHelperCall(emit, CellAtomMethod);
+                EmitAtomCell(emit, AtomTable.EmptyListId, patch: false);
                 EmitHelperCall(emit, EngineUnifyMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
@@ -643,8 +673,7 @@ public sealed partial class IlPredicateCompiler
                 if (arg == 0) regZeroAtom = atomId;   // ADR-022 — track A0 for $native_run
                 EmitSetRegisterConst(emit, arg, () =>
                 {
-                    EmitAtomId(emit, atomId);
-                    EmitHelperCall(emit, CellAtomMethod);
+                    EmitAtomCell(emit, atomId);
                 });
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -655,8 +684,7 @@ public sealed partial class IlPredicateCompiler
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
                 EmitSetRegisterConst(emit, arg, () =>
                 {
-                    emit.LoadConstant((long)value);
-                    EmitHelperCall(emit, CellIntMethod);
+                    EmitIntCell(emit, value);
                 });
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -681,8 +709,7 @@ public sealed partial class IlPredicateCompiler
                 int arg = BytecodeIO.ReadInt32(code, pc + 1);
                 EmitSetRegisterConst(emit, arg, () =>
                 {
-                    emit.LoadConstant(AtomTable.EmptyListId);
-                    EmitHelperCall(emit, CellAtomMethod);
+                    EmitAtomCell(emit, AtomTable.EmptyListId, patch: false);
                 });
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -1500,8 +1527,7 @@ public sealed partial class IlPredicateCompiler
             {
                 int atomId = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
-                EmitAtomId(emit, atomId);
-                EmitHelperCall(emit, CellAtomMethod);
+                EmitAtomCell(emit, atomId);
                 EmitHelperCall(emit, EngineUnifyArgCellMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
@@ -1511,8 +1537,7 @@ public sealed partial class IlPredicateCompiler
             {
                 int value = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
-                emit.LoadConstant((long)value);
-                EmitHelperCall(emit, CellIntMethod);
+                EmitIntCell(emit, value);
                 EmitHelperCall(emit, EngineUnifyArgCellMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
@@ -1521,8 +1546,7 @@ public sealed partial class IlPredicateCompiler
             if (op == Opcode.UnifyNil)
             {
                 emit.LoadArgument(0);
-                emit.LoadConstant(AtomTable.EmptyListId);
-                EmitHelperCall(emit, CellAtomMethod);
+                EmitAtomCell(emit, AtomTable.EmptyListId, patch: false);
                 EmitHelperCall(emit, EngineUnifyArgCellMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += 1;
