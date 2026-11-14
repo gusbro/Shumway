@@ -192,7 +192,7 @@ public class ExtraBuiltinsTests
         // domain_error(not_less_than_zero, _) rather than the
         // uncatchable InvalidOperationException earlier phases used.
         var engine = new PrologEngine();
-        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        var ex = HostError.Raised(
             () => engine.Query("succ(-1, _)."));
         Assert.Equal("domain_error", ex.Kind);
         Assert.Equal("not_less_than_zero", ex.Detail);

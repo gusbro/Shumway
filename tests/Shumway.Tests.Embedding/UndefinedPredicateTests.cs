@@ -19,7 +19,7 @@ public class UndefinedPredicateTests
     public void DirectQuery_RaisesExistenceError()
     {
         var engine = new PrologEngine();
-        var ex = Assert.Throws<PrologRuntimeException>(
+        var ex = HostError.Raised(
             () => engine.Query("no_such_pred(1)."));
         Assert.Equal("existence_error", ex.Kind);
         Assert.Equal("no_such_pred/1", ex.Detail);
@@ -74,7 +74,7 @@ public class UndefinedPredicateTests
     {
         var engine = new PrologEngine();
         engine.ConsultString("run :- helper(1).");
-        var ex = Assert.Throws<PrologRuntimeException>(() => engine.Query("run."));
+        var ex = HostError.Raised(() => engine.Query("run."));
         Assert.Equal("existence_error", ex.Kind);
         Assert.EndsWith("helper/1", ex.Detail);
     }

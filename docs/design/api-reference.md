@@ -61,5 +61,7 @@ Raise errors by throwing `Shumway.Core.PrologRuntimeException`. See
 
 ## Exceptions
 
-An uncaught Prolog `throw/1` surfaces as `ShumwayPrologException` (in
-`Shumway.Core`), exposing the ball as `Term Term`.
+An uncaught error surfaces as `ShumwayPrologException` (in
+`Shumway.Embedding`), exposing the ball as `Term Term`: a `throw/1` of the
+program, and an error a builtin or a foreign predicate raised, whose
+`PrologRuntimeException` is the `InnerException`.

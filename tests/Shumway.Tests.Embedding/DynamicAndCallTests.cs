@@ -107,7 +107,7 @@ public class DynamicAndCallTests
         // permission_error(modify, static_procedure, _).
         var engine = new PrologEngine();
         engine.Query("set_prolog_flag(implicit_dynamic, false).");
-        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        var ex = HostError.Raised(
             () => engine.Query("assertz(p(1))."));
         Assert.Equal("permission_error", ex.Kind);
     }

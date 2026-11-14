@@ -81,7 +81,7 @@ public sealed class ConsultSyntaxRecoveryTests
         // quietly missing a clause: the bundle writer's validation consult
         // runs strict, and the first bad clause raises syntax_error.
         var e = new PrologEngine { StrictConsultSyntax = true };
-        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        var ex = HostError.Raised(
             () => e.ConsultString("good.\nbroken(] .\n"));
         Assert.Equal("syntax_error", ex.Kind);
     }

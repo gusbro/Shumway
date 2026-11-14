@@ -43,7 +43,7 @@ public class Chunk53Tests
             :- public divider/2.
             divider(N, D) :- _ is N / D.
             """);
-        Assert.Throws<PrologRuntimeException>(
+        HostError.Raised(
             () => engine.Query("divider(10, 0)."));
         var frames = engine.LastErrorStackTraceWithPositions;
         Assert.NotEmpty(frames);
@@ -80,7 +80,7 @@ public class Chunk53Tests
             :- public top/0.
             top :- _ is 1 / 0.
             """);
-        try { engine.Query("top."); } catch (PrologRuntimeException) { }
+        try { engine.Query("top."); } catch (ShumwayPrologException) { }
         var plain = engine.LastErrorStackTrace;
         var withPos = engine.LastErrorStackTraceWithPositions;
         Assert.Equal(plain.Count, withPos.Count);

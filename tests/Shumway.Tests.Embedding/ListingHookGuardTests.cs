@@ -22,7 +22,6 @@ public class ListingHookGuardTests
         // being listed here.
         try { engine.ConsultString(source); }
         catch (ShumwayPrologException) { }
-        catch (Shumway.Core.PrologRuntimeException) { }
         var sw = new StringWriter();
         engine.Out = sw;
         engine.Query("listing.");

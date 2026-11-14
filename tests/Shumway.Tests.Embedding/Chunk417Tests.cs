@@ -55,7 +55,7 @@ public class Chunk417Tests
         // before the assertz sees zzz/1 as undefined (error), not as an
         // empty dynamic predicate (fail).
         var e = Make();
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(() =>
+        HostError.Raised(() =>
             e.Query("( zzz(1) -> true ; true ), assertz(zzz(1))."));
     }
 
@@ -81,8 +81,8 @@ public class Chunk417Tests
     public void DefaultIsError_DirectAndMetaCall()
     {
         var e = Make();
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(() => e.Query("zzz(1)."));
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(() => e.Query("call(zzz(1))."));
+        HostError.Raised(() => e.Query("zzz(1)."));
+        HostError.Raised(() => e.Query("call(zzz(1))."));
     }
 
     [Fact]
@@ -109,7 +109,7 @@ public class Chunk417Tests
         Assert.True(e.Query("set_prolog_flag(unknown, fail).").Success);
         Assert.False(e.Query("zzz(1).").Success);
         Assert.True(e.Query("set_prolog_flag(unknown, error).").Success);
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(() => e.Query("zzz(1)."));
+        HostError.Raised(() => e.Query("zzz(1)."));
     }
 
     [Fact]

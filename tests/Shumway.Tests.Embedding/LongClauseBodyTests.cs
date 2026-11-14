@@ -83,7 +83,7 @@ public class LongClauseBodyTests
         // 60.000 parentheses: nothing is wrong with the text, there is simply
         // no stack to descend it on. The engine says so — and lives.
         var strict = new PrologEngine { StrictConsultSyntax = true };
-        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        var ex = HostError.Raised(
             () => strict.ConsultString(DeeplyNestedClause()));
         Assert.Equal("resource_error", ex.Kind);
         Assert.Equal("term_nesting", ex.Detail);

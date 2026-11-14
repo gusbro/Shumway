@@ -31,7 +31,7 @@ public class PrologEngineTests
         // 'bar/0' is undefined. ISO requires the call to raise
         // existence_error(procedure, bar/0) when reached — not a link
         // failure, and not a silent `false`.
-        var ex = Assert.Throws<PrologRuntimeException>(() => engine.Query("bar."));
+        var ex = HostError.Raised(() => engine.Query("bar."));
         Assert.Equal("existence_error", ex.Kind);
         Assert.Equal("bar/0", ex.Detail);
     }

@@ -64,7 +64,7 @@ public sealed class FdDomainOnTheHeapTests
               + "indomain(X), X =:= 576460752303423486");
         Holds("Z in -576460752303423488..0, Z #< -576460752303423486, "
               + "indomain(Z), Z =:= -576460752303423488");
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        HostError.Raised(
             () => Fd().Query("X in 1..576460752303423488.").Success);
     }
 
@@ -75,7 +75,7 @@ public sealed class FdDomainOnTheHeapTests
     public void AForgedDomainIsRejected()
     {
         foreach (string bad in new[] { "foo(1,9)", "'$fd_dom'(1)", "42", "[]" })
-            Assert.Throws<Shumway.Core.PrologRuntimeException>(
+            HostError.Raised(
                 () => Fd().Query($"'$dom_contains'({bad}, 5).").Success);
     }
 

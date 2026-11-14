@@ -99,7 +99,7 @@ public class QueryCodeSpaceTests
         Assert.True(engine.Query("p(1).").Success);
         engine.CodeSpaceLimit = engine._persistentLength;
 
-        var ex = Assert.Throws<PrologRuntimeException>(() => engine.Query("p(1)."));
+        var ex = HostError.Raised(() => engine.Query("p(1)."));
         Assert.Equal("resource_error", ex.Kind);
         Assert.Equal("code_space", ex.Detail);
 

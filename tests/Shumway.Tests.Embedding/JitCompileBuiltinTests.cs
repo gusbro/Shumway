@@ -154,10 +154,10 @@ public sealed class JitCompileBuiltinTests
     public void BadModesAreRejected()
     {
         var e = Engine();
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(() => e.Query("jit_compile(sideways).").Success);
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(() => e.Query("jit_compile(f(x)).").Success);
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(() => e.Query("jit_compile(-3).").Success);
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(() => e.Query("jit_compile(X).").Success);
+        HostError.Raised(() => e.Query("jit_compile(sideways).").Success);
+        HostError.Raised(() => e.Query("jit_compile(f(x)).").Success);
+        HostError.Raised(() => e.Query("jit_compile(-3).").Success);
+        HostError.Raised(() => e.Query("jit_compile(X).").Success);
     }
 
     /// <summary>The mode is engine state, so a directive in a consulted file

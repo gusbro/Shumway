@@ -117,7 +117,7 @@ public class Chunk246Tests
         engine.RegisterPredicates(typeof(C246Pairs));
         // Mid is + — must be bound. Generator emits FromTerm<int>
         // which throws on a VarTerm via the chunk-238 path.
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        HostError.Raised(
             () => engine.Query("c246_successor_pair(L, M, U).").Bindings.ToList());
     }
 

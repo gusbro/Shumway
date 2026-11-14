@@ -109,7 +109,7 @@ public class StreamTests
     {
         var engine = new PrologEngine();
         // 'read' is now supported; an unknown mode (gibberish) raises.
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        HostError.Raised(
             () => engine.Query("open('/tmp/whatever.txt', purple, _)."));
     }
 
@@ -117,7 +117,7 @@ public class StreamTests
     public void Close_NonStreamHandle_Throws()
     {
         var engine = new PrologEngine();
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        HostError.Raised(
             () => engine.Query("close(not_a_stream)."));
     }
 }

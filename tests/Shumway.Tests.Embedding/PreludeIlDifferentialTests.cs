@@ -155,7 +155,7 @@ public sealed class PreludeIlDifferentialTests
                 var (ilS, ilO, _) = Run(c, ilThreshold: 1);
                 agrees = wamSols.SequenceEqual(ilS) && (!c.Output || wamOut == ilO);
             }
-            catch (Shumway.Core.PrologRuntimeException) { agrees = false; }
+            catch (ShumwayPrologException) { agrees = false; }
             Assert.False(agrees,
                 $"{c.Pred} now agrees under WAM/IL — the known issue ({reason}) " +
                 "appears fixed; remove it from KnownIlUnsafe.");

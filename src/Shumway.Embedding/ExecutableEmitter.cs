@@ -446,9 +446,10 @@ internal static class Program
             System.Console.Error.WriteLine(""% Execution aborted."");
             return 1;
         }}
-        catch (Shumway.Core.PrologRuntimeException ex)
+        catch (Shumway.Embedding.ShumwayPrologException ex)
+            when (ex.InnerException is Shumway.Core.PrologRuntimeException raised)
         {{
-            System.Console.Error.WriteLine(""shumway: uncaught: "" + ex.Message);
+            System.Console.Error.WriteLine(""shumway: uncaught: "" + raised.Message);
             return 2;
         }}
         catch (System.Exception ex)

@@ -63,7 +63,7 @@ public class CompileModeFlagTests
             ":- public divider/2.\n" +
             "divider(zero, _) :- true.\n" +      // line 2
             "divider(nz, X) :- _ is 10 / X.\n"); // line 3 (this clause errors)
-        Assert.Throws<PrologRuntimeException>(() => engine.Query("divider(nz, 0)."));
+        HostError.Raised(() => engine.Query("divider(nz, 0)."));
         var frame = engine.LastErrorStackTraceWithPositions.First(f => f.Name == "divider");
         // Predicate-level fallback = the predicate's first line (2), not the
         // erroring clause's line (3) — that precision needs compile_mode=debug.

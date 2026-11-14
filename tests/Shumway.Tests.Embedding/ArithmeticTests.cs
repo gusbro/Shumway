@@ -175,7 +175,7 @@ public class ArithmeticTests
     public void Is_UnboundRightSide_RaisesInstantiationError()
     {
         var engine = new PrologEngine();
-        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        var ex = HostError.Raised(
             () => engine.Query("X is Y."));
         Assert.Equal("instantiation_error", ex.Kind);
     }
@@ -188,7 +188,7 @@ public class ArithmeticTests
         // than the uncatchable InvalidOperationException earlier phases
         // surfaced.
         var engine = new PrologEngine();
-        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        var ex = HostError.Raised(
             () => engine.Query("X is foo."));
         Assert.Equal("type_error", ex.Kind);
         Assert.Equal("evaluable", ex.Detail);
@@ -198,7 +198,7 @@ public class ArithmeticTests
     public void Is_DivisionByZero_RaisesEvaluationError()
     {
         var engine = new PrologEngine();
-        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        var ex = HostError.Raised(
             () => engine.Query("X is 1 / 0."));
         Assert.Equal("evaluation_error", ex.Kind);
         Assert.Equal("zero_divisor", ex.Detail);
@@ -208,7 +208,7 @@ public class ArithmeticTests
     public void Is_IntegerDivisionByZero_RaisesEvaluationError()
     {
         var engine = new PrologEngine();
-        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        var ex = HostError.Raised(
             () => engine.Query("X is 1 // 0."));
         Assert.Equal("evaluation_error", ex.Kind);
         Assert.Equal("zero_divisor", ex.Detail);

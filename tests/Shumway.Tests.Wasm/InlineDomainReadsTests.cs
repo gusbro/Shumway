@@ -170,10 +170,10 @@ public sealed class InlineDomainReadsTests(ITestOutputHelper o)
     public void AForgedDomainIsNotAnsweredInTheModule(string goal)
     {
         var (tier, _) = Tier();
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        HostError.Raised(
             () => tier.Query($"{goal}.").Success);
         // And Tier-0 agrees, which is what makes it the right answer.
-        Assert.Throws<Shumway.Core.PrologRuntimeException>(
+        HostError.Raised(
             () => Plain().Query($"{goal}.").Success);
     }
 }

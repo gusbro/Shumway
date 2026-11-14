@@ -168,7 +168,8 @@ public sealed partial class PrologEngine
 
     // A change the host makes from outside a run holds the engine busy, as a run
     // does: the code it compiles claims its atoms before a collection can mark the
-    // engine (ADR-003).
+    // engine (ADR-003). An error it raises reaches the host as one from a run does
+    // (ADR-010).
     private T HostChange<T>(Func<T> change)
     {
         var claim = HostAtoms;
@@ -179,6 +180,10 @@ public sealed partial class PrologEngine
             T result = change();
             completed = true;
             return result;
+        }
+        catch (PrologRuntimeException ex)
+        {
+            throw new ShumwayPrologException(MetaBuiltins.TranslateRuntimeError(ex), ex);
         }
         finally { claim?.ExitHostChange(completed); }
     }

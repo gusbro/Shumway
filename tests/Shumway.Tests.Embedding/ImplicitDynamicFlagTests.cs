@@ -63,7 +63,7 @@ public class ImplicitDynamicFlagTests
             :- public test/0.
             test :- assertz(pepe), call(pepe).
             """);
-        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(() => engine.Query("test."));
+        var ex = HostError.Raised(() => engine.Query("test."));
         Assert.Contains("permission_error", ex.Message);
     }
 
@@ -93,7 +93,7 @@ public class ImplicitDynamicFlagTests
             existing(static_clause).
             test :- assertz(existing(new_one)).
             """);
-        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(() => engine.Query("test."));
+        var ex = HostError.Raised(() => engine.Query("test."));
         Assert.Contains("permission_error", ex.Message);
     }
 
@@ -106,7 +106,7 @@ public class ImplicitDynamicFlagTests
             :- public test/0.
             test :- assertz(true).
             """);
-        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(() => engine.Query("test."));
+        var ex = HostError.Raised(() => engine.Query("test."));
         Assert.Contains("permission_error", ex.Message);
     }
 
