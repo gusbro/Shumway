@@ -344,11 +344,25 @@ public sealed partial class IlPredicateCompiler
         // What every site of the arity does before the ladder is the
         // arity's, after the method's code: a site is its marker, its
         // return and a branch.
-        if (!l.Checks.TryGetValue(arity, out var check))
-            l.Checks[arity] = check = emit.DefineLabel($"cpush_check{arity}_{NextLabelSeq()}");
-        emit.Branch(check);
+        if (SharedPushChecks)
+        {
+            if (!l.Checks.TryGetValue(arity, out var check))
+                l.Checks[arity] = check = emit.DefineLabel($"cpush_check{arity}_{NextLabelSeq()}");
+            emit.Branch(check);
+        }
+        else EmitFramePushCheck(emit, l, arity, slow);
         emit.MarkLabel(back);
     }
+
+    // MEASUREMENT LEVER, temporary.
+    internal static bool SharedPushChecks { get; set; } =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHARED_PUSH") != "0";
+    internal static bool SharedTrustSlow { get; set; } =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHARED_TRUST") != "0";
+    internal static bool SharedConstCell { get; set; } =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_IL_CONST_CELL") != "0";
+    internal static bool SharedGuardFail { get; set; } =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHARED_GUARDFAIL") != "0";
 
     private static void EmitFramePushCheck(IlEmit emit, FrameLocals l, int arity, IlLabel slow)
     {

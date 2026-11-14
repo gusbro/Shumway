@@ -2039,7 +2039,7 @@ public sealed partial class IlPredicateCompiler
         using var stubOpaque = cpsFields ? default : CpsOpaque();
         // The undo of a guard whose marks are in the same locals as another's
         // and whose failure dispatches the same way is that guard's stub.
-        object? shareKey = failShare is not null && dynamicFailDispatch is not null
+        object? shareKey = SharedGuardFail && failShare is not null && dynamicFailDispatch is not null
             && g.NeedsSnapshot && !cpsFields && !g.Framed && regs is null
             ? (failShare, bt, xt, h, hb) : null;
         if (shareKey is not null && emit.SharedBlocks.TryGetValue(shareKey, out var sharedStub))

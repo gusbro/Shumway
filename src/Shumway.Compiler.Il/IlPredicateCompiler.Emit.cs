@@ -175,6 +175,12 @@ public sealed partial class IlPredicateCompiler
     /// of every inline count against the method's locals.</summary>
     private static void EmitAtomCell(IlEmit emit, int atomId, bool patch = true)
     {
+        if (!SharedConstCell)
+        {
+            if (patch) EmitAtomId(emit, atomId); else emit.LoadConstant(atomId);
+            EmitHelperCall(emit, CellAtomMethod);
+            return;
+        }
         var cell = emit.RentLocal<Cell>("const_cell");
         emit.LoadLocalAddress(cell);
         if (patch && _persistPatches is not null)
@@ -195,6 +201,12 @@ public sealed partial class IlPredicateCompiler
     {
         if (value < Cell.MinInt60 || value > Cell.MaxInt60)
             throw new NotSupportedException($"integer {value} is not a small integer");
+        if (!SharedConstCell)
+        {
+            emit.LoadConstant(value);
+            EmitHelperCall(emit, CellIntMethod);
+            return;
+        }
         var cell = emit.RentLocal<Cell>("const_cell");
         emit.LoadLocalAddress(cell);
         emit.LoadConstant(((long)Tag.Int << Cell.TagShift) | (value & Cell.PayloadMask));

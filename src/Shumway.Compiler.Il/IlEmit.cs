@@ -252,8 +252,13 @@ public sealed class IlEmit
     /// type. Unassigned as far as the caller knows.</summary>
     public IlLocal RentLocal<T>(string? name = null) => RentLocal(typeof(T), name);
 
+    // MEASUREMENT LEVER, temporary.
+    internal static bool PoolLocals { get; set; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_IL_LOCAL_POOL") != "0";
+
     public IlLocal RentLocal(Type type, string? name = null)
     {
+        if (!PoolLocals) return DeclareLocal(type, name);
         if (_freeLocals is not null && _freeLocals.TryGetValue(type, out var free) && free.Count > 0)
             return free.Pop();
         return DeclareLocal(type, name);
@@ -263,7 +268,7 @@ public sealed class IlEmit
     /// after code emitted later has run.</summary>
     public void ReturnLocal(IlLocal? local)
     {
-        if (local is null) return;
+        if (local is null || !PoolLocals) return;
         _freeLocals ??= new();
         if (!_freeLocals.TryGetValue(local.LocalType, out var free))
             _freeLocals[local.LocalType] = free = new();

@@ -1064,7 +1064,7 @@ public sealed partial class IlPredicateCompiler
                 int nextResume = retrying ? resumeCursor[retry.Next] : -1;
                 EmitFrameResumeTail(emit, frames,
                     retrying ? () => EmitResumeMarker(emit, regionFid, nextResume) : null,
-                    retrying ? null : () =>
+                    retrying || !SharedTrustSlow ? null : () =>
                     {
                         // One slow trust for the region: it goes on at the
                         // alternative through the dispatch switch.
