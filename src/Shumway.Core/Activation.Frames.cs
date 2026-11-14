@@ -1274,6 +1274,15 @@ public sealed partial class Activation
         if (_pendingCleanupRefs is not null) FlushCleanupsAfterCut();
     }
 
+    /// <summary>The cut of a meta-called <c>!</c>, to the enclosing call's
+    /// barrier, as the interpreter's meta-call does it: the cleanups of the
+    /// scopes it discards run before the goal after it.</summary>
+    public void CutToBarrier(int barrier)
+    {
+        Cut(barrier);
+        if (_pendingCleanupRefs is not null) FlushCleanupsAfterCut();
+    }
+
     /// <summary>The <c>BP</c> (next-alternative) value written by
     /// <see cref="SoftCut"/> to mark an else choice point neutralised. Distinct
     /// from the <c>-1</c> sentinel an IL choice-point frame carries; a real code

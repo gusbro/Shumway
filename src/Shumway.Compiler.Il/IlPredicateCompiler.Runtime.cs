@@ -319,7 +319,7 @@ public sealed partial class IlPredicateCompiler
                 switch (route.Kind)
                 {
                     case MetaRouteKind.Cut:
-                        engine.Cut(cutBarrier);
+                        engine.CutToBarrier(cutBarrier);
                         return SyncSuccess;
                     case MetaRouteKind.True:
                         return SyncSuccess;
@@ -379,15 +379,16 @@ public sealed partial class IlPredicateCompiler
                 functorId = CallNegFid;
             }
 
-            // Cut as the runtime goal: commits to the call's barrier.
-            // The interpreter's DispatchCall AdvancePc's after Cut;
-            // for IL we just report sync success so the caller falls
-            // through to its next opcode.
+            // Cut as the runtime goal: commits to the call's barrier, and
+            // runs the cleanups of the scopes it discards, as the
+            // interpreter's meta-call does. The interpreter's DispatchCall
+            // AdvancePc's after the cut; for IL we just report sync success
+            // so the caller falls through to its next opcode.
             if (functorId == CutFid)
             {
                 if (routeCacheable)
                     cache[routeKey] = new MetaRoute(MetaRouteKind.Cut, 0);
-                engine.Cut(cutBarrier);
+                engine.CutToBarrier(cutBarrier);
                 return SyncSuccess;
             }
             if (functorId == TrueFid)
