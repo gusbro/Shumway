@@ -141,7 +141,7 @@ h2 {
 
 /* --- fields ------------------------------------------------------------- */
 
-pre#out, input, select {
+pre#out, input, select, textarea.oneline {
   font: 13px/1.5 var(--mono);
   width: 100%;
   box-sizing: border-box;
@@ -152,7 +152,9 @@ pre#out, input, select {
   padding: .4rem .6rem;
 }
 pre#out { padding: .6rem .75rem; }
-:is(input, select, pre#out, .editor, button):focus-visible {
+/* A goal box (oneline.js) looks and scrolls like the one-line input it replaces. */
+textarea.oneline { resize: none; overflow: hidden; white-space: pre; display: block; }
+:is(input, select, textarea.oneline, pre#out, .editor, button):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -616,7 +618,7 @@ body.busy #consult, body.busy #libraries { opacity: .6; pointer-events: none; }
 .gutter-row.bp.log.unbound::before { background: none; border-color: var(--accent); }
 
 #watch-form { display: flex; gap: .35rem; margin-top: .4rem; }
-#watch-form input { flex: 1; min-width: 0; font: 12px var(--mono); }
+#watch-form textarea { flex: 1; min-width: 0; font: 12px var(--mono); }
 #watch-form button { font-size: .82rem; padding: .3rem .6rem; }
 .watch-goal { color: inherit; }
 .watch-result { color: var(--muted); }
@@ -662,7 +664,7 @@ pre#immediate-log { margin: 0; white-space: pre-wrap; word-break: break-word; }
 #immediate-log .answer { color: var(--answer); }
 #immediate-log .error { color: var(--error); }
 #immediate-form { display: flex; gap: .35rem; margin-top: .4rem; }
-#immediate-form input { flex: 1; min-width: 0; font: 12px var(--mono); }
+#immediate-form textarea { flex: 1; min-width: 0; font: 12px var(--mono); }
 #immediate-form button { font-size: .82rem; padding: .3rem .6rem; }
 
 /* Stack rows: the goal on the left, where-it-is pinned to the right — the

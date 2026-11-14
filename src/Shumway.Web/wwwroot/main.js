@@ -13,6 +13,7 @@ import * as theme from './theme.js';
 import * as layout from './layout.js';
 import { attach } from './editor.js';
 import * as debugUi from './debug.js';
+import { oneLine } from './oneline.js';
 
 const out = document.getElementById('out');
 const queryInput = document.getElementById('query');
@@ -367,6 +368,9 @@ document.getElementById('query-form').addEventListener('submit', async (e) => {
   if (debugUi.isStopped()) { await debugUi.evaluate(text); return; }
   await run(text.endsWith('.') ? text : text + '.');
 });
+
+// While answers are pending, Enter is "stop here" (below), not a new query.
+oneLine(queryInput, () => awaitingInput || !pending);
 
 queryInput.addEventListener('keydown', async (e) => {
   // While a program is reading, the box is its input: only Escape is ours, and

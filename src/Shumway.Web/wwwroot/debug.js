@@ -23,6 +23,7 @@
 
 import * as session from './session.js';
 import * as settings from './settings.js';
+import { oneLine } from './oneline.js';
 
 let emit, statusEl, consultBuffer, editorEl, getText, getFile, getWorkspace, openFile;
 
@@ -74,7 +75,9 @@ export function init(deps) {
     immDraft = '';
     evaluate(goal);
   });
+  oneLine($('immediate-input'));
   $('immediate-input').addEventListener('keydown', onImmediateKey);
+  oneLine($('watch-input'));
   $('dbg-pause').addEventListener('click', () => session.debugBreakNow());
   $('debug-toggle').addEventListener('click', () => toggle());
   $('dbg-continue').addEventListener('click', () => resume('continue'));
