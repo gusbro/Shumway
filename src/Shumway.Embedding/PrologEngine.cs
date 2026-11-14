@@ -560,11 +560,22 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
 
     /// <summary>per-engine pseudo-random generator
     /// behind <c>random/1</c>, <c>random_between/3</c> and
-    /// <c>randomize/1</c>. Seedable via Randomize; defaults to a
-    /// time-based seed on first access.</summary>
+    /// <c>randomize/1</c>. Seedable via Randomize; defaults to a seed
+    /// of its own on first access.</summary>
     private System.Random? _random;
-    internal System.Random Random => _random ??= new System.Random();
+    internal System.Random Random => _random ??= NewRandom();
     System.Random Shumway.Builtins.IRandomHost.Random => Random;   // arith random/1
+
+    // .NET Framework seeds a Random made without a seed from the tick count:
+    // two engines that draw their first number in the same tick draw the same
+    // sequence. .NET seeds each one apart, and a seed given there selects the
+    // legacy algorithm, so only Framework gets one.
+    private static System.Random NewRandom()
+#if NETFRAMEWORK
+        => new System.Random(System.Guid.NewGuid().GetHashCode());
+#else
+        => new System.Random();
+#endif
 
     /// <summary>Replaces the per-engine random generator with one
     /// seeded by <paramref name="seed"/>. Backs <c>randomize/1</c>.</summary>
