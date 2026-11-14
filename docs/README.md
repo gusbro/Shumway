@@ -58,6 +58,7 @@ Detailed designs referenced from the code:
 - [debug-info.md](design/debug-info.md) — positions, ports, the debugger's site tables.
 - [foreign-predicates.md](design/foreign-predicates.md) — the `[PrologPredicate]` bridge.
 - [api-reference.md](design/api-reference.md) — the embedding API reference.
+- [jupyterlite-architecture.md](design/jupyterlite-architecture.md): notebooks in the browser on WebShumway (design, not built), with [the protocol](design/jupyterlite-protocol.md), [the plan](design/jupyterlite-plan.md) and [the feature table](design/jupyterlite-features.yaml).
 - [inline-caching.md](design/inline-caching.md) — NOT BUILT; kept as a redirect to what shipped instead.
 
 ## Benchmarks (`benchmarks/`)
