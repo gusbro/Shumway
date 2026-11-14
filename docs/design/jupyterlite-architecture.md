@@ -112,7 +112,7 @@ The WebShumway demo becomes a consumer of 1 and 3 with a single session.
 | D10 | Server precompiled into the bundle | 067 |
 | D11 | Identity: `shumway_prolog`, standard Prolog `language_info`, site default kernel | 066 |
 | D12 | Disable JupyterLite's service worker; our own, derived from WebShumway's; WebShumway's stops deleting other caches | 069 |
-| D13 | COEP chosen by engine (WebKit → `require-corp`), pending verification V1 | 069 |
+| D13 | `require-corp` in WebShumway; in the lite site COEP chosen by engine (WebKit → `require-corp`), for the images of markdown cells | 069 |
 | D14 | Files: mirror between the Contents API and MEMFS around each cell; no OPFS in the lite site | 070 |
 | D15 | Rich outputs in standard MIME, in phases: tables → Graphviz → Vega-Lite → widgets | 072 |
 | D16 | Package layout above, protocol versioned separately | 073 |
@@ -125,8 +125,9 @@ These come out of the design but belong to WebShumway or the engine:
 
 - `sw.js` deletes every cache of the origin on activation, not only its own
   (ADR-069).
-- `sw.js` sends `credentialless` to WebKit, which does not implement it
-  (ADR-069, verification V1). ADR-042 needs amending once V1 is done.
+- `sw.js` sends `credentialless` to WebKit, which does not implement it, so
+  WebShumway does not boot there (ADR-069, verification V1). The fix and the
+  amendment of ADR-042 are a pull request of their own.
 - The working directory is process-global (ADR-071). The desktop
   `EnginePool` has the same latent problem.
 - Cancellation surfaces as an OperationCanceledException, so it cannot be

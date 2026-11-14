@@ -15,11 +15,12 @@ true, as the Documentation invariant requires.
 | V1 | Open the current WebShumway demo on an iPhone (Safari). Check `crossOriginIsolated`, and whether the engine boots | result recorded in ADR-069; if it fails, F2 is scheduled and ADR-042 is amended |
 | V2 | Measure the memory of one engine with a server-sized program loaded, on desktop Chrome and on the iPhone | default session limit written into ADR-068 (can wait until Phase 3 provides the real bundle; a proxy program is fine for a first figure) |
 | F1 | `sw.js`: on `activate`, delete only caches carrying WebShumway's prefix | demo still works offline; another app's caches on the origin survive |
-| F2 | (if V1 fails) `sw.js`: COEP per engine, `require-corp` on WebKit that is not Chromium, with detection that also matches iPadOS in desktop mode and Mac Safari | demo boots on the iPhone; ADR-042 amended |
+| F2 | `sw.js`: `require-corp` for every browser (WebShumway needs nothing `credentialless` gives) | demo boots in Chromium, Firefox and WebKit; ADR-042 amended |
 
 V1 has a first result, recorded in ADR-069: in headless WebKit 27.2 the demo
 does not boot, and `require-corp` isolates where `credentialless` does not. A
-real device is still to be tried. F2 is therefore scheduled.
+real device is still to be tried. F1 and F2 are a pull request of their own
+against WebShumway.
 
 ## Phase 1: Host sessions (ADR-068; must be accepted first)
 

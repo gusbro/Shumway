@@ -2,9 +2,11 @@
 
 ## Status
 
-Proposed (2026-11-14). Design only; nothing is implemented. Records D12 and
-D13. D13's WebKit branch depends on verification V1 in the plan, which has a
-first result (Context, below).
+Proposed (2026-11-14). Records D12 and D13. Verification V1 of the plan has
+results (Context), and they changed D13: WebShumway sends one value to every
+engine, and the choice by engine is the lite site's alone. The WebShumway side
+of D12 and D13 is a fix of its own (ADR-042, amended); the lite site's part is
+not implemented.
 
 ## Context
 
@@ -58,6 +60,19 @@ browser against a page served with real headers: with `credentialless` the page
 is not isolated, with `require-corp` it is. A real iPhone, iPad or Mac Safari
 has not been tried yet.
 
+**WebShumway never needed `credentialless`.** ADR-042 chose it so that the
+library importer could read GitHub's listing API, which sends CORS but no CORP.
+A CORS fetch is allowed under `require-corp`. Measured in headless Chromium
+159, Firefox 159 and WebKit 27.2, against the published site behind a server
+that sends no headers and with the service worker sending `require-corp`: all
+three isolate the page, boot the engine, answer a query and read the listing.
+
+**What `credentialless` does buy is images from other hosts.** An `<img>` whose
+host sends no CORP (measured with two public image hosts) loads under
+`credentialless` in Chromium and Firefox, and under `require-corp` in no
+engine. WebShumway embeds no such image. A notebook's markdown cells commonly
+do.
+
 ## Decision
 
 ### D12: One service worker in the lite site: ours
@@ -76,20 +91,21 @@ has not been tried yet.
   only caches carrying its own prefix. This fix stands on its own and goes
   into WebShumway first.
 
-### D13: COEP chosen by engine
+### D13: `require-corp` in WebShumway, COEP chosen by engine in the lite site
 
-Pending V1, the service worker selects the COEP value per browser engine:
+- **WebShumway sends `require-corp` to every browser.** All three engines
+  implement it, and nothing the page loads needs the other value (Context).
+  There is no detection of the browser engine. ADR-042 is amended.
+- **The lite site chooses by engine**, because of the images in markdown
+  cells:
+  - `credentialless` where it is implemented (Chromium, Firefox);
+  - `require-corp` in WebKit, where an image from a host without CORP does
+    not show.
 
-- `credentialless` where it is supported (Chromium, Firefox);
-- `require-corp` in WebKit.
-
-Detection must match **WebKit that is not Chromium**, not "iOS": iPadOS
-presents itself as a Mac by default, and Mac Safari has the same limitation.
-The fix lands in WebShumway's service worker, and the lite site inherits it.
-ADR-042's statement about Safari is amended once V1 has a result.
-
-Under `require-corp`, WebKit loses what ADR-042 attributes to it (URL import
-from GitHub's listing API). Booting matters more.
+  Detection must match **WebKit that is not Chromium**, not "iOS": iPadOS
+  presents itself as a Mac by default, and Mac Safari has the same limitation.
+  The lite site's worker is built from WebShumway's source with this one
+  difference.
 
 ## Consequences
 
@@ -99,8 +115,9 @@ from GitHub's listing API). Booting matters more.
   anyway) and contents sync for worker kernels (none here).
 - If a future kernel needs to run in a worker, this decision has to be
   revisited.
-- If V1 confirms the problem, iPhone, iPad and Mac Safari users gain
-  WebShumway itself, not only notebooks.
+- iPhone, iPad and Mac Safari users gain WebShumway itself, not only
+  notebooks.
+- In WebKit, a notebook's image from a host that sends no CORP does not show.
 
 ## Alternatives considered
 
@@ -112,6 +129,9 @@ from GitHub's listing API). Booting matters more.
   reserve.
 - **Rely on WebShumway's worker covering `/lite/`.** Couples the deployment
   of the two sites. Rejected.
+- **`require-corp` in the lite site too.** One behaviour in every browser and
+  no detection, at the cost of those images everywhere. Rejected while the
+  detection stays this small.
 
 ## Related
 
