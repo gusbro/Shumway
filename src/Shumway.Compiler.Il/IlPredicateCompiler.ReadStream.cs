@@ -361,8 +361,7 @@ public sealed partial class IlPredicateCompiler
                     },
                     () =>
                     {
-                        EmitAtomId(emit, atomId);
-                        EmitHelperCall(emit, CellAtomMethod);
+                        EmitAtomCell(emit, atomId);
                     });
                 return true;
             }
@@ -373,8 +372,7 @@ public sealed partial class IlPredicateCompiler
                     () => emit.LoadConstant(Cell.Int(value).Data),
                     () =>
                     {
-                        emit.LoadConstant(value);
-                        EmitHelperCall(emit, CellIntMethod);
+                        EmitIntCell(emit, value);
                     });
                 return true;
             }
@@ -383,8 +381,7 @@ public sealed partial class IlPredicateCompiler
                     () => emit.LoadConstant(Cell.Atom(AtomTable.EmptyListId).Data),
                     () =>
                     {
-                        emit.LoadConstant(AtomTable.EmptyListId);
-                        EmitHelperCall(emit, CellAtomMethod);
+                        EmitAtomCell(emit, AtomTable.EmptyListId, patch: false);
                     });
                 return true;
             case Opcode.UnifyVoid:

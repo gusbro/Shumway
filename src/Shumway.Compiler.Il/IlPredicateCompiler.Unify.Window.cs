@@ -321,16 +321,13 @@ public sealed partial class IlPredicateCompiler
         switch (a.Op)
         {
             case Opcode.UnifyAtom:
-                EmitAtomId(emit, a.Operand);
-                EmitHelperCall(emit, CellAtomMethod);
+                EmitAtomCell(emit, a.Operand);
                 break;
             case Opcode.UnifyInteger:
-                emit.LoadConstant((long)a.Operand);
-                EmitHelperCall(emit, CellIntMethod);
+                EmitIntCell(emit, a.Operand);
                 break;
             default:   // nil
-                emit.LoadConstant(AtomTable.EmptyListId);
-                EmitHelperCall(emit, CellAtomMethod);
+                EmitAtomCell(emit, AtomTable.EmptyListId, patch: false);
                 break;
         }
     }

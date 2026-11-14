@@ -481,13 +481,11 @@ public sealed partial class IlPredicateCompiler
                 emit.MarkLabel(cases[c]);
                 if (isAtom)
                 {
-                    EmitAtomId(emit, keys[c]);
-                    EmitHelperCall(emit, CellAtomMethod);
+                    EmitAtomCell(emit, keys[c]);
                 }
                 else
                 {
-                    emit.LoadConstant((long)keys[c]);
-                    EmitHelperCall(emit, CellIntMethod);
+                    EmitIntCell(emit, keys[c]);
                 }
                 emit.StoreLocal(kv);
                 emit.Branch(join);
