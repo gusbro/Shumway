@@ -137,8 +137,8 @@ Configurable callback in `jupyter_widgets`, `jupyter_forms` and
 
 ## Engine track, in parallel
 
-- **ADR-071**, working directory per engine: accepted, and a prerequisite
-  of Phase 3. Implement it before then.
+- **ADR-071**, working directory per engine: accepted and implemented
+  (PR #241), a prerequisite of Phase 3.
 - **Future ADR:** a cancellation that Prolog can catch, so that an interrupt
   keeps the session's state.
 

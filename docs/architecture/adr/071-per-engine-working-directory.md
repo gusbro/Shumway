@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted (2026-11-14), after the analysis below. Not implemented yet. It
+Accepted (2026-11-14), after the analysis below. Implemented (2026-11-15,
+PR #241). It
 changes the observable behaviour of a builtin when several engines share a
 process, and only for a host that asks for it: the default is today's
 behaviour.

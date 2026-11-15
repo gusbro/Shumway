@@ -203,8 +203,9 @@ measurement is still to do.
   (below).
 - **Five megabytes that stay held after some boots** (below, "What a session
   is made of"): what holds them is not known.
-- **The stack of a session's thread**, about 5 MB, the runtime's default.
-  Whether a session's thread needs that much has not been looked at.
+- **The stack of a session's thread** stays the runtime's default, about
+  5 MB. A 512 KB stack ran the same deep goals (below, "A smaller stack"),
+  and what it would save did not show in the runtime's memory.
 
 ### What Firefox was
 
@@ -280,6 +281,16 @@ The managed heap a session adds goes from 22.3 MB to 3.9 MB, or 8.9 MB: in
 about half of the first dozen sessions 5 MB more stays held after the boot.
 It did before the change too, and what holds it is not known. Over 24
 sessions the average is 7 MB.
+
+**A smaller stack.** Three sessions with `library(clpfd)` ran eight deep
+goals each, with the runtime's stack and with 512 KB: `copy_term` of a term
+100,000 deep, `term_to_atom` and `print` at 20,000, `throw` at 50,000,
+`garbage_collect` with two terms 200,000 deep, `msort` of 100,000 and a
+`sum/3` over 2,000 variables. All 24 passed with both stacks: the engine's
+walks over a term keep their own stacks. The runtime's memory came out at
+343.5 MB with both, but it grows in steps of 20%, so the measure cannot show
+the at most 4.5 MB a thread the smaller stack would save. The stack stays the
+default.
 
 These are desktop figures. The device with the least memory that a notebook
 is used on is a tablet, and its figure needs the hook on the published site:
