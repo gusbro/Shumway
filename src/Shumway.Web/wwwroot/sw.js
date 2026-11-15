@@ -120,7 +120,12 @@ self.addEventListener('activate', (event) => {
         if (name !== CACHE && name.startsWith(CACHE_PREFIX)) await caches.delete(name);
       }
     })(), 5000).catch(() => { });
-    await self.clients.claim();
+    // Asked for, not waited for. In Firefox the claim does not settle while
+    // the page's worker threads are blocked, and the runtime's threads block:
+    // the worker stayed `activating` with every fetch of the page held behind
+    // it, until the browser killed it a minute later and those fetches failed.
+    // The page is controlled as soon as the claim is made.
+    self.clients.claim().catch(() => { });
   })());
 });
 

@@ -1712,6 +1712,7 @@ if (settings.wasDiscarded()) {
 
 // Files: bring back whatever the last session left, then open the workspace it
 // was left in.
+libraries.setPersistent(await workspace.probe());
 const restored = await workspace.restoreAll();
 // The libraries' sources come back now; their bundles while the page is in use
 // (see libraries.js). A consult or a query waits for those.

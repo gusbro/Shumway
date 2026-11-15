@@ -300,8 +300,15 @@ export async function run(session, emit, out, editor, workspace) {
     select(3);
     const clip = new DataTransfer();
     clip.setData('text/plain', 'b :-\r\n    c.\r\n');
-    program.dispatchEvent(new ClipboardEvent('paste', { clipboardData: clip, bubbles: true, cancelable: true }));
-    check('a pasted program keeps its lines', state(), 'a.\nb :-\n    c.\n|15');
+    const paste = new ClipboardEvent('paste', { clipboardData: clip, bubbles: true, cancelable: true });
+    // A browser may make the event without the text it was given, and then
+    // there is no paste for a script to check.
+    if (paste.clipboardData?.getData('text/plain')) {
+      program.dispatchEvent(paste);
+      check('a pasted program keeps its lines', state(), 'a.\nb :-\n    c.\n|15');
+    } else {
+      emit('note: a scripted paste carries no text in this browser, so pasting is not checked\n', 'note');
+    }
 
     // An edit made by code keeps the caret in sight, which the browser does
     // only for its own edits, and moves the scroll only when the caret would
