@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -27,7 +28,7 @@ public sealed record WasmRelocatableMember(
 public sealed class WasmRelocatableModule
 {
     private const uint Magic = 0x4D52_5753;   // "SWRM"
-    private const byte I32Const = 0x41, I64Const = 0x42, CodeSectionId = 10;
+    private const byte I32Const = 0x41, I64Const = 0x42, CodeSectionId = 10, DataSectionId = 11;
     private const int IntWidth = 5, CellWidth = 10;
 
     public byte[] Bytes { get; private set; } = Array.Empty<byte>();
@@ -223,12 +224,56 @@ public sealed class WasmRelocatableModule
             sites[slot].Add(p + 1);
             p += 1 + len;
         }
+        // ADR-063 images: a cell sentinel in a segment is the cell itself.
+        // Every image cell carries a tag and none the sentinel's nibble 0x8
+        // (Foreign is never a literal), so a match is a sentinel.
+        var dataSites = new List<int>[relocs.Count];
+        for (int i = 0; i < dataSites.Length; i++) dataSites[i] = new List<int>();
+        foreach (var (at, length) in DataSegments(bytes))
+            for (int q = at; q + 8 <= at + length; q += 8)
+            {
+                long value = BinaryPrimitives.ReadInt64LittleEndian(bytes.AsSpan(q, 8));
+                if ((value & ~(long)RelocatingCompileEnv.SlotMask) != RelocatingCompileEnv.CellSentinelBase)
+                    continue;
+                int slot = (int)(value & RelocatingCompileEnv.SlotMask);
+                if (slot >= relocs.Count)
+                    throw new WasmCompileException($"sentinel of unknown slot {slot} in a data segment at byte {q}");
+                if (!relocs[slot].Wide)
+                    throw new WasmCompileException($"slot {slot} is not a cell but sits in a data segment at byte {q}");
+                dataSites[slot].Add(q);
+            }
         for (int i = 0; i < relocs.Count; i++)
         {
-            if (sites[i].Count == 0)
+            if (sites[i].Count == 0 && dataSites[i].Count == 0)
                 throw new WasmCompileException($"relocation {i} ({relocs[i].Kind} {relocs[i].Name}/{relocs[i].Arity}) was never emitted");
             relocs[i].Sites = sites[i].ToArray();
+            relocs[i].DataSites = dataSites[i].ToArray();
         }
+    }
+
+    /// <summary>Where each data segment's bytes start, and how many there
+    /// are. Only passive segments: the images are the module's only data.</summary>
+    private static List<(int At, int Length)> DataSegments(byte[] bytes)
+    {
+        var segments = new List<(int, int)>();
+        int p = 8;                                   // magic + version
+        while (p < bytes.Length)
+        {
+            byte id = bytes[p++];
+            int size = (int)ReadVarUInt32(bytes, ref p);
+            if (id != DataSectionId) { p += size; continue; }
+            uint count = ReadVarUInt32(bytes, ref p);
+            for (uint k = 0; k < count; k++)
+            {
+                if (ReadVarUInt32(bytes, ref p) != 1)
+                    throw new WasmCompileException("a data segment that is not passive");
+                int length = (int)ReadVarUInt32(bytes, ref p);
+                segments.Add((p, length));
+                p += length;
+            }
+            break;
+        }
+        return segments;
     }
 
     private static (int Start, int End) CodeSection(byte[] bytes)
@@ -381,6 +426,7 @@ public sealed class WasmRelocatableModule
             }
             int width = r.Wide ? CellWidth : IntWidth;
             foreach (int at in r.Sites) WritePaddedLeb(bytes, at, value, width);
+            foreach (int at in r.DataSites) BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(at, 8), value);
         }
 
         var entryCursors = new Dictionary<int, int>(Members.Count);
@@ -431,6 +477,8 @@ public sealed class WasmRelocatableModule
             Mix(p.ParameterType.Name + " " + p.Name, p.Position);
         foreach (var name in Enum.GetNames(typeof(WasmInlineForms)))
             Mix(name, (int)Enum.Parse(typeof(WasmInlineForms), name));
+        // A relocation's wire form: its sites in the code, then in the data.
+        Mix("WasmRelocation Sites DataSites", 2);
         return h;
     }
 
@@ -461,6 +509,8 @@ public sealed class WasmRelocatableModule
             w.Write(r.Wide);
             w.Write(r.Sites.Length);
             foreach (int s in r.Sites) w.Write(s);
+            w.Write(r.DataSites.Length);
+            foreach (int s in r.DataSites) w.Write(s);
         }
         w.Write(builtins.Count);
         foreach (var b in builtins)
@@ -518,7 +568,9 @@ public sealed class WasmRelocatableModule
             bool wide = r.ReadBoolean();
             var sites = new int[r.ReadInt32()];
             for (int j = 0; j < sites.Length; j++) sites[j] = r.ReadInt32();
-            relocs.Add(new WasmRelocation(kind, name, arity, off, wide) { Sites = sites });
+            var dataSites = new int[r.ReadInt32()];
+            for (int j = 0; j < dataSites.Length; j++) dataSites[j] = r.ReadInt32();
+            relocs.Add(new WasmRelocation(kind, name, arity, off, wide) { Sites = sites, DataSites = dataSites });
         }
         m.Relocations = relocs;
         n = r.ReadInt32();

@@ -76,7 +76,10 @@ ground.
    table instead: the patch site carries the image, the loader interns it
    there and bakes that id. Two id spaces, each consistent: the bytecode's
    and a run-time emit's index the engine's pool, a persisted emit's the
-   process's table.
+   process's table. A wasm module baked into a bundle carries its images'
+   cells in its data segments, so an atom or a functor there is a
+   relocation by name, as in its code, patched where the cell sits when
+   the module is installed.
 
 6. Each call still gets its own copy. Term identity, backtracking (the heap
    top is reset as after any build), garbage collection (an image's cells
