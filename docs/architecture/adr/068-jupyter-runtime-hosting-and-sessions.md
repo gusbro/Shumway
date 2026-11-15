@@ -199,9 +199,12 @@ measurement is still to do.
 
 - **The tier's own notes** ("compiling N predicates") still go to the page
   as a whole, not to a session.
-- **The session limit's default**, which waits for two things (below): what
-  a session costs once the sessions of a page share their bundles, and a
-  tablet's figure.
+- **The session limit's default**, which waits for a tablet's figure
+  (below).
+- **Five megabytes that stay held after some boots** (below, "What a session
+  is made of"): what holds them is not known.
+- **The stack of a session's thread**, about 5 MB, the runtime's default.
+  Whether a session's thread needs that much has not been looked at.
 
 ### What Firefox was
 
@@ -228,19 +231,55 @@ and WebKit 27.2, a publish without AOT.
 
 - **A session costs about 38 MB of the runtime's memory**, taken over 12:
   about 12 MB of managed heap to boot and 10 MB more with `library(clpfd)`
-  loaded, and the rest outside the managed heap.
-- **Most of that is probably the same bytes again**, which a profile has yet
-  to confirm. Every engine reads and parses its own copy of the standard
-  library's bundle (5.8 MB, its wasm module included), and of each library
-  it loads. On the desktop the same engine costs 6.4 MB of managed heap. If
-  the profile agrees, sharing the bundles between the sessions of a page is
-  the work that moves the limit.
+  loaded, and the rest outside the managed heap. The runtime's memory grows
+  a fifth at a time, so this figure is coarse; the managed heap is exact.
+- **Most of the managed heap was the same bytes again** (see "What a session
+  is made of" below).
 - **Time.** A session boots in 0.4 to 1.5 s and loads `library(clpfd)` in
   0.3 to 1.6 s.
 - **Threads are not the limit.** Twelve sessions start with the pool the
   runtime makes at boot (5), opened one at a time. A test that started three
   threads in a row and blocked waiting for them never ran them: a thread
   past the pool starts only once its creator lets go.
+
+### What a session is made of (2026-11-15)
+
+The hook takes a level: what each session holds. Chromium, managed heap a
+session adds:
+
+| A session holds | Managed heap |
+|---|---|
+| Its thread alone | none; about 5 MB of stack outside the heap |
+| An engine with no wasm in it | 1.3 MB |
+| The engine as the page boots it | 12.2 MB |
+| That, with `library(clpfd)` loaded | 22.3 MB |
+
+- **The engine is small; the wasm modules are not.** The standard library's
+  bundle is 5.8 MB, of which 5.6 MB is its wasm module; the library's is
+  4.8 MB, about 4.1 MB of it the module.
+- **Each session held two copies of each module**: the bytes its own read of
+  the bundle gave it, kept to install the module again after
+  `jit_compile(bundles_off)`, and a patched, pinned copy its threads register
+  the module from. That is about 19.5 MB of the 22.3 MB.
+- **A session's thread costs about 5 MB**, the stack the runtime gives a
+  thread. It is the floor of what a session costs.
+
+**Shared by content.** The page reads the standard library's bundle once; a
+bundle's wasm modules are one array per content, whichever engine reads the
+bundle; and the sessions that install the same module register it from one
+pinned copy. Measured with that, sessions with `library(clpfd)` loaded:
+
+| The runtime's memory | Before | Shared |
+|---|---|---|
+| Chromium, 24 sessions | 887 MB | 495 to 591 MB |
+| Chromium, 12 sessions | 593 MB | 344 to 349 MB |
+| Firefox, 12 sessions | 600 MB | 419 MB |
+| WebKit, 12 sessions | not run | 349 MB |
+
+The managed heap a session adds goes from 22.3 MB to 3.9 MB, or 8.9 MB: in
+about half of the first dozen sessions 5 MB more stays held after the boot.
+It did before the change too, and what holds it is not known. Over 24
+sessions the average is 7 MB.
 
 These are desktop figures. The device with the least memory that a notebook
 is used on is a tablet, and its figure needs the hook on the published site:
