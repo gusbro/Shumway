@@ -55,7 +55,8 @@ methods directly.
   are never evicted silently, because the user would lose state without
   noticing.
 - **The default** is set by measurement (plan, verification V2): the memory
-  of an engine with the server loaded, on a desktop browser and on an iPhone.
+  of an engine with the server loaded, on a desktop browser and on a tablet.
+  A phone is not a target: a notebook is not usable on its screen.
 - **The WebShumway demo** is rewritten as a host with exactly one session, so
   there is one code path.
 
@@ -196,16 +197,55 @@ measurement is still to do.
 
 ### Still open
 
-- **Firefox.** In Firefox 159 the hook stops when a second session starts a
-  search that does not end: two worker errors and nothing after. One session
-  with an endless search and Stop works there, on `main` and with this
-  change. A larger thread pool at boot did not change it. Not diagnosed.
-- **Threads.** The runtime makes its threads at boot (5, and 1 kept spare).
-  A test that started three more in a row never ran them, in every browser.
-  The notebook app has to ask for the threads its session limit needs, and
-  verification V2 has to count them.
 - **The tier's own notes** ("compiling N predicates") still go to the page
   as a whole, not to a session.
+- **The session limit's default**, which waits for two things (below): what
+  a session costs once the sessions of a page share their bundles, and a
+  tablet's figure.
+
+### What Firefox was
+
+In Firefox 159 the `#sessions` hook stopped part way, and the page's own
+selftest stopped at 87 checks on `main` too. Neither was the sessions. The
+service worker's `activate` waited for `clients.claim()`, and in Firefox the
+claim does not settle while the page's worker threads are blocked, which the
+runtime's threads are. The worker stayed `activating` with every fetch of the
+page held behind it, the browser killed it a minute later, and those fetches
+failed. The worker now asks for the claim without waiting for it (a fix of
+WebShumway's own). With it the hook passes in the three engines.
+
+### Memory and threads in a browser (V2, 2026-11-15)
+
+The `#sessionsmem` hook opens sessions one at a time, each with
+`library(clpfd)` loaded and a query run. Headless Chromium 159, Firefox 159
+and WebKit 27.2, a publish without AOT.
+
+| | Chromium | Firefox | WebKit |
+|---|---|---|---|
+| The runtime's memory with the page's own session | 138 MB | 140 MB | 140 MB |
+| After 6 more sessions | 412 MB | 349 MB | 419 MB |
+| After 12 more sessions | 593 MB | 600 MB | not run |
+
+- **A session costs about 38 MB of the runtime's memory**, taken over 12:
+  about 12 MB of managed heap to boot and 10 MB more with `library(clpfd)`
+  loaded, and the rest outside the managed heap.
+- **Most of that is probably the same bytes again**, which a profile has yet
+  to confirm. Every engine reads and parses its own copy of the standard
+  library's bundle (5.8 MB, its wasm module included), and of each library
+  it loads. On the desktop the same engine costs 6.4 MB of managed heap. If
+  the profile agrees, sharing the bundles between the sessions of a page is
+  the work that moves the limit.
+- **Time.** A session boots in 0.4 to 1.5 s and loads `library(clpfd)` in
+  0.3 to 1.6 s.
+- **Threads are not the limit.** Twelve sessions start with the pool the
+  runtime makes at boot (5), opened one at a time. A test that started three
+  threads in a row and blocked waiting for them never ran them: a thread
+  past the pool starts only once its creator lets go.
+
+These are desktop figures. The device with the least memory that a notebook
+is used on is a tablet, and its figure needs the hook on the published site:
+a tablet reaches a development machine without https, and a page without
+https is not isolated.
 
 ## Alternatives considered
 

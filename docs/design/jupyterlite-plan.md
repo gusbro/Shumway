@@ -14,15 +14,16 @@ true, as the Documentation invariant requires.
 | Id | Task | Done when |
 |---|---|---|
 | V1 | Open the current WebShumway demo on an iPhone (Safari). Check `crossOriginIsolated`, and whether the engine boots | result recorded in ADR-069; if it fails, F2 is scheduled and ADR-042 is amended |
-| V2 | Measure the memory of one engine with a server-sized program loaded, on desktop Chrome and on the iPhone | default session limit written into ADR-068 (can wait until Phase 3 provides the real bundle; a proxy program is fine for a first figure) |
+| V2 | Measure the memory of one engine with a server-sized program loaded, on desktop browsers and on a tablet (a phone's screen is too small for a notebook, so it is not a target) | default session limit written into ADR-068 (can wait until Phase 3 provides the real bundle; a proxy program is fine for a first figure) |
 | F1 | `sw.js`: on `activate`, delete only caches carrying WebShumway's prefix | demo still works offline; another app's caches on the origin survive |
 | F2 | `sw.js`: `require-corp` for every browser (WebShumway needs nothing `credentialless` gives) | demo boots in Chromium, Firefox and WebKit; ADR-042 amended |
 
 V1, F1 and F2 are done. In headless WebKit 27.2 the demo did not boot, and
 `require-corp` isolates where `credentialless` does not (ADR-069). F1 and F2
 went into WebShumway as a fix of their own, and with it published the demo
-boots on a real iPhone. V2 has a first figure on the desktop (ADR-068); the
-browser measurement is still to do.
+boots on a real iPhone. V2 is measured in three desktop browsers (ADR-068):
+about 38 MB of the runtime's memory per session with `library(clpfd)` loaded.
+The tablet's figure and the default limit are still to do.
 
 ## Phase 1: Host sessions (ADR-068, accepted)
 
@@ -41,8 +42,10 @@ browser measurement is still to do.
 
 **State (2026-11-15):** built, see ADR-068 "What was built". The page's own
 test passes as on `main` in Chromium, and the two-session test passes on the
-desktop and, in the browser, in Chromium and WebKit. Open: the two-session
-test in Firefox, and the manual pass over the guide's examples.
+desktop and, in the browser, in Chromium, Firefox and WebKit (Firefox once
+the service worker stopped waiting for its claim, a fix of WebShumway's own).
+Open: the manual pass over the guide's examples, and sharing the bundles
+between the sessions of a page (ADR-068, "Memory and threads in a browser").
 
 ## Phase 2: The Prolog server, headless (ADR-067)
 
