@@ -1,6 +1,7 @@
 # Jupyter notebooks on WebShumway: plan
 
-Status: plan, nothing started (2026-11-14). The architecture is in
+Status: Phase 0 done except the browser half of V2; Phase 1 in progress
+(2026-11-15). The architecture is in
 [`jupyterlite-architecture.md`](jupyterlite-architecture.md); the decisions
 are in ADR-066 to ADR-073.
 
@@ -17,10 +18,11 @@ true, as the Documentation invariant requires.
 | F1 | `sw.js`: on `activate`, delete only caches carrying WebShumway's prefix | demo still works offline; another app's caches on the origin survive |
 | F2 | `sw.js`: `require-corp` for every browser (WebShumway needs nothing `credentialless` gives) | demo boots in Chromium, Firefox and WebKit; ADR-042 amended |
 
-V1 has a first result, recorded in ADR-069: in headless WebKit 27.2 the demo
-does not boot, and `require-corp` isolates where `credentialless` does not. A
-real device is still to be tried. F1 and F2 are a pull request of their own
-against WebShumway.
+V1, F1 and F2 are done. In headless WebKit 27.2 the demo did not boot, and
+`require-corp` isolates where `credentialless` does not (ADR-069). F1 and F2
+went into WebShumway as a fix of their own, and with it published the demo
+boots on a real iPhone. V2 has a first figure on the desktop (ADR-068); the
+browser measurement is still to do.
 
 ## Phase 1: Host sessions (ADR-068, accepted)
 
@@ -36,6 +38,11 @@ against WebShumway.
 - A test creates two sessions in one runtime and shows that their databases,
   flags and operators are isolated.
 - Cancelling one session leaves the other untouched.
+
+**State (2026-11-15):** built, see ADR-068 "What was built". The page's own
+test passes as on `main` in Chromium, and the two-session test passes on the
+desktop and, in the browser, in Chromium and WebKit. Open: the two-session
+test in Firefox, and the manual pass over the guide's examples.
 
 ## Phase 2: The Prolog server, headless (ADR-067)
 

@@ -123,11 +123,11 @@ The WebShumway demo becomes a consumer of 1 and 3 with a single session.
 
 These come out of the design but belong to WebShumway or the engine:
 
-- `sw.js` deletes every cache of the origin on activation, not only its own
-  (ADR-069).
-- `sw.js` sends `credentialless` to WebKit, which does not implement it, so
-  WebShumway does not boot there (ADR-069, verification V1). The fix and the
-  amendment of ADR-042 are a pull request of their own.
+- `sw.js` deleted every cache of the origin on activation, not only its own
+  (ADR-069). Fixed.
+- `sw.js` sent `credentialless` to WebKit, which does not implement it, so
+  WebShumway did not boot there (ADR-069, verification V1). Fixed, with
+  ADR-042 amended: the worker sends `require-corp` to every browser.
 - The working directory is process-global (ADR-071). The desktop
   `EnginePool` has the same latent problem.
 - Cancellation surfaces as an OperationCanceledException, so it cannot be

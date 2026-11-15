@@ -5,8 +5,8 @@
 Proposed (2026-11-14). Records D12 and D13. Verification V1 of the plan has
 results (Context), and they changed D13: WebShumway sends one value to every
 engine, and the choice by engine is the lite site's alone. The WebShumway side
-of D12 and D13 is a fix of its own (ADR-042, amended); the lite site's part is
-not implemented.
+of D12 and D13 is implemented (ADR-042, amended); the lite site's part is
+not.
 
 ## Context
 
@@ -57,8 +57,11 @@ controls the page and serves it with `COEP: credentialless`;
 `crossOriginIsolated` stays false, there is no SharedArrayBuffer, and the boot
 aborts with "the page is not cross-origin isolated". The control was the same
 browser against a page served with real headers: with `credentialless` the page
-is not isolated, with `require-corp` it is. A real iPhone, iPad or Mac Safari
-has not been tried yet.
+is not isolated, with `require-corp` it is.
+
+**V1, closed (2026-11-15).** With the fix published (the worker sends
+`require-corp`), the demo boots and answers queries on a real iPhone. An iPad
+and Mac Safari have not been tried; they use the same engine.
 
 **WebShumway never needed `credentialless`.** ADR-042 chose it so that the
 library importer could read GitHub's listing API, which sends CORS but no CORP.

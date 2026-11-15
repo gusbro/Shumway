@@ -2,9 +2,11 @@
 
 ## Status
 
-Accepted (2026-11-14), with the work the audit below found. Nothing is
-implemented yet. Records D6 and D7. This changes the threading model of the
-web host, which `decision-policy.md` names a major decision.
+Accepted (2026-11-14), with the work the audit below found. The session host
+and the four pieces of work of the audit are implemented (see "What was built",
+2026-11-15); the notebook app and its export surface are not. Records D6 and
+D7. This changes the threading model of the web host, which
+`decision-policy.md` names a major decision.
 
 ## Context
 
@@ -158,6 +160,52 @@ The first engine costs 5.5 MB and 14 MB: it pays for the shared tables. The
 figure leaves out the session's thread, the compiled code of its modules and
 everything specific to the browser, so it is a floor. The browser
 measurement is still to do.
+
+## What was built (2026-11-15)
+
+- **The host library, `Shumway.WebHost`.** A session is an engine, its
+  thread, the query it has open, its input, its output with the throttle, and
+  a working directory of its own (ADR-071). A registry keeps the sessions of
+  a page by id, with the limit: a session past it is refused with a message.
+  The library has no JavaScript in it; the app gives each session an object
+  that speaks for its part of the page. That is also what lets the desktop
+  tests drive two sessions against each other.
+- **WebShumway is a host with one session.** Same exports, same page.
+- **The four pieces of work of the audit.**
+  - `PrologEngine.Error`: what `user_error` writes to, per engine.
+  - The two pinned tables are pinned by each chain, like every other area.
+  - What `jit_compile/1` chose (off, threshold, batch, form) is an object of
+    the session, not statics: it survives a restart of that session and
+    reaches no other.
+- **A bug the second session found.** `System.Threading.Lock` does not
+  exclude on browser-wasm with threads: two threads contending for one end
+  with the exit throwing that the thread does not hold it, in Chromium,
+  Firefox and WebKit alike. The atom table was the one user of that type, so
+  two threads interning one new name made two atoms, and a predicate whose
+  clauses were read on either side of that came out as two. The table uses a
+  monitor now. WebShumway already had the exposure: a library compiles on
+  its own thread beside the session's engine (ADR-042 §7).
+- **Tests.** On the desktop, two sessions: databases, flags and operators
+  apart, a cancel that leaves the other running, input, output and
+  `user_error` to the session's own page, a directory each, the limit, and a
+  close that lets go of a goal waiting for input. In the browser, the
+  `#sessions` hook: two sessions beside the page's own, both inside wasm at
+  once, one growing the shared tables under the other, `jit_compile/1` per
+  session, cancellation in both forms. It passes in Chromium 159 and WebKit
+  27.2.
+
+### Still open
+
+- **Firefox.** In Firefox 159 the hook stops when a second session starts a
+  search that does not end: two worker errors and nothing after. One session
+  with an endless search and Stop works there, on `main` and with this
+  change. A larger thread pool at boot did not change it. Not diagnosed.
+- **Threads.** The runtime makes its threads at boot (5, and 1 kept spare).
+  A test that started three more in a row never ran them, in every browser.
+  The notebook app has to ask for the threads its session limit needs, and
+  verification V2 has to count them.
+- **The tier's own notes** ("compiling N predicates") still go to the page
+  as a whole, not to a session.
 
 ## Alternatives considered
 
