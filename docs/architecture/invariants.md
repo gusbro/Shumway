@@ -22,6 +22,17 @@ is the authority. ADR references give the full rationale.
 - **Global tables (atom table, functor table, code cache) are thread-safe**
   (`ConcurrentDictionary` / fine-grained locks) — engines share them.
   (ADR-001.)
+- **In code that can run on WebAssembly, a lock is a monitor (`lock` on an
+  `object`), never `System.Threading.Lock`.** That is the engine and
+  everything a browser host loads; a tool that only runs on the desktop may
+  use either. The reason: on browser-wasm with threads
+  `System.Threading.Lock` does not exclude. Two threads contending for one
+  both get in, measured in Chromium, Firefox and WebKit, while the desktop
+  runtime excludes as it should. It was the atom table's lock, and two
+  engines interning one new name at once made two atoms of it, which then
+  split a predicate in two at link time. `LocksAreMonitorsTests` checks the
+  engine's assemblies by the type of their fields, because the failure
+  cannot be shown on the desktop.
 - **The heap is a `Cell[]` of 8-byte blittable values. Never put managed
   object references inside cells.** Managed payloads (string, foreign
   object, rational) live in per-activation side tables, reached by an
