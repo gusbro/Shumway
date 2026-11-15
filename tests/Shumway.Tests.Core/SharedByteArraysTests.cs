@@ -21,6 +21,8 @@ public class SharedByteArraysTests
         Assert.Same(first, shared.Share(first));
         Assert.Same(first, shared.Share(Blob(1000, 1)));
         Assert.Equal(1, shared.Count);
+        // The table holds weakly: a local past its last use is the GC's.
+        GC.KeepAlive(first);
     }
 
     [Fact]
@@ -34,6 +36,8 @@ public class SharedByteArraysTests
         Assert.NotSame(a, c);
         Assert.Equal(3, shared.Count);
         Assert.Same(b, shared.Share(Blob(1000, 2)));
+        GC.KeepAlive(a);
+        GC.KeepAlive(c);
     }
 
     [Fact]
@@ -49,6 +53,7 @@ public class SharedByteArraysTests
         Assert.Equal(offered, held);
         Assert.Same(held, shared.Share(Blob(64, 7), Copy));
         Assert.Equal(1, made);
+        GC.KeepAlive(held);
     }
 
     [Fact]
