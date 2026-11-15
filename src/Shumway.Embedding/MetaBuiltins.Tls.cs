@@ -97,7 +97,8 @@ public static partial class MetaBuiltins
     }
 
     /// <summary>A certificate and its key, from the options that name them.</summary>
-    private sealed class IdentityOptions
+    // osPath: ADR-071, the files it names are relative to the engine's directory.
+    private sealed class IdentityOptions(Func<string, string> osPath)
     {
         public byte[]? Pkcs12;
         public string? CertificateFile;
@@ -109,9 +110,9 @@ public static partial class MetaBuiltins
             switch (option.Functor)
             {
                 case "pkcs12": Pkcs12 = BytesOption(value, option); return true;
-                case "pkcs12_file": Pkcs12 = ReadFileOption(TextOption(value, option)); return true;
-                case "certificate_file": CertificateFile = TextOption(value, option); return true;
-                case "key_file": KeyFile = TextOption(value, option); return true;
+                case "pkcs12_file": Pkcs12 = ReadFileOption(osPath(TextOption(value, option))); return true;
+                case "certificate_file": CertificateFile = osPath(TextOption(value, option)); return true;
+                case "key_file": KeyFile = osPath(TextOption(value, option)); return true;
                 case "password": Password = TextOption(value, option); return true;
                 default: return false;
             }
@@ -136,7 +137,7 @@ public static partial class MetaBuiltins
     private static bool NewTlsClientContext(Activation engine)
     {
         var context = new TlsClientContext();
-        var identity = new IdentityOptions();
+        var identity = new IdentityOptions(engine.OsPath);
         Term list = MaterializeRegister(engine, 1);
         foreach (Term option in ListItems(list, list))
         {
@@ -148,7 +149,7 @@ public static partial class MetaBuiltins
             {
                 case "hostname": context.Hostname = TextOption(v, option); break;
                 case "verify": context.Verify = BoolOption(v, option); break;
-                case "cacert_file": context.CaCertificateFile = TextOption(v, option); break;
+                case "cacert_file": context.CaCertificateFile = engine.OsPath(TextOption(v, option)); break;
                 default: throw new ShumwayPrologException(IsoError.DomainError("tls_option", option));
             }
         }
@@ -163,7 +164,7 @@ public static partial class MetaBuiltins
 
     private static bool NewTlsServerContext(Activation engine)
     {
-        var identity = new IdentityOptions();
+        var identity = new IdentityOptions(engine.OsPath);
         Term list = MaterializeRegister(engine, 1);
         foreach (Term option in ListItems(list, list))
         {

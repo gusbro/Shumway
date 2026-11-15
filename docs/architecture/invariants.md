@@ -237,6 +237,20 @@ honest (`../design/cell-layout-detail.md` §Validation rules):
 - The two `.shum` writers (linker and librarian) must stay byte-identical in
   the sections they share.
 
+## Paths
+
+- **A builtin hands the operating system no path a program supplied without
+  passing it through `Activation.OsPath` (or `FullOsPath`)**, and the engine
+  through `EngineDirectory`. While an engine has a directory of its own
+  (ADR-071) it never reads or changes the process directory; with the
+  default scope the helpers return the path unchanged.
+- **Only the host changes an engine's directory scope.** The flag
+  `cwd_scope` is read-only: a program that could switch to the process
+  scope could move the directory of every other engine.
+- **A child process gets its directory as an argument of the call that
+  creates it** (`ProcessStartInfo.WorkingDirectory`). Nothing moves the
+  process directory around a call, and no lock guards it.
+
 ## Build
 
 - **Zero warnings** — enforced by `<TreatWarningsAsErrors>` in the root

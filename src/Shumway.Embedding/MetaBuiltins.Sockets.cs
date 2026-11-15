@@ -253,7 +253,7 @@ public static partial class MetaBuiltins
         if (address is VarTerm) throw new ShumwayPrologException(IsoError.InstantiationError());
         var (host, portTerm, unixPath) = ParseSocketAddress(address);
         Socket socket = unixPath is not null
-            ? ConnectUnix(registry, unixPath, o)
+            ? ConnectUnix(registry, engine.OsPath(unixPath), o)
             : ConnectInet(registry, host, ResolvePort(portTerm, o.NumericServname), o, address);
         return UnifyNewSocketStream(engine, 1, socket, o, host);
     }
@@ -347,7 +347,7 @@ public static partial class MetaBuiltins
         Socket socket;
         if (unixPath is not null)
         {
-            socket = ListenUnix(unixPath, o);
+            socket = ListenUnix(engine.OsPath(unixPath), o);
         }
         else
         {

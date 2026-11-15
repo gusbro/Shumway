@@ -12,7 +12,7 @@ public sealed partial class PrologEngine
     private BundleLoader Bundles => _bundleLoader ??= new BundleLoader(this);
 
     /// <summary>Loads a linked <c>.shum</c> bundle from disk into this engine.</summary>
-    public void LoadBundle(string path) => Bundles.LoadBundle(path);
+    public void LoadBundle(string path) => Bundles.LoadBundle(_directory.Resolve(path));
 
     /// <summary>Loads an in-memory <see cref="Bundle"/> into this engine.</summary>
     public void LoadBundle(Bundle bundle) => Bundles.LoadBundle(bundle);
@@ -29,12 +29,12 @@ public sealed partial class PrologEngine
     /// <summary>Arity <c>save/0,1</c> — snapshots consult history + dynamic
     /// clauses to a bundle file.</summary>
     public void SaveState(string path, bool dynamicOnly = false)
-        => Bundles.SaveState(path, dynamicOnly);
+        => Bundles.SaveState(_directory.Resolve(path), dynamicOnly);
 
     public byte[] SaveStateToBytes(bool dynamicOnly = false)
         => Bundles.SaveStateToBytes(dynamicOnly);
 
-    public void RestoreState(string path) => Bundles.RestoreState(path);
+    public void RestoreState(string path) => Bundles.RestoreState(_directory.Resolve(path));
 
     public void RestoreStateFromBytes(byte[] data) => Bundles.RestoreStateFromBytes(data);
 

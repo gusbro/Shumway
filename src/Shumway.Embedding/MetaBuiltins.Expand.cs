@@ -119,7 +119,8 @@ public static partial class MetaBuiltins
     private static void WritePredicatesToFile(PrologEngine host, string path, IList<int> fids)
     {
         // A consult reads it back in the default encoding.
-        using var sw = Shumway.Builtins.StreamBuiltins.WholeFileWriter(path, host.Flags.DefaultTextEncoding);
+        using var sw = Shumway.Builtins.StreamBuiltins.WholeFileWriter(
+            host.ResolvePath(path), host.Flags.DefaultTextEncoding);
         // Emit `:- dynamic Name/Arity.` for any dynamic predicate in the
         // list so a re-consult preserves the declaration (under
         // implicit_dynamic=true the directive isn't strictly required,
@@ -147,10 +148,10 @@ public static partial class MetaBuiltins
     public static bool Directory6(Activation engine)
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "directory/6");
-        if (!System.IO.Directory.Exists(path))
+        if (!System.IO.Directory.Exists(engine.OsPath(path)))
             throw new ShumwayPrologException(
                 IsoError.ExistenceError("directory", new AtomTerm(path)));
-        var entries = new System.IO.DirectoryInfo(path)
+        var entries = new System.IO.DirectoryInfo(engine.OsPath(path))
             .EnumerateFileSystemInfos()
             .OrderBy(e => e.Name, StringComparer.Ordinal)
             .ToList();

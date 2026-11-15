@@ -661,6 +661,56 @@ the program cannot stop it, and every cleanup set up with
 `setup_call_cleanup/3` has already run when you receive it. Those cleanups
 also run when you cancel a query through its `CancellationToken`.
 
+### A working directory per engine
+
+By default an engine uses the directory of the process. Relative paths go to
+the operating system as written, and `working_directory/2` moves the whole
+process, so every engine of the process moves with it. That is the right
+thing for a program with one engine.
+
+A host that runs several engines at once, each on its own files, gives each
+one a directory of its own:
+
+```csharp
+var engine = new PrologEngine();
+engine.SetCwdScope(CwdScope.Engine, @"C:\projects\alpha");
+
+engine.ConsultFile("rules.pl");                 // C:\projects\alpha\rules.pl
+engine.Query("open('out.txt', write, S), close(S).");   // C:\projects\alpha\out.txt
+engine.Query("working_directory(_, reports).");          // this engine only
+Console.WriteLine(engine.WorkingDirectory);    // C:\projects\alpha\reports
+```
+
+With no directory the engine starts where it stands, which for a new engine is
+the process directory at that moment. While the scope is `CwdScope.Engine`:
+
+- The engine neither reads nor changes the process directory.
+- Every relative path the engine resolves is relative to its own directory:
+  `open/4`, `consult/1`, `include/1`, `absolute_file_name/2`, `see/1` and
+  `tell/1`, the file-system predicates, saved states, and the host's own
+  calls that take a path, such as `ConsultFile`.
+- A process the program starts, with `shell/1,2` or `process_create/3`,
+  starts in the engine's directory. The `cwd/1` option still chooses another,
+  and a relative one is relative to the engine's.
+- The read-only flag `cwd_scope` is `engine`. It is `process` for an engine
+  that did not ask. A program cannot change it.
+
+The host can change its mind at any time. `SetCwdScope(CwdScope.Process)`
+takes the engine back to the process directory and drops its own, and
+assigning `engine.WorkingDirectory` moves the engine without a query.
+
+Two things run outside the engine and still see the process directory:
+
+- **Native code.** A `:- native` function that receives a relative file name
+  resolves it in the operating system. Pass it an absolute one;
+  `absolute_file_name/2` makes it absolute against the engine's directory.
+- **Your own foreign predicates.** `File.Open("data.txt")` inside a
+  `[PrologPredicate]` is ordinary .NET. `engine.ResolvePath("data.txt")`
+  returns the path as the builtins would resolve it.
+
+An `EnginePool` needs nothing special: its factory creates the engines, so
+the factory calls `SetCwdScope`.
+
 ### Loading a precompiled bundle
 
 ```csharp

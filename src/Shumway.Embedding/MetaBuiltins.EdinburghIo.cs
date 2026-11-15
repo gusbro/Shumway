@@ -25,11 +25,11 @@ public static partial class MetaBuiltins
         // reopen from scratch) broke the classic nested-include idiom —
         // `seeing(F) … see(Inner) … seen, see(F)` restarted F from the top,
         // so the outer file's clauses were read twice.
-        string full = System.IO.Path.GetFullPath(path);
+        string full = engine.FullOsPath(path);
         foreach (var cand in streams.All())
         {
             if (cand.IsReader && !cand.Closed && cand.Filename is not null
-                && System.IO.Path.GetFullPath(cand.Filename) == full)
+                && engine.FullOsPath(cand.Filename) == full)
             {
                 streams.SetCurrentInput(cand);
                 return true;
@@ -39,7 +39,7 @@ public static partial class MetaBuiltins
         try
         {
             h = Shumway.Builtins.StreamBuiltins.OpenTextReader(streams.NextId(), path, alias: null,
-                encodingName: null, bomOpt: null, streams.DefaultEncodingName);
+                encodingName: null, bomOpt: null, streams.DefaultEncodingName, engine.OsPath(path));
         }
         catch (FileNotFoundException)
         {
@@ -91,12 +91,12 @@ public static partial class MetaBuiltins
         // makes it current again, appending where it left off. Only told/0
         // closes. The classic multi-output juggle depends on this:
         // `tell(a), telling(SP), tell(b), … tell(SP), told`.
-        string full = System.IO.Path.GetFullPath(path);
+        string full = engine.FullOsPath(path);
         foreach (var cand in streams.All())
         {
             if (!cand.IsReader && !cand.Closed && cand.Filename is not null
                 && cand.Writer is not null
-                && System.IO.Path.GetFullPath(cand.Filename) == full)
+                && engine.FullOsPath(cand.Filename) == full)
             {
                 streams.SetCurrentOutput(cand);
                 return true;
@@ -106,7 +106,7 @@ public static partial class MetaBuiltins
         try
         {
             h = Shumway.Builtins.StreamBuiltins.OpenTextWriter(streams.NextId(), path, alias: null,
-                "write", encodingName: null, bomOpt: null, streams.DefaultEncodingName);
+                "write", encodingName: null, bomOpt: null, streams.DefaultEncodingName, engine.OsPath(path));
         }
         catch (DirectoryNotFoundException)
         {

@@ -160,7 +160,7 @@ public sealed partial class PrologEngine
             throw new System.ArgumentException($"unknown library dialect '{dialect}'");
         AddLibraryDirectory(path);
         string full;
-        try { full = System.IO.Path.GetFullPath(path); } catch { full = path; }
+        try { full = _directory.FullPath(path); } catch { full = path; }
         (_libraryDirDialect ??= new(System.StringComparer.OrdinalIgnoreCase))[full] = dialect;
         // Trealla surfaces BUILTIN-level names (limit/2, load_text/2) that its
         // programs use without importing anything, so mounting a trealla tree
@@ -651,7 +651,7 @@ public sealed partial class PrologEngine
     {
         if (string.IsNullOrWhiteSpace(path)) return;
         string full;
-        try { full = System.IO.Path.GetFullPath(path); } catch { full = path; }
+        try { full = _directory.FullPath(path); } catch { full = path; }
         if (!_libraryDirs!.Contains(full, StringComparer.OrdinalIgnoreCase))
             _libraryDirs!.Add(full);
     }
@@ -939,6 +939,7 @@ public sealed partial class PrologEngine
             string path = fileAtom.Name;
             if (_consultBaseDir is not null && !System.IO.Path.IsPathRooted(path))
                 path = System.IO.Path.Combine(_consultBaseDir, path);
+            path = _directory.Resolve(path);
             if (!System.IO.Path.HasExtension(path) && System.IO.File.Exists(path + ".pl"))
                 path += ".pl";
             if (!System.IO.File.Exists(path))
@@ -964,7 +965,7 @@ public sealed partial class PrologEngine
     private string? LoadResolvedLibrary(string name, string path)
     {
         string full;
-        try { full = System.IO.Path.GetFullPath(path); }
+        try { full = _directory.FullPath(path); }
         catch { full = path; }
 
         // Already loaded, and still what was loaded: importing it again is the
