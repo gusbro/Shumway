@@ -244,8 +244,11 @@ export async function importFolder(name, dial, picked, report = () => {}) {
 // quadratic and leaving a library source the user had only looked at take
 // seconds of a busy page.
 
-export const persistent = () =>
-  typeof navigator !== 'undefined' && navigator.storage && !!navigator.storage.getDirectory;
+// The page sets it from the workspace's probe of storage: the interface being
+// there does not mean it answers.
+let usable = typeof navigator !== 'undefined' && !!navigator.storage?.getDirectory;
+export const persistent = () => usable;
+export const setPersistent = (answers) => { usable = usable && answers; };
 
 const root = async () => (await navigator.storage.getDirectory())
   .getDirectoryHandle('libraries', { create: true });

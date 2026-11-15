@@ -12567,7 +12567,19 @@ public static class WasmPredicateCompiler
             int n = image.Length;
             var bytes = new byte[n * 8];
             for (int i = 0; i < n; i++)
-                System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(i * 8), image.Cells[i].Data);
+            {
+                // Atom and functor ids are the process's: through the env, so
+                // a baked module relocates them in the segment as it does in
+                // the code. The raw id named another functor elsewhere.
+                Cell c = image.Cells[i];
+                long data = c.Tag switch
+                {
+                    Tag.Atom => _env.AtomCell(c.AsAtomId),
+                    Tag.Functor => _env.FunctorCell(c.AsFunctorId),
+                    _ => c.Data,
+                };
+                System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(i * 8), data);
+            }
             uint segment = (uint)_images.Count;
             _images.Add(bytes);
 
