@@ -1,4 +1,4 @@
-# ADR-071: Working directory per engine, as an engine creation option
+# ADR-071: Working directory per engine, as an option of the host
 
 ## Status
 
@@ -28,13 +28,18 @@ behaviour.
 
 ## Decision
 
-- **A host-level option at engine creation**, not a Prolog flag that can be
-  changed at run time (switching semantics mid-session would be worse than
-  either choice):
+- **An option the host sets, not a Prolog flag.** A program that could
+  switch to the process scope could move the directory of every other
+  engine, so only the host chooses:
 
   ```
   CwdScope = Process | Engine
   ```
+
+  The host sets it with `SetCwdScope(scope, initialDirectory)`, at any time
+  and in either direction. Going back to `Process` drops the engine's own
+  directory. The host can also move an engine's directory directly, without
+  a query.
 
 - **`Process` is the default**: today's behaviour. The REPL, existing
   embedders and single-engine hosts see no change.
@@ -49,8 +54,8 @@ behaviour.
   - `working_directory/2` reads and changes the engine's directory only;
   - code the engine does not run follows the rules under "Code the engine
     does not run".
-- **A read-only Prolog flag** reports the mode, so code can tell which one it
-  is in.
+- **The read-only Prolog flag `cwd_scope`** reports the mode, `process` or
+  `engine`, so code can tell which one it is in.
 - **Invariant:** with a single engine, the two modes are indistinguishable
   from Prolog, with one exception: a relative path handed to native code
   (below). Otherwise they differ only with several engines, or when the host

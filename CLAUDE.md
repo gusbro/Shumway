@@ -346,7 +346,7 @@ When proposing changes:
 | Hosting the runtime in a notebook page: one engine per kernel | ADR-068 |
 | Service workers and cross-origin isolation for the notebook site (proposed) | ADR-069 |
 | Files in notebooks: a mirror between the contents store and MEMFS (proposed) | ADR-070 |
-| Working directory per engine, as an engine creation option | ADR-071 |
+| Working directory per engine, as an option of the host | ADR-071 |
 | Rich outputs in notebooks, no Python in the kernel (proposed) | ADR-072 |
 | Notebook package layout, protocol versioning, feature table (proposed) | ADR-073 |
 | PSTR design | docs/design/pstr-design.md |

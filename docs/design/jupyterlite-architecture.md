@@ -117,7 +117,7 @@ The WebShumway demo becomes a consumer of 1 and 3 with a single session.
 | D15 | Rich outputs in standard MIME, in phases: tables → Graphviz → Vega-Lite → widgets | 072 |
 | D16 | Package layout above, protocol versioned separately | 073 |
 | D17 | Feature table as YAML, every row backed by an acceptance cell | 073 |
-| | Per-engine working directory as an engine option | 071 |
+| | Per-engine working directory as an option of the host | 071 |
 
 ## What changes outside the notebook work
 
