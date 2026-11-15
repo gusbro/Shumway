@@ -587,7 +587,8 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// engine that never touches streams pays nothing.</summary>
     private StreamRegistry? _streams;
     internal StreamRegistry Streams =>
-        _streams ??= new StreamRegistry(new FollowingWriter(() => Out), In);
+        _streams ??= new StreamRegistry(new FollowingWriter(() => Out), In,
+            new FollowingWriter(() => Error));
 
     /// <summary>Activation-wide mutable flag state. Builtins
     /// <c>set_prolog_flag/2</c> and <c>current_prolog_flag/2</c> read
@@ -728,6 +729,18 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     }
 
     private System.IO.TextWriter? _warnings;
+
+    /// <summary>What <c>user_error</c> writes to. Defaults to standard
+    /// error. A host with several engines gives each its own, so one
+    /// engine's diagnostics do not come out among another's. Resolved
+    /// late, like <see cref="Warnings"/>.</summary>
+    public System.IO.TextWriter Error
+    {
+        get => _error ?? Console.Error;
+        set => _error = value;
+    }
+
+    private System.IO.TextWriter? _error;
 
     // ADR-071. Shared with every activation of this engine.
     internal readonly Shumway.Core.EngineDirectory _directory = new();

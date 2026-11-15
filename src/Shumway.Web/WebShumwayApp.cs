@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices.JavaScript;
 using Shumway.Embedding;
 using Shumway.TopLevel;
+using Shumway.WebHost;
 
 namespace Shumway.Web;
 
@@ -23,47 +24,31 @@ namespace Shumway.Web;
 /// </summary>
 internal static partial class WebShumwayApp
 {
-    private static TopLevelSession? _session;
-    private static QueryRun? _run;
-
-    /// <summary>Serializes everything that touches the engine.
+    /// <summary>The page's sessions (ADR-068). WebShumway is a host with
+    /// exactly one: the engine, its thread, its input and its output live in
+    /// it, and the exports below speak for it.
     ///
-    /// <para>An activation is single-threaded internally — the engine is not a
-    /// thing two threads may be inside at once. With the search on a pool thread
-    /// there are two threads in play, and the editor asks for highlighting on
-    /// every keystroke, which reads the live operator table a consult is busy
-    /// mutating. So engine work queues rather than overlaps: at most one of
-    /// these bodies runs at a time, whichever thread called it.</para>
-    ///
-    /// <para><see cref="QueryCancel"/> is deliberately outside — it must reach a
+    /// <para>Everything that touches the engine queues on the session's
+    /// thread (<see cref="OnEngine{T}"/>): an activation is single-threaded
+    /// inside, and the editor asks for highlighting on every keystroke, which
+    /// reads the operator table a consult is busy changing.
+    /// <see cref="QueryCancel"/> is deliberately outside: it must reach a
     /// running search, and it only sets a flag the engine reads at a safe
-    /// point. Queueing it would make it wait for the very goal it means to
-    /// stop.</para>
-    /// <para>Since the wasm tier, serializing is not enough: it has to be the
-    /// same thread every time. A compiled module is registered in the calling
-    /// thread's function table -- with threads on, every worker has its own,
-    /// and only the memory is shared -- so a pool that hands out a different
-    /// thread each time makes every module pay registration again there.
-    /// Measured at 37 ms for one big group; with many small modules it is per
-    /// module per thread. One dedicated thread pays each module once.</para>
-    ///
-    /// <para>The queue also subsumes the semaphore this used to hold: one
-    /// consumer is serialization.</para></summary>
-    // CA1416 marks BlockingCollection and Thread.Start unsupported on browser.
-    // That annotation predates threads being switchable on; with
-    // WasmEnableThreads the runtime has real workers, and this is one more of
-    // them. It is asserted rather than assumed: the #wasmthread probe reports
-    // the managed thread id of a series of engine calls, and the pinning is
-    // only real if they are all the same.
-#pragma warning disable CA1416
-    private static readonly System.Collections.Concurrent.BlockingCollection<Action>
-        _engineQueue = new();
-    private static Thread? _engineThread;
-    private static int _engineThreadId;
+    /// point.</para></summary>
+    private static SessionHost? _host;
+    private static HostSession? _only;
+
+    /// <summary>The one session's tier settings: what jit_compile/1 chose.</summary>
+    internal static readonly WasmTierSettings Tier = new();
+
+    private static HostSession S
+        => _only ?? throw new InvalidOperationException("The runtime has not started.");
+
+    private static Task<T> OnEngine<T>(Func<T> work) => S.OnEngine(work);
 
     /// <summary>The managed id of the engine thread, for the diagnostics that
     /// have to prove the pinning is real.</summary>
-    internal static int EngineThreadId => _engineThreadId;
+    internal static int EngineThreadId => S.EngineThreadId;
 
     /// <summary>The id of the thread a piece of engine work actually ran on --
     /// read from inside the queue, which is the only place that can answer
@@ -76,39 +61,13 @@ internal static partial class WebShumwayApp
     internal static Task<int> OnEngineTableLength()
         => OnEngine(TableLengthHere);
 
-    private static void EnsureEngineThread()
+    /// <summary>The one session's side of the page.</summary>
+    private sealed class Page : ISessionPage
     {
-        if (_engineThread is not null) return;
-        lock (_engineQueue)
-        {
-            if (_engineThread is not null) return;
-            var t = new Thread(() =>
-            {
-                _engineThreadId = Environment.CurrentManagedThreadId;
-                foreach (var item in _engineQueue.GetConsumingEnumerable()) item();
-            })
-            { IsBackground = true, Name = "shumway-engine" };
-            t.Start();
-            _engineThread = t;
-        }
+        public void Write(string text) => WriteToPage(text);
+        public void WriteError(string text) => WriteErrorToPage(text);
+        public void AskForInput() => WebShumwayApp.AskForInput();
     }
-
-    private static Task<T> OnEngine<T>(Func<T> work)
-    {
-        EnsureEngineThread();
-        // RunContinuationsAsynchronously: without it the awaiting continuation
-        // runs on the engine thread, and a continuation that queues more engine
-        // work would deadlock against the queue it is standing in.
-        var tcs = new TaskCompletionSource<T>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-        _engineQueue.Add(() =>
-        {
-            try { tcs.SetResult(work()); }
-            catch (Exception e) { tcs.SetException(e); }
-        });
-        return tcs.Task;
-    }
-#pragma warning restore CA1416
 
     /// <summary>Reply prefixes from <see cref="QueryNext"/>. One character, so a
     /// search that steps solution by solution crosses to JavaScript cheaply.</summary>
@@ -119,7 +78,8 @@ internal static partial class WebShumwayApp
     private const char TagAborted = 'a';    // abort/0 ended the query
 
     /// <summary>Appends engine output to the page. Prolog writes reach this through
-    /// <see cref="PageWriter"/>, which the engine holds as its output stream.</summary>
+    /// the session's <see cref="PageOutput"/>, which the engine holds as its
+    /// output stream.</summary>
     [JSImport("ui.write", "main.js")]
     internal static partial void WriteToPage(string text);
 
@@ -146,6 +106,10 @@ internal static partial class WebShumwayApp
         // JavaScript through the exports below. This runs on the runtime thread,
         // which is the only place its context can be captured.
         _jsThread = SynchronizationContext.Current;
+        _host = new SessionHost(_jsThread, maxSessions: 1);
+        _only = _host.Create("main", new Page(), _ => BootEngine(Tier));
+        // A pause requested for a run that just ended must not ambush the next.
+        _only.RunEnded += () => Volatile.Write(ref _breakNowRequested, 0);
 
         // Standard output and error have no home in a browser — they go to the
         // developer console, where a user never looks. Anything written to them
@@ -153,8 +117,8 @@ internal static partial class WebShumwayApp
         // all) belongs in the transcript: this is a Prolog top level, its users
         // are programmers, and a page that fails silently is worse than one that
         // fails loudly.
-        Console.SetOut(new PageWriter());
-        Console.SetError(new PageWriter(asError: true));
+        Console.SetOut(_only.Output.Writer);
+        Console.SetError(_only.Output.ErrorWriter);
 
         // browser-wasm has no Brotli codec, and a bundle is compressed with it
         // by default. Reading was never affected (the format says whether a
@@ -201,11 +165,8 @@ internal static partial class WebShumwayApp
         {
             try
             {
-                // Whatever was open belonged to the engine being discarded —
-                // including a goal blocked on input, which would otherwise wait
-                // for a page that has moved on.
-                EndRun();
-                _pageInput.SupplyEof();
+                // Whatever was open goes with the engine being discarded,
+                // a goal blocked on input included: the session sees to it.
                 StartEngine();
                 return (string?)null;
             }
@@ -221,10 +182,10 @@ internal static partial class WebShumwayApp
 
     private static string TierNow()
     {
-        if (_debugMode || BrowserWasmTier.Disabled || !Shumway.Core.RuntimeCaps.SupportsWasmCodegen
-            || _session?.Engine.IlPromotion.Wasm is not { Enabled: true })
+        if (_debugMode || Tier.Disabled || !Shumway.Core.RuntimeCaps.SupportsWasmCodegen
+            || S.TopLevel?.Engine.IlPromotion.Wasm is not { Enabled: true })
             return "Tier-0 interpreter";
-        return Shumway.Compiler.Wasm.WasmPredicateCompiler.CpsMode
+        return Tier.Cps
             ? "Tier-1 WebAssembly, continuation functions"
             : "Tier-1 WebAssembly";
     }
@@ -235,21 +196,12 @@ internal static partial class WebShumwayApp
     private static void StartEngine()
     {
         _debugMode = false;
-        // Out and In must be set before the first query: query setup builds the
-        // stream registry, and user_output / user_input keep whatever they were
-        // handed then.
-        PrologEngine engine = BootEngine();
-        engine.Out = new PageWriter();
-        // Load-time warnings default to standard error, which a page does not
-        // have: a use_module that found nothing would load silently and leave
-        // the user looking at a program missing half of itself.
-        engine.Warnings = new PageWriter();
-        engine.In = _pageInput;
-        _pageInput.Reset();
-        _session = new TopLevelSession(engine);
-        // Relative paths in Prolog — consult('lists.pl'), open/4 — resolve
-        // against the active workspace, so a program means what it says.
+        // Relative paths in Prolog (consult('lists.pl'), open/4) resolve
+        // against the active workspace, so a program means what it says. The
+        // directory is the session's engine's, not the process's (ADR-071).
         EnsureWorkspace();
+        // Output, warnings, user_error, input: the session wires them.
+        S.StartEngine();
         // Libraries are global: every engine, including one started by switching
         // workspace, knows them.
         RegisterLibraries();
@@ -279,9 +231,10 @@ internal static partial class WebShumwayApp
                 // double_quotes is not SWI's is not ISO's. Reading it as ISO
                 // gets it wrong — and quietly, since most of a file parses
                 // either way.
-                _session!.Engine.WithLibraryDialect(dialect, () =>
+                TopLevelSession top = S.TopLevel!;
+                top.Engine.WithLibraryDialect(dialect, () =>
                 {
-                    _session.ReconsultBuffer(source);
+                    top.ReconsultBuffer(source);
                     return true;
                 });
                 return (string?)null;
@@ -294,15 +247,12 @@ internal static partial class WebShumwayApp
     [JSExport]
     internal static Task<string?> QueryStart(string queryText)
     {
-        _run?.Cancel();
+        S.CancelRun();
         return OnEngine(() =>
         {
-            // A fresh query gets a fresh input stream: an end-of-file answered
-            // to the last one must not be the first thing this one reads.
-            _pageInput.Reset();
             try
             {
-                _run = _session!.StartQuery(queryText);
+                S.StartQuery(queryText);
                 return (string?)null;
             }
             catch (Exception ex) { return Describe(ex); }
@@ -322,29 +272,15 @@ internal static partial class WebShumwayApp
     internal static Task<string> QueryNext(int width)
         => OnEngine(() =>
         {
-            if (_run is null) return TagFailed.ToString();
-            try
+            QueryStep step = S.Next(width <= 20 ? 80 : width);
+            return step.Kind switch
             {
-                if (!_run.MoveNext()) { EndRun(); return TagFailed.ToString(); }
-                string text = _run.Format(width <= 20 ? 80 : width);
-                if (_run.IsLast) { EndRun(); return TagLast + text; }
-                return TagSolution + text;
-            }
-            catch (OperationCanceledException)
-            {
-                EndRun();
-                return TagFailed.ToString();
-            }
-            catch (Shumway.Core.PrologAbortException)
-            {
-                EndRun();
-                return TagAborted.ToString();
-            }
-            catch (Exception ex)
-            {
-                EndRun();
-                return TagError + Describe(ex);
-            }
+                QueryStepKind.Solution => TagSolution + step.Text,
+                QueryStepKind.Last => TagLast + step.Text,
+                QueryStepKind.Failed => TagFailed.ToString(),
+                QueryStepKind.Aborted => TagAborted.ToString(),
+                _ => TagError + step.Text,
+            };
         });
 
     /// <summary>Abandons the running query, if any. Called from the UI thread
@@ -355,11 +291,8 @@ internal static partial class WebShumwayApp
     [JSExport]
     internal static Task<bool> QueryCancel()
     {
-        bool wasRunning = _run is not null;
-        _run?.Cancel();
-        // The abandoned query's unpainted output goes with it — see
-        // DropBufferedOutput.
-        DropBufferedOutput();
+        // The abandoned query's unpainted output goes with it.
+        bool wasRunning = S.Cancel();
         // A search stopped at a breakpoint is blocked, not running: the token
         // alone would never be observed. Wake it so it can see the cancel.
         TryReleaseStop("continue");
@@ -374,7 +307,7 @@ internal static partial class WebShumwayApp
     [JSExport]
     internal static Task<string> Complete(string prefix)
         => OnEngine(() =>
-            _session is null ? "" : string.Join('\n', _session.Complete(prefix)));
+            S.TopLevel is { } top ? string.Join('\n', top.Complete(prefix)) : "");
 
     /// <summary>Highlighting for the editor: flat triples
     /// <c>start,length,kind,…</c> comma-separated. <c>kind</c> indexes
@@ -396,7 +329,7 @@ internal static partial class WebShumwayApp
             // Reads the live operator table, which a consult mutates — hence the
             // gate. It also means highlighting waits behind a running search;
             // the page's editor draws its text without waiting for the colours.
-            var spans = SyntaxHighlighter.Highlight(source, _session?.Engine.Operators);
+            var spans = SyntaxHighlighter.Highlight(source, S.TopLevel?.Engine.Operators);
             var sb = new System.Text.StringBuilder(spans.Count * 12);
             for (int i = 0; i < spans.Count; i++)
             {
@@ -442,161 +375,9 @@ internal static partial class WebShumwayApp
         => Task.FromResult(
             string.Join(',', Enum.GetNames<SpanKind>().Select(n => n.ToLowerInvariant())));
 
-    private static void EndRun()
-    {
-        _run?.Dispose();
-        _run = null;
-        // A pause requested for a run that just ended must not ambush the next.
-        Volatile.Write(ref _breakNowRequested, 0);
-    }
+    private static void EndRun() => S.EndRun();
 
     /// <summary>The full diagnostic — the error plus the engine's call stack with
     /// source positions — as the REPL shows it, newline-separated for the page.</summary>
-    private static string Describe(Exception ex)
-        => _session is null
-            ? ex.Message
-            : string.Join('\n', ErrorRendering.Describe(_session.Engine, ex));
-
-    /// <summary>The engine's output stream, forwarding to the page. Buffers nothing:
-    /// a program that writes as it searches should be watchable while it runs.
-    ///
-    /// <para>A write from the search thread cannot touch JavaScript directly, so it
-    /// is posted to the runtime thread. Posts on one context run in the order they
-    /// were made, which is the property that matters: a program's output must
-    /// reach the page in the order it was written.</para></summary>
-    private sealed class PageWriter(bool asError = false) : TextWriter
-    {
-        public override System.Text.Encoding Encoding => System.Text.Encoding.UTF8;
-        public override void Write(char value) => Write(value.ToString());
-        public override void WriteLine(string? value) => Write((value ?? "") + "\n");
-
-        public override void Write(string? value)
-        {
-            if (string.IsNullOrEmpty(value)) return;
-            if (_jsThread is null || SynchronizationContext.Current == _jsThread)
-            {
-                // Already on the thread that owns JavaScript. Anything buffered
-                // goes first, or this write would jump ahead of it.
-                FlushOutput();
-                Emit(asError, value);
-                return;
-            }
-            BufferOutput(asError, value);
-        }
-    }
-
-    /// <summary>Engine output on its way to the page: what has been written and
-    /// not yet painted.
-    ///
-    /// <para>Posting each write on its own is what made an output-heavy goal
-    /// unusable. <c>trace, numlist(1, 10000, X)</c> writes tens of thousands of
-    /// lines; the page cannot paint them as fast as the search produces them, so
-    /// the queue grows without bound and the search ends up wedged behind its own
-    /// output — which is why Stop looked like it did nothing: the search had been
-    /// asked to stop, but the transcript kept painting the backlog for minutes.
-    /// </para>
-    ///
-    /// <para>So writes accumulate here and at most one flush is ever in flight.
-    /// The post is scheduled on the first buffered write rather than on a timer,
-    /// so when the page is keeping up a write still crosses on the next turn —
-    /// a prompt written before a read is not left sitting in a buffer. When the
-    /// page is not keeping up, everything written meanwhile arrives as one
-    /// string. Both kinds share one list, so ordinary output and diagnostics
-    /// keep the order they were written in.</para></summary>
-    private static readonly object _outLock = new();
-    private static readonly List<(bool AsError, System.Text.StringBuilder Text)> _outSegments = new();
-    private static bool _flushPending;
-    private static int _outChars;
-
-    /// <summary>How much unpainted output the search may run ahead by before it
-    /// is made to wait. Batching alone was not enough to keep Stop working: a
-    /// goal that writes without pause fills the runtime thread's queue with
-    /// flushes, and QueryCancel needs that thread to reach the engine — so the
-    /// search outran the only thread that could stop it. Waiting here throttles
-    /// the producer to roughly the speed of the page, which leaves the runtime
-    /// thread time to answer, and bounds the memory a runaway goal can take.
-    /// </summary>
-    private const int OutputHighWater = 64 * 1024;
-    private static readonly ManualResetEventSlim _outDrained = new(true);
-
-    private static void BufferOutput(bool asError, string text)
-    {
-        bool schedule, overHighWater;
-        lock (_outLock)
-        {
-            if (_outSegments.Count > 0 && _outSegments[^1].AsError == asError)
-                _outSegments[^1].Text.Append(text);
-            else
-                _outSegments.Add((asError, new System.Text.StringBuilder(text)));
-            _outChars += text.Length;
-            schedule = !_flushPending;
-            _flushPending = true;
-            overHighWater = _outChars > OutputHighWater;
-            if (overHighWater) _outDrained.Reset();
-        }
-        if (schedule) _jsThread!.Post(static _ => FlushOutput(), null);
-        // A bounded wait: a throttle, never a block. If the page has stopped
-        // painting altogether (a hidden tab), the search proceeds anyway rather
-        // than wedging — it has already yielded the time that matters.
-        //
-        // CA1416 flags the wait as unsupported on browser, which is true of the
-        // thread that must never block: the runtime thread. This runs only on
-        // the search thread — the branch above returned early when the caller is
-        // the runtime thread — and that one is a pool thread whose whole job is
-        // a synchronous search. Blocking it briefly is the design, not a
-        // violation of it.
-#pragma warning disable CA1416
-        if (overHighWater)
-        {
-            _outDrained.Wait(100);
-            // ...and then leave the runtime thread a gap it can answer in.
-            // Waiting for the drain alone is not enough: the search wakes the
-            // instant the flush lands and refills, so the thread QueryCancel has
-            // to reach goes straight back to painting. A few idle milliseconds
-            // per batch cost nothing at these volumes (a batch is 64 KB) and are
-            // what makes Stop reliable while a goal is writing.
-            System.Threading.Thread.Sleep(5);
-        }
-#pragma warning restore CA1416
-    }
-
-    /// <summary>Paints everything buffered. Runs on the runtime thread — the only
-    /// one that may call into JavaScript.</summary>
-    private static void FlushOutput()
-    {
-        (bool AsError, string Text)[] segments;
-        lock (_outLock)
-        {
-            _flushPending = false;
-            if (_outSegments.Count == 0) { _outChars = 0; _outDrained.Set(); return; }
-            segments = new (bool, string)[_outSegments.Count];
-            for (int i = 0; i < _outSegments.Count; i++)
-                segments[i] = (_outSegments[i].AsError, _outSegments[i].Text.ToString());
-            _outSegments.Clear();
-            _outChars = 0;
-            _outDrained.Set();   // let a throttled writer go on
-        }
-        foreach (var (asError, text) in segments) Emit(asError, text);
-    }
-
-    /// <summary>Throws away output that has not been painted yet — what an
-    /// abandoned query still had queued. Without it, Stop stops the search and
-    /// the transcript goes on painting its trace long afterwards, which reads as
-    /// Stop having done nothing.</summary>
-    private static void DropBufferedOutput()
-    {
-        lock (_outLock)
-        {
-            _outSegments.Clear();
-            _outChars = 0;
-            // An abandoned query must not be left parked on the throttle: it has
-            // to run on to its next safe point to see that it was cancelled.
-            _outDrained.Set();
-        }
-    }
-
-    private static void Emit(bool asError, string text)
-    {
-        if (asError) WriteErrorToPage(text); else WriteToPage(text);
-    }
+    private static string Describe(Exception ex) => S.Describe(ex);
 }

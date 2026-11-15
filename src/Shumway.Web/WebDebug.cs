@@ -46,10 +46,8 @@ internal static partial class WebShumwayApp
         {
             try
             {
-                EndRun();
-                _pageInput.SupplyEof();
                 StartEngine();
-                var engine = _session!.Engine;
+                var engine = S.Engine;
                 // Before any consult: the flag is read when a clause compiles —
                 // and it must be set as a directive. A set_prolog_flag query
                 // lands in the store current_prolog_flag reads but not the one
@@ -93,7 +91,7 @@ internal static partial class WebShumwayApp
     {
         try
         {
-            var engine = _session!.Engine;
+            var engine = S.Engine;
             if (!set) { engine.RemoveBreakpoint(file, line); return null; }
             string? cond = condition.Length == 0 ? null : condition;
             int bound = engine.AddBreakpoint(file, line, cond);

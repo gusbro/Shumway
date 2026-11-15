@@ -77,9 +77,10 @@ public static class WasmPredicateCompiler
     /// before anything is emitted, or null: the phases of
     /// <see cref="CompileGroup"/> that find most refusals, without a module
     /// for each member. A refusal only emission finds still needs a compile.</summary>
-    public static string? RefusalBeforeEmit(WasmGroupMember member, IWasmCompileEnv env)
+    public static string? RefusalBeforeEmit(WasmGroupMember member, IWasmCompileEnv env,
+                                            bool? cps = null, WasmCpsGrain? grain = null)
     {
-        var c = new Compilation(new[] { member }, env, 0, CpsMode, CpsGrain);
+        var c = new Compilation(new[] { member }, env, 0, cps ?? CpsMode, grain ?? CpsGrain);
         try
         {
             c.RejectDispatchOnlyPredicates();

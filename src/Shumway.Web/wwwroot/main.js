@@ -1858,6 +1858,19 @@ if (persistMode) {
     try { await fetch('/collect', { method: 'POST', body: t }); } catch { }
   }
   try { window.close(); } catch { }
+} else if (location.hash.startsWith('#sessions')) {
+  // #sessions, or #sessions=<rounds>: two sessions beside the page's own, each
+  // with its engine, thread and tier (ADR-068), run against each other.
+  try {
+    const rounds = parseInt(location.hash.split('=')[1] ?? '3', 10) || 3;
+    const report = await session.exports().SessionsProbe(rounds);
+    emit(report);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const t = '--- sessions probe: STOPPED: ' + (ex && ex.message ? ex.message : ex) + ' ---\n';
+    emit(t);
+    try { await fetch('/collect', { method: 'POST', body: t }); } catch { }
+  }
 } else if (location.hash.startsWith('#wasmsplit')) {
   // #wasmsplit, or #wasmsplit=<hops>x<rounds>. Phase 0 of the many-modules
   // arc: two modules hand control to each other with return_call_indirect

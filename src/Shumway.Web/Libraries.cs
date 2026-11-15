@@ -76,7 +76,7 @@ internal static partial class WebShumwayApp
     internal static void RegisterLibraries()
     {
         Directory.CreateDirectory(LibrariesRoot);
-        PrologEngine engine = _session!.Engine;
+        PrologEngine engine = S.Engine;
         engine.LibrarySourceResolver = (library, source) => CompileOnDemand(engine, library, source);
         foreach (string dir in Directory.GetDirectories(LibrariesRoot))
         {
@@ -123,16 +123,16 @@ internal static partial class WebShumwayApp
                 if (string.IsNullOrWhiteSpace(dialect))
                 {
                     if (File.Exists(marker)) File.Delete(marker);
-                    _session!.Engine.AddLibraryDirectory(dir);
+                    S.Engine.AddLibraryDirectory(dir);
                 }
                 else
                 {
                     // Tag first: an unknown dialect must not leave a marker
                     // behind that every later boot would trip over.
-                    _session!.Engine.AddLibraryDirectory(dir, dialect.Trim());
+                    S.Engine.AddLibraryDirectory(dir, dialect.Trim());
                     File.WriteAllText(marker, dialect.Trim());
                 }
-                _session!.Engine.AddLibraryDirectory(Path.Combine(dir, SourceDir));
+                S.Engine.AddLibraryDirectory(Path.Combine(dir, SourceDir));
                 return null;
             }
             catch (Exception ex) { return ex.Message; }
@@ -420,7 +420,7 @@ internal static partial class WebShumwayApp
             // the archive also carries its predicates as a wasm module, baked
             // here once (the batch compile the tier would otherwise run on
             // every visit) and installed when the library loads.
-            bool wasm = RuntimeCaps.SupportsWasmCodegen && !BrowserWasmTier.Disabled;
+            bool wasm = RuntimeCaps.SupportsWasmCodegen && !Tier.Disabled;
             byte[] bytes = Librarian.CreateArchive(compiled
                 .Where(c => c.IsRoot || !HasBundleOfItsOwn(root, c.ModuleName))
                 .Select(c => new BundleArchiveMember(

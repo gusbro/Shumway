@@ -105,6 +105,7 @@ looks like a hang and is not.
 | hook | what it is |
 |---|---|
 | `#selftest` | The browser's own test suite. ADR-042 makes it the only automatic test that reaches this layer. |
+| `#sessions[=rounds]` | Two sessions beside the page's own, each with its engine, thread and tier, run against each other: answers while both are inside wasm, one growing the shared tables under the other, flags, operators, `jit_compile/1`, output, cancellation and the session limit. A test, not a measurement. |
 | `#wasmcompilecheck` | End to end on the `jit_compile` pseudo-goal over the live session engine: attach, run something hot, and status must show the promotion. A test, not a measurement. |
 | `#wasmbench[=rounds]` | The five-program benchmark this page reports. |
 | `#wasmtier[=rounds]` | The older three-program probe, kept for its time-split diagnostics. |

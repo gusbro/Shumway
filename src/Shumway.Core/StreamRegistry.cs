@@ -100,12 +100,14 @@ public sealed class StreamRegistry
     /// <summary>The terminal handle of <c>user_error</c>, the ISO
     /// standard-error writer (`write(user_error,
     /// …)` / `display(user_error, …)` are the conventional diagnostics
-    /// channel). Always registered; writes to
-    /// <see cref="System.Console.Error"/>. While <c>set_stream/2</c> has
-    /// moved the alias to another stream, this handle has no alias.</summary>
+    /// channel). Always registered; writes to the host's error writer,
+    /// <see cref="System.Console.Error"/> when it gave none. While
+    /// <c>set_stream/2</c> has moved the alias to another stream, this
+    /// handle has no alias.</summary>
     public StreamHandle UserError { get; }
 
-    public StreamRegistry(TextWriter defaultOut, TextReader? defaultIn = null)
+    public StreamRegistry(TextWriter defaultOut, TextReader? defaultIn = null,
+        TextWriter? defaultError = null)
     {
         ArgumentNullException.ThrowIfNull(defaultOut);
 
@@ -133,7 +135,7 @@ public sealed class StreamRegistry
         Register(UserOutput);
 
         UserError = new StreamHandle(
-            id: AllocateId(), writer: System.Console.Error,
+            id: AllocateId(), writer: defaultError ?? System.Console.Error,
             mode: "append", filename: null, alias: "user_error");
         Register(UserError);
 

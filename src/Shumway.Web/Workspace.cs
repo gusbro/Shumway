@@ -31,16 +31,18 @@ internal static partial class WebShumwayApp
     internal static string ActiveWorkspaceDir => WorkspacesRoot + "/" + _activeWorkspace;
 
     /// <summary>Creates the active workspace if it is not there and makes it the
-    /// current directory, which is what Prolog resolves relative paths against.</summary>
+    /// session's directory, which is what Prolog resolves relative paths
+    /// against. The engine's own directory (ADR-071): the process's is left
+    /// alone.</summary>
     internal static void EnsureWorkspace()
     {
         Directory.CreateDirectory(ActiveWorkspaceDir);
-        Directory.SetCurrentDirectory(ActiveWorkspaceDir);
+        S.SetDirectory(ActiveWorkspaceDir);
     }
 
     // These go through the engine gate. They are not engine calls, but they are
     // the same filesystem a running goal reads and writes through open/4 — and
-    // EnsureWorkspace sets the process-wide current directory. Queueing them
+    // EnsureWorkspace sets the engine's current directory. Queueing them
     // behind engine work costs a save nothing in practice (the gate is only held
     // for the length of one solution) and removes the race entirely.
 
@@ -187,7 +189,7 @@ internal static partial class WebShumwayApp
                 // RE-consult, as the buffer path does: loading the same file
                 // twice must not define its predicates twice. Debug mode routes
                 // the Consult button here so breakpoints key by the file's name.
-                _session!.Engine.ReconsultFile(Resolve(name));
+                S.Engine.ReconsultFile(Resolve(name));
                 return (string?)null;
             }
             catch (Exception ex) { return Describe(ex); }

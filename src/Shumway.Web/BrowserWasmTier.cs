@@ -21,6 +21,10 @@ namespace Shumway.Web;
 /// work is hoisted into the chain open/close.</summary>
 internal sealed class BrowserWasmWorld : IWasmExecutionWorld
 {
+    /// <summary>The settings of the session this world's engine belongs to:
+    /// the form its builds compile to.</summary>
+    internal WasmTierSettings Settings { get; init; } = new();
+
     private readonly WasmResumeTable _table = new();
     private readonly WasmModuleRegistry _modules;
 
@@ -548,13 +552,15 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
 
         /// <summary>The arithmetic functor table, pinned. It is replaced
         /// when it grows with the functor table, so the address is re-taken
-        /// rather than cached across a staging.</summary>
-        private static GCHandle _arithPin;
-        private static long _arithPinAddr;
-        private static int[]? _arithPinned;
+        /// rather than cached across a staging. The table is the process's
+        /// and the pin is this chain's: a pin shared by every engine would be
+        /// freed by one while another's module still reads through it.</summary>
+        private GCHandle _arithPin;
+        private long _arithPinAddr;
+        private int[]? _arithPinned;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static long ArithTableAddress(out int length)
+        private long ArithTableAddress(out int length)
         {
             int[] r = Shumway.Builtins.ArithFunctorTable.Current(out length);
             if (r.Length == 0) return 0;
@@ -627,13 +633,14 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         }
 
         /// <summary>The reverse functor table, pinned. Replaced when it
-        /// grows, so the address is re-taken rather than cached.</summary>
-        private static GCHandle _funRevPin;
-        private static long _funRevPinAddr;
-        private static long[]? _funRevPinned;
+        /// grows, so the address is re-taken rather than cached. This
+        /// chain's pin, as the arithmetic table's.</summary>
+        private GCHandle _funRevPin;
+        private long _funRevPinAddr;
+        private long[]? _funRevPinned;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static long FunctorReverseAddress(out int mask)
+        private long FunctorReverseAddress(out int mask)
         {
             long[] r = Shumway.Core.FunctorReverseTable.Current(out mask);
             return ReferenceEquals(_funRevPinned, r) ? _funRevPinAddr
@@ -774,6 +781,7 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
             Unpin(ref _attrDropPin); Unpin(ref _wakePin);
             Unpin(ref _attrModulePin); Unpin(ref _findallPin);
             Unpin(ref _globalWritePin);
+            Unpin(ref _arithPin); Unpin(ref _funRevPin);
         }
 
         private static void Unpin(ref GCHandle pin)
@@ -1147,37 +1155,16 @@ internal static class BrowserWasmTier
     internal static int ResumeRows() => _world?.ResumeRows ?? 0;
     internal static long ModuleBytes() => _world?.ModuleBytes ?? 0;
 
-    /// <summary>Attaches the wasm promotion store to an engine. No-op when
-    /// the capability is off.</summary>
-    /// <summary>Set by jit_compile(off) and honoured by the boot, so a
-    /// restart really does give an engine with no wasm in it. Without it the
-    /// boot re-attached the tier at the default threshold and installed the
-    /// bundle's module, so "restart. for a clean engine" was false twice over.
-    /// Cleared by any jit_compile that turns the tier back on.</summary>
-    internal static bool Disabled;
-
-    /// <summary>The mode a restart comes back with. jit_compile/1 is engine
-    /// state, and a restart builds a new engine -- without these, clearing the
-    /// database also silently threw away the tier setting the session was
-    /// working under, which is the one thing a restart should not touch.
-    /// <see cref="Disabled"/> already survived for the off case; these carry
-    /// the rest.</summary>
-    internal static int BootThreshold = 1;
-
-    /// <summary>Whether the restarted engine batches (see <see
-    /// cref="Attach"/>).</summary>
-    internal static bool BootBatch = true;
-
     /// <summary>jit_compile/1 for this page: the threshold alone does not
     /// describe the tier here, because the world is attached lazily and "all"
     /// means "compile the program now and at every consult", not "promote on
     /// the first call". Installed on the store so it survives query setup,
     /// and installed even when the tier is off -- otherwise nothing could
     /// turn it back on.</summary>
-    internal static void WireJitControl(PrologEngine engine)
+    internal static void WireJitControl(PrologEngine engine, WasmTierSettings settings)
     {
-        engine.IlPromotion.JitPolicy = t => SetJit(engine, t).Ok;
-        engine.IlPromotion.JitFormPolicy = cps => SetForm(engine, cps).Ok;
+        engine.IlPromotion.JitPolicy = t => SetJit(engine, settings, t).Ok;
+        engine.IlPromotion.JitFormPolicy = cps => SetForm(engine, settings, cps).Ok;
     }
 
     /// <summary>jit_compile(cps) and jit_compile(nocps): the form the next
@@ -1186,12 +1173,13 @@ internal static class BrowserWasmTier
     /// next batch builds the program again in it; with a threshold, what
     /// already promoted goes back at the next query setup and promotes again
     /// in it.</summary>
-    internal static (bool Ok, string Report) SetForm(PrologEngine engine, bool cps)
+    internal static (bool Ok, string Report) SetForm(PrologEngine engine,
+        WasmTierSettings settings, bool cps)
     {
         if (!RuntimeCaps.SupportsWasmCodegen)
             return (!cps, "% jit_compile: the capability is off in this build\n");
-        Shumway.Compiler.Wasm.WasmPredicateCompiler.CpsMode = cps;
-        Shumway.Compiler.Wasm.WasmPredicateCompiler.CpsGrain = WasmCpsGrain.Budget;
+        settings.Cps = cps;
+        settings.Grain = WasmCpsGrain.Budget;
         if (engine.IlPromotion.Wasm is { Enabled: true } wa)
         {
             if (wa.CompileAllOnConsult) wa.ForceNextBatch();
@@ -1205,7 +1193,8 @@ internal static class BrowserWasmTier
     /// <summary>The policy proper. Returns the page's wording too, so
     /// jit_compile and jit_compile cannot drift apart: one of them is the
     /// other's spelling.</summary>
-    internal static (bool Ok, string Report) SetJit(PrologEngine engine, int threshold)
+    internal static (bool Ok, string Report) SetJit(PrologEngine engine,
+        WasmTierSettings settings, int threshold)
     {
         if (!RuntimeCaps.SupportsWasmCodegen)
             return (threshold == 0,
@@ -1213,9 +1202,9 @@ internal static class BrowserWasmTier
         var store = engine.IlPromotion;
         if (threshold == 0)
         {
-            Disabled = true;
-            BootThreshold = 0;
-            BootBatch = false;
+            settings.Disabled = true;
+            settings.BootThreshold = 0;
+            settings.BootBatch = false;
             if (store.Wasm is { } w) { w.Threshold = 0; w.CompileAllOnConsult = false; }
             // The already-promoted go back to bytecode at the next query
             // setup: dropping a delegate with a live choice point inside it
@@ -1224,11 +1213,11 @@ internal static class BrowserWasmTier
             return (true, "% jit_compile: off. The goals after this one run on "
                 + "Tier-0, and restart. gives an engine with no wasm at all\n");
         }
-        Disabled = false;               // asking for any of it un-disables
+        settings.Disabled = false;      // asking for any of it un-disables
         bool batch = threshold == 1;    // "all" is the batch; a count is lazy
-        BootThreshold = threshold;
-        BootBatch = batch;
-        if (store.Wasm is null) Attach(engine, threshold, batch);
+        settings.BootThreshold = threshold;
+        settings.BootBatch = batch;
+        if (store.Wasm is null) Attach(engine, settings, threshold, batch);
         if (store.Wasm is not { } wa) return (false, "% jit_compile: could not attach\n");
         wa.Threshold = threshold;
         wa.CompileAllOnConsult = batch;
@@ -1259,14 +1248,14 @@ internal static class BrowserWasmTier
     ///
     /// <para>A caller asking for a numeric threshold is asking for the lazy
     /// mode and gets it, batch off.</para></summary>
-    internal static void Attach(PrologEngine engine, int? threshold = null,
-        bool? batch = null)
+    internal static void Attach(PrologEngine engine, WasmTierSettings settings,
+        int? threshold = null, bool? batch = null)
     {
-        int th = threshold ?? BootThreshold;
-        bool bt = batch ?? BootBatch;
-        if (!RuntimeCaps.SupportsWasmCodegen || Disabled) return;
+        int th = threshold ?? settings.BootThreshold;
+        bool bt = batch ?? settings.BootBatch;
+        if (!RuntimeCaps.SupportsWasmCodegen || settings.Disabled) return;
         var store = engine.IlPromotion;
-        var world = new BrowserWasmWorld();
+        var world = new BrowserWasmWorld { Settings = settings };
         _world = world;
         var env = new EngineWasmCompileEnv();
         store.Wasm = new WasmPromotionStore(store)
@@ -1338,7 +1327,8 @@ internal static class BrowserWasmTier
                 var good = new List<WasmGroupMember>();
                 foreach (var m in members)
                 {
-                    string? why = WasmPredicateCompiler.RefusalBeforeEmit(m, env);
+                    string? why = WasmPredicateCompiler.RefusalBeforeEmit(m, env,
+                        world.Settings.Cps, world.Settings.Grain);
                     if (why is null) good.Add(m);
                     else store.Wasm?.MarkUnpromotable(m.Predicate.FunctorId, why);
                 }
@@ -1353,7 +1343,8 @@ internal static class BrowserWasmTier
                         try
                         {
                             WasmPredicateCompiler.CompileGroup(
-                                new List<WasmGroupMember> { m }, env);
+                                new List<WasmGroupMember> { m }, env,
+                                cps: world.Settings.Cps, grain: world.Settings.Grain);
                             compiled.Add(m);
                         }
                         catch (WasmCompileException ex)
@@ -1447,7 +1438,8 @@ internal static class BrowserWasmTier
         List<WasmGroupMember> members, EngineWasmCompileEnv env)
     {
         var entry = WasmPredicateCompiler.CompileGroup(members, env,
-            moduleId: world.NextModuleId);
+            moduleId: world.NextModuleId,
+            cps: world.Settings.Cps, grain: world.Settings.Grain);
         var entryAddr = new Dictionary<int, int>(members.Count);
         foreach (var m in members)
             entryAddr[m.Predicate.FunctorId] = m.Bias;
@@ -1490,7 +1482,7 @@ internal static partial class WebShumwayApp
                 var tiered = new PrologEngine();
                 tiered.ConsultString(TierProbeCorpus);
                 tiered.IlPromotion.Threshold = 0;
-                BrowserWasmTier.Attach(tiered, threshold: 1);
+                BrowserWasmTier.Attach(tiered, Tier, threshold: 1);
                 if (tiered.IlPromotion.Wasm is null)
                     return "wasm tier NOT attached: the capability is off\n";
 
@@ -1685,7 +1677,7 @@ internal static partial class WebShumwayApp
                     var tiered = new PrologEngine();
                     tiered.ConsultString(prog.Source);
                     tiered.IlPromotion.Threshold = 0;
-                    BrowserWasmTier.Attach(tiered, threshold: 1);
+                    BrowserWasmTier.Attach(tiered, Tier, threshold: 1);
                     if (tiered.IlPromotion.Wasm is null)
                         return "wasm tier NOT attached: the capability is off\n";
                     var plain = new PrologEngine();
@@ -1840,14 +1832,14 @@ internal static partial class WebShumwayApp
                         long t0 = Stopwatch.GetTimestamp();
                         if (mode != "tier0")
                         {
-                            BrowserWasmTier.Attach(engine, threshold: 1, batch: true);
+                            BrowserWasmTier.Attach(engine, Tier, threshold: 1, batch: true);
                             if (engine.IlPromotion.Wasm is null)
                                 return "wasm tier NOT attached: the capability is off\n";
                             // The stdlib's baked module, installed as the page
                             // installs it: the grain question is then about the
                             // USER's predicates, which is all that is left to
                             // compile in the browser.
-                            WebShumwayApp.InstallBundleWasm(engine);
+                            WebShumwayApp.InstallBundleWasm(engine, Tier);
                             engine.IlPromotion.Wasm.CompileAllOnConsult = mode is "batch";
                         }
                         engine.ConsultString(prog.Source);
@@ -1966,7 +1958,7 @@ internal static partial class WebShumwayApp
         {
             if (!Shumway.Core.RuntimeCaps.SupportsWasmCodegen)
                 return "% jit_compile: the capability is off in this build\n";
-            var engine = _session?.Engine;
+            var engine = S.TopLevel?.Engine;
             if (engine is null) return "% jit_compile: no engine\n";
             var store = engine.IlPromotion;
 
@@ -2267,8 +2259,8 @@ internal static partial class WebShumwayApp
             // can measure both (#wasmprobe=...&cps=ab).
             if (command is "cps on" or "cps budget" or "cps off")
             {
-                Shumway.Compiler.Wasm.WasmPredicateCompiler.CpsMode = command != "cps off";
-                Shumway.Compiler.Wasm.WasmPredicateCompiler.CpsGrain = command == "cps budget"
+                Tier.Cps = command != "cps off";
+                Tier.Grain = command == "cps budget"
                     ? WasmCpsGrain.Budget : WasmCpsGrain.EntryPoint;
                 return $"% jit_compile: {command}; the next build takes it\n";
             }
@@ -2286,7 +2278,7 @@ internal static partial class WebShumwayApp
             }
             if (command is "cps" or "nocps")
             {
-                var (_, report) = BrowserWasmTier.SetForm(engine, command == "cps");
+                var (_, report) = BrowserWasmTier.SetForm(engine, Tier, command == "cps");
                 // Typed at the top level, between queries: build now, as
                 // jit_compile(all) does, so the next goal runs in the form.
                 if (store.Wasm is { Enabled: true, CompileAllOnConsult: true } w)
@@ -2305,9 +2297,9 @@ internal static partial class WebShumwayApp
                       + " and are compiled like the program's own\n";
             }
             if (command is "off" or "none")
-                return BrowserWasmTier.SetJit(engine, 0).Report;
+                return BrowserWasmTier.SetJit(engine, Tier, 0).Report;
             if (command == "all")
-                return BrowserWasmTier.SetJit(engine, 1).Report;
+                return BrowserWasmTier.SetJit(engine, Tier, 1).Report;
             // "on", or a numeric threshold. Attach once; afterwards only the
             // threshold moves (re-attaching would abandon the group's members
             // while their delegates live on).
@@ -2315,7 +2307,7 @@ internal static partial class WebShumwayApp
                 : int.TryParse(command, out int n) && n > 0 ? n : -1;
             if (threshold < 0)
                 return "% jit_compile: all | none | status | <threshold> | bundles_on | bundles_off\n";
-            return BrowserWasmTier.SetJit(engine, threshold).Report;
+            return BrowserWasmTier.SetJit(engine, Tier, threshold).Report;
         });
 
     /// <summary>Called by the page after a consult and after each completed
@@ -2327,7 +2319,7 @@ internal static partial class WebShumwayApp
     internal static Task<int> JitCompileAllTick()
         => OnEngine(() =>
         {
-            var engine = _session?.Engine;
+            var engine = S.TopLevel?.Engine;
             if (engine?.IlPromotion.Wasm is not { CompileAllOnConsult: true } w)
                 return 0;
             // The "compiling" half is announced by the store, which is the
