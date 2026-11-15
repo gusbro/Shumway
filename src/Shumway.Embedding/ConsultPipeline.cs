@@ -103,10 +103,10 @@ internal sealed class ConsultPipeline
         // directory for the duration of the consult (restored after: a
         // nested ConsultFile from an initialization goal must not leak).
         string? prevBase = E._consultBaseDir;
-        E._consultBaseDir = Path.GetDirectoryName(Path.GetFullPath(path));
+        E._consultBaseDir = Path.GetDirectoryName(E._directory.FullPath(path));
         // prolog_load_context(file, _) / (source, _).
         string? prevLoadFile = E._currentLoadFile;
-        try { E._currentLoadFile = Path.GetFullPath(path); } catch { E._currentLoadFile = path; }
+        try { E._currentLoadFile = E._directory.FullPath(path); } catch { E._currentLoadFile = path; }
         // ADR-035 — stop sites compiled during this consult are stamped with this
         // file, so a debugger can map a breakpoint in foo.pl back to them.
         int prevFile = E._debugFileId;
@@ -120,7 +120,7 @@ internal sealed class ConsultPipeline
         // a breakpoint the editor sets still binds — but the name it reports is now one anybody
         // can find.)
         string debugPath = path;
-        try { debugPath = Path.GetFullPath(path); }
+        try { debugPath = E._directory.FullPath(path); }
         catch (Exception) { /* unresolvable — the name as given is the best we have */ }
         E._debugFileId = DebugSiteTable.InternFile(debugPath);
 
@@ -1492,7 +1492,11 @@ internal sealed class ConsultPipeline
                 System.Threading.Volatile.Write(ref s_preludeClauses, list);
             // ISO 7.4.2.7 `:- include(File)` — textual inclusion.
             rawClauses = Shumway.Compiler.Parsing.IncludeExpander.Expand(
-                list, E._consultBaseDir, E._operators, E._flags);
+                list,
+                // ADR-071: text with no file of its own includes relative to
+                // the engine's directory when it has one.
+                E._consultBaseDir ?? (E._directory.IsPerEngine ? E._directory.Current : null),
+                E._operators, E._flags);
         }
         else
         {
@@ -1700,7 +1704,8 @@ internal sealed class ConsultPipeline
                     || CompatLibraries.TryGet(lib.Name, out _)
                     || LibraryBundles.IsEngineLibrary(lib.Name);
             if (spec is AtomTerm f)
-                return System.IO.File.Exists(f.Name) || System.IO.File.Exists(f.Name + ".pl");
+                return System.IO.File.Exists(E._directory.Resolve(f.Name))
+                    || System.IO.File.Exists(E._directory.Resolve(f.Name + ".pl"));
             return false;
         }
         // current_prolog_flag(Flag, Value): compare against the engine's flag.

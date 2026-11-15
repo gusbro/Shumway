@@ -100,7 +100,7 @@ public static partial class MetaBuiltins
     /// <summary>The file an executable names: <c>path(Name)</c> or a name with no directory
     /// is looked up on the search path; any other is a file, relative to the working
     /// directory. Null when it does not exist.</summary>
-    private static string? ResolveExecutable(Term exe, out Term culprit)
+    private static string? ResolveExecutable(Activation engine, Term exe, out Term culprit)
     {
         culprit = exe;
         if (exe is VarTerm) throw new ShumwayPrologException(IsoError.InstantiationError());
@@ -114,7 +114,7 @@ public static partial class MetaBuiltins
         if (!exe.TryAsText(out string file) || file.Length == 0)
             throw new ShumwayPrologException(IsoError.DomainError("process_executable", exe));
         if (file.IndexOfAny(new[] { '/', '\\' }) < 0) return FindOnPath(file);
-        string full = Path.GetFullPath(file);
+        string full = engine.FullOsPath(file);
         if (File.Exists(full)) return full;
         return OperatingSystem.IsWindows() && !Path.HasExtension(full) && File.Exists(full + ".exe")
             ? full + ".exe" : null;
@@ -163,7 +163,7 @@ public static partial class MetaBuiltins
             case AtomTerm { Name: "std" }: return new StdioSpec();
             case AtomTerm { Name: "null" }: return new StdioSpec { Kind = "null" };
             case CompoundTerm { Functor: "file", Args: [var file] }:
-                return new StdioSpec { Kind = "file", File = ProcessText(file, option) };
+                return new StdioSpec { Kind = "file", File = engine.OsPath(ProcessText(file, option)) };
             case CompoundTerm { Functor: "pipe", Args: [VarTerm] }:
                 return new StdioSpec { Kind = "pipe" };
             case CompoundTerm { Functor: "pipe", Args: [VarTerm, var streamOptions] }:
@@ -270,7 +270,7 @@ public static partial class MetaBuiltins
     private static bool StartProcess(Activation engine)
     {
         Term exeTerm = MaterializeRegister(engine, 0);
-        string? exe = ResolveExecutable(exeTerm, out Term culprit)
+        string? exe = ResolveExecutable(engine, exeTerm, out Term culprit)
             ?? throw new ShumwayPrologException(IsoError.ExistenceError("source_sink", culprit));
         Term args = MaterializeRegister(engine, 1);
         var argv = ListItems(args, args).Select(a => ProcessText(a, args)).ToList();
@@ -279,6 +279,11 @@ public static partial class MetaBuiltins
         var stdout = new StdioSpec();
         var stderr = new StdioSpec();
         var psi = new ProcessStartInfo(exe) { UseShellExecute = false };
+        // ADR-071: the child starts in the engine's directory unless cwd/1
+        // says otherwise. An argument of the call that creates the child:
+        // the process directory is not touched.
+        if (engine.EngineDirectory is { IsPerEngine: true } own)
+            psi.WorkingDirectory = own.Current;
         bool window = false;
         long? priority = null;
         Term options = MaterializeRegister(engine, 2);
@@ -296,7 +301,7 @@ public static partial class MetaBuiltins
                 case "process": break;
                 case "wait": break;
                 case "cwd":
-                    string cwd = Path.GetFullPath(ProcessText(v, option));
+                    string cwd = engine.FullOsPath(ProcessText(v, option));
                     if (!Directory.Exists(cwd))
                         throw new ShumwayPrologException(IsoError.ExistenceError("directory", v));
                     psi.WorkingDirectory = cwd;
@@ -708,7 +713,7 @@ public static partial class MetaBuiltins
     /// <summary><c>'$process_which'(+Exe, -File)</c></summary>
     public static bool ProcessWhich(Activation engine)
     {
-        string? file = ResolveExecutable(MaterializeRegister(engine, 0), out _);
+        string? file = ResolveExecutable(engine, MaterializeRegister(engine, 0), out _);
         return file is not null
             && engine.UnifyRegisterWithCell(1, Cell.Atom(AtomTable.Intern(PrologPath.ToCanonical(file)).Id));
     }

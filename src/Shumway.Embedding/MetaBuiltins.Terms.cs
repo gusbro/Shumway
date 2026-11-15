@@ -113,6 +113,7 @@ public static partial class MetaBuiltins
             case "dialect":
             case "argv":
             case "tabling":
+            case "cwd_scope":
                 throw new ShumwayPrologException(IsoError.PermissionError(
                     "modify", "flag", new AtomTerm(flagName), engine));
         }
@@ -401,6 +402,10 @@ public static partial class MetaBuiltins
             case "dialect":
                 return UnifyAtom(engine, 1, "shumway");
 
+            case "cwd_scope":   // ADR-071; the host chooses, a program only reads it
+                return UnifyAtom(engine, 1,
+                    engine.EngineDirectory is { IsPerEngine: true } ? "engine" : "process");
+
             case "pid":   // read-only, as in SWI; same value pid/1 reports
                 return engine.UnifyRegisterWithCell(1,
                     Cell.Int(System.Environment.ProcessId));
@@ -547,7 +552,7 @@ public static partial class MetaBuiltins
         "debug", "dialect", "library_dialect", "version_data", "argv", "pid",
         "implicit_dynamic", "arity_compat", "lenient_escapes", "encoding",
         "compile_mode", "debug_lco", "prefer_rationals", "answer_max_depth",
-        "tabling", "verbose",
+        "tabling", "verbose", "cwd_scope",
     };
 
     private static bool PrologFlagUnify(Activation engine, PrologEngine host, int idx)
@@ -932,7 +937,7 @@ public static partial class MetaBuiltins
         {
             // ADR-044 (amended): a trailing separator is kept as written and
             // never added, so the answer does not depend on what exists.
-            string absolute = PrologPath.ToCanonical(Path.GetFullPath(spec));
+            string absolute = PrologPath.ToCanonical(engine.FullOsPath(spec));
             int aid = AtomTable.Intern(absolute, permanent: true).Id;
             return engine.UnifyRegisterWithCell(1, Cell.Atom(aid));
         }
@@ -1020,7 +1025,10 @@ public static partial class MetaBuiltins
     public static bool WorkingDirectory2(Activation engine)
     {
         // ADR-044: canonical form, ending in '/' (SWI's convention too).
-        string oldCwd = PrologPath.ToCanonicalDirectory(Directory.GetCurrentDirectory());
+        // ADR-071: the engine's own directory when it has one.
+        Shumway.Core.EngineDirectory? own = engine.EngineDirectory;
+        string oldCwd = PrologPath.ToCanonicalDirectory(
+            own?.Current ?? Directory.GetCurrentDirectory());
         int oldAid = AtomTable.Intern(oldCwd, permanent: true).Id;
         if (!engine.UnifyRegisterWithCell(0, Cell.Atom(oldAid)))
             return false;
@@ -1032,7 +1040,11 @@ public static partial class MetaBuiltins
         string newCanonical = PrologPath.ToCanonicalDirectory(newCwd);
         if (newCanonical != oldCwd)
         {
-            try { Directory.SetCurrentDirectory(newCwd); }
+            try
+            {
+                if (own is not null) own.Change(newCwd);
+                else Directory.SetCurrentDirectory(newCwd);
+            }
             catch (DirectoryNotFoundException)
             {
                 throw new ShumwayPrologException(

@@ -837,6 +837,7 @@ public sealed partial class PrologEngine
     /// storage name/arity + <see cref="TermCodec"/>-encoded clauses).</summary>
     internal void SaveDbToFile(string path)
     {
+        path = _directory.Resolve(path);
         using var fs = new FileStream(path, FileMode.Create, FileAccess.Write);
         using var w = new BinaryWriter(fs, System.Text.Encoding.UTF8);
         var preds = new List<(int Fid, List<Clause> Clauses)>();
@@ -867,6 +868,7 @@ public sealed partial class PrologEngine
     /// <c>save/1</c> snapshot.</summary>
     internal void RestoreDbFromFile(Activation engine, string path)
     {
+        path = _directory.Resolve(path);
         var snapshot = new Dictionary<int, List<Clause>>();
         using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read))
         using (var r = new BinaryReader(fs, System.Text.Encoding.UTF8))

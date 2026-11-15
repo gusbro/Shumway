@@ -26,7 +26,7 @@ public static partial class MetaBuiltins
         {
             byte[] data = HttpClientInstance.GetByteArrayAsync(url)
                 .GetAwaiter().GetResult();
-            System.IO.File.WriteAllBytes(file, data);
+            System.IO.File.WriteAllBytes(engine.OsPath(file), data);
         }
         catch (System.Exception ex) when (ex is System.Net.Http.HttpRequestException
             or System.Threading.Tasks.TaskCanceledException

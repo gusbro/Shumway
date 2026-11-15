@@ -21,6 +21,13 @@ surface. Everything lives in the **`Shumway.Embedding`** namespace (terms are in
   `UseNativeLibrary(path)`; `AddLibraryDirectory(dir[, dialect])`.
 - **Flags / modules**: `Flags` (`PrologFlags`), `Modules`
   (`IReadOnlyDictionary<string, ModuleManifest>`).
+- **Working directory** (ADR-071): `SetCwdScope(CwdScope scope, string?
+  initialDirectory = null)`, at any time, where `CwdScope` is `Process` (the
+  default) or `Engine` (a directory of the engine's own); `CwdScope`;
+  `WorkingDirectory`, readable and settable (the engine's, or the process's
+  under `Process`); `ResolvePath(string)` returns a path as the builtins
+  resolve it, for a foreign predicate that takes a file name. A program
+  reads the scope as the flag `cwd_scope` and cannot change it.
 
 ## Terms
 

@@ -54,7 +54,13 @@ public sealed partial class PrologEngine
 
     /// <summary>Registers a native C library (DLL / .so / .dylib) whose exports
     /// back <c>:- native</c> functions. Loaded once per path for the process.</summary>
-    public void UseNativeLibrary(string path) => _native.UseNativeLibrary(path);
+    public void UseNativeLibrary(string path)
+    {
+        // ADR-071: a file name is relative to the engine's directory; a bare
+        // name the operating system searches for stays as written.
+        string resolved = _directory.Resolve(path);
+        _native.UseNativeLibrary(System.IO.File.Exists(resolved) ? resolved : path);
+    }
 
     internal NativeReftypeAllocator? NativeAllocator => _native.NativeAllocator;
 

@@ -329,7 +329,7 @@ public static partial class MetaBuiltins
                 return;
             case Shumway.Compiler.Ast.AtomTerm a:
             {
-                string path = ConsultPipeline.ResolveSourcePath(a.Name);   // SWI-style: consult(algo) → algo.pl
+                string path = ConsultPipeline.ResolveSourcePath(engine.OsPath(a.Name));   // SWI-style: consult(algo) → algo.pl
                 if (!System.IO.File.Exists(path))
                     throw new Shumway.Core.PrologRuntimeException(
                         "existence_error", "source_sink",
@@ -435,7 +435,7 @@ public static partial class MetaBuiltins
         // A relative name resolves against the directory of the file being
         // loaded, as `:- include/1` does — `:- ensure_loaded(file_1)` inside
         // dir/main.pl means dir/file_1.pl, not one relative to the CWD.
-        string resolved = ConsultPipeline.ResolveSourcePath(path);
+        string resolved = ConsultPipeline.ResolveSourcePath(engine.OsPath(path));
         if (!System.IO.File.Exists(resolved)
             && host._consultBaseDir is { } baseDir
             && !System.IO.Path.IsPathRooted(path))
@@ -634,7 +634,7 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "restore/1 requires the engine to be hosted by a PrologEngine.");
         string path = RequireAtomPath(engine, register: 0, builtin: "restore/1");
-        if (!System.IO.File.Exists(path))
+        if (!System.IO.File.Exists(engine.OsPath(path)))
             throw new Shumway.Core.PrologRuntimeException(
                 "existence_error", "source_sink",
                 (object)new Shumway.Compiler.Ast.AtomTerm(path));
@@ -657,7 +657,7 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "restore_state/1 requires the engine to be hosted by a PrologEngine.");
         string path = RequireAtomPath(engine, register: 0, builtin: "restore_state/1");
-        if (!System.IO.File.Exists(path))
+        if (!System.IO.File.Exists(engine.OsPath(path)))
             throw new Shumway.Core.PrologRuntimeException(
                 "existence_error", "source_sink",
                 (object)new Shumway.Compiler.Ast.AtomTerm(path));
@@ -716,7 +716,7 @@ public static partial class MetaBuiltins
                 "reconsult/1 requires the engine to be hosted by a PrologEngine.");
 
         string given = FileSpecAtom(engine, MaterializeRegister(engine, 0), out string? intoModule);
-        string path = ConsultPipeline.ResolveSourcePath(given);   // SWI-style: reconsult(algo) → algo.pl
+        string path = ConsultPipeline.ResolveSourcePath(engine.OsPath(given));   // SWI-style: reconsult(algo) → algo.pl
         if (!System.IO.File.Exists(path))
             throw new Shumway.Core.PrologRuntimeException(
                 "existence_error", "source_sink",

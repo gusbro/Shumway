@@ -466,6 +466,20 @@ public sealed partial class Activation
     /// outlive any one query.</summary>
     public StreamRegistry? Streams { get; set; }
 
+    /// <summary>ADR-071: the directory relative paths resolve against. Wired
+    /// with the stream registry; null means the process directory.</summary>
+    public EngineDirectory? EngineDirectory { get; set; }
+
+    /// <summary>ADR-071: the path to hand to the operating system for a path
+    /// a program supplied. Every builtin that touches the file system goes
+    /// through this.</summary>
+    public string OsPath(string path) => EngineDirectory?.Resolve(path) ?? path;
+
+    /// <summary>ADR-071: the absolute, normalised form of a path a program
+    /// supplied.</summary>
+    public string FullOsPath(string path)
+        => EngineDirectory?.FullPath(path) ?? System.IO.Path.GetFullPath(path);
+
     /// <summary>Free-list of dead-clause bytecode regions
     /// available for reuse by within-query incremental
     /// <c>assertz</c> / <c>asserta</c>. Lives on <see cref="Activation"/>

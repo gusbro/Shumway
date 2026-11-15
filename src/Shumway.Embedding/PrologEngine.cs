@@ -299,7 +299,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     {
         try
         {
-            string full = System.IO.Path.GetFullPath(path);
+            string full = _directory.FullPath(path);
             _consultedPaths.Add(full);
             _loadStamps[full] = StampOf(full);
         }
@@ -325,14 +325,14 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// whether it has changed since.</summary>
     internal bool WasConsulted(string path)
     {
-        try { return _consultedPaths.Contains(System.IO.Path.GetFullPath(path)); }
+        try { return _consultedPaths.Contains(_directory.FullPath(path)); }
         catch { return false; }
     }
 
     internal bool IsLoadedAndUnchanged(string path)
     {
         string full;
-        try { full = System.IO.Path.GetFullPath(path); }
+        try { full = _directory.FullPath(path); }
         catch { return false; }
         return _consultedPaths.Contains(full) && !FileDiffersFromLoad(full);
     }
@@ -728,6 +728,64 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     }
 
     private System.IO.TextWriter? _warnings;
+
+    // ADR-071. Shared with every activation of this engine.
+    internal readonly Shumway.Core.EngineDirectory _directory = new();
+
+    /// <summary>Chooses what this engine's working directory is (ADR-071).
+    /// The host may call it at any time; a program cannot change the scope.
+    ///
+    /// <para><see cref="CwdScope.Engine"/> gives the engine a directory of its
+    /// own, starting at <paramref name="initialDirectory"/>, or where the
+    /// engine stands now when null. While it lasts the engine neither reads
+    /// nor changes the process directory: <c>working_directory/2</c> moves
+    /// this engine only, and every relative path the engine resolves, from
+    /// Prolog or from a host call such as <see cref="ConsultFile(string)"/>,
+    /// is relative to it.</para>
+    ///
+    /// <para><see cref="CwdScope.Process"/> is what an engine has without this
+    /// call: the process directory, which every engine of the process
+    /// shares. Going back to it drops the engine's own directory.</para></summary>
+    /// <exception cref="ArgumentException">An initial directory was given
+    /// with <see cref="CwdScope.Process"/>.</exception>
+    /// <exception cref="DirectoryNotFoundException">The initial directory
+    /// does not exist.</exception>
+    public void SetCwdScope(CwdScope scope, string? initialDirectory = null)
+    {
+        if (scope == CwdScope.Process)
+        {
+            if (initialDirectory is not null)
+                throw new ArgumentException(
+                    "The process scope has no initial directory.", nameof(initialDirectory));
+            _directory.UseProcess();
+            return;
+        }
+        _directory.UseOwn(initialDirectory);
+    }
+
+    /// <summary>What this engine's working directory is: see
+    /// <see cref="SetCwdScope"/>.</summary>
+    public CwdScope CwdScope => _directory.IsPerEngine ? CwdScope.Engine : CwdScope.Process;
+
+    /// <summary>The directory this engine resolves relative paths against:
+    /// its own under <see cref="CwdScope.Engine"/>, the process directory
+    /// otherwise. Absolute, in the host's form. Setting it is what
+    /// <c>working_directory/2</c> does: under <see cref="CwdScope.Engine"/> it
+    /// moves this engine, under <see cref="CwdScope.Process"/> the whole
+    /// process. A relative value is relative to the current one.</summary>
+    /// <exception cref="DirectoryNotFoundException">The directory does not
+    /// exist.</exception>
+    public string WorkingDirectory
+    {
+        get => _directory.Current;
+        set => _directory.Change(value);
+    }
+
+    /// <summary>The path to hand to the operating system for
+    /// <paramref name="path"/>, as the engine's builtins resolve it (ADR-071).
+    /// For a foreign predicate that takes a file name. An engine on the
+    /// process directory returns the path unchanged.</summary>
+    public string ResolvePath(string path) => _directory.Resolve(path);
 
     /// <summary>Whether a solution's values are materialized only as far as
     /// the answer will be shown. Off by default: an embedder's <c>Query</c>

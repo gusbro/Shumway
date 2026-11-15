@@ -1933,6 +1933,7 @@ public sealed partial class PrologEngine
             // so StreamBuiltins reaches handles, the alias map, and
             // the current-input / current-output cursors.
             Streams = Streams,
+            EngineDirectory = _directory,
             // The current-query address map lets IL-emitted Execute
             // opcodes resolve their tail-call target via a
             // stable functor-id lookup instead of an embedded address
