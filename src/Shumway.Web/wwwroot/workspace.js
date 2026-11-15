@@ -50,9 +50,21 @@ export async function removeWorkspace(name) {
 
 // --- the persistent side (OPFS) ------------------------------------------
 
+// Whether storage answered when it was asked, not whether the interface is
+// there: a private window has getDirectory and throws from it, and a page
+// that believed the interface told the user their files were kept.
+let usable = typeof navigator !== 'undefined' && !!navigator.storage?.getDirectory;
+
 /** True when this browser gives us origin-private storage. */
-export const persistent = () =>
-  typeof navigator !== 'undefined' && navigator.storage && !!navigator.storage.getDirectory;
+export const persistent = () => usable;
+
+/** Asks storage for its root, once, before anything relies on it. */
+export async function probe() {
+  if (!usable) return false;
+  usable = await withTimeout(
+    navigator.storage.getDirectory().then(() => true, () => false), 3000, false);
+  return usable;
+}
 
 const root = async () => (await navigator.storage.getDirectory())
   .getDirectoryHandle('workspaces', { create: true });
