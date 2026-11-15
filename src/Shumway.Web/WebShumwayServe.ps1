@@ -72,7 +72,7 @@ while ($listener.IsListening) {
       $res.ContentType = if ($mime[$ext]) { $mime[$ext] } else { 'application/octet-stream' }
       # The isolation headers: SharedArrayBuffer (threads) requires them.
       $res.Headers.Add('Cross-Origin-Opener-Policy', 'same-origin')
-      $res.Headers.Add('Cross-Origin-Embedder-Policy', 'credentialless')
+      $res.Headers.Add('Cross-Origin-Embedder-Policy', 'require-corp')
       # Always fresh: this server exists to look at the build just made.
       $res.Headers.Add('Cache-Control', 'no-store')
       $bytes = [System.IO.File]::ReadAllBytes($filePath)
