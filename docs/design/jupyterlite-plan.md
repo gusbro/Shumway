@@ -91,8 +91,7 @@ either fixed or documented as intended, for example module-qualified names.
   - example notebooks;
   - deployed under `/lite`.
 - **Working directory:** each session starts in its notebook's directory,
-  using ADR-071 if it is accepted and implemented by then, and otherwise the
-  interim global gate (ADR-070).
+  through ADR-071, which must be implemented by then.
 
 **Acceptance:**
 - **Acceptance notebook (ADR-073 D17).** It runs green in CI with Playwright
@@ -128,8 +127,8 @@ Configurable callback in `jupyter_widgets`, `jupyter_forms` and
 
 ## Engine track, in parallel
 
-- **ADR-071**, working directory per engine: do the analysis, then accept or
-  reject it.
+- **ADR-071**, working directory per engine: accepted, and a prerequisite
+  of Phase 3. Implement it before then.
 - **Future ADR:** a cancellation that Prolog can catch, so that an interrupt
   keeps the session's state.
 

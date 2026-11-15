@@ -35,9 +35,8 @@ working-directory requirement depends on ADR-071.
 - **The engine is unchanged.** It sees a file system, as it does in the demo.
 - **Each session starts in its notebook's directory** under `/drive`. That
   needs a working directory per engine, because several sessions share one
-  process (ADR-068). Until ADR-071 is implemented, the interim is a global
-  gate across sessions that sets the process directory on entry to each
-  request. Two notebooks then cannot execute at the same time.
+  process (ADR-068). ADR-071 provides it and is a prerequisite: there is
+  no interim that swaps the process directory under a lock.
 
 ## Consequences
 
