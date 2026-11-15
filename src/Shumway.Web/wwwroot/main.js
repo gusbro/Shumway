@@ -1858,6 +1858,20 @@ if (persistMode) {
     try { await fetch('/collect', { method: 'POST', body: t }); } catch { }
   }
   try { window.close(); } catch { }
+} else if (location.hash.startsWith('#sessionsmem')) {
+  // #sessionsmem=<sessions>[&threads=<pool>]: what a session costs (ADR-068).
+  try {
+    const count = parseInt(location.hash.split('=')[1] ?? '4', 10) || 4;
+    const before = session.wasmMemoryBytes();
+    const report = await session.exports().SessionsMemoryProbe(count);
+    const after = session.wasmMemoryBytes();
+    const mb = (bytes) => (bytes / 1048576).toFixed(1);
+    emit(`note the runtime's memory: ${mb(before)} MB before, ${mb(after)} MB after; `
+       + `threads asked for at boot: ${session.threadPoolSize()}\n`);
+    emit(report);
+  } catch (ex) {
+    emit('--- sessions memory probe: done (STOPPED: ' + (ex && ex.message ? ex.message : ex) + ') ---\n');
+  }
 } else if (location.hash.startsWith('#sessions')) {
   // #sessions, or #sessions=<rounds>: two sessions beside the page's own, each
   // with its engine, thread and tier (ADR-068), run against each other.

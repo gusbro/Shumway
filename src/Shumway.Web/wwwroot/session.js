@@ -19,6 +19,14 @@ export const ERROR = 'e';
 export const ABORTED = 'a';
 
 let engine = null;
+let wasmModule = null;
+let poolSize = 0;
+
+/** The size of the runtime's linear memory, for the measurement hooks. */
+export const wasmMemoryBytes = () => wasmModule?.HEAPU8?.byteLength ?? 0;
+
+/** How many threads the runtime was asked to make at boot. */
+export const threadPoolSize = () => poolSize;
 
 /**
  * Starts the runtime and the engine.
@@ -28,7 +36,14 @@ let engine = null;
  */
 export async function boot(onOutput, onAskForInput, onDiagnostic, onDebugStop, onNote) {
   const { dotnet } = await import('./_framework/dotnet.js');
-  const { setModuleImports, getConfig, getAssemblyExports, runMain } = await dotnet.create();
+  // The runtime makes its threads at boot. A hook that opens more sessions
+  // than the page's own asks for the threads it needs: &threads=<n>.
+  const threads = parseInt(/[#&]threads=(\d+)/.exec(location.hash)?.[1] ?? '0', 10);
+  const runtime = await (threads > 0
+    ? dotnet.withConfig({ pthreadPoolInitialSize: threads }) : dotnet).create();
+  const { setModuleImports, getConfig, getAssemblyExports, runMain } = runtime;
+  wasmModule = runtime.Module;
+  poolSize = getConfig().pthreadPoolInitialSize ?? 0;
   setModuleImports('main.js', {
     ui: {
       write: (t) => { if (typeof t === 'string' && t.startsWith('[tier]')) { try { fetch('/collect', { method: 'POST', body: t }); } catch {} } return onOutput(t); },

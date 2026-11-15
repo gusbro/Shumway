@@ -39,6 +39,76 @@ internal static partial class WebShumwayApp
                 ? wasm.CompileAllTick(session.Engine) : 0;
         });
 
+    /// <summary>#sessionsmem: what a session costs (ADR-068, verification V2).
+    /// Opens sessions one at a time, each with <c>library(clpfd)</c> loaded
+    /// and a query run, and says after each what the managed heap grew by and
+    /// how long it took. A session whose thread does not start ends the run:
+    /// that is the page's limit, whatever the memory.</summary>
+    [JSExport]
+    internal static async Task<string> SessionsMemoryProbe(int count)
+    {
+        void Say(string line)
+        {
+            if (_jsThread is { } js) js.Post(static l => WriteToPage((string)l!), line);
+        }
+        static double Mb(long bytes) => bytes / (1024.0 * 1024.0);
+        static long Managed() => GC.GetTotalMemory(forceFullCollection: true);
+
+        int wanted = Math.Max(1, count);
+        var host = new SessionHost(_jsThread, maxSessions: wanted);
+        var open = new List<HostSession>();
+        long previous = Managed();
+        Say($"note before any session: managed heap {Mb(previous):F1} MB, "
+            + $"committed {Mb(GC.GetGCMemoryInfo().TotalCommittedBytes):F1} MB\n");
+        try
+        {
+            for (int i = 0; i < wanted; i++)
+            {
+                HostSession s = host.Create("m" + i, new RecordingPage(), _ => BootEngine(new WasmTierSettings()));
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                Task<bool> boot = s.OnEngine(() => { s.StartEngine(); return true; });
+                if (await Task.WhenAny(boot, Task.Delay(60_000)).ConfigureAwait(false) != boot)
+                {
+                    Say($"FAIL session {i + 1}: its thread did not start within 60 s\n");
+                    break;
+                }
+                await boot.ConfigureAwait(false);
+                double bootMs = System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
+                long booted = Managed();
+
+                t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                // Two queries: the operators are the library's, and a query
+                // is read whole before it runs.
+                await Ask(s, "use_module(library(clpfd)).").ConfigureAwait(false);
+                QueryStep load = await Ask(s, "X #> 3, X #< 6, label([X]).").ConfigureAwait(false);
+                double loadMs = System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
+                long loaded = Managed();
+                open.Add(s);
+
+                bool right = load.Text.Contains("X = 4");
+                Say((right ? "ok   " : "FAIL ") + $"session {i + 1}: boot {bootMs:F0} ms, +{Mb(booted - previous):F1} MB; "
+                    + $"clpfd and a query {loadMs:F0} ms, +{Mb(loaded - booted):F1} MB; "
+                    + $"managed heap {Mb(loaded):F1} MB, committed {Mb(GC.GetGCMemoryInfo().TotalCommittedBytes):F1} MB"
+                    + (right ? "" : $" [{load.Kind}: {load.Text.Replace('\n', ' ')}]") + "\n");
+                previous = loaded;
+            }
+            // Every session answers again with all of them open.
+            int answering = 0;
+            foreach (HostSession s in open)
+                if ((await Ask(s, "X #> 3, X #< 6, label([X]).").ConfigureAwait(false)).Text.Contains("X = 4"))
+                    answering++;
+            Say((answering == open.Count ? "ok   " : "FAIL ")
+                + $"{answering} of {open.Count} sessions answer with all of them open\n");
+        }
+        catch (Exception ex)
+        {
+            Say("FAIL the probe threw: " + ex + "\n");
+        }
+        // The sessions stay open: the page measures its memory after this.
+        GC.KeepAlive(open);
+        return $"--- sessions memory probe: done, {open.Count} of {wanted} sessions ---\n";
+    }
+
     [JSExport]
     internal static async Task<string> SessionsProbe(int rounds)
     {
