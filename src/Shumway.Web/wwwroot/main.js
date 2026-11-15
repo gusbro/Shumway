@@ -1859,11 +1859,13 @@ if (persistMode) {
   }
   try { window.close(); } catch { }
 } else if (location.hash.startsWith('#sessionsmem')) {
-  // #sessionsmem=<sessions>[&threads=<pool>]: what a session costs (ADR-068).
+  // #sessionsmem=<sessions>[&what=<level>][&threads=<pool>]: what a session
+  // costs (ADR-068).
   try {
     const count = parseInt(location.hash.split('=')[1] ?? '4', 10) || 4;
     const before = session.wasmMemoryBytes();
-    const report = await session.exports().SessionsMemoryProbe(count);
+    const what = /[#&]what=(\w+)/.exec(location.hash)?.[1] ?? 'clpfd';
+    const report = await session.exports().SessionsMemoryProbe(count, what);
     const after = session.wasmMemoryBytes();
     const mb = (bytes) => (bytes / 1048576).toFixed(1);
     emit(`note the runtime's memory: ${mb(before)} MB before, ${mb(after)} MB after; `

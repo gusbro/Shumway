@@ -44,6 +44,10 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
     // Indexed by module id.
     private readonly List<Registration> _registrations = new();
 
+    // The sessions of a page install the same modules (the stdlib's, a
+    // library's): they register from one pinned copy of each.
+    private static readonly SharedByteArrays PinnedModules = new();
+
     // The rows the modules read, pinned where the table keeps them; repinned
     // when the table grows (an install, never mid-call).
     private long[]? _pinnedRows;
@@ -119,9 +123,12 @@ internal sealed class BrowserWasmWorld : IWasmExecutionWorld
         int registerDemand,
         IEnumerable<(int Caller, int Callee)> callEdges)
     {
-        byte[] patched = WasmSharedMemory.Patch(module);
-        byte[] pinned = GC.AllocateArray<byte>(patched.Length, pinned: true);
-        patched.CopyTo(pinned, 0);
+        byte[] pinned = PinnedModules.Share(WasmSharedMemory.Patch(module), static patched =>
+        {
+            byte[] p = GC.AllocateArray<byte>(patched.Length, pinned: true);
+            patched.CopyTo(p, 0);
+            return p;
+        });
         var index = new ThreadLocal<int>(() =>
         {
             int at = (int)(nint)Marshal.UnsafeAddrOfPinnedArrayElement(pinned, 0);

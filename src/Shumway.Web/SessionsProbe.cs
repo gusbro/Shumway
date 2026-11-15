@@ -40,13 +40,17 @@ internal static partial class WebShumwayApp
         });
 
     /// <summary>#sessionsmem: what a session costs (ADR-068, verification V2).
-    /// Opens sessions one at a time, each with <c>library(clpfd)</c> loaded
-    /// and a query run, and says after each what the managed heap grew by and
-    /// how long it took. A session whose thread does not start ends the run:
-    /// that is the page's limit, whatever the memory.</summary>
+    /// Opens sessions one at a time, each holding what <paramref name="what"/>
+    /// says, and reports after each what the managed heap grew by and how long
+    /// it took. A session whose thread does not start ends the run: that is
+    /// the page's limit, whatever the memory.</summary>
     [JSExport]
-    internal static async Task<string> SessionsMemoryProbe(int count)
+    internal static async Task<string> SessionsMemoryProbe(int count, string what)
     {
+        // What each session holds: "thread" (its thread alone), "tier0" (an
+        // engine with no wasm in it), "engine" (the engine as the page boots
+        // it) or "clpfd" (that, with the library loaded and a query run).
+        string level = string.IsNullOrEmpty(what) ? "clpfd" : what;
         void Say(string line)
         {
             if (_jsThread is { } js) js.Post(static l => WriteToPage((string)l!), line);
@@ -57,16 +61,17 @@ internal static partial class WebShumwayApp
         int wanted = Math.Max(1, count);
         var host = new SessionHost(_jsThread, maxSessions: wanted);
         var open = new List<HostSession>();
-        long previous = Managed();
+        long start = Managed(), previous = start;
         Say($"note before any session: managed heap {Mb(previous):F1} MB, "
             + $"committed {Mb(GC.GetGCMemoryInfo().TotalCommittedBytes):F1} MB\n");
         try
         {
             for (int i = 0; i < wanted; i++)
             {
-                HostSession s = host.Create("m" + i, new RecordingPage(), _ => BootEngine(new WasmTierSettings()));
+                HostSession s = host.Create("m" + i, new RecordingPage(),
+                    _ => BootEngine(new WasmTierSettings { Disabled = level == "tier0" }));
                 long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                Task<bool> boot = s.OnEngine(() => { s.StartEngine(); return true; });
+                Task<bool> boot = s.OnEngine(() => { if (level != "thread") s.StartEngine(); return true; });
                 if (await Task.WhenAny(boot, Task.Delay(60_000)).ConfigureAwait(false) != boot)
                 {
                     Say($"FAIL session {i + 1}: its thread did not start within 60 s\n");
@@ -77,17 +82,23 @@ internal static partial class WebShumwayApp
                 long booted = Managed();
 
                 t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                // Two queries: the operators are the library's, and a query
-                // is read whole before it runs.
-                await Ask(s, "use_module(library(clpfd)).").ConfigureAwait(false);
-                QueryStep load = await Ask(s, "X #> 3, X #< 6, label([X]).").ConfigureAwait(false);
+                QueryStep load = new(QueryStepKind.Last, "X = 4");
+                if (level == "clpfd")
+                {
+                    // Two queries: the operators are the library's, and a query
+                    // is read whole before it runs.
+                    await Ask(s, "use_module(library(clpfd)).").ConfigureAwait(false);
+                    load = await Ask(s, "X #> 3, X #< 6, label([X]).").ConfigureAwait(false);
+                }
+                else if (level != "thread")
+                    load = await Ask(s, "X is 2 + 2.").ConfigureAwait(false);
                 double loadMs = System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
                 long loaded = Managed();
                 open.Add(s);
 
                 bool right = load.Text.Contains("X = 4");
                 Say((right ? "ok   " : "FAIL ") + $"session {i + 1}: boot {bootMs:F0} ms, +{Mb(booted - previous):F1} MB; "
-                    + $"clpfd and a query {loadMs:F0} ms, +{Mb(loaded - booted):F1} MB; "
+                    + $"{(level == "clpfd" ? "clpfd and a query" : "a query")} {loadMs:F0} ms, +{Mb(loaded - booted):F1} MB; "
                     + $"managed heap {Mb(loaded):F1} MB, committed {Mb(GC.GetGCMemoryInfo().TotalCommittedBytes):F1} MB"
                     + (right ? "" : $" [{load.Kind}: {load.Text.Replace('\n', ' ')}]") + "\n");
                 previous = loaded;
@@ -95,10 +106,18 @@ internal static partial class WebShumwayApp
             // Every session answers again with all of them open.
             int answering = 0;
             foreach (HostSession s in open)
-                if ((await Ask(s, "X #> 3, X #< 6, label([X]).").ConfigureAwait(false)).Text.Contains("X = 4"))
+                if (level == "thread"
+                    || (await Ask(s, level == "clpfd" ? "X #> 3, X #< 6, label([X])." : "X is 2 + 2.")
+                        .ConfigureAwait(false)).Text.Contains("X = 4"))
                     answering++;
             Say((answering == open.Count ? "ok   " : "FAIL ")
                 + $"{answering} of {open.Count} sessions answer with all of them open\n");
+            // What a session left behind while it booted may still be held
+            // from its thread's stack: this is the heap once each has run again.
+            await Task.Delay(200).ConfigureAwait(false);
+            long settled = Managed();
+            Say($"note with every session run again: managed heap {Mb(settled):F1} MB, "
+                + $"{Mb((settled - start) / Math.Max(1, open.Count)):F1} MB a session\n");
         }
         catch (Exception ex)
         {
@@ -106,7 +125,7 @@ internal static partial class WebShumwayApp
         }
         // The sessions stay open: the page measures its memory after this.
         GC.KeepAlive(open);
-        return $"--- sessions memory probe: done, {open.Count} of {wanted} sessions ---\n";
+        return $"--- sessions memory probe ({level}): done, {open.Count} of {wanted} sessions ---\n";
     }
 
     [JSExport]
