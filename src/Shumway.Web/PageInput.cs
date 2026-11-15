@@ -22,14 +22,12 @@ internal static partial class WebShumwayApp
     [JSImport("ui.askForInput", "main.js")]
     internal static partial void AskForInput();
 
-    private static readonly PageReader _pageInput = new();
-
     /// <summary>Hands the running program a line of input (a newline is added —
     /// the program is reading lines, not keystrokes).</summary>
     [JSExport]
     internal static Task SupplyInput(string text)
     {
-        _pageInput.Supply(text);
+        S.Input.Supply(text);
         return Task.CompletedTask;
     }
 
@@ -38,71 +36,7 @@ internal static partial class WebShumwayApp
     [JSExport]
     internal static Task SupplyEndOfFile()
     {
-        _pageInput.SupplyEof();
+        S.Input.SupplyEndOfFile();
         return Task.CompletedTask;
-    }
-
-    private sealed class PageReader : TextReader
-    {
-        private readonly object _lock = new();
-        private string _buffer = "";
-        private int _at;
-        private bool _eof;
-
-        public override int Peek() => Available() ? _buffer[_at] : -1;
-
-        public override int Read() => Available() ? _buffer[_at++] : -1;
-
-        /// <summary>True once there is a character to hand out; asks the page and
-        /// blocks if there is not. False only at end of file.</summary>
-        private bool Available()
-        {
-            lock (_lock)
-            {
-                while (true)
-                {
-                    if (_at < _buffer.Length) return true;
-                    if (_eof) return false;
-                    if (_jsThread is null) return false;   // no page to ask
-                    // Blocking is only safe off the runtime thread — that thread
-                    // has to be free to deliver the answer. It never reads (the
-                    // search is on a pool thread), but if one ever did, an
-                    // immediate end-of-file beats a deadlocked tab.
-                    if (SynchronizationContext.Current == _jsThread) return false;
-                    // Ask on the thread that owns the JavaScript side, then wait.
-                    // Monitor.Wait releases the lock, so the answer can arrive.
-                    _jsThread.Post(static _ => AskForInput(), null);
-                    // CA1416: blocking is unsupported on the browser's main
-                    // thread; the guard above is what keeps this off it.
-#pragma warning disable CA1416
-                    Monitor.Wait(_lock);
-#pragma warning restore CA1416
-                }
-            }
-        }
-
-        public void Supply(string text)
-        {
-            lock (_lock)
-            {
-                // Keep only what has not been read: a program reading term by
-                // term leaves the rest of the line for the next read.
-                _buffer = _buffer[_at..] + text + "\n";
-                _at = 0;
-                Monitor.PulseAll(_lock);
-            }
-        }
-
-        public void SupplyEof()
-        {
-            lock (_lock) { _eof = true; Monitor.PulseAll(_lock); }
-        }
-
-        /// <summary>Reopens the stream for the next query — an end-of-file
-        /// answered once should not make every later read/1 return it.</summary>
-        public void Reset()
-        {
-            lock (_lock) { _buffer = ""; _at = 0; _eof = false; Monitor.PulseAll(_lock); }
-        }
     }
 }

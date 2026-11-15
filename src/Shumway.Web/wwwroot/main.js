@@ -1859,6 +1859,35 @@ if (persistMode) {
     try { await fetch('/collect', { method: 'POST', body: t }); } catch { }
   }
   try { window.close(); } catch { }
+} else if (location.hash.startsWith('#sessionsmem')) {
+  // #sessionsmem=<sessions>[&what=<level>][&threads=<pool>]: what a session
+  // costs (ADR-068).
+  try {
+    const count = parseInt(location.hash.split('=')[1] ?? '4', 10) || 4;
+    const before = session.wasmMemoryBytes();
+    const what = /[#&]what=(\w+)/.exec(location.hash)?.[1] ?? 'clpfd';
+    const report = await session.exports().SessionsMemoryProbe(count, what);
+    const after = session.wasmMemoryBytes();
+    const mb = (bytes) => (bytes / 1048576).toFixed(1);
+    emit(`note the runtime's memory: ${mb(before)} MB before, ${mb(after)} MB after; `
+       + `threads asked for at boot: ${session.threadPoolSize()}\n`);
+    emit(report);
+  } catch (ex) {
+    emit('--- sessions memory probe: done (STOPPED: ' + (ex && ex.message ? ex.message : ex) + ') ---\n');
+  }
+} else if (location.hash.startsWith('#sessions')) {
+  // #sessions, or #sessions=<rounds>: two sessions beside the page's own, each
+  // with its engine, thread and tier (ADR-068), run against each other.
+  try {
+    const rounds = parseInt(location.hash.split('=')[1] ?? '3', 10) || 3;
+    const report = await session.exports().SessionsProbe(rounds);
+    emit(report);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const t = '--- sessions probe: STOPPED: ' + (ex && ex.message ? ex.message : ex) + ' ---\n';
+    emit(t);
+    try { await fetch('/collect', { method: 'POST', body: t }); } catch { }
+  }
 } else if (location.hash.startsWith('#wasmsplit')) {
   // #wasmsplit, or #wasmsplit=<hops>x<rounds>. Phase 0 of the many-modules
   // arc: two modules hand control to each other with return_call_indirect

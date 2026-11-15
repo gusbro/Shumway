@@ -126,7 +126,9 @@ public static partial class MetaBuiltins
     private static Stream? BytesToWrite(Activation engine, StreamHandle h)
     {
         StreamRegistry registry = engine.Streams!;
-        if (ReferenceEquals(h, registry.UserError)) return Console.OpenStandardError();
+        if (ReferenceEquals(h, registry.UserError))
+            return ReferenceEquals(RequireHost(engine, "library(process)").Error, Console.Error)
+                ? Console.OpenStandardError() : null;
         if (ReferenceEquals(h, registry.UserOutput))
             return ReferenceEquals(RequireHost(engine, "library(process)").Out, Console.Out)
                 ? Console.OpenStandardOutput() : null;

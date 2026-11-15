@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The web host library (ADR-068): an engine with its thread, its input
+       and its output as one session object, and the registry that holds the
+       sessions of a page. No JavaScript interop here: the app that owns the
+       page (WebShumway, the notebook kernel) supplies it through
+       ISessionPage, which is also what lets the desktop tests drive it. -->
+  <PropertyGroup>
+    <RootNamespace>Shumway.WebHost</RootNamespace>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shumway.TopLevel\Shumway.TopLevel.csproj" />
+  </ItemGroup>
+
+</Project>

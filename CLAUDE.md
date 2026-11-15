@@ -76,6 +76,7 @@ src/
 ├── Shumway.Lib/            # `shumway-lib` — .shmo archives (ar-style)
 ├── Shumway.Disasm/         # `shumway-disasm` — WAM disassembler / audit
 ├── Shumway.Dap/            # `shumway-dap` — VS Code debug adapter
+├── Shumway.WebHost/        # Web host sessions: engine, thread, input, output (ADR-068)
 ├── Shumway.Web/            # WebShumway (browser-wasm static site)
 └── Shumway.SourceGen/      # [PrologTerm] / [PrologPredicate] source generators
 

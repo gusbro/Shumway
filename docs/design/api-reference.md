@@ -21,6 +21,10 @@ surface. Everything lives in the **`Shumway.Embedding`** namespace (terms are in
   `UseNativeLibrary(path)`; `AddLibraryDirectory(dir[, dialect])`.
 - **Flags / modules**: `Flags` (`PrologFlags`), `Modules`
   (`IReadOnlyDictionary<string, ModuleManifest>`).
+- **Standard streams**: `Out` (what `user_output` writes to), `In` (what
+  `user_input` reads), `Error` (what `user_error` writes to) and `Warnings`
+  (load-time warnings). Unset, they are the console's. A host with several
+  engines gives each its own.
 - **Working directory** (ADR-071): `SetCwdScope(CwdScope scope, string?
   initialDirectory = null)`, at any time, where `CwdScope` is `Process` (the
   default) or `Engine` (a directory of the engine's own); `CwdScope`;

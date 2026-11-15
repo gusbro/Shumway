@@ -33,6 +33,9 @@
          Tier-0 to check the answers and to anchor the timings. -->
     <ProjectReference Include="..\..\src\Shumway.Embedding\Shumway.Embedding.csproj" />
     <ProjectReference Include="..\..\src\Shumway.Libraries\Shumway.Libraries.csproj" />
+    <!-- The web host's sessions (ADR-068): the part with no JavaScript in it
+         runs on the desktop, where two sessions can be set against each other. -->
+    <ProjectReference Include="..\..\src\Shumway.WebHost\Shumway.WebHost.csproj" />
   </ItemGroup>
 
 </Project>

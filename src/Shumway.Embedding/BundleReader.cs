@@ -9,6 +9,10 @@ namespace Shumway.Embedding;
 /// </summary>
 public static class BundleReader
 {
+    // Engines that load the same bundle, each from its own read of it, hold
+    // one copy of its wasm module: megabytes they only ever read.
+    private static readonly Shumway.Core.SharedByteArrays WasmModules = new();
+
     public static Bundle ReadFromFile(string path)
     {
         ArgumentNullException.ThrowIfNull(path);
@@ -266,7 +270,7 @@ public static class BundleReader
                 throw new InvalidDataException(
                     $"Bundle: truncated wasm module (expected {byteCount} bytes, "
                     + $"got {bytes.Length}).");
-            wasmModules[i] = bytes;
+            wasmModules[i] = WasmModules.Share(bytes);
         }
         // Engine-libraries trailer.
         uint engineLibraryCount = br.ReadUInt32();
