@@ -22,6 +22,10 @@ is the authority. ADR references give the full rationale.
 - **Global tables (atom table, functor table, code cache) are thread-safe**
   (`ConcurrentDictionary` / fine-grained locks) — engines share them.
   (ADR-001.)
+- **A lock is a monitor (`lock` on an `object`), never
+  `System.Threading.Lock`.** On browser-wasm with threads that type lets two
+  threads in at once. It was the atom table's lock, and two engines
+  interning one new name made two atoms of it.
 - **The heap is a `Cell[]` of 8-byte blittable values. Never put managed
   object references inside cells.** Managed payloads (string, foreign
   object, rational) live in per-activation side tables, reached by an

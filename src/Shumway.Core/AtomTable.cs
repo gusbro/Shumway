@@ -35,11 +35,10 @@ public static class AtomTable
     private static readonly Dictionary<int, Atom> _transientById = new();
     private static readonly Dictionary<int, TransientWeakEntry> _transientWeak = new();
     private static readonly List<WeakReference<Atom>> _foreignWeakRefs = new();
-#if NETFRAMEWORK
+    // A monitor, not System.Threading.Lock: on browser-wasm with threads that
+    // type lets two threads in at once, and two interns of one new name then
+    // make two atoms.
     private static readonly object _lock = new();
-#else
-    private static readonly System.Threading.Lock _lock = new();
-#endif
     private static int _nextId = FirstUserId;
 
     // The ids of dead atoms, handed out again last in first out: an id a holder
