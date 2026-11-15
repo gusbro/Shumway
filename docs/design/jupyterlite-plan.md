@@ -22,7 +22,7 @@ does not boot, and `require-corp` isolates where `credentialless` does not. A
 real device is still to be tried. F1 and F2 are a pull request of their own
 against WebShumway.
 
-## Phase 1: Host sessions (ADR-068; must be accepted first)
+## Phase 1: Host sessions (ADR-068, accepted)
 
 - Extract the host library from `Shumway.Web`, turning the static engine,
   engine thread, cancellation and page input into a session per instance,

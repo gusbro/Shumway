@@ -54,15 +54,43 @@ the notebook work.
 - The notebook host (ADR-068) uses `Engine`. The desktop `EnginePool` is a
   candidate, decided separately.
 
+## Analysis, first pass (2026-11-14)
+
+Read against `main` at `7713419`.
+
+- **No helper resolves a relative path today.** `PrologPath` converts
+  separators only (ADR-044). A relative path reaches `System.IO` as it is,
+  and the operating system resolves it against the process directory.
+- **About 75 call sites** in the engine's run-time code take a path that a
+  program supplied, in 16 files. They pass through few places, and the
+  helper goes in those:
+
+  | Place | What it covers |
+  |---|---|
+  | `RequireAtomPath` (30 callers) | the file-system builtins: create, delete, rename, copy, exists, size, time, directory listing |
+  | `HostFileStream.Open` | `open/3,4` and everything built on it |
+  | `FileSpecAtom` and the consult pipeline | `consult/1`, `ensure_loaded/1`, `include/1`, load paths |
+  | `absolute_file_name` | its `Path.GetFullPath(spec)` |
+  | `see/1`, `tell/1` | their lookup of an open stream by full path |
+  | Library directories | `AddLibraryDirectory`, and the default `./lib` |
+  | Others, one site each | saved states, certificate files, Unix socket paths, native libraries, assemblies of foreign predicates |
+
+- **Source-relative resolution keeps working.** A file being loaded already
+  carries its own base directory, and falls back to the process directory
+  only for the outermost file. The helper replaces that fallback and
+  nothing else.
+- **.NET Framework 4.8** has no `Path.GetFullPath(path, basePath)`, so the
+  helper combines and normalises by itself.
+- **Out of scope:** about 50 more sites belong to the toolchain (the
+  executable and library emitters, the linker, the compiler). They run
+  outside any engine, against the directory the tool was started in.
+
 ## Analysis still to do
 
-- Audit the roughly 96 `File.`/`Directory.` call sites and find out how many
-  already go through a path helper (for example `PrologPath`). That
-  determines the cost.
-- Paths that cross into foreign code (`:- c`, process spawning, sockets with
-  Unix paths): relative to what?
-- Interaction with source-relative resolution (`absolute_file_name/3`
-  relative to the file being loaded), which must keep working as now.
+- Paths that cross into foreign code (`:- c`, process spawning): relative to
+  what? In `Engine` mode a spawned process should start in the engine's
+  directory, not the process's.
+- Whether the desktop `EnginePool` uses `Engine` mode.
 - Whether `Engine` should become the default in a later version.
 
 ## Consequences if accepted
