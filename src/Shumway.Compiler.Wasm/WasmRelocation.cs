@@ -33,7 +33,9 @@ public enum WasmRelocKind : byte
 /// <summary>One relocation: what to resolve, and where in the module its
 /// sentinel sits. A sentinel may be emitted at several sites; each site is
 /// the first byte of a padded LEB (5 bytes for an i32-sized value, 10 for a
-/// cell) right after its <c>i32.const</c>/<c>i64.const</c> opcode.
+/// cell) right after its <c>i32.const</c>/<c>i64.const</c> opcode. A cell
+/// sentinel may also sit in a data segment, as the cell itself (ADR-063
+/// images): those are <see cref="DataSites"/>.
 /// </summary>
 public sealed record WasmRelocation(
     WasmRelocKind Kind,
@@ -47,6 +49,10 @@ public sealed record WasmRelocation(
     bool Wide)
 {
     public int[] Sites { get; set; } = Array.Empty<int>();
+
+    /// <summary>Cells in a data segment: the byte offset of each 8-byte
+    /// little-endian cell.</summary>
+    public int[] DataSites { get; set; } = Array.Empty<int>();
 }
 
 /// <summary>The builtin-form decisions the compiled code depends on, by
