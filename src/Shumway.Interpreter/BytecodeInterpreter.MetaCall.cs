@@ -879,9 +879,14 @@ public sealed partial class BytecodeInterpreter
         _engine.CurrentBuiltinId = builtinId;
         bool ok;
         Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId, _engine.CellsAllocated);
+        // ADR-035 call port: a builtin that is a goal built at run time is a
+        // goal of the program, as it is at a call_builtin site.
+        _engine.Debug?.OnCallBuiltin(_engine, builtinId, false);
+        if (_engine.TakeDebugPcRedirect()) return true;   // SNS during the stop: skip the builtin
         try { ok = builtin.Impl(_engine); }
         catch (PrologRuntimeException re)
         { re.StampBuiltin(builtin.Name, builtin.Arity); throw; }
+        _engine.Debug?.OnBuiltinResult(_engine, builtinId, ok);
         if (!ok)
             return TryBacktrack();
         _engine.AdvancePc(9);

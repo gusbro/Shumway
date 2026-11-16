@@ -136,6 +136,23 @@ public class Adr035TracerTests
         Assert.Contains("   Exit: (1) atom_length(abc, 3)", lines);
     }
 
+    [Theory]
+    [InlineData(@"G = atom_length(abc, N), call(G).", 1, "   Exit: (1) atom_length(abc, 3)")]
+    [InlineData(@"G = atom_length(abc, 7), \+ call(G).", 1, "   Fail: (1) atom_length(abc, 7)")]
+    [InlineData(@"G = (atom_length(abc, N), atom_length(de, M)), call(G).", 1, "   Exit: (1) atom_length(de, 2)")]
+    [InlineData(@"G = atom_length(abc), call(G, N).", 1, "   Exit: (1) atom_length(abc, 3)")]
+    public void ABuiltinThatIsAGoalBuiltAtRunTime_IsTracedAsOneWrittenInAClause(
+        string goal, int expected, string port)
+    {
+        // Written in the query, the same builtin goes through call_builtin,
+        // which always reported it. The oracle is that trace.
+        var lines = Trace("", goal, out int solutions);
+
+        Assert.Equal(expected, solutions);
+        Assert.Contains(lines, l => l.StartsWith("   Call: (1) atom_length(abc"));
+        Assert.Contains(port, lines);
+    }
+
     [Fact]
     public void BacktrackableBuiltin_ReportsARedoPerSolution()
     {
