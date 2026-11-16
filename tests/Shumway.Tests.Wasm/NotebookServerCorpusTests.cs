@@ -21,27 +21,6 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
     /// on purpose: the session, the request (from 1) and the reason.</summary>
     private static readonly Dictionary<(string Session, int Request), (string Reason, string Ours)> Intended = new()
     {
-        [("002-malformed", 2)] = (
-            "A line that is not JSON gets a parse error. The reference stops answering.",
-            """{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Invalid JSON was received by the server.","data":{"prolog_message":""}}}"""),
-        [("002-malformed", 3)] = (
-            "The server is still there after a line that is not JSON.",
-            """{"jsonrpc":"2.0","id":1,"result":{"1":{"status":"success","type":"query","bindings":{},"output":""}}}"""),
-        [("003-queries", 4)] = (
-            "A variable that is another one shows that variable, not an atom with its name.",
-            """{"jsonrpc":"2.0","id":4,"result":{"1":{"status":"success","type":"query","bindings":{"Y":"X"},"output":""}}}"""),
-        [("008-variables", 2)] = (
-            "A variable and an atom of the same name can be told apart.",
-            """{"jsonrpc":"2.0","id":2,"result":{"1":{"status":"success","type":"query","bindings":{"Y":"X","Z":"'X'"},"output":""}}}"""),
-        [("008-variables", 3)] = (
-            "A variable that is another one shows that variable, not an atom with its name.",
-            """{"jsonrpc":"2.0","id":3,"result":{"1":{"status":"success","type":"query","bindings":{"Y":"X","Z":"X"},"output":""}}}"""),
-        [("008-variables", 4)] = (
-            "A variable that is another one shows that variable, not an atom with its name.",
-            """{"jsonrpc":"2.0","id":4,"result":{"1":{"status":"success","type":"query","bindings":{"X":"f(Y)","Z":"Y"},"output":""}}}"""),
-        [("008-variables", 6)] = (
-            "Naming a variable does not turn its other occurrences into atoms.",
-            """{"jsonrpc":"2.0","id":6,"result":{"1":{"status":"success","type":"query","bindings":{"Y":"X","W":"g(X,X,'X')"},"output":""}}}"""),
         [("010-previous-bindings", 15)] = (
             "In a query that uses both X and $X, X is the query's own variable.",
             """{"jsonrpc":"2.0","id":15,"result":{"1":{"status":"success","type":"query","bindings":{"X":"1","Y":"g(_,1)"},"output":""}}}"""),
@@ -191,12 +170,10 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
     /// the name of its key, which is the variant's (ADR-067 D5);</item>
     /// <item>the number in the name of a variable that has no name;</item>
     /// <item>the version of the engine the recording was made with;</item>
-    /// <item>the reference's empty list as a JSON array: every binding is
-    /// text here;</item>
     /// <item>the residual goals of a query, a key only our server sends: the
     /// reference says nothing of a constrained variable.</item>
     /// </list></summary>
-    private static JsonNode? Comparable(JsonNode? node, bool version, string? under = null)
+    private static JsonNode? Comparable(JsonNode? node, bool version)
     {
         switch (node)
         {
@@ -207,11 +184,9 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
                     if (key is "prolog_message" or "logtalk_message") result["message_text"] = "";
                     else if (key == "residual_goals") continue;
                     else if (version && key == "result" && value is JsonValue) result[key] = "version";
-                    else result[key] = Comparable(value, version, under == "bindings" ? "binding" : key);
+                    else result[key] = Comparable(value, version);
                 }
                 return result;
-            case JsonArray { Count: 0 } when under == "binding":
-                return JsonValue.Create("[]");
             case JsonArray items:
                 return new JsonArray(items.Select(item => Comparable(item, version)).ToArray());
             case JsonValue value when value.TryGetValue(out string? text):

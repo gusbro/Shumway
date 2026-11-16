@@ -36,7 +36,7 @@ is part of this repository. The recording here was made with:
 
 | Tree | Version |
 |---|---|
-| Hercutalk | 0.47.0 (`865d6fd`) |
+| Hercutalk | 0.47.1 (`73e2175`) |
 | Logtalk | 3.103.0-b01 (`aff5dd7`) |
 
 ## Recording
@@ -51,9 +51,10 @@ pwsh tests/jupyter/record-reference.ps1 -Logtalk ... -Hercutalk ... -Only 004-re
   afterwards.
 - The directories of the machine are replaced by `$CWD`, `$LOGTALK` and
   `$HERCUTALK` in what is recorded.
-- A session that answered fewer lines than it was sent is reported: read it
-  before keeping the recording. The reference stops answering after a line
-  that is not JSON (`002-malformed`).
+- A session that answered a different number of lines than it was sent is
+  reported: read it before keeping the recording. On Shumway the reference
+  answers one more line, a parse error, when its input ends; the comparison
+  stops at the last request. After `halt` it answers nothing (`011-halt`).
 
 ## The same server on another Prolog
 

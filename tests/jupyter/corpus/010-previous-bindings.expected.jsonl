@@ -7,9 +7,10 @@
 {"jsonrpc":"2.0","id":7,"result":{"1":{"status":"success","type":"query","bindings":{"X":"p"},"output":""}}}
 {"jsonrpc":"2.0","id":8,"result":{"1":{"status":"success","type":"query","bindings":{"X":"q"},"output":""}}}
 {"jsonrpc":"2.0","id":9,"result":{"1":{"status":"success","type":"query","bindings":{"V":"q","X":"q"},"output":""}}}
-{"jsonrpc":"2.0","id":10,"result":{"1":{"status":"success","type":"query","bindings":{"X":"g(_G180690,1)","T":"1"},"output":""}}}
+{"jsonrpc":"2.0","id":10,"result":{"1":{"status":"success","type":"query","bindings":{"X":"g(_G182399,1)","T":"1"},"output":""}}}
 {"jsonrpc":"2.0","id":11,"result":{"1":{"status":"success","type":"query","bindings":{"X":"g(A,1)","B":"1"},"output":""}}}
 {"jsonrpc":"2.0","id":12,"result":{"1":{"status":"error","error":{"code":-4711,"message":"Failure","data":{"logtalk_message":""}}}}}
-{"jsonrpc":"2.0","id":13,"result":{"1":{"status":"success","type":"query","bindings":{"V":"g(_G189852,1)","X":"g(_G189852,1)"},"output":""}}}
+{"jsonrpc":"2.0","id":13,"result":{"1":{"status":"success","type":"query","bindings":{"V":"g(_G191696,1)","X":"g(_G191696,1)"},"output":""}}}
 {"jsonrpc":"2.0","id":14,"result":{"1":{"status":"success","type":"query","bindings":{"V":"'$X'"},"output":""}}}
-{"jsonrpc":"2.0","id":15,"result":{"1":{"status":"success","type":"query","bindings":{"X":"g(_G196216,1)","Y":"g(_G196216,1)"},"output":""}}}
+{"jsonrpc":"2.0","id":15,"result":{"1":{"status":"success","type":"query","bindings":{"X":"g(_G198215,1)","Y":"g(_G198215,1)"},"output":""}}}
+{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Invalid JSON was received by the server.","data":{"logtalk_message":""}}}

@@ -16,3 +16,4 @@
 {"jsonrpc":"2.0","id":16,"result":{"1":{"status":"error","error":{"code":-4711,"message":"Failure","data":{"logtalk_message":""}}}}}
 {"jsonrpc":"2.0","id":17,"result":{"1":{"status":"error","error":{"code":-4711,"message":"Failure","data":{"logtalk_message":""}}}}}
 {"jsonrpc":"2.0","id":18,"result":{"1":{"status":"error","error":{"code":-4713,"message":"No active call","data":{"logtalk_message":""}}}}}
+{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Invalid JSON was received by the server.","data":{"logtalk_message":""}}}
