@@ -26,6 +26,7 @@
 :- module(jupyter_server, [jupyter_serve/0]).
 
 :- use_module(jupyter_json).
+:- use_module(jupyter).
 
 %! jupyter_serve | Notebook server | Answers the requests of jupyter_requests on jupyter_responses until the stream ends or a cell calls halt.
 jupyter_serve :-
@@ -145,6 +146,9 @@ magic('file+', [C|Cs], Text, file(File, append, load, Text)) :- atom_chars(File,
 magic(load, [C|Cs], Text, file(File, write, load, Text)) :- atom_chars(File, [C|Cs]).
 magic(save, [C|Cs], Text, file(File, write, save, Text)) :- atom_chars(File, [C|Cs]).
 magic(highlight, [], _, highlight).
+magic(table, [], Text, table(Text, print_table)).
+magic(csv, [C|Cs], Text, table(Text, save(csv, File))) :- atom_chars(File, [C|Cs]).
+magic(tsv, [C|Cs], Text, table(Text, save(tsv, File))) :- atom_chars(File, [C|Cs]).
 
 % Without the spaces around it.
 trimmed(Chars, Trimmed) :-
@@ -169,6 +173,17 @@ magic_content(file(File, Mode, Action, Text), Content) :-
     (   Action == load -> Content = queries([query(jupyter_server:load(File), [])])
     ;   Content = nothing
     ).
+% Each query of the cell is shown as the table of its solutions.
+magic_content(table(Text, How), queries(Tables)) :-
+    cell_queries(Text, Queries),
+    tables(Queries, How, Tables).
+
+tables([], _, []).
+tables([query(Goal, Names)|Queries], How, [query(Table, Names)|Tables]) :-
+    (   How = save(Format, File) -> Table = jupyter:print_and_save_table(Goal, Format, File)
+    ;   Table = jupyter:print_table(Goal)
+    ),
+    tables(Queries, How, Tables).
 
 % A cell with a clause that does not parse is an error of the cell: nothing
 % of it is loaded, where a load from a program reports the clause and goes on.
@@ -215,9 +230,48 @@ run(query(Goal, Names), Alive, Spent0, Spent, Cell0, Cell, Next) :-
         (   nonvar(Error) ->
             Spent = Spent0, Next = continue,
             failed(Cell0, -4712, 'Exception', Error, Cell)
-        ;   solve(Resolved, Names, Alive, Spent0, Spent, Cell0, Cell, Next)
+        ;   helpers(Resolved, Names, Called),
+            solve(Called, Names, Alive, Spent0, Spent, Cell0, Cell, Next)
         )
     ).
+
+% A helper that names the variables of its goal gets their names here, from
+% the query it is written in: a goal that runs has none. It is found as a
+% goal of the query itself, through its control constructs.
+helpers(Goal, Names, Called) :-
+    (   var(Goal) -> Called = Goal
+    ;   control(Goal, Name, Left, Right) ->
+        helpers(Left, Names, CalledLeft),
+        helpers(Right, Names, CalledRight),
+        Called =.. [Name, CalledLeft, CalledRight]
+    ;   Goal = (\+ Inner) ->
+        helpers(Inner, Names, CalledInner),
+        Called = (\+ CalledInner)
+    ;   helper(Goal, Names, Named) -> Called = Named
+    ;   Goal = jupyter:Helper, nonvar(Helper), helper(Helper, Names, Named) -> Called = Named
+    ;   Called = Goal
+    ).
+
+control((Left, Right), ',', Left, Right).
+control((Left ; Right), ';', Left, Right).
+control((Left -> Right), '->', Left, Right).
+control((Left *-> Right), '*->', Left, Right).
+
+helper(print_table(Goal), Names, jupyter:'$jupyter_table'(user:Goal, Named)) :-
+    term_variables(Goal, Variables),
+    names_of(Names, Variables, Named).
+helper(print_and_save_table(Goal, Format, File), Names,
+       jupyter:'$jupyter_saved_table'(user:Goal, Named, Format, File)) :-
+    term_variables(Goal, Variables),
+    names_of(Names, Variables, Named).
+
+% The names of the query that belong to Variables, in the query's order.
+names_of([], _, []).
+names_of([Name=Variable|Names], Variables, Named) :-
+    (   occurs(Variables, Variable) -> Named = [Name=Variable|Rest]
+    ;   Named = Rest
+    ),
+    names_of(Names, Variables, Rest).
 
 retry_goal(Goal) :- Goal == retry.
 retry_goal(Goal) :- Goal == jupyter:retry.
@@ -244,6 +298,7 @@ retry(Alive, Spent0, Spent, Cell0, Cell, Next) :-
 % points stay; a retry fails back into them.
 solve(Goal, Names, Alive, Spent0, Spent, Cell0, Cell, Next) :-
     output(_),
+    '$jupyter_extras'(_),
     nb_setval('$jupyter_cell', none),
     (   catch(solution(Goal, Exit), Error, true),
         resumed(Cell0, Cell1),
@@ -278,8 +333,10 @@ solved(Error, Exit, Names, Alive, Spent0, Spent, Cell0, Cell, Next) :-
         failed(Cell0, -4712, 'Exception', Error, Cell)
     ;   output(Output),
         bindings(Names, Bindings),
+        % What the helpers of module jupyter left for this answer.
+        '$jupyter_extras'(Extras),
         answered(Cell0, obj([status-str(success), type-str(query),
-                             bindings-obj(Bindings), output-str(Output)]), Cell1),
+                             bindings-obj(Bindings), output-str(Output)|Extras]), Cell1),
         remember(Names),
         (   Exit == last -> Spent is Spent0 + 1, Cell = Cell1, Next = continue
         ;   Spent = Spent0, Cell = none,

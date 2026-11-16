@@ -48,6 +48,15 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
         [("014-file-magics", 16)] = (
             "A clause that does not parse is an error of the cell, with the reader's message as its text. The reference answers a failure and puts the message in the output.",
             """{"jsonrpc":"2.0","id":16,"result":{"1":{"status":"error","error":{"code":-4712,"message":"Exception","data":{"prolog_message":""}}}}}"""),
+        [("015-tables", 13)] = (
+            "A helper is a goal like any other: it works inside a conjunction. In the reference it has to be the whole query.",
+            """{"jsonrpc":"2.0","id":13,"result":{"1":{"status":"success","type":"query","bindings":{"X":"1"},"output":"","print_table":{"ValuesLists":[["1","1"],["1","2"]],"VariableNames":["X","Y"]}}}}"""),
+        [("016-saved-tables", 2)] = (
+            "The server writes the file of a saved table, in the session's directory. In the reference the client writes it.",
+            """{"jsonrpc":"2.0","id":2,"result":{"1":{"status":"success","type":"query","bindings":{"R":"written"},"output":""}}}"""),
+        [("016-saved-tables", 6)] = (
+            "A format that is neither csv nor tsv is an error. The reference passes it on to its client.",
+            """{"jsonrpc":"2.0","id":6,"result":{"1":{"status":"error","error":{"code":-4712,"message":"Exception","data":{"prolog_message":""}}}}}"""),
     };
 
     private static List<string> SessionNames()
@@ -67,7 +76,7 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
     public void TheCorpus_IsThere()
     {
         List<string> sessions = SessionNames();
-        Assert.True(sessions.Count >= 14, $"only {sessions.Count} sessions in {Corpus}");
+        Assert.True(sessions.Count >= 16, $"only {sessions.Count} sessions in {Corpus}");
         foreach (string session in sessions)
         {
             Assert.NotEmpty(Lines(session, "requests"));

@@ -223,6 +223,35 @@ public sealed class NotebookServerTests : IDisposable
     }
 
     [Fact]
+    public void ASavedTable_IsAFileWithItsValuesQuotedWhereTheyMustBe()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+        string Text(string name) => File.ReadAllText(Path.Combine(_notebooks.DirectoryOf("a"), name)).Replace("\r\n", "\n");
+
+        First(server, @"print_and_save_table(member(X-Y, [1-plain, 2-'a,b', 3-'say ""hi""', 4-'two words']), csv, 'out.csv').");
+        First(server, "%%tsv out.tsv\nmember(X-Y, [1-'a,b', 2-'tab\\there']).");
+
+        // A value is its printed form: the quotes of an atom are part of it.
+        Assert.Equal("X,Y\n1,plain\n2,\"'a,b'\"\n3,\"'say \"\"hi\"\"'\"\n4,'two words'\n", Text("out.csv"));
+        Assert.Equal("X\tY\n1\t'a,b'\n2\t'tab\\there'\n", Text("out.tsv"));
+    }
+
+    [Fact]
+    public void ATableAskedForByAProgram_NamesItsColumnsWithLetters()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+        First(server, "%%user\nshow(L) :- jupyter:print_table(member(_-_, L)).\nboth(L) :- print_table(member(_, L)), write(done).");
+
+        JsonNode pairs = First(server, "show([1-a, 2-b]).");
+        JsonNode both = First(server, "both([x]), jupyter:print_table([[1, 2]], ['P', 'Q']).");
+
+        Assert.Equal("""{"ValuesLists":[["1","a"],["2","b"]],"VariableNames":["A","B"]}""", pairs["print_table"]!.ToJsonString());
+        // The latest table of a query is the one its answer carries.
+        Assert.Equal("""{"ValuesLists":[["1","2"]],"VariableNames":["P","Q"]}""", both["print_table"]!.ToJsonString());
+        Assert.Equal("done", (string)both["output"]!);
+    }
+
+    [Fact]
     public void ADeterministicQuery_IsNotKeptAlive()
     {
         NotebookServer server = _notebooks.Open("a").Server;

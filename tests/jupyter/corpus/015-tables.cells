@@ -1,0 +1,48 @@
+### call
+jupyter:print_table(member(X, [a, b, c])).
+### reference
+jupyter::print_table(member(X, [a, b, c])).
+### call
+jupyter:print_table((member(X, [1, 2]), member(Y, [p, 'Q r']))).
+### reference
+jupyter::print_table((member(X, [1, 2]), member(Y, [p, 'Q r']))).
+### call
+jupyter:print_table(fail).
+### reference
+jupyter::print_table(fail).
+### call
+jupyter:print_table(true).
+### reference
+jupyter::print_table(true).
+### call
+jupyter:print_table(member(_X, [1, 2])).
+### reference
+jupyter::print_table(member(_X, [1, 2])).
+### call
+jupyter:print_table([[1, 2], [3, 4]], ['A', 'B']).
+### reference
+jupyter::print_table([[1, 2], [3, 4]], ['A', 'B']).
+### call
+jupyter:print_table([[1, 2], [3, 4]], []).
+### reference
+jupyter::print_table([[1, 2], [3, 4]], []).
+### call
+jupyter:print_table((member(X, [f(Y), "str", 1.5]), write(side))).
+### reference
+jupyter::print_table((member(X, [f(Y), "str", 1.5]), write(side))).
+### call
+%%table
+member(X, [a, b]), member(Y, [1, 2]).
+### call
+%%table
+member(X, [a, b])
+### call
+print_table(member(X, [a, b])).
+### call
+jupyter:print_table(throw(oops)).
+### reference
+jupyter::print_table(throw(oops)).
+### call
+X = 1, jupyter:print_table(member(Y, [X, 2])).
+### reference
+X = 1, jupyter::print_table(member(Y, [X, 2])).

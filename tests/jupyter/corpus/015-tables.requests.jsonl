@@ -1,0 +1,13 @@
+{"jsonrpc":"2.0","id":1,"method":"call","params":{"code":"jupyter:print_table(member(X, [a, b, c]))."}}
+{"jsonrpc":"2.0","id":2,"method":"call","params":{"code":"jupyter:print_table((member(X, [1, 2]), member(Y, [p, 'Q r'])))."}}
+{"jsonrpc":"2.0","id":3,"method":"call","params":{"code":"jupyter:print_table(fail)."}}
+{"jsonrpc":"2.0","id":4,"method":"call","params":{"code":"jupyter:print_table(true)."}}
+{"jsonrpc":"2.0","id":5,"method":"call","params":{"code":"jupyter:print_table(member(_X, [1, 2]))."}}
+{"jsonrpc":"2.0","id":6,"method":"call","params":{"code":"jupyter:print_table([[1, 2], [3, 4]], ['A', 'B'])."}}
+{"jsonrpc":"2.0","id":7,"method":"call","params":{"code":"jupyter:print_table([[1, 2], [3, 4]], [])."}}
+{"jsonrpc":"2.0","id":8,"method":"call","params":{"code":"jupyter:print_table((member(X, [f(Y), \"str\", 1.5]), write(side)))."}}
+{"jsonrpc":"2.0","id":9,"method":"call","params":{"code":"%%table\nmember(X, [a, b]), member(Y, [1, 2])."}}
+{"jsonrpc":"2.0","id":10,"method":"call","params":{"code":"%%table\nmember(X, [a, b])"}}
+{"jsonrpc":"2.0","id":11,"method":"call","params":{"code":"print_table(member(X, [a, b]))."}}
+{"jsonrpc":"2.0","id":12,"method":"call","params":{"code":"jupyter:print_table(throw(oops))."}}
+{"jsonrpc":"2.0","id":13,"method":"call","params":{"code":"X = 1, jupyter:print_table(member(Y, [X, 2]))."}}

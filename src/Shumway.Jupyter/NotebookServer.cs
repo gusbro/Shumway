@@ -54,8 +54,9 @@ public sealed class NotebookServer
     {
         ArgumentNullException.ThrowIfNull(engine);
         ServerPredicates.Register();
-        // jupyter_server imports jupyter_json.
+        // In the order they import each other.
         engine.ConsultString(Source("jupyter_json.pl"));
+        engine.ConsultString(Source("jupyter.pl"));
         engine.ConsultString(Source("jupyter_server.pl"));
     }
 
