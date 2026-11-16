@@ -1,7 +1,8 @@
 # Jupyter notebooks on WebShumway: plan
 
 Status: Phase 0 done but for the default session limit, which waits for the
-server (Phase 2); Phase 1 done (2026-11-15); Phase 2 in progress. The architecture is in
+server in a browser (Phase 3); Phase 1 done (2026-11-15); Phase 2 done
+(2026-11-16). The architecture is in
 [`jupyterlite-architecture.md`](jupyterlite-architecture.md); the decisions
 are in ADR-066 to ADR-073.
 
@@ -25,7 +26,8 @@ boots on a real iPhone. V2 is measured in three desktop browsers and on a
 tablet (ADR-068): with `library(clpfd)` loaded, a session took about 38 MB of
 the runtime's memory before the sessions of a page shared their wasm modules,
 and on the tablet six sessions take the runtime from 138 MB to 286 MB. The
-default limit is set with the server loaded, in Phase 2.
+default limit is set with the server loaded in a browser, in Phase 3: Phase 2
+built the server on the desktop only.
 
 ## Phase 1: Host sessions (ADR-068, accepted)
 
@@ -72,7 +74,9 @@ of"). The manual pass over the guide's examples found two things:
 - Add the `protocol` method **[ext]**.
 - Apply the D8 exit condition once the first third of the corpus passes.
 
-**State (2026-11-16): the work is done; the phase is not closed yet.**
+**State: done (2026-11-16).** The server is `src/Shumway.Jupyter` (PR #248);
+the engine changes it needed went in pull requests of their own (#249 to
+#252).
 - Done: the harness and a corpus of 21 sessions; the request loop with
   `retry`, `$Var` and `halt`; output capture; the file, table and line
   magics; the helpers behind them; the predicate docs; the `protocol`
@@ -82,7 +86,11 @@ of"). The manual pass over the guide's examples found two things:
   and what differs is listed in the protocol document, §9.
 - Moved to Phase 3: the precompiled bundle (D10). What it saves is the
   compilation of the server when a notebook opens, which is measured in a
-  browser.
+  browser. So are the default session limit of Phase 0, which needs the
+  server loaded in a browser, and `jupyter:trace/1` on the wasm tier, which
+  was not run.
+- The corpus was recorded again with Hercutalk 0.47.1, which fixed three of
+  the differences found with 0.47.0 after they were reported.
 
 **Acceptance: differential tests against Hercutalk on the desktop.** Logtalk
 already runs on Shumway (`shumwaylgt`), so the reference is Hercutalk 0.47.0
