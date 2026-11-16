@@ -483,3 +483,31 @@ atoms 0.84, a functor that differs 0.64, the chess shape (`piece(z-9, _, _)`
 against `piece(a-1, _, _)`) 0.47, enumeration with the element free 0.96, and
 `p(_, a)` against 32 elements that all match 1.08: the one case that pays
 for the look and gains nothing. `SHUMWAY_IL_GUARD_QUICKREJECT=0` turns it off.
+
+## Amendment (2026-11-16): a guard with a catch/3 keeps its choice point
+
+`'$catch_begin'/2` is not one of the deterministic builtins a guard may hold.
+The catch frame it pushes records the choice point register, which is where
+a failing recovery backtracks to, and the continuation in the environment
+header of the helper it runs in, which is where the clause resumes after a
+recovery that succeeds. A guard that inlined the helper of a `catch/3` gave
+it neither. The guard's alternative was in IL locals, so the recorded choice
+point was the one below the clause: the guarded goal raised, the recovery
+failed, and the clause failed without trying its else branch or its next
+clause. The helper's frame was opened inline, with the continuation of the
+clause's caller: the recovery succeeded and the rest of the clause was
+skipped.
+
+The recognisers refuse the builtin (`BuiltinEntry.OpensCatchScope`): the
+guard itself, the fail-direct description of a callee, and the two rule
+inliners. The clause keeps its choice point and calls the helper. The shape
+that was taken is a `catch/3` whose goal is deterministic builtins alone,
+as a condition or before a clause's cut; a goal with a call was already
+refused.
+
+Nothing is lost when nothing is raised: four million iterations of
+`( catch(atom_length(X, _), _, fail) -> R = then ; R = else )` take a median
+1.14 s with the choice point against 1.16 s without (A B B A, processor
+capped). The catch frame is what the shape costs. The wasm tier has no
+CP-free guards and answered correctly. Tests: `Adr031CatchInGuardTests`,
+`CatchInAConditionTests`.

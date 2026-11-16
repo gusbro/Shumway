@@ -316,7 +316,8 @@ public sealed partial class IlPredicateCompiler
                     var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
                         BytecodeIO.ReadInt32(code, pc + 1));
                     // precomputed flags instead of name compares.
-                    if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable)
+                    if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable
+                        || entry.OpensCatchScope)
                         return false;
                     endsTerminal = false;
                     pc += OpcodeTable.Get((byte)op).Size;
