@@ -1,0 +1,14 @@
+### call
+write(hello).
+### call
+write(hello), nl, write(world), nl.
+### call
+format("~w and ~q~n", [a, 'B c']), X = done.
+### call
+print(f("string", 'Atom', [1, 2])).
+### call
+write(before), fail.
+### call
+write(user_error, to_error), nl(user_error).
+### call
+forall(member(X, [1, 2, 3]), (write(X), nl)).

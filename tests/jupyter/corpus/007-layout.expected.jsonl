@@ -1,0 +1,7 @@
+{"jsonrpc":"2.0","id":1,"result":{"1":{"status":"success","type":"query","bindings":{"X":"1"},"output":""}}}
+{"jsonrpc":"2.0","id":2,"result":{"1":{"status":"success","type":"query","bindings":{"X":"2"},"output":""}}}
+{"jsonrpc":"2.0","id":3,"result":{"1":{"status":"success","type":"query","bindings":{"X":"3"},"output":""}}}
+{"jsonrpc":"2.0","id":4,"result":""}
+{"jsonrpc":"2.0","id":5,"result":""}
+{"jsonrpc":"2.0","id":6,"result":{"1":{"status":"success","type":"query","bindings":{"X":"4"},"output":""}}}
+{"jsonrpc":"2.0","id":7,"result":{"1":{"status":"success","type":"query","bindings":{"X":"5"},"output":""}}}

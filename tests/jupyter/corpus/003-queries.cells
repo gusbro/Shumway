@@ -1,0 +1,25 @@
+### call
+X = 1, Y = foo(X).
+### call
+true.
+### call
+fail.
+### call
+X = Y.
+### call
+X = f(Y, _Z, _), Y = 'hello world'.
+### call
+L = [1, 2.5, "text", 'Quoted', [a|T]], T = [].
+### call
+X is 2 ** 100.
+### call
+atom_length(abc, N).
+### call
+
+### call
+% only a comment
+### call
+X = 1.
+Y = 2.
+fail.
+Z = 3.

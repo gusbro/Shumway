@@ -1,0 +1,15 @@
+{"jsonrpc":"2.0","id":1,"method":"call","params":{"code":"X = f(a), Y = [1, 2]."}}
+{"jsonrpc":"2.0","id":2,"method":"call","params":{"code":"Z = $X."}}
+{"jsonrpc":"2.0","id":3,"method":"call","params":{"code":"$X = f(A), length($Y, N)."}}
+{"jsonrpc":"2.0","id":4,"method":"call","params":{"code":"W = $Unknown."}}
+{"jsonrpc":"2.0","id":5,"method":"call","params":{"code":"X = second."}}
+{"jsonrpc":"2.0","id":6,"method":"call","params":{"code":"V = $X."}}
+{"jsonrpc":"2.0","id":7,"method":"call","params":{"code":"member(X, [p, q])."}}
+{"jsonrpc":"2.0","id":8,"method":"call","params":{"code":"retry."}}
+{"jsonrpc":"2.0","id":9,"method":"call","params":{"code":"V = $X."}}
+{"jsonrpc":"2.0","id":10,"method":"call","params":{"code":"X = g(_, T), T = 1."}}
+{"jsonrpc":"2.0","id":11,"method":"call","params":{"code":"$X = g(A, B)."}}
+{"jsonrpc":"2.0","id":12,"method":"call","params":{"code":"fail."}}
+{"jsonrpc":"2.0","id":13,"method":"call","params":{"code":"V = $X."}}
+{"jsonrpc":"2.0","id":14,"method":"call","params":{"code":"V = '$X', atom(V)."}}
+{"jsonrpc":"2.0","id":15,"method":"call","params":{"code":"X = 1, Y = $X."}}

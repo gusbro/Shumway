@@ -1,0 +1,5 @@
+{"jsonrpc":"2.0","id":0,"result":"shumway"}
+{"jsonrpc":"2.0","id":0,"result":"0.9.3"}
+{"jsonrpc":"2.0","id":7,"error":{"code":-32601,"message":"The method does not exist / is not available.","data":{"logtalk_message":"no_such_method"}}}
+{"jsonrpc":"2.0","id":8,"error":{"code":-32602,"message":"Invalid method parameter(s).","data":{"logtalk_message":""}}}
+{"jsonrpc":"2.0","id":1,"result":{"1":{"status":"success","type":"query","bindings":{},"output":""}}}

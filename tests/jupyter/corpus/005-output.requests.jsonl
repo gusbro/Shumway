@@ -1,0 +1,7 @@
+{"jsonrpc":"2.0","id":1,"method":"call","params":{"code":"write(hello)."}}
+{"jsonrpc":"2.0","id":2,"method":"call","params":{"code":"write(hello), nl, write(world), nl."}}
+{"jsonrpc":"2.0","id":3,"method":"call","params":{"code":"format(\"~w and ~q~n\", [a, 'B c']), X = done."}}
+{"jsonrpc":"2.0","id":4,"method":"call","params":{"code":"print(f(\"string\", 'Atom', [1, 2]))."}}
+{"jsonrpc":"2.0","id":5,"method":"call","params":{"code":"write(before), fail."}}
+{"jsonrpc":"2.0","id":6,"method":"call","params":{"code":"write(user_error, to_error), nl(user_error)."}}
+{"jsonrpc":"2.0","id":7,"method":"call","params":{"code":"forall(member(X, [1, 2, 3]), (write(X), nl))."}}

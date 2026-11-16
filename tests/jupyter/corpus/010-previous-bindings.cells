@@ -1,0 +1,30 @@
+### call
+X = f(a), Y = [1, 2].
+### call
+Z = $X.
+### call
+$X = f(A), length($Y, N).
+### call
+W = $Unknown.
+### call
+X = second.
+### call
+V = $X.
+### call
+member(X, [p, q]).
+### call
+retry.
+### call
+V = $X.
+### call
+X = g(_, T), T = 1.
+### call
+$X = g(A, B).
+### call
+fail.
+### call
+V = $X.
+### call
+V = '$X', atom(V).
+### call
+X = 1, Y = $X.

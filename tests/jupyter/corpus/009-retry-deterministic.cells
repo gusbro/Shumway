@@ -1,0 +1,36 @@
+### call
+X = 1.
+### call
+retry.
+### call
+retry.
+### call
+member(X, [a, b]).
+### call
+Y = 2.
+### call
+retry.
+### call
+retry.
+### call
+retry.
+### call
+retry.
+### call
+member(X, [a, b]), !.
+### call
+retry.
+### call
+retry.
+### call
+write(side), nl, member(X, [1, 2]).
+### call
+throw(stop).
+### call
+retry.
+### call
+fail.
+### call
+retry.
+### call
+retry.
