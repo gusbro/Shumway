@@ -1,0 +1,22 @@
+{"jsonrpc":"2.0","id":1,"method":"call","params":{"code":"%%user\np(1).\np(2)."}}
+{"jsonrpc":"2.0","id":2,"method":"call","params":{"code":"p(X)."}}
+{"jsonrpc":"2.0","id":3,"method":"call","params":{"code":"retry."}}
+{"jsonrpc":"2.0","id":4,"method":"call","params":{"code":"%%user+\np(3)."}}
+{"jsonrpc":"2.0","id":5,"method":"call","params":{"code":"findall(X, p(X), L)."}}
+{"jsonrpc":"2.0","id":6,"method":"call","params":{"code":"%%user\nq(a)."}}
+{"jsonrpc":"2.0","id":7,"method":"call","params":{"code":"q(X)."}}
+{"jsonrpc":"2.0","id":8,"method":"call","params":{"code":"findall(X, p(X), L)."}}
+{"jsonrpc":"2.0","id":9,"method":"call","params":{"code":"%%file facts.pl\nr(1).\nr(2)."}}
+{"jsonrpc":"2.0","id":10,"method":"call","params":{"code":"findall(X, r(X), L)."}}
+{"jsonrpc":"2.0","id":11,"method":"call","params":{"code":"%%file+ facts.pl\nr(3)."}}
+{"jsonrpc":"2.0","id":12,"method":"call","params":{"code":"findall(X, r(X), L)."}}
+{"jsonrpc":"2.0","id":13,"method":"call","params":{"code":"%%save notes.txt\nany text, not Prolog ("}}
+{"jsonrpc":"2.0","id":14,"method":"call","params":{"code":"%%load more.pl\ns(1)."}}
+{"jsonrpc":"2.0","id":15,"method":"call","params":{"code":"s(X)."}}
+{"jsonrpc":"2.0","id":16,"method":"call","params":{"code":"%%user\nbroken(."}}
+{"jsonrpc":"2.0","id":17,"method":"call","params":{"code":"%%user\nt(1).\nt(X) :- no_such_thing(X)."}}
+{"jsonrpc":"2.0","id":18,"method":"call","params":{"code":"t(X)."}}
+{"jsonrpc":"2.0","id":19,"method":"call","params":{"code":"%%highlight\nfoo :- bar."}}
+{"jsonrpc":"2.0","id":20,"method":"call","params":{"code":"%%user\n:- write(loading), nl.\nu(1)."}}
+{"jsonrpc":"2.0","id":21,"method":"call","params":{"code":"%%nosuchmagic\nv(1)."}}
+{"jsonrpc":"2.0","id":22,"method":"call","params":{"code":"%%user"}}

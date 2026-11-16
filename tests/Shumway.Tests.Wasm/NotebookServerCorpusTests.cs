@@ -45,6 +45,9 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
         [("010-previous-bindings", 15)] = (
             "In a query that uses both X and $X, X is the query's own variable.",
             """{"jsonrpc":"2.0","id":15,"result":{"1":{"status":"success","type":"query","bindings":{"X":"1","Y":"g(_,1)"},"output":""}}}"""),
+        [("014-file-magics", 16)] = (
+            "A clause that does not parse is an error of the cell, with the reader's message as its text. The reference answers a failure and puts the message in the output.",
+            """{"jsonrpc":"2.0","id":16,"result":{"1":{"status":"error","error":{"code":-4712,"message":"Exception","data":{"prolog_message":""}}}}}"""),
     };
 
     private static List<string> SessionNames()
@@ -64,7 +67,7 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
     public void TheCorpus_IsThere()
     {
         List<string> sessions = SessionNames();
-        Assert.True(sessions.Count >= 12, $"only {sessions.Count} sessions in {Corpus}");
+        Assert.True(sessions.Count >= 14, $"only {sessions.Count} sessions in {Corpus}");
         foreach (string session in sessions)
         {
             Assert.NotEmpty(Lines(session, "requests"));

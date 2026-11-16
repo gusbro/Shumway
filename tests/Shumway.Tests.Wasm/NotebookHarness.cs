@@ -12,6 +12,8 @@ internal sealed class NotebookHarness : IDisposable
 
     private readonly SessionHost _host = new(pageThread: null, maxSessions: 4);
     private readonly List<NotebookServer> _servers = new();
+    private readonly string _root = Path.Combine(
+        Path.GetTempPath(), "shumway-notebook-" + Guid.NewGuid().ToString("N"));
 
     public sealed class Page : ISessionPage
     {
@@ -31,12 +33,23 @@ internal sealed class NotebookHarness : IDisposable
             NotebookServer.Install(engine);
             return engine;
         });
-        Task<bool> started = session.OnEngine(() => { session.StartEngine(); return true; });
+        // A directory of its own: a cell that writes a file writes it there.
+        string directory = DirectoryOf(id);
+        Directory.CreateDirectory(directory);
+        Task<bool> started = session.OnEngine(() =>
+        {
+            session.SetDirectory(directory);
+            session.StartEngine();
+            return true;
+        });
         Assert.True(started.Wait(Patience), "the session did not start");
         NotebookServer server = NotebookServer.Start(session);
         _servers.Add(server);
         return (server, session);
     }
+
+    /// <summary>The working directory of the session <paramref name="id"/>.</summary>
+    public string DirectoryOf(string id) => Path.Combine(_root, id);
 
     /// <summary>The response to a request line, or null when the server has
     /// stopped.</summary>
@@ -56,5 +69,6 @@ internal sealed class NotebookHarness : IDisposable
         // A server waiting for a request holds its session's thread.
         foreach (NotebookServer server in _servers) server.Close();
         Assert.True(_host.CloseAll().Wait(Patience));
+        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
     }
 }

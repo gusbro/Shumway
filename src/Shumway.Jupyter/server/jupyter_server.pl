@@ -19,7 +19,9 @@
 %     call, to standard output or standard error, less one final line end;
 %   '$jupyter_open_text'(+Chars, -Stream): an input stream over a text;
 %   '$jupyter_error_text'(+Ball, -Chars): the line a top level shows for
-%     an error.
+%     an error;
+%   '$jupyter_strict_syntax'(+New, -Old): whether a clause that does not
+%     parse ends the load of its file.
 
 :- module(jupyter_server, [jupyter_serve/0]).
 
@@ -93,12 +95,14 @@ known(protocol).
 % answer to the request.
 method(call, Id, Params, Cell) :-
     (   Params = obj(Pairs), memberchk(code-str(Code), Pairs) ->
-        catch(cell_queries(Code, Queries), Error, true),
+        catch(cell_content(Code, Content), Error, true),
         (   nonvar(Error) ->
             Cell = none,
             error_text(Error, Text),
             send_error(Id, -4712, 'Exception', Text)
-        ;   Cell = cell(Id, Queries, [])
+        ;   Content = queries(Queries) -> Cell = cell(Id, Queries, [])
+        ;   Cell = none,
+            send_result(Id, obj([]))
         )
     ;   Cell = none,
         send_error(Id, -32602, 'Invalid method parameter(s).', [])
@@ -113,6 +117,65 @@ method(version, Id, _, none) :-
     send_result(Id, str(Version)).
 method(protocol, Id, _, none) :-
     send_result(Id, obj([version-1, implementation-str(shumway)])).
+
+% cell_content(+Code, -Content): queries(Queries), or nothing when the
+% cell has nothing to run.
+cell_content(Code, Content) :-
+    (   magic(Code, Magic) -> magic_content(Magic, Content)
+    ;   cell_queries(Code, Queries),
+        Content = queries(Queries)
+    ).
+
+% ----- cell magics -----
+
+% A cell whose first line is %%NAME, or %%NAME ARGUMENT, with a NAME below.
+% Any other first line is a comment of an ordinary cell.
+magic(Code, Magic) :-
+    once(append(['%', '%'|Header], ['\n'|Text], Code)),
+    (   append(NameChars, [' '|Rest], Header) -> trimmed(Rest, Argument)
+    ;   NameChars = Header, Argument = []
+    ),
+    atom_chars(Name, NameChars),
+    magic(Name, Argument, Text, Magic).
+
+magic(user, [], Text, file('user.pl', write, load, Text)).
+magic('user+', [], Text, file('user.pl', append, load, Text)).
+magic(file, [C|Cs], Text, file(File, write, load, Text)) :- atom_chars(File, [C|Cs]).
+magic('file+', [C|Cs], Text, file(File, append, load, Text)) :- atom_chars(File, [C|Cs]).
+magic(load, [C|Cs], Text, file(File, write, load, Text)) :- atom_chars(File, [C|Cs]).
+magic(save, [C|Cs], Text, file(File, write, save, Text)) :- atom_chars(File, [C|Cs]).
+magic(highlight, [], _, highlight).
+
+% Without the spaces around it.
+trimmed(Chars, Trimmed) :-
+    leading(Chars, Rest),
+    reverse(Rest, Reversed),
+    leading(Reversed, ReversedTrimmed),
+    reverse(ReversedTrimmed, Trimmed).
+
+leading([C|Cs], Rest) :-
+    ( C == ' ' ; C == '\t' ; C == '\r' ),
+    !,
+    leading(Cs, Rest).
+leading(Chars, Chars).
+
+% The text goes to its file. A file that is loaded is a query of the cell:
+% its answer carries what loading wrote and the error it raised.
+magic_content(highlight, nothing).
+magic_content(file(File, Mode, Action, Text), Content) :-
+    setup_call_cleanup(open(File, Mode, Stream),
+                       format(Stream, "~s~n", [Text]),
+                       close(Stream)),
+    (   Action == load -> Content = queries([query(jupyter_server:load(File), [])])
+    ;   Content = nothing
+    ).
+
+% A cell with a clause that does not parse is an error of the cell: nothing
+% of it is loaded, where a load from a program reports the clause and goes on.
+load(File) :-
+    setup_call_cleanup('$jupyter_strict_syntax'(true, Old),
+                       user:reconsult(File),
+                       '$jupyter_strict_syntax'(Old, _)).
 
 cell_queries(Code, Queries) :-
     catch(text_queries(Code, Read), error(syntax_error(Why), Where), true),

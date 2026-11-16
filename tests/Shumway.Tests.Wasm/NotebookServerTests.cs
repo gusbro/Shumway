@@ -184,6 +184,45 @@ public sealed class NotebookServerTests : IDisposable
     }
 
     [Fact]
+    public void ACellMagic_WritesItsFileInTheSessionsDirectory()
+    {
+        NotebookServer a = _notebooks.Open("a").Server;
+        NotebookServer b = _notebooks.Open("b").Server;
+
+        JsonNode saved = Answer(a, Call(1, "%%save notes.txt\nfirst line\nsecond ("))["result"]!;
+        First(a, "%%file facts.pl\nfact(1).");
+        First(a, "%%file+ facts.pl\nfact(2).");
+        JsonNode mine = First(a, "findall(X, fact(X), L).");
+        JsonNode theirs = First(b, "fact(X).");
+
+        Assert.Empty(saved.AsObject());
+        string Text(string name) => File.ReadAllText(Path.Combine(_notebooks.DirectoryOf("a"), name)).Replace("\r\n", "\n");
+        Assert.Equal("first line\nsecond (\n", Text("notes.txt"));
+        Assert.Equal("fact(1).\nfact(2).\n", Text("facts.pl"));
+        Assert.Equal("[1,2]", (string)mine["bindings"]!["L"]!);
+        Assert.Contains("existence_error", Message(theirs));
+        Assert.False(File.Exists(Path.Combine(_notebooks.DirectoryOf("b"), "facts.pl")));
+    }
+
+    [Fact]
+    public void ACellThatDoesNotParse_IsAnError_AndLoadsNothing()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+
+        JsonNode load = First(server, "%%user\nloaded(1).\nbroken(.\nloaded(2).");
+        JsonNode query = First(server, "loaded(X).");
+        // The load of a program, not of a cell, still reports and goes on.
+        JsonNode consult = First(server, "consult('user.pl'), findall(X, loaded(X), L).");
+
+        Assert.Equal(-4712, (int)load["error"]!["code"]!);
+        Assert.StartsWith("syntax error: ", Message(load));
+        Assert.Contains("user.pl:2:", Message(load));
+        Assert.Contains("existence_error", Message(query));
+        Assert.StartsWith("[1", (string)consult["bindings"]!["L"]!);
+        Assert.Contains("syntax error: ", (string)consult["output"]!);
+    }
+
+    [Fact]
     public void ADeterministicQuery_IsNotKeptAlive()
     {
         NotebookServer server = _notebooks.Open("a").Server;

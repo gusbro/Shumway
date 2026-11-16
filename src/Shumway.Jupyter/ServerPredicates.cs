@@ -30,6 +30,7 @@ internal static class ServerPredicates
             BuiltinsRegistry.Register("$jupyter_take_output", 1, TakeOutput);
             BuiltinsRegistry.Register("$jupyter_open_text", 2, OpenText);
             BuiltinsRegistry.Register("$jupyter_error_text", 2, ErrorText);
+            BuiltinsRegistry.Register("$jupyter_strict_syntax", 2, StrictSyntax);
             _registered = true;
         }
     }
@@ -82,6 +83,20 @@ internal static class ServerPredicates
     {
         Term ball = RegisterMarshalling.ReadRegisterAsTerm(activation, 0);
         return RegisterMarshalling.UnifyRegisterWithTerm(activation, 1, Text(Describe(ball)));
+    }
+
+    // '$jupyter_strict_syntax'(+New, -Old): whether a clause that does not
+    // parse ends the load of its file, set to New; Old is what it was.
+    private static bool StrictSyntax(Activation activation)
+    {
+        ServerOf(activation);
+        var engine = (PrologEngine)activation.Host!;
+        Term wanted = RegisterMarshalling.ReadRegisterAsTerm(activation, 0);
+        if (wanted is not AtomTerm { Name: "true" or "false" } flag)
+            throw new ShumwayPrologException(IsoError.TypeError("boolean", wanted));
+        bool old = engine.StrictConsultSyntax;
+        engine.StrictConsultSyntax = flag.Name == "true";
+        return RegisterMarshalling.UnifyRegisterWithTerm(activation, 1, new AtomTerm(old ? "true" : "false"));
     }
 
     /// <summary>The line a top level shows for an error that was caught as
