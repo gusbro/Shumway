@@ -1,0 +1,9 @@
+{"jsonrpc":"2.0","id":1,"method":"call","params":{"code":"%%user\napp([], L, L).\napp([H|T], L, [H|R]) :- app(T, L, R)."}}
+{"jsonrpc":"2.0","id":2,"method":"call","params":{"code":"jupyter:trace(app([1], [2], L))."}}
+{"jsonrpc":"2.0","id":3,"method":"call","params":{"code":"jupyter:trace(app([1], [2], [3]))."}}
+{"jsonrpc":"2.0","id":4,"method":"call","params":{"code":"jupyter:trace(member(X, [a, b]))."}}
+{"jsonrpc":"2.0","id":5,"method":"call","params":{"code":"retry."}}
+{"jsonrpc":"2.0","id":6,"method":"call","params":{"code":"jupyter:trace(( app([1], [2], L), X is foo + 1 ))."}}
+{"jsonrpc":"2.0","id":7,"method":"call","params":{"code":"app([1], [2], L)."}}
+{"jsonrpc":"2.0","id":8,"method":"call","params":{"code":"trace."}}
+{"jsonrpc":"2.0","id":9,"method":"call","params":{"code":"trace(app([1], [2], L))."}}

@@ -210,6 +210,60 @@ print_query_time :-
 last_of([Query], Query) :- !.
 last_of([_|Queries], Query) :- last_of(Queries, Query).
 
+% ----- tracing -----
+
+% trace(+Goal): the ports of Goal as it runs. Goal runs once, and trace/1
+% succeeds whether Goal did or not, as the reference's does.
+% The tracer goes on inside the catch/3 and under a name it does not show:
+% the trace is of Goal, not of what runs it.
+trace(Goal) :-
+    (   catch('$jupyter_traced'(Goal), Ball, ( '$jupyter_tracing'(false), throw(Ball) )) -> true
+    ;   true
+    ),
+    '$jupyter_tracing'(false).
+
+'$jupyter_traced'(Goal) :-
+    '$jupyter_tracing'(true),
+    user:Goal.
+
+% ----- completion -----
+
+% update_completion_data: the names a kernel completes with, as additional
+% data of the answer. Each is a head with its arguments lettered: the
+% helpers of this module, the predicates the engine documents and the ones
+% the session defined.
+update_completion_data :-
+    findall(jupyter:Name/Arity, doc(Name/Arity, _, _), Helpers),
+    '$jupyter_documented'(Documented),
+    findall(Name/Arity, session_predicate(Name, Arity), Defined),
+    append(Documented, Defined, Unsorted),
+    sort(Unsorted, Indicators),
+    append(Helpers, Indicators, All),
+    head_texts(All, Texts),
+    '$jupyter_extra'(predicate_atoms, Texts).
+
+% The engine lists under user the predicates of every loaded module, the
+% private ones too, and has no property that tells them apart. What another
+% module has is left out, and with it that module's exports.
+session_predicate(Name, Arity) :-
+    current_predicate(user:Name/Arity),
+    \+ sub_atom(Name, 0, 1, _, '$'),
+    \+ ( current_module(Module), Module \== user, current_predicate(Module:Name/Arity) ).
+
+head_texts([], []).
+head_texts([Indicator|Indicators], [str(Text)|Texts]) :-
+    head(Indicator, Head, Arguments),
+    lettered(Arguments, 0, Names),
+    with_output_to(string(Text), write_term(Head, [quoted(true), variable_names(Names)])),
+    head_texts(Indicators, Texts).
+
+head(Indicator, Head, Arguments) :-
+    (   Indicator = Module:Name/Arity -> Head = Module:Plain
+    ;   Indicator = Name/Arity, Head = Plain
+    ),
+    functor(Plain, Name, Arity),
+    Plain =.. [_|Arguments].
+
 % ----- the session's directory -----
 
 pwd :-
@@ -293,6 +347,12 @@ doc(pwd/0, 'jupyter:pwd', [
     'Prints the working directory of the session.']).
 doc(cd/1, 'jupyter:cd(+Directory)', [
     'Changes the working directory of the session.']).
+doc(trace/1, 'jupyter:trace(+Goal)', [
+    'Prints the calls, exits, retries and failures of Goal as it runs.',
+    'Goal runs once, and the query goes on whether it succeeded or failed.']).
+doc(update_completion_data/0, 'jupyter:update_completion_data', [
+    'Gives the kernel the names it completes with.',
+    'Call it after loading code, to complete the names of its predicates.']).
 doc(print_variable_bindings/0, 'jupyter:print_variable_bindings', [
     'Prints the latest value each variable of an earlier query was given.',
     'In a query, $Var stands for the latest value of Var.']).

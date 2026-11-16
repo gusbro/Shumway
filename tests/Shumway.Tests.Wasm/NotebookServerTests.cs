@@ -320,7 +320,8 @@ public sealed class NotebookServerTests : IDisposable
         {
             "halt/0", "retry/0", "help/0", "magic/0", "version/0", "version/4", "versions/0", "pwd/0", "cd/1",
             "print_variable_bindings/0", "print_queries/0", "print_queries/1", "print_query_time/0",
-            "print_table/1", "print_table/2", "print_and_save_table/3",
+            "print_table/1", "print_table/2", "print_and_save_table/3", "trace/1",
+            "update_completion_data/0",
         };
         string[] magics =
         {
@@ -407,6 +408,88 @@ public sealed class NotebookServerTests : IDisposable
         Assert.Equal(-4712, (int)answer["2"]!["error"]!["code"]!);
         Assert.Equal("A clause is not a query. To define predicates, start the cell with %%user.", Message(answer["2"]!));
         Assert.Equal("2", (string)answer["3"]!["bindings"]!["Y"]!);
+    }
+
+    private const string Append = "%%user\napp([], L, L).\napp([H|T], L, [H|R]) :- app(T, L, R).";
+
+    private static string Unnamed(string text)
+        => System.Text.RegularExpressions.Regex.Replace(text, @"_G?\d+", "_");
+
+    [Fact]
+    public void TraceOfAGoal_PrintsItsPorts_AndRunsItOnce()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+        First(server, Append);
+
+        JsonNode traced = First(server, "jupyter:trace(app([1], [2], L)), write(after).");
+        JsonNode failed = First(server, "jupyter:trace(app([1], [2], [3])), write(after).");
+        JsonNode first = First(server, "jupyter:trace(member(X, [a, b])).");
+        JsonNode again = First(server, "retry.");
+
+        Assert.Equal("[1,2]", (string)traced["bindings"]!["L"]!);
+        Assert.Equal(
+            "   Call: (1) app([1], [2], _)\n   Call: (1) app([], [2], _)\n   Exit: (1) app([], [2], [2])\nafter",
+            Unnamed((string)traced["output"]!));
+        // A goal that fails does not fail the query.
+        Assert.Equal("success", (string)failed["status"]!);
+        Assert.Equal("   Call: (1) app([1], [2], [3])\n   Fail: (1) app([1], [2], [3])\nafter", (string)failed["output"]!);
+        Assert.Equal("a", (string)first["bindings"]!["X"]!);
+        Assert.Equal(-4711, (int)again["error"]!["code"]!);
+    }
+
+    [Fact]
+    public void TheTracer_IsOffWhenAQueryEnds()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+        First(server, Append);
+
+        JsonNode raised = First(server, "jupyter:trace(( app([1], [2], L), X is foo + L )).");
+        JsonNode afterAnError = First(server, "app([1], [2], L).");
+        JsonNode leftOn = First(server, "trace, app([1], [2], L).");
+        JsonNode afterASolution = First(server, "app([1], [2], L).");
+        JsonNode failedOn = First(server, "trace, app([1], [2], [3]).");
+        JsonNode afterAFailure = First(server, "app([1], [2], L).");
+        JsonNode alone = First(server, "trace.");
+
+        Assert.Equal(-4712, (int)raised["error"]!["code"]!);
+        Assert.StartsWith("   Call: (1) app([1], [2], _)\n", Unnamed((string)raised["error"]!["data"]!["output"]!));
+        Assert.Equal("", (string)afterAnError["output"]!);
+        // Of the query's own goals, and nothing of what the server runs after them.
+        Assert.Equal(
+            "   Call: (1) app([1], [2], _)\n   Call: (1) app([], [2], _)\n   Exit: (1) app([], [2], [2])",
+            Unnamed((string)leftOn["output"]!));
+        Assert.Equal("", (string)afterASolution["output"]!);
+        Assert.Equal(-4711, (int)failedOn["error"]!["code"]!);
+        Assert.Equal("", (string)afterAFailure["output"]!);
+        Assert.Equal(-4712, (int)alone["error"]!["code"]!);
+        Assert.Equal(
+            "The tracer does not stay on after a query. To trace a goal, call jupyter:trace(Goal).",
+            Message(alone));
+    }
+
+    [Fact]
+    public void TheNamesToCompleteWith_AreTheHelpersTheEnginesAndTheSessions()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+        string[] Names() => First(server, "jupyter:update_completion_data.")["predicate_atoms"]!
+            .AsArray().Select(name => (string)name!).ToArray();
+
+        string[] before = Names();
+        First(server, "%%user\napp([], L, L).\napp([H|T], L, [H|R]) :- app(T, L, R).\n'a b'(1).\nnow.");
+        string[] after = Names();
+
+        // The kernel asks before any cell runs, and reads the names of the first answer.
+        Assert.Contains("jupyter:print_table(A)", before);
+        Assert.Contains("jupyter:trace(A)", before);
+        Assert.Contains("append(A,B,C)", before);
+        Assert.Contains("atom_length(A,B)", before);
+        Assert.Contains("halt", before);
+        Assert.DoesNotContain("app(A,B,C)", before);
+        Assert.DoesNotContain(before, name => name.Contains('$'));
+        Assert.DoesNotContain(before, name => name.StartsWith("jupyter_", StringComparison.Ordinal));
+        Assert.Equal(before.Length, before.Distinct().Count());
+        // What the session defined since, written so that it reads back.
+        Assert.Equal(new[] { "'a b'(A)", "app(A,B,C)", "now" }, after.Except(before).Order(StringComparer.Ordinal));
     }
 
     [Fact]

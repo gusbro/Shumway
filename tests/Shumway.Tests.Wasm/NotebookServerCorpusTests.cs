@@ -79,6 +79,10 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
         ("017-line-magics", 19),    // pwd
         ("017-line-magics", 20),    // version
         ("018-predicate-docs", 1),  // the description of each helper
+        ("021-trace", 2),           // the trace: the reference prints none on this engine
+        ("021-trace", 3),
+        ("021-trace", 4),
+        ("021-trace", 6),           // the trace up to the error
     };
 
     private static List<string> SessionNames()
@@ -167,8 +171,10 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
                 var result = new JsonObject();
                 foreach (var (key, value) in pairs)
                 {
-                    bool own = key is "output" or "print_table"
-                        || (key == "result" && value is JsonObject answer && !answer.ContainsKey("1"));
+                    // Left out, not blanked: an error has an output only
+                    // when something was written before it.
+                    if (key is "output" or "print_table") continue;
+                    bool own = key == "result" && value is JsonObject answer && !answer.ContainsKey("1");
                     result[key] = own ? "own text" : WithoutOwnText(value);
                 }
                 return result;

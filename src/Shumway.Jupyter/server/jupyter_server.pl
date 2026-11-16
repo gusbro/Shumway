@@ -139,15 +139,8 @@ cell_content(Code, Content) :-
     (   magic(Code, Magic) -> magic_content(Magic, Content)
     ;   line_magic(Code, Query) -> Content = queries([Query])
     ;   cell_queries(Code, Queries),
-        (   completion_data(Queries) -> Content = nothing
-        ;   Content = queries(Queries)
-        )
+        Content = queries(Queries)
     ).
-
-% What a kernel asks for when it starts. The reference answers it with
-% nothing; the names to complete are not sent yet.
-completion_data([query(Goal, _)]) :-
-    Goal == jupyter:update_completion_data.
 
 % ----- line magics -----
 
@@ -277,6 +270,9 @@ run(query(Goal, Names), Alive, Spent0, Spent, Cell0, Cell, Next) :-
     ;   clause_term(Goal) ->
         Spent = Spent0, Next = continue,
         failed(Cell0, -4712, 'Exception', jupyter(clause_in_cell), Cell)
+    ;   Goal == trace ->
+        Spent = Spent0, Next = continue,
+        failed(Cell0, -4712, 'Exception', jupyter(tracer_in_cell), Cell)
     ;   catch(with_previous(Goal, Names, Resolved), Error, true),
         (   nonvar(Error) ->
             Spent = Spent0, Next = continue,
@@ -356,17 +352,20 @@ retry(Alive, Spent0, Spent, Cell0, Cell, Next) :-
 % The query's solutions, one for each time control comes back here. After a
 % solution the server goes on inside this clause, so the query's choice
 % points stay; a retry fails back into them.
+% A tracer the query left on would trace the server from here on.
 solve(Goal, Names, Text, Alive, Spent0, Spent, Cell0, Cell, Next) :-
     output(_),
     '$jupyter_extras'(_),
     nb_setval('$jupyter_cell', none),
     statistics(cputime, Started),
     (   catch(solution(Goal, Exit), Error, true),
+        '$jupyter_tracing'(false),
         resumed(Cell0, Cell1, First),
         ran(First, Error, Cell1, Text, Started),
         solved(Error, Exit, Names, Alive, Spent0, Spent, Cell1, Cell, Next)
     ->  true
-    ;   resumed(Cell0, Cell1, _),
+    ;   '$jupyter_tracing'(false),
+        resumed(Cell0, Cell1, _),
         output(Output),
         error_object(-4711, 'Failure', [], Output, Failure),
         answered(Cell1, obj([status-str(error), error-Failure]), Cell),
@@ -396,8 +395,14 @@ output(Text) :-
     '$jupyter_take_output'(Text).
 
 % Exit is bound when the goal left no choice point.
+% The tracer goes off as the goal's last step, before what tells a
+% deterministic exit runs and joins the trace.
 solution(Goal, Exit) :-
-    setup_call_cleanup(true, user:Goal, Exit = last).
+    setup_call_cleanup(true, '$jupyter_untraced'(Goal), Exit = last).
+
+'$jupyter_untraced'(Goal) :-
+    user:Goal,
+    '$jupyter_tracing'(false).
 
 solved(Error, Exit, Names, Alive, Spent0, Spent, Cell0, Cell, Next) :-
     (   nonvar(Error) ->
@@ -584,5 +589,7 @@ error_text(Ball, Text) :-
         with_output_to(string(Text), format("$~w has no value from an earlier query", [Name]))
     ;   Ball == jupyter(clause_in_cell) ->
         atom_chars('A clause is not a query. To define predicates, start the cell with %%user.', Text)
+    ;   Ball == jupyter(tracer_in_cell) ->
+        atom_chars('The tracer does not stay on after a query. To trace a goal, call jupyter:trace(Goal).', Text)
     ;   '$jupyter_error_text'(Ball, Text)
     ).

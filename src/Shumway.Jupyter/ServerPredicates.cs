@@ -31,6 +31,8 @@ internal static class ServerPredicates
             BuiltinsRegistry.Register("$jupyter_open_text", 2, OpenText);
             BuiltinsRegistry.Register("$jupyter_error_text", 2, ErrorText);
             BuiltinsRegistry.Register("$jupyter_strict_syntax", 2, StrictSyntax);
+            BuiltinsRegistry.Register("$jupyter_tracing", 1, Tracing);
+            BuiltinsRegistry.Register("$jupyter_documented", 1, Documented);
             _registered = true;
         }
     }
@@ -97,6 +99,45 @@ internal static class ServerPredicates
         bool old = engine.StrictConsultSyntax;
         engine.StrictConsultSyntax = flag.Name == "true";
         return RegisterMarshalling.UnifyRegisterWithTerm(activation, 1, new AtomTerm(old ? "true" : "false"));
+    }
+
+    // '$jupyter_tracing'(+Boolean): the engine's four-port tracer, on or off.
+    // The tracer shows no goal whose name starts with $, so the switch is not
+    // a line of the trace it starts or ends, as a call of notrace/0 would be.
+    private static bool Tracing(Activation activation)
+    {
+        Term wanted = RegisterMarshalling.ReadRegisterAsTerm(activation, 0);
+        if (wanted is not AtomTerm { Name: "true" or "false" } flag)
+            throw new ShumwayPrologException(IsoError.TypeError("boolean", wanted));
+        return EngineBuiltin(flag.Name == "true" ? "trace" : "notrace").Impl(activation);
+    }
+
+    private static BuiltinEntry EngineBuiltin(string name)
+    {
+        foreach (BuiltinEntry entry in BuiltinsRegistry.AllEntries())
+            if (entry.Arity == 0 && entry.Name == name) return entry;
+        throw new InvalidOperationException($"The engine has no {name}/0.");
+    }
+
+    // The reference of the engine's predicates reads their sources: once.
+    private static readonly Lazy<(string Name, int Arity)[]> DocumentedPredicates = new(() =>
+        PredicateDoc.Entries().Select(entry => (entry.Name, entry.Arity)).Distinct().ToArray());
+
+    // '$jupyter_documented'(-Indicators): Name/Arity of each predicate the
+    // engine documents, which are the ones a program is meant to call.
+    private static bool Documented(Activation activation)
+    {
+        Term list = new AtomTerm("[]");
+        (string Name, int Arity)[] documented = DocumentedPredicates.Value;
+        for (int i = documented.Length - 1; i >= 0; i--)
+        {
+            var indicator = new CompoundTerm("/", new Term[]
+            {
+                new AtomTerm(documented[i].Name), new IntTerm(documented[i].Arity),
+            });
+            list = new CompoundTerm(".", new[] { indicator, list });
+        }
+        return RegisterMarshalling.UnifyRegisterWithTerm(activation, 0, list);
     }
 
     /// <summary>The line a top level shows for an error that was caught as

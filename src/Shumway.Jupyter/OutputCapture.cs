@@ -11,6 +11,10 @@ internal sealed class OutputCapture : TextWriter
     private readonly object _gate = new();
     private readonly StringBuilder _text = new();
 
+    // A line the engine ends itself (the tracer's) ends as a line Prolog
+    // code ends, whatever the platform.
+    public OutputCapture() => NewLine = "\n";
+
     public override Encoding Encoding => Encoding.UTF8;
 
     public override void Write(char value)

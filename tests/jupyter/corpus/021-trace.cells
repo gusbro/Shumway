@@ -1,0 +1,28 @@
+### call
+%%user
+app([], L, L).
+app([H|T], L, [H|R]) :- app(T, L, R).
+### call
+jupyter:trace(app([1], [2], L)).
+### reference
+jupyter::trace(app([1], [2], L)).
+### call
+jupyter:trace(app([1], [2], [3])).
+### reference
+jupyter::trace(app([1], [2], [3])).
+### call
+jupyter:trace(member(X, [a, b])).
+### reference
+jupyter::trace(member(X, [a, b])).
+### call
+retry.
+### call
+jupyter:trace(( app([1], [2], L), X is foo + 1 )).
+### reference
+jupyter::trace(( app([1], [2], L), X is foo + 1 )).
+### call
+app([1], [2], L).
+### call
+trace.
+### call
+trace(app([1], [2], L)).
