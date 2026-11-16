@@ -38,7 +38,12 @@ public sealed partial class PrologEngine
     /// <paramref name="output"/>, defaulting to the engine's own output sink so
     /// a hosted engine's trace lands wherever its program's writes do.</summary>
     public void SetTracing(bool on, System.IO.TextWriter? output = null)
-        => DebugSession = on ? new Debugging.DebugTracer(this, output ?? Out) : null;
+    {
+        DebugSession = on ? new Debugging.DebugTracer(this, output ?? Out) : null;
+        // The ports are the interpreter's to raise: while the tracer is on,
+        // every call runs its bytecode (ADR-035).
+        IlPromotion.KeepCallsInterpreted(on);
+    }
 
     // ----- ADR-035: breakpoints -----
     //

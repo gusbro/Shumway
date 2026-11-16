@@ -33,6 +33,8 @@ public class Adr035DisableDebugTests
         // interface implementations, so the explicit no-ops are required.
         void IDebugSession.OnInlineGoal(Activation engine) { }
         void IDebugSession.OnLeaveProlog(Activation engine) { }
+        void IDebugSession.OnRedoExit(Activation engine) { }
+        void IDebugSession.OnUnwind(Activation engine) { }
 
         private readonly PrologEngine _engine;
         public readonly List<int> Lines = new();

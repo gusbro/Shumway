@@ -167,7 +167,7 @@ Sections: [Unification & comparison](#unification--comparison) · [Type checking
 | `throw(+Exception)` | control | Throws an exception term, unwinding to the nearest catch/3. |
 | `time(:Goal)` | engine | Calls Goal like call/1 and prints a per-answer resource report to the current output: elapsed seconds and heap cells allocated, and with Tier-1 off also inferences (the goals the interpreter dispatched) and Lips. Non-determinism is preserved: each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. |
 | `time_out(:Goal, +MilliSeconds, -Result)` | engine | Runs Goal under a time limit. Result is success, or time_out if the limit expired. Non-deterministic: Goal keeps its solutions, and re-entering it on backtracking restarts the clock, so the limit bounds each solution rather than the whole enumeration. The limit is enforced at the engine's safe points, so a goal that neither calls nor allocates can outlive it; ordinary Prolog, including a failure-driven loop like (repeat, fail), is interrupted. |
-| `trace` | engine | Turns on the four-port tracer: from here on, every goal prints a line at its call, exit, redo and fail ports. Takes effect immediately, including for the goals remaining in the current query. |
+| `trace` | engine | Turns on the four-port tracer: from here on, every goal prints a line at its call, exit, redo and fail ports. Takes effect immediately, including for the goals remaining in the current query. While it is on the program runs interpreted. |
 | `true` | control | Always succeeds. |
 
 ## Findall & aggregation

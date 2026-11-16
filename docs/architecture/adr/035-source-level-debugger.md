@@ -449,3 +449,41 @@ file: the first file interned used to get it, so the clauses of a `ConsultString
 source took the name of whatever file was loading when they were recompiled, and a
 breakpoint on that file's line also stopped on the string's same line
 (`Adr035BreakTests.ABreakpointInAFile_DoesNotStopOnTheSameLineOfAnotherSource`).
+
+## Amendment (2026-11-16): the tracer keeps calls on the interpreter
+
+The interpreter raises the ports, so a predicate that had been compiled ran
+with the tracer on and reported nothing but its own call. While a tracer is
+attached every call is dispatched to its bytecode:
+
+- the store of compiled code answers no call
+  (`IlPromotionStore.CallsStayInterpreted`), for the IL tier and the wasm tier
+  alike, and counts none toward a promotion;
+- a query set up meanwhile gets no table of compiled routines, and `trace/0`
+  empties the table of the query it is called from, so a call site already
+  linked to compiled code misses the table and becomes a plain call again;
+- nothing is dropped. `notrace/0` makes the compiled code serve again, and
+  the next query links its sites.
+
+What is already running in compiled code when the tracer goes on finishes
+there: its frames and choice points resume through the store, which keeps
+answering resumes. What it calls from then on is interpreted. A predicate
+with no bytecode (a bundle linked without it) stays compiled and reports no
+port.
+
+The switch is the engine's, as `trace/0` is: every query of the engine runs
+interpreted while one traces.
+
+Three ports the tracer lacked:
+
+- a builtin that is a goal built at run time
+  (`G = atom_length(abc, N), call(G)`) reports its call and its result, as one
+  written in a clause does;
+- the next solution of a builtin that has several gets its exit port after
+  the redo (`IDebugSession.OnRedoExit`);
+- a goal that a caught ball left gets an `Exception` port, by name
+  (`IDebugSession.OnUnwind`). It used to stay open and print a later exit with
+  arguments read from heap the catch had given back. A query that ends with
+  an error nobody caught leaves nothing in the trace of the next one.
+
+Tests: `Adr035TracerTests`.

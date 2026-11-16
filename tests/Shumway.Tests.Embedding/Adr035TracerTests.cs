@@ -213,6 +213,140 @@ public class Adr035TracerTests
     }
 
     [Fact]
+    public void ABuiltinsNextSolution_HasItsExitPort_AndWhatFollowsIsNotUnderIt()
+    {
+        // The second solution of between/3 comes from a retry, which no
+        // call_builtin instruction reports.
+        var lines = Trace("ok(2).\n", "between(1, 2, X), ok(X).", out int solutions);
+
+        Assert.Equal(1, solutions);
+        int redo = lines.FindIndex(l => l.StartsWith("   Redo: (1) between("));
+        Assert.True(redo >= 0, "no redo of between/3");
+        Assert.Equal("   Exit: (1) between(1, 2, 2)", lines[redo + 1]);
+        Assert.Equal("   Call: (1) ok(2)", lines[redo + 2]);
+        Assert.Equal("   Exit: (1) ok(2)", lines[redo + 3]);
+    }
+
+    [Fact]
+    public void AGoalThatRaisesUnderACatch_GetsAnExceptionPort_AndTheTraceGoesOn()
+    {
+        var lines = Trace(
+            "p(X) :- atom_length(X, _).\nq(1).\n",
+            "catch(p(f(x)), _, true), q(Y).", out int solutions);
+
+        Assert.Equal(1, solutions);
+        int raised = lines.FindIndex(l => l.StartsWith("   Call: (2) atom_length(f(x),"));
+        Assert.True(raised >= 0, "atom_length/2 was not called");
+        // The goals the ball left, innermost first, and then the rest of the
+        // query at the depth it is at.
+        Assert.Equal(new[]
+        {
+            "   Exception: (2) atom_length/2",
+            "   Exception: (1) p/1",
+            "   Exit: (1) q(1)",
+        }, lines.Skip(raised + 1).Where(l => !l.StartsWith("   Call: (1) q(")).ToArray());
+        Assert.DoesNotContain(lines, l => l.Contains("Exit: (2) atom_length") || l.Contains("Fail:"));
+    }
+
+    [Fact]
+    public void AnErrorNobodyCatches_LeavesNothingOfItsQueryInTheNextTrace()
+    {
+        var engine = new PrologEngine();
+        engine.ConsultString("p(X) :- atom_length(X, _).\nq(1).\n");
+        var sink = new StringWriter();
+        engine.SetTracing(true, sink);
+        Assert.ThrowsAny<Exception>(() => engine.QueryAll("p(f(x)).").Count());
+        sink.GetStringBuilder().Clear();
+
+        Assert.Single(engine.QueryAll("q(Y)."));
+        engine.SetTracing(false);
+
+        var lines = sink.ToString().Split('\n').Select(l => l.TrimEnd('\r'))
+            .Where(l => l.Trim().Length > 0).ToList();
+        foreach (string l in lines) _log.WriteLine(l);
+        Assert.Equal(2, lines.Count);
+        Assert.StartsWith("   Call: (1) q(", lines[0]);
+        Assert.Equal("   Exit: (1) q(1)", lines[1]);
+    }
+
+    private const string Chain = ":- public r/2.\n"
+        + "r(N, M) :- G = atom_length(abc, N), call(G), s(N, M).\n"
+        + "s(N, M) :- M is N + 1, t(M).\n"
+        + "t(_).\n";
+
+    /// <summary>The ports of <paramref name="goal"/> on <paramref name="engine"/>,
+    /// with no number of an unnamed variable.</summary>
+    private List<string> TraceOn(PrologEngine engine, string goal)
+    {
+        var sink = new StringWriter();
+        engine.SetTracing(true, sink);
+        Assert.Single(engine.QueryAll(goal));
+        engine.SetTracing(false);
+        var lines = sink.ToString().Split('\n').Select(l => l.TrimEnd('\r'))
+            .Where(l => l.Trim().Length > 0)
+            .Select(l => System.Text.RegularExpressions.Regex.Replace(l, @"_G?\d+", "_"))
+            .ToList();
+        foreach (string l in lines) _log.WriteLine(l);
+        return lines;
+    }
+
+    private static PrologEngine WithTheChainCompiled()
+    {
+        var engine = new PrologEngine();
+        engine.IlPromotion.Threshold = 1;
+        engine.ConsultString(Chain);
+        Assert.True(engine.Query("r(_, _).").Success);
+        Assert.True(engine.Query("r(_, _).").Success);
+        Assert.True(engine.IlPromotion.WaitForPendingPromotions(60_000), "promotion did not settle");
+        Assert.True(engine.IlPromotion.IsPromoted(Fid("r", 2)), "r/2 did not promote: the test would show nothing");
+        return engine;
+    }
+
+    private static int Fid(string name, int arity)
+        => Shumway.Core.FunctorTable.Intern(Shumway.Core.AtomTable.Intern(name).Id, arity);
+
+    [Fact]
+    public void CompiledPredicates_RunTheirBytecodeWhileTheTracerIsOn()
+    {
+        // The interpreter is what raises the ports: the oracle is an engine
+        // that never compiled the program.
+        var interpreted = new PrologEngine();
+        interpreted.IlPromotion.Threshold = 0;
+        interpreted.ConsultString(Chain);
+        List<string> expected = TraceOn(interpreted, "r(N, M).");
+        Assert.Contains("   Exit: (1) t(4)", expected);
+
+        PrologEngine engine = WithTheChainCompiled();
+        Assert.Equal(expected, TraceOn(engine, "r(N, M)."));
+
+        // Nothing was dropped, and the compiled code serves again.
+        Assert.False(engine.IlPromotion.CallsStayInterpreted);
+        Assert.True(engine.IlPromotion.IsPromoted(Fid("r", 2)));
+        Assert.True(engine.Query("r(N, M), N == 3, M == 4.").Success);
+    }
+
+    [Fact]
+    public void TraceCalledFromAQueryThatWasSetUpCompiled_TracesWhatItCallsNext()
+    {
+        PrologEngine engine = WithTheChainCompiled();
+        var sink = new StringWriter();
+        engine.Out = sink;
+
+        // trace/0 runs in a query whose calls were already linked to the
+        // compiled code.
+        Assert.True(engine.Query("trace, r(N, M), notrace, N == 3, M == 4.").Success);
+
+        string[] lines = sink.ToString().Split('\n').Select(l => l.TrimEnd('\r'))
+            .Where(l => l.Trim().Length > 0).ToArray();
+        foreach (string l in lines) _log.WriteLine(l);
+        Assert.Contains(lines, l => l.StartsWith("   Call: (2) atom_length(abc,"));
+        Assert.Contains("   Exit: (2) atom_length(abc, 3)", lines);
+        Assert.Contains("   Call: (1) t(4)", lines);
+        Assert.Contains("   Exit: (1) t(4)", lines);
+        Assert.False(engine.IlPromotion.CallsStayInterpreted);
+    }
+
+    [Fact]
     public void TracePredicate_TurnsTracingOnMidQuery()
     {
         var engine = new PrologEngine();

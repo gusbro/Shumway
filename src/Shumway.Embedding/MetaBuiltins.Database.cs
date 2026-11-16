@@ -655,6 +655,10 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException("trace/0 requires a PrologEngine host.");
         host.SetTracing(true, engine.Out);
         engine.Debug = host.DebugSession;
+        // The query that is running was set up with its compiled code linked.
+        // A call misses an empty table and finds the bytecode; what is already
+        // running in compiled code is resumed through the store.
+        engine.IlByFunctorId = null;
         return true;
     }
 

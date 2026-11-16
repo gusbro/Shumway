@@ -87,6 +87,10 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
     public Func<Activation, int, bool>? ResolveByFunctorId(int functorId)
         => SuspendsWasm(functorId) ? null : _store.TryGetResumeWrapper(functorId);
 
+    public Func<Activation, int, bool>? ResolveCallByFunctorId(int functorId)
+        => _store.CallsStayInterpreted && AddressOfFunctor(functorId) >= 0
+            ? null : ResolveByFunctorId(functorId);
+
     // Built on the first miss only: a CallIl site losing its delegate is an
     // eviction between queries, not a per-dispatch event.
     private Dictionary<int, int>? _addressByFid;
@@ -159,6 +163,9 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
 
     public Func<Activation, bool>? OnDispatch(int targetAddress)
     {
+        // A tracer is attached: every call runs its bytecode, and none counts
+        // toward a promotion.
+        if (_store.CallsStayInterpreted) return null;
         if (_evictionStampSeen != _store.EvictionStamp)
         {
             _dispatchCache.Clear();

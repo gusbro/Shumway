@@ -654,6 +654,7 @@ public sealed partial class Activation
         _e = f.RecoveryE;
         _cp = f.RecoveryCp;
         _stackTop = f.SnapE;
+        Debug?.OnUnwind(this);   // ADR-035: the goals the ball left have no port
     }
 
     /// <summary>

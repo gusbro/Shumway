@@ -109,6 +109,24 @@ public interface IDebugSession
     void OnLeaveProlog(Activation engine) { }
 #endif
 
+    /// <summary>The exit port of the goal <see cref="OnRedo"/> just resumed,
+    /// when it gave its next solution inside the dispatch: a builtin with more
+    /// than one, whose solutions no <c>proceed</c> reports.</summary>
+#if NETFRAMEWORK
+    void OnRedoExit(Activation engine);
+#else
+    void OnRedoExit(Activation engine) { }
+#endif
+
+    /// <summary>A ball was caught. The machine is back where the
+    /// <c>catch/3</c> began, the heap top among the rest, and every goal
+    /// called since is gone with no port of its own.</summary>
+#if NETFRAMEWORK
+    void OnUnwind(Activation engine);
+#else
+    void OnUnwind(Activation engine) { }
+#endif
+
     /// <summary>ADR-016 mark phase: a session that holds heap indices of its own
     /// (a tracer keeps each open goal's argument cells so it can show what the
     /// goal bound when it exits) must mark them, or the collector will treat

@@ -776,6 +776,23 @@ public sealed partial class IlPromotionStore
     /// delegates keep serving.</summary>
     public bool PromotionsSuspended { get; set; }
 
+    /// <summary>True while a tracer is attached (ADR-035): a call is
+    /// dispatched to its bytecode whatever compiled code the predicate has,
+    /// and counts toward no promotion. Nothing is dropped, so the compiled
+    /// code serves again once it is false, and it keeps serving the resumes
+    /// of what was already running in it.</summary>
+    public bool CallsStayInterpreted { get; private set; }
+
+    /// <summary>Sets <see cref="CallsStayInterpreted"/>. The stamp moves so
+    /// that the call sites a query set up before the change are linked again
+    /// for the next one.</summary>
+    public void KeepCallsInterpreted(bool on)
+    {
+        if (CallsStayInterpreted == on) return;
+        CallsStayInterpreted = on;
+        EvictionStamp++;
+    }
+
 
     /// <summary>ADR-023 — drops a dynamic predicate's IL snapshot after a mutation;
     /// the next call falls back to the in-place-patched Tier-0 chain and the

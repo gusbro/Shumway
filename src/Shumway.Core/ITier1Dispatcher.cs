@@ -30,6 +30,13 @@ public interface ITier1Dispatcher
     /// recursive C# stack frame.</summary>
     Func<Activation, int, bool>? ResolveByFunctorId(int functorId);
 
+    /// <summary>The compiled code a call to the functor enters, or null when
+    /// the call goes to its bytecode: it has no compiled code, or calls are
+    /// kept on the interpreter (a tracer is attached) and the predicate has
+    /// bytecode to run. A resume asks <see cref="ResolveByFunctorId"/>: what
+    /// began in compiled code finishes there.</summary>
+    Func<Activation, int, bool>? ResolveCallByFunctorId(int functorId);
+
     /// <summary>The linked address of the predicate with this functor id
     /// in the running program, or -1. The interpreter needs it when a
     /// <c>CallIl</c> site finds no delegate (evicted since the site was
