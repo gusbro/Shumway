@@ -230,7 +230,7 @@ Hercutalk comes to answer as the Prolog server does, so the list stays true.
 | The file of `print_and_save_table` | written by the client | written by the server, in the session's directory |
 | A table format other than `csv` or `tsv` | passed on to the client | `domain_error(table_format, F)` |
 | `enable_logging` | the text `"true"` | `false`: no log file is kept |
-| `jupyter:update_completion_data.` | an empty result: the code that collects the names is commented out | a query like any other, whose answer has `predicate_atoms`: the helpers, the predicates the engine documents and the ones the session defined |
+| `jupyter:update_completion_data.` | an empty result: the code that collects the names is commented out | a query like any other, whose answer has `predicate_atoms`: the helpers, the predicates the engine documents, the ones the session defined and the exports of the modules it loaded (`m:p(A)` where `user` does not import them) |
 
 Hercutalk 0.47.0 differed in three more: a line that is not JSON stopped
 it, a variable bound to another was shown as an atom with that variable's
