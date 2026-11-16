@@ -222,19 +222,20 @@ Hercutalk comes to answer as the Prolog server does, so the list stays true.
 
 **Answers that differ:**
 
-| Case | Hercutalk 0.47.0 | Prolog server |
+| Case | Hercutalk 0.47.1 | Prolog server |
 |---|---|---|
-| A line that is not JSON | no answer, and the server stops | `parse_error` (-32700), and the server goes on |
-| `X = Y.` | `Y = 'X'`, an atom with the variable's name | `Y = X` |
-| `X = Y, W = g(X, Y, 'X').` | `W = g('X','X','X')` | `W = g(X,X,'X')` |
 | `X = 1, Y = $X.` | `X` is shown with its earlier value | `X` is the query's own variable; `$X` is the earlier value |
-| An empty list as a binding | the JSON array `[]` | the text `"[]"`, as every other binding |
 | A file of a cell magic that does not parse | a failure, with the reader's message in the output | an exception, with the reader's message as its text; nothing of the file is loaded |
 | A helper inside a conjunction | fails: it has to be the whole query | works |
 | The file of `print_and_save_table` | written by the client | written by the server, in the session's directory |
 | A table format other than `csv` or `tsv` | passed on to the client | `domain_error(table_format, F)` |
 | `enable_logging` | the text `"true"` | `false`: no log file is kept |
 | `jupyter:update_completion_data.` | an empty result: the code that collects the names is commented out | a query like any other, whose answer has `predicate_atoms`: the helpers, the predicates the engine documents and the ones the session defined |
+
+Hercutalk 0.47.0 differed in three more: a line that is not JSON stopped
+it, a variable bound to another was shown as an atom with that variable's
+name, and an empty list was a JSON array. They were reported and 0.47.1
+answers as the Prolog server does.
 
 The completion request is the one row the corpus does not hold: Hercutalk's
 answer is empty, and ours is a list that changes with the engine's
