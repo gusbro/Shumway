@@ -1770,6 +1770,23 @@ a file without a module directive into `m`, and so does `consult(File)`
 called from `m`'s own code. The same rules hold on the two reference
 systems for modules.
 
+**Asking what a module has.** `current_predicate(m:Name/Arity)` enumerates
+what `m` defines, private or exported. Without a module it asks the module
+the call is written in: `user` at the top level and in a plain file, the
+module itself in a `:- module/2` file. An import is not a definition, so it
+is not listed where it is imported. `predicate_property/2` is what tells
+where a predicate comes from:
+
+```prolog
+?- predicate_property(m:helper(_), exported).           % m exports it
+?- predicate_property(user:helper(_), imported_from(M)). % user imports it from M
+?- predicate_property(Head, defined).                   % callable from here, imports included
+```
+
+It fails for a predicate the asking module can neither call by name nor
+import, another module's private among them. `current_module/1` enumerates
+the modules.
+
 The engine's own libraries are modules with export lists, so loading two
 libraries with overlapping surfaces (say `clpfd` and `clpz`, which share
 `#=`, `in`, …) is two imports that collide: the first import wins the bare

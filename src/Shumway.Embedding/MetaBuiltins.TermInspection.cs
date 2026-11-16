@@ -1234,8 +1234,11 @@ public static partial class MetaBuiltins
         // Builtins (and the prelude's library predicates, which are
         // built_in to a program) are excluded — GNU-verified:
         // current_predicate(atom/1) fails there too. predicate_property/2
-        // is the way to ask about a builtin.
-        foreach (int fid in host.AllStaticAndDynamicFunctors())
+        // is the way to ask about a builtin. Asked with no module, it is
+        // user that is asked: the global namespace, which has nothing of an
+        // export-qualified module. A $-name stays: a program's own may start
+        // with one, and it asks for them this way.
+        foreach (int fid in host.GlobalStaticAndDynamicFunctors())
         {
             if (BuiltinsRegistry.TryGetByFunctor(fid, out _)) continue;
             if (host.IsPreludeFunctor(fid)) continue;
@@ -1300,11 +1303,8 @@ public static partial class MetaBuiltins
     }
 
     /// <summary><c>'$ctx_predicate_enum'(+Module, ?PI)</c> — the in-module
-    /// view behind the context-injected <c>current_predicate/1</c>: the
-    /// module's own definitions united with the global view, deduplicated.
-    /// (The qualified form stays strictly per-module — SICStus doctrine;
-    /// this union is only what an UNqualified call inside the module
-    /// sees.)</summary>
+    /// view behind the context-injected <c>current_predicate/1</c>
+    /// (<see cref="PrologEngine.UnqualifiedPredicateView"/>), deduplicated.</summary>
     public static bool CtxPredicateEnum(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
@@ -1319,18 +1319,8 @@ public static partial class MetaBuiltins
             indicators.Add(new CompoundTerm("/", new Term[]
                 { new AtomTerm(name), new IntTerm(arity) }));
         }
-        if (modTerm is AtomTerm ma)
-            foreach (var (_, fid) in host.DefinedModulePredicates(ma.Name))
-            {
-                var (atomId, arity) = FunctorTable.Lookup(fid);
-                Add(AtomTable.GetById(atomId)?.Name ?? "?", arity);
-            }
-        foreach (int fid in Shumway.Builtins.BuiltinsRegistry.AllRegisteredFunctorIds())
-        {
-            var (atomId, arity) = FunctorTable.Lookup(fid);
-            Add(AtomTable.GetById(atomId)?.Name ?? "?", arity);
-        }
-        foreach (int fid in host.AllStaticAndDynamicFunctors())
+        string module = modTerm is AtomTerm ma ? ma.Name : PrologEngine.DefaultModuleName;
+        foreach (int fid in host.UnqualifiedPredicateView(module))
         {
             var (atomId, arity) = FunctorTable.Lookup(fid);
             Add(AtomTable.GetById(atomId)?.Name ?? "?", arity);

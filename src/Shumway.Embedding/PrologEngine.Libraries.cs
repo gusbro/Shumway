@@ -1391,10 +1391,41 @@ public sealed partial class PrologEngine
             // file) are user's as much as a consulted clause, and user:foo(1)
             // as a goal reaches them already. The prelude's are the system's.
             if (mod == DefaultModuleName)
-                foreach (int fid in AllStaticAndDynamicFunctors())
+                foreach (int fid in GlobalStaticAndDynamicFunctors())
                     if (!IsPreludeFunctor(fid) && Fresh(fid)) yield return (mod, fid);
         }
     }
+
+    /// <summary>What an unqualified <c>current_predicate/1</c> written in
+    /// <paramref name="module"/> answers for. An export-qualified module asks
+    /// about itself, as <c>current_predicate(Module:PI)</c> does (SICStus). One
+    /// loaded as SWI code sees what it can call by name, as it does there: its
+    /// own, its imports, the builtins and the global namespace. Any other
+    /// module's predicates are global, so it sees <c>user</c>'s.</summary>
+    internal IEnumerable<int> UnqualifiedPredicateView(string module)
+    {
+        if (!_modules.TryGetValue(module, out ModuleManifest? manifest)
+            || !manifest.IsExportQualified)
+        {
+            foreach (var (_, fid) in DefinedModulePredicates(DefaultModuleName))
+                yield return fid;
+            yield break;
+        }
+        foreach (var (_, fid) in DefinedModulePredicates(module))
+            yield return fid;
+        if (manifest.Dialect != "swi") yield break;
+        foreach (int fid in manifest.Imports.Keys)
+            yield return fid;
+        foreach (int fid in Shumway.Builtins.BuiltinsRegistry.AllRegisteredFunctorIds())
+            yield return fid;
+        foreach (int fid in GlobalStaticAndDynamicFunctors())
+            yield return fid;
+    }
+
+    /// <summary>Whether <paramref name="module"/> exports the functor: the
+    /// <c>exported</c> property of <c>predicate_property/2</c>.</summary>
+    internal bool ModuleExportsFunctor(string module, int fid)
+        => _modules.TryGetValue(module, out ModuleManifest? m) && m.ExportFunctors.Contains(fid);
 
     /// <summary>The modules a program sees, in name order: every module of
     /// the table but the engine's own (<c>$</c>-named). <c>current_module/1</c>

@@ -197,6 +197,9 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     // Built by the same scan, invalidated with it: the head functors a
     // grammar rule defines (predicate_property(H, non_terminal)).
     internal HashSet<int>? _nonTerminalFunctorsCache;
+    // Built by the same scan, invalidated with it: the head functors of the
+    // global namespace, which an export-qualified module adds nothing to.
+    internal HashSet<int>? _globalStaticHeadFunctorsCache;
     // The static clauses by the head functor they define, for clause/2 —
     // dropped with _staticHeadFunctorsCache (DropStaticClauseCaches) and by
     // a derivation bump, the two signals that the module manifests changed.
