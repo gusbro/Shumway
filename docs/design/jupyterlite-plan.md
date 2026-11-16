@@ -1,7 +1,7 @@
 # Jupyter notebooks on WebShumway: plan
 
 Status: Phase 0 done but for the default session limit, which waits for the
-server (Phase 2); Phase 1 done (2026-11-15). The architecture is in
+server (Phase 2); Phase 1 done (2026-11-15); Phase 2 in progress. The architecture is in
 [`jupyterlite-architecture.md`](jupyterlite-architecture.md); the decisions
 are in ADR-066 to ADR-073.
 
@@ -70,8 +70,20 @@ of"). The manual pass over the guide's examples found two things:
   alias), output capture to memory, logging, boot, and JSON reading and
   writing.
 - Add the `protocol` method **[ext]**.
-- Precompile the server into a bundle (D10).
 - Apply the D8 exit condition once the first third of the corpus passes.
+
+**State (2026-11-16): in progress.**
+- Done: the harness and a corpus of 18 sessions; the request loop with
+  `retry`, `$Var` and `halt`; output capture; the file, table and line
+  magics; the helpers behind them; the predicate docs; the `protocol`
+  method.
+- The D8 exit condition did not apply: the server answers the whole corpus,
+  and what differs is listed in the protocol document, §9.
+- Left: residual goals (O2), `trace/1`, the names for completion, and the
+  message for a clause in an ordinary cell (O1).
+- Moved to Phase 3: the precompiled bundle (D10). What it saves is the
+  compilation of the server when a notebook opens, which is measured in a
+  browser.
 
 **Acceptance: differential tests against Hercutalk on the desktop.** Logtalk
 already runs on Shumway (`shumwaylgt`), so the reference is Hercutalk 0.47.0
@@ -90,6 +102,8 @@ either fixed or documented as intended, for example module-qualified names.
 ## Phase 3: MVP in the browser
 
 - **.NET:** the Jupyter wasm app, exposing the session API.
+- Precompile the server into a bundle (ADR-067 D10), with the time a
+  notebook takes to open measured before and after.
 - **`@shumway/web-runtime`:**
   - `isolate.js`;
   - the service worker (ADR-069);
@@ -158,8 +172,8 @@ Configurable callback in `jupyter_widgets`, `jupyter_forms` and
 
 | Id | Question | Leaning |
 |---|---|---|
-| O1 | Prolog variant: accept a cell containing only clauses directly, as hhu-stups' kernel does, as an implicit `%%user+` **[ext]**? Hercutalk enters code through magics only | decide in Phase 2, after reading how Hercutalk's `term_handling` handles it |
-| O2 | `residual_goals` final shape | agree with Hercutalk |
+| O1 | Prolog variant: accept a cell containing only clauses directly, as hhu-stups' kernel does, as an implicit `%%user+` **[ext]**? Hercutalk enters code through magics only | **Decided (2026-11-16): no.** A fact cannot be told from a query, so a mixed cell would load its rules and run its facts. Code enters through magics, and a term that can only be a clause is an error that points to `%%user` |
+| O2 | `residual_goals` final shape | **Decided (2026-11-16):** a list of goals as text, as the top level shows them (protocol, §4). Proposed to Hercutalk; if it does not take it, the Logtalk variant shows no constraints |
 | O3 | Where imported libraries live in the lite site (`/drive/lib` or the bundle) | decide in Phase 3 from WebShumway's import code |
 
 ## Coordination with Paulo Moura (Hercutalk, Logtalk)
@@ -180,3 +194,6 @@ To raise early, because several items change his code or depend on it:
 9. Courtesy note: the Prolog variant's server is written against the
    protocol and tested against Hercutalk's responses, and carries none of
    its code.
+10. What the differential test found in Hercutalk's answers (protocol, §9):
+    a variable that is another one shown as a quoted atom, the empty list
+    sent as a JSON array, and a line that is not JSON ending the server.

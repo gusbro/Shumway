@@ -5,6 +5,9 @@
 Proposed (2026-11-14). Design only; nothing is implemented. Records D4
 (revised) and D15.
 
+Accepted in part (2026-11-16): the residual constraints in a query's answer,
+below. The rest stays proposed.
+
 ## Context
 
 Hercutalk's Python half (about 2,400 lines) does five things:
@@ -83,11 +86,16 @@ scripts run. Those files are Apache-2.0 (ADR-067).
 - **`jupyter:display(+Mime, +Data)`** emits a raw `display_data`: SVG, HTML
   or markdown built in Prolog, for example to draw CLP solutions. It is a new
   additional-data key, marked as an extension in the protocol.
-- **Residual constraints in bindings.** Hercutalk shows a `clpfd` variable
-  as `X in Dom` (a `dom` entry in the binding). For any attributed variable
-  (`clpfd`, `dif`, `freeze`), show the residual goals, as Shumway's top level
-  does, through `copy_term/3`. Check how Hercutalk encodes this, so that both
-  render alike.
+- **Residual constraints in a query's answer (accepted 2026-11-16).**
+  Hercutalk shows a `clpfd` variable as `X in Dom` (a `dom` entry in the
+  binding) on the backends where it knows how to ask for the domain. On
+  Shumway it shows nothing: `X in 1..5.` answers with no bindings. For any
+  attributed variable (`clpfd`, `dif`, `freeze`), the Prolog server sends the
+  residual goals, as Shumway's top level shows them, through `copy_term/3`.
+  - They travel under a key of their own, `residual_goals`: a list of goals
+    as text, written with the query's variable names (protocol, §4).
+  - The key is proposed to Hercutalk. Until it takes it, the Logtalk variant
+    shows no constraints on Shumway.
 
 **Principle.** Whatever can move from the kernel into the server (formatting
 tables, building SVG or specs, writing files) moves there. It then serves

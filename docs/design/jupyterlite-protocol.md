@@ -13,6 +13,11 @@ disagree, the code wins, and the disagreement is a bug in this document.
 Additions are marked **[ext]** and must not change the meaning of anything
 inherited.
 
+**What is checked.** `tests/jupyter/corpus` holds sessions of requests and
+what Hercutalk answered to each. The Prolog server is sent the same requests
+and its responses are compared with those (ADR-067 D8). §9 lists where it
+answers differently on purpose.
+
 Decisions behind this document: ADR-067 (protocol and server) and ADR-072
 (outputs).
 
@@ -35,9 +40,9 @@ Decisions behind this document: ADR-067 (protocol and server) and ADR-072
 
 | Method | Params | Result | Shumway notes |
 |---|---|---|---|
-| `call` | `{"code": "<cell text>"}` | per-term results (§3), or `""` for an empty cell | the core of everything |
+| `call` | `{"code": "<cell text>"}` | per-term results (§3); `""` for an empty cell; `{}` for a cell with nothing to run (`%%save`, `%%highlight`) | the core of everything |
 | `backend` | none | atom: the backend's `prolog_dialect` | answers `shumway` |
-| `enable_logging` | none | boolean: whether a log file was created | the log goes to the console or a MEMFS file |
+| `enable_logging` | none | boolean: whether a log file was created | answers `false`: no log file is kept |
 | `version` | none | `"Major.Minor.Patch"` of the backend | Shumway's version |
 | `jupyter_predicate_docs` | none | object: docs of the predicates in `jupyter` | module `jupyter` here (ADR-067 D9) |
 | `protocol` **[ext]** | none | `{"version": 1, "implementation": "shumway"}` | checked by the kernel at session start (ADR-073) |
@@ -87,8 +92,16 @@ Each entry has a `status`:
 { "status": "error", "error": { "code": -4712, "message": "Exception", "data": { ... } } }
 ```
 
-The `data` object carries the error message and any output. The exact
-fields are those built by `jupyter_jsonrpc::json_error_term/5`.
+The `data` object carries:
+
+- the text of the error, under `prolog_message` from the Prolog server and
+  `logtalk_message` from the Logtalk one (ADR-067 D5). The kernel reads
+  whichever is present. The text is the system's own: the Prolog server
+  sends the line Shumway's top level shows;
+- `output`, when the term wrote something before it failed or raised.
+
+**A cell that does not parse** is answered with an error for the whole
+request (`error` at the top level, code -4712), and none of it runs.
 
 **`halt`:** `{ "status": "halt" }`. The server stopped, and the next execution
 needs a new session.
@@ -100,6 +113,7 @@ reported for the **first** error, as in Hercutalk.
 
 | Code | Name |
 |---|---|
+| -32700 | parse_error: the line is not JSON |
 | -32600 | invalid_request |
 | -32601 | method_not_found |
 | -32602 | invalid_params |
@@ -123,11 +137,15 @@ reported for the **first** error, as in Hercutalk.
 | `input_html` | HTML with callbacks | `text/html`, once the callback is configurable | 4 |
 | `set_prolog_backend` | backend name | `not_applicable` on Shumway | |
 | `display_data` **[ext]** | `{"mime": "...", "data": "..."}`, from `jupyter:display/2` | that MIME, plus `text/plain` | 1 |
-| `residual_goals` **[ext]** | per variable, list of goal strings | appended to the bindings | 1 |
+| `residual_goals` **[ext]** | list of goal strings | shown after the bindings, one to a line | 1 |
 
-`residual_goals` only adds information; a client that does not know it
-still shows `dom` as before. Its final shape is settled together with
-Hercutalk (ADR-072).
+`residual_goals` holds the constraints left on the variables of the query
+(`clpfd`, `dif`, `freeze`), as the goals Shumway's top level shows, each
+written with the query's variable names:
+`"residual_goals": ["X in 1..5", "X#<Y"]`. The key is absent when there are
+none. It only adds information: a client that does not know it still shows
+`dom` as before. Accepted for the Prolog variant on 2026-11-16 (plan, O2),
+and proposed to Hercutalk so that both variants show constraints alike.
 
 ## 5. Cell semantics (summary, authoritative in `jupyter_term_handling`)
 
@@ -137,23 +155,40 @@ Hercutalk (ADR-072).
   `handle_query_term/6`. **Program code is entered with cell magics**
   (`%%user`, `%%file`, …), which write a file and load it. Treat the code as
   the authority, and confirm with Paulo Moura that the comment is outdated.
-- **Open for the Prolog variant (plan, O1):** whether a cell that contains
-  only clauses is accepted directly, as in hhu-stups' `prolog_kernel`, as an
-  **[ext]** that behaves like an implicit `%%user+`.
-- **`$Var` in a query** is replaced by the latest value of `Var` from a
-  previous query (`jupyter_variable_bindings`).
-- **Queries:**
-  - `retry`/`jupyter:retry` makes the previous goal compute its next
-    solution (ADR-067 explains the nested loop);
-  - `halt`/`jupyter:halt` stops the server;
-  - calls to the special `jupyter` predicates;
-  - `trace/0,1,2` and `leash/1`;
-  - any other term when it is the only one in the cell.
-- **Cell magics** are recognised by prefix at the start of the cell:
-  `%%user`, `%%user+`, `%%file`, `%%file+`, `%%save`, `%%load`,
-  `%%highlight`, `%%table`, `%%csv`, `%%tsv`, `%%tree`, `%%data`. There are
-  also line magics. In the Prolog variant, `%%user` writes `user.pl` and
-  consults it, where Hercutalk writes `user.lgt` and loads it.
+- **The Prolog variant keeps this rule** (plan, O1, decided 2026-11-16). A
+  fact in an ordinary cell cannot be told from a query, so a cell is never
+  loaded as a program by guessing. A term that can only be a clause (a rule,
+  a directive, a grammar rule) is an error whose text points to `%%user`.
+- **A cell may hold several queries.** Each is answered in order, under its
+  position, and an error or a failure in one does not stop the next.
+- **`$Var` in a query** is the latest value an earlier query gave `Var`. A
+  variable left unbound has none, and neither has one whose name starts with
+  an underscore. When the query has no other use of `Var`, `Var` is shown
+  among its bindings with that value.
+- **`retry`/`jupyter:retry`** asks the latest query for its next solution.
+  The queries that had a solution are a stack: when the latest has no more,
+  `retry` answers a failure and the one before it becomes the latest. With
+  no query left, the error is `no_active_call`.
+- **`halt`/`jupyter:halt`** answers `{"status": "halt"}` and stops the
+  server. What follows it in the cell does not run.
+- **Bindings.** A variable is shown with its value written with quotes where
+  needed. One left unbound is not shown, unless it is the same variable as
+  an earlier one of the query. A variable whose name starts with an
+  underscore is not shown.
+- **Output.** What a query writes to standard output or standard error is
+  its `output`, less one final line end.
+- **Cell magics** are recognised on the first line of the cell: `%%user`,
+  `%%user+`, `%%file F`, `%%file+ F`, `%%save F`, `%%load F`, `%%highlight`,
+  `%%table`, `%%csv F`, `%%tsv F`, `%%tree`, `%%data`. A first line that
+  names none of them is a comment. In the Prolog variant `%%user` writes
+  `user.pl` and consults it, where Hercutalk writes `user.lgt` and loads it.
+  The load is a query of the cell: its answer carries what loading wrote.
+- **Line magics** are a cell that is `%NAME` and nothing else: `%bindings`,
+  `%queries`, `%help`, `%pwd`, `%magic`, `%versions`, `%flags`. Each runs a
+  helper of `jupyter`.
+- **Helpers.** A helper of module `jupyter` that shows more than text adds a
+  key of §4 to the answer of its query. `print_table`, `print_and_save_table`
+  and `print_queries` are also accepted without the module.
 
 ## 6. Vega-Lite from `show_data` [ext, proposed upstream]
 
@@ -178,3 +213,37 @@ When a goal reads from `user_input`, the session raises an input request.
 The kernel sends Jupyter an `input_request`, then forwards the reply with
 `SessionSupplyInput`, or calls `SessionSupplyEndOfFile` when the input is
 closed. JSON requests never travel on `user_input` (§1).
+
+## 9. Where the Prolog server differs from Hercutalk on purpose
+
+Each of these is declared, with its reason, in the test that compares the two
+(`tests/Shumway.Tests.Wasm/NotebookServerCorpusTests.cs`). That test fails if
+Hercutalk comes to answer as the Prolog server does, so the list stays true.
+
+**Answers that differ:**
+
+| Case | Hercutalk 0.47.0 | Prolog server |
+|---|---|---|
+| A line that is not JSON | no answer, and the server stops | `parse_error` (-32700), and the server goes on |
+| `X = Y.` | `Y = 'X'`, an atom with the variable's name | `Y = X` |
+| `X = Y, W = g(X, Y, 'X').` | `W = g('X','X','X')` | `W = g(X,X,'X')` |
+| `X = 1, Y = $X.` | `X` is shown with its earlier value | `X` is the query's own variable; `$X` is the earlier value |
+| An empty list as a binding | the JSON array `[]` | the text `"[]"`, as every other binding |
+| A file of a cell magic that does not parse | a failure, with the reader's message in the output | an exception, with the reader's message as its text; nothing of the file is loaded |
+| A helper inside a conjunction | fails: it has to be the whole query | works |
+| The file of `print_and_save_table` | written by the client | written by the server, in the session's directory |
+| A table format other than `csv` or `tsv` | passed on to the client | `domain_error(table_format, F)` |
+| `enable_logging` | the text `"true"` | `false`: no log file is kept |
+
+**Text that is each system's own.** These are compared without their text:
+
+- the text of an error message, and the name of its key (§3);
+- the number in the name of a variable that has no name;
+- what `%versions`, `%help`, `%magic`, `%flags`, `%pwd`, `%queries`,
+  `print_query_time` and `jupyter_predicate_docs` say. A helper is written
+  `jupyter:Name` here and `jupyter::Name` there.
+
+**Not visible on the wire.** In Hercutalk every query that had a solution
+stays alive until a `retry` exhausts it. The Prolog server keeps alive only a
+query that left choice points. The answers are the same, and the stack of a
+session does not grow with its cells.
