@@ -230,25 +230,40 @@ trace(Goal) :-
 
 % update_completion_data: the names a kernel completes with, as additional
 % data of the answer. Each is a head with its arguments lettered: the
-% helpers of this module, the predicates the engine documents and the ones
-% the session defined.
+% helpers of this module, the predicates the engine documents, the ones the
+% session defined and the exports of the modules it loaded.
 update_completion_data :-
     findall(jupyter:Name/Arity, doc(Name/Arity, _, _), Helpers),
     '$jupyter_documented'(Documented),
-    findall(Name/Arity, session_predicate(Name, Arity), Defined),
+    findall(Indicator, session_predicate(Indicator), Defined),
     append(Documented, Defined, Unsorted),
     sort(Unsorted, Indicators),
     append(Helpers, Indicators, All),
     head_texts(All, Texts),
     '$jupyter_extra'(predicate_atoms, Texts).
 
-% The engine lists under user the predicates of every loaded module, the
-% private ones too, and has no property that tells them apart. What another
-% module has is left out, and with it that module's exports.
-session_predicate(Name, Arity) :-
+% What user defines, and what the modules export: by name where user
+% imports it, qualified where a cell has to qualify it to call it. A
+% module's private predicates are not offered. The server's own modules are
+% left out; the helpers of jupyter are listed above.
+session_predicate(Name/Arity) :-
     current_predicate(user:Name/Arity),
-    \+ sub_atom(Name, 0, 1, _, '$'),
-    \+ ( current_module(Module), Module \== user, current_predicate(Module:Name/Arity) ).
+    \+ sub_atom(Name, 0, 1, _, '$').
+session_predicate(Indicator) :-
+    current_module(Module),
+    \+ server_module(Module),
+    current_predicate(Module:Name/Arity),
+    functor(Head, Name, Arity),
+    predicate_property(Module:Head, exported),
+    (   predicate_property(user:Head, imported_from(Module)) -> Indicator = Name/Arity
+    ;   Indicator = Module:Name/Arity
+    ).
+
+server_module(user).
+server_module(jupyter).
+server_module(jupyter_json).
+server_module(jupyter_session).
+server_module(jupyter_server).
 
 head_texts([], []).
 head_texts([Indicator|Indicators], [str(Text)|Texts]) :-

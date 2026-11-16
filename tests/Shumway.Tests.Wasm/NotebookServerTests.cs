@@ -493,6 +493,27 @@ public sealed class NotebookServerTests : IDisposable
     }
 
     [Fact]
+    public void TheNamesToCompleteWith_HaveTheExportsOfTheLoadedModules()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+        string[] Names() => First(server, "jupyter:update_completion_data.")["predicate_atoms"]!
+            .AsArray().Select(name => (string)name!).ToArray();
+
+        string[] before = Names();
+        // n is loaded by m, so user does not import it; m is loaded by the cell, so user does.
+        First(server, "%%save n.pl\n:- module(n, [npub/0]).\nnpub.\nnpriv.");
+        Assert.Equal("success", (string)First(server, "%%file m.pl\n:- module(m, [mpub/1]).\n:- use_module(n).\nmpub(1).\nmpriv(2).")["status"]!);
+        string[] after = Names();
+
+        Assert.Equal(new[] { "mpub(A)", "n:npub" }, after.Except(before).Order(StringComparer.Ordinal));
+        // What a cell can call, as it calls it.
+        Assert.Equal("success", (string)First(server, "mpub(X), n:npub.")["status"]!);
+        // The server's own modules are not offered, the helpers of jupyter but as helpers.
+        Assert.DoesNotContain(after, name => name.StartsWith("jupyter_", StringComparison.Ordinal));
+        Assert.DoesNotContain(after, name => name.Contains("print_table") && !name.StartsWith("jupyter:", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ADeterministicQuery_IsNotKeptAlive()
     {
         NotebookServer server = _notebooks.Open("a").Server;
