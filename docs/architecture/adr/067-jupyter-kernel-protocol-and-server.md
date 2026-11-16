@@ -2,10 +2,13 @@
 
 ## Status
 
-Proposed (2026-11-14). Design only; nothing is implemented. Records D5, D8,
-D9 and D10. D5 was first decided as "one call per request, no loop". It was
-reversed before anything was written, once the retry mechanism below was
-found in Hercutalk's code.
+Accepted (2026-11-15). Nothing is implemented. Records D5, D8, D9 and D10.
+Two decisions changed before anything was written:
+- D5 was first "one call per request, no loop". It was reversed once the
+  retry mechanism below was found in Hercutalk's code.
+- D8 was first a translation of Hercutalk's server, module by module. On
+  acceptance it became a server of our own, with Hercutalk as the reference
+  of a differential test.
 
 ## Context
 
@@ -39,8 +42,9 @@ dgelessus (the hhu-stups origin). `jupyter_widgets`, `jupyter_forms` and
 - **The wire format is Hercutalk's**: same methods, same result shape, same
   additional-data keys. Extensions are allowed; they are marked as such in
   the protocol document and offered upstream.
-- **Inside the session, the server's `loop/3` runs as in Hercutalk**, on the
-  session's engine thread (ADR-068). It blocks reading the next request from
+- **Inside the session, the server runs a request loop as Hercutalk's
+  `loop/3` does**, nested inside a goal that succeeded, on the session's
+  engine thread (ADR-068). It blocks reading the next request from
   an in-memory **request pipe** and writes responses to an in-memory
   **response pipe**. This is Hercutalk's stdin/stdout without a process, and
   it follows the pattern of `PageInput`'s `PageReader`.
@@ -48,8 +52,8 @@ dgelessus (the hhu-stups origin). `jupyter_widgets`, `jupyter_forms` and
   one line on the request pipe and completes when the matching response line
   appears on the response pipe. JavaScript never sees the loop.
 - **Requests are read from a dedicated stream, not `current_input`.**
-  Hercutalk's `read_message/1` reads `current_input`. If our port read it
-  too, a `read/1` in a cell would consume JSON. The port reads requests from
+  Hercutalk's `read_message/1` reads `current_input`. If our server read it
+  too, a `read/1` in a cell would consume JSON. The server reads requests from
   a stream alias (`jupyter_requests`), and `user_input` is bound to the
   session's page input (ADR-068). This is a small change worth proposing to
   Hercutalk, which today shares one stdin.
@@ -68,48 +72,64 @@ forever. With one engine per kernel (ADR-068) that no longer matters: all of
 that kernel's engine work goes through its server anyway, completion and
 inspection included.
 
-### D8: Hybrid server: translate what defines behaviour, write the transport
+### D8: A server of our own, with Hercutalk as the reference
 
-Translate **module by module**, keeping file names, predicate names and
-structure, so that `jupyter_X.lgt` and `jupyter_X.pl` can be compared side by
-side:
+- **The server is written for Shumway**, in Prolog modules of its own.
+  Hercutalk's code is not translated or copied. It is read as the
+  specification of what a cell means, and what is learnt from it goes into
+  the protocol document and into the corpus below.
+- **A differential test says what is correct.** The same JSON-RPC lines go to
+  Hercutalk, running on desktop Shumway through Logtalk, and to our server,
+  and the responses are compared. A difference is fixed, or documented as
+  intended (module-qualified names, for example). A case found later joins
+  the corpus.
+- **What is shared with Hercutalk is interface:**
+  - the wire format (D5);
+  - the names a notebook's author writes: the helpers of D9, `retry`, `halt`
+    and the magics;
+  - how `retry` works: the goal stays alive under a nested request loop.
+- **The server uses what the engine has**: its term writer, residual goals
+  through `copy_term/3`, output captured to an in-memory stream, a session's
+  own input and output (ADR-068). It does not carry the portable forms of
+  these that a server for many Prolog systems needs.
 
-| Hercutalk file | Treatment |
+Each part of the server has a place in Hercutalk where its behaviour is
+defined:
+
+| Part of the server | Where Hercutalk defines the behaviour |
 |---|---|
-| `jupyter_term_handling` | translate (cell semantics, the heart of it) |
-| `jupyter_request_handling` | translate, **including `loop/3`** |
-| `jupyter_query_handling` | translate; replace capture-to-file with capture to an in-memory stream |
-| `jupyter_variable_bindings` | translate |
-| `jupyter_preferences` | translate |
-| `jupyter` (helpers) | translate into module `jupyter` (D9) |
-| `jupyter_jsonrpc` | translate the message layer; JSON reading and writing as below |
-| `jupyter_logging` | write ours (console, or a file in MEMFS) |
-| `jupyter_server`, `loader` | write ours (boot inside the session) |
-| `jupyter_widgets`, `jupyter_forms`, `jupyter_inputs` | later phase (ADR-072); Apache-2.0, keep that licence on those files |
+| Cell semantics: what a clause, a directive, a query or a magic does | `jupyter_term_handling` |
+| The request loop, dispatch and `retry` | `jupyter_request_handling` |
+| Running a query with its output captured, in memory and not in a file | `jupyter_query_handling` |
+| Bindings carried across cells (`$Var`) | `jupyter_variable_bindings` |
+| Preferences | `jupyter_preferences` |
+| The helper module `jupyter` (D9) | `jupyter` |
+| JSON-RPC messages | `jupyter_jsonrpc` |
+| Transport, boot and logging | nowhere: they belong to the host |
+| Widgets, forms and inputs | a later phase, decided in ADR-072 |
 
-- **Mapping:** `:- object(X)` becomes `:- module(X, [...])`, `uses/2` becomes
-  imports, and `X::p` becomes `X:p`. Logtalk-specific calls
-  (`logtalk::print_message`, `meta::map`, `term_io`, `debugger`) map to
-  Shumway equivalents. A call with no equivalent is listed in the port's
-  notes rather than improvised.
-- **JSON:** Shumway has no JSON library. Provide `jupyter_json_read/2` and
-  `jupyter_json_write/2` (C# builtins, or Prolog if fast enough) producing
-  and consuming **the term shape Hercutalk's code expects** (`json([Key-Value,
-  ...])` for objects and `@(null)` for null, as seen in
-  `jupyter_request_handling`. The exact encoding of strings, booleans and
-  numbers must be read off the server code and Logtalk's `json` library
-  before writing the bridge). Fidelity to that shape is what lets the
-  translated code run unchanged.
-- **Licence:** each translated file keeps the original MIT notice and adds
-  its own line, for example "Translated to Prolog for Shumway from Hercutalk
-  0.47.0 (865d6fd)".
-- **Version pin:** the port records the Hercutalk version it was translated
-  from. Porting a later upstream change is then a diff between files that
-  correspond one to one.
-- **Exit condition:** if translating `jupyter_term_handling` turns out to be
-  forced (deeply tied to Logtalk, or unmaintainable), stop after the first
-  third and re-evaluate writing that module from scratch against the protocol
-  document.
+- **JSON:** Shumway has no JSON library. The server gets
+  `jupyter_json_read/2` and `jupyter_json_write/2` (C# builtins, or Prolog if
+  fast enough). The term shape is the server's own choice, since no code
+  written for another shape runs on it.
+- **Reference version:** the corpus records the Hercutalk version its
+  expected responses came from (0.47.0, `865d6fd`, to begin with). A later
+  upstream change is taken by running the corpus against the new version and
+  reading what differs.
+- **Exit condition:** if the server does not converge on the corpus (new
+  differences keep appearing in cell semantics after the first third of the
+  corpus passes), stop and re-evaluate translating `jupyter_term_handling`,
+  with its MIT notice, as a stated exception to this repository's rule on
+  other projects' code.
+
+**Why not a translation.**
+- This repository holds its own implementations, with equivalence shown by
+  tests. The Logtalk adapter was rewritten that way.
+- A translation brings Hercutalk's forms of what the engine already does, and
+  every upstream change is then ported by hand.
+- Hercutalk web runs Hercutalk's server itself, unmodified, on Logtalk. That
+  is where fidelity to its code matters. In the Prolog variant what has to
+  agree is the protocol and the behaviour.
 
 ### D9: Helper module `jupyter`
 
@@ -127,15 +147,16 @@ will use for Logtalk.
 
 ## Consequences
 
-- `retry`, nested queries and every semantic detail behave as in Hercutalk,
-  because the code that defines them is the same code.
-- The only first-party code on the server side is the transport, the boot,
-  logging, output capture and JSON.
+- `retry`, nested queries and the cell semantics the corpus covers behave as
+  in Hercutalk, because a differential test says so, not because the code is
+  shared.
+- A behaviour the corpus does not cover may differ, and is fixed when found.
+- The server is first-party code throughout.
 - `read/1` from a cell works, and works better than in Hercutalk, because
   requests and user input are separate streams.
 - An interrupt loses the session's state, as it does in Hercutalk today.
-- Upstream changes have to be ported by hand. The version pin keeps that
-  manageable.
+- An upstream change is found by running the corpus against the new
+  Hercutalk version, and written here by hand.
 - The session's engine is busy for as long as the kernel lives. That is fine
   with one engine per kernel, and it is the reason ADR-068 is a prerequisite.
 
@@ -146,10 +167,12 @@ will use for Logtalk.
   across requests.
 - **Port the original hhu-stups server.** It is SWI/SICStus-specific, and
   Hercutalk has since moved on (portability, magics, data). Rejected.
-- **Write a server from scratch against the protocol.** The protocol fixes
-  the wire format, but cell semantics have no specification other than
-  `jupyter_term_handling`'s 1,400 lines. Rejected as the default, and kept as
-  D8's exit condition.
+- **Translate Hercutalk's server module by module (the first D8).** Objects
+  become modules, names and structure stay, and the files compare one to one
+  with their originals, each with its MIT notice. Cell semantics have no
+  specification other than `jupyter_term_handling`'s 1,400 lines, and a
+  translation carries them over whole. Rejected for the reasons in D8, and
+  kept as its exit condition.
 - **Run Hercutalk's Python half in Pyodide.** It needs `subprocess`, an HTTP
   server thread, the native `dot` binary and ZMQ, none of which Pyodide
   provides. Rejected (see ADR-072).

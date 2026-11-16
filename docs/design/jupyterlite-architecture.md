@@ -48,9 +48,9 @@ supports Shumway as a backend (the `shumwaylgt` integration script in Logtalk).
 
 1. **Engine.** WebShumway's existing browser-wasm runtime with threads
    (ADR-042 §3). Nothing in the engine knows it is in a notebook.
-2. **Logical server.** Prolog code running on the engine: the Hercutalk
-   JSON-RPC server, translated from Logtalk objects to Prolog modules
-   (ADR-067). It owns cell semantics: what a clause, directive or query
+2. **Logical server.** Prolog code running on the engine: a JSON-RPC server
+   of our own that speaks Hercutalk's protocol and is tested against
+   Hercutalk's responses (ADR-067). It owns cell semantics: what a clause, directive or query
    cell does, `retry`, variable bindings carried across cells, magics, and
    the `jupyter` helper module.
 3. **Session host (.NET).** One session per kernel: an engine, its thread,
@@ -107,7 +107,7 @@ The WebShumway demo becomes a consumer of 1 and 3 with a single session.
 | D5 | Hercutalk's JSON-RPC as the shared contract; **blocking loop inside the session, `Task` per request outside** | 067 |
 | D6 | Runtime hosted in the JupyterLite page; reuse `QueryCancel` and `PageInput` | 068 |
 | D7 | One engine per kernel, living for the session; configurable limit | 068 |
-| D8 | Hybrid server: translate Hercutalk's semantic modules **and its request loop**; write the transport and output capture | 067 |
+| D8 | A server of our own, written against the protocol, with Hercutalk as the reference of a differential test | 067 |
 | D9 | Helpers in a Prolog module `jupyter` | 067 |
 | D10 | Server precompiled into the bundle | 067 |
 | D11 | Identity: `shumway_prolog`, standard Prolog `language_info`, site default kernel | 066 |

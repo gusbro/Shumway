@@ -342,7 +342,7 @@ When proposing changes:
 | Big integers live on the heap (blocks of 60-bit limbs) | ADR-064 |
 | Reclaiming the helpers of runtime-asserted rules (proposed) | ADR-065 |
 | Jupyter notebooks on WebShumway: scope, variants, identity (proposed) | ADR-066 |
-| The notebook kernel protocol and the Prolog-side server (proposed) | ADR-067 |
+| The notebook kernel protocol and the Prolog-side server | ADR-067 |
 | Hosting the runtime in a notebook page: one engine per kernel | ADR-068 |
 | Service workers and cross-origin isolation for the notebook site (proposed) | ADR-069 |
 | Files in notebooks: a mirror between the contents store and MEMFS (proposed) | ADR-070 |

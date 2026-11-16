@@ -58,17 +58,20 @@ of"). The manual pass over the guide's examples found two things:
 
 ## Phase 2: The Prolog server, headless (ADR-067)
 
-- Translate `jupyter_term_handling`, `jupyter_request_handling` (with
-  `loop/3`), `jupyter_query_handling`, `jupyter_variable_bindings`,
-  `jupyter_preferences`, `jupyter` and the message layer of
-  `jupyter_jsonrpc` into Prolog modules, keeping names and structure. Each
-  file keeps its MIT notice and records the Hercutalk version.
+- Build the differential harness first: the same JSON-RPC lines to Hercutalk
+  on desktop Shumway and to our server, and the responses compared. The
+  corpus grows with the server.
+- Write the server as Prolog modules of our own (ADR-067 D8): cell semantics,
+  the request loop with `retry`, a query run with its output captured,
+  bindings carried across cells, preferences, the helper module `jupyter` and
+  the JSON-RPC messages. Hercutalk's code is read as the specification of
+  each; none of it is translated or copied.
 - Write the transport (request and response streams, the `jupyter_requests`
-  alias), output capture to memory, logging, boot, and the JSON bridge
-  producing Hercutalk's term shape.
+  alias), output capture to memory, logging, boot, and JSON reading and
+  writing.
 - Add the `protocol` method **[ext]**.
 - Precompile the server into a bundle (D10).
-- Apply the D8 exit condition after the first third of `term_handling`.
+- Apply the D8 exit condition once the first third of the corpus passes.
 
 **Acceptance: differential tests against Hercutalk on the desktop.** Logtalk
 already runs on Shumway (`shumwaylgt`), so the reference is Hercutalk 0.47.0
@@ -80,8 +83,8 @@ on desktop Shumway. Build a corpus of cells covering:
 - magics;
 - `print_table`.
 
-Feed the same JSON-RPC lines to the translated server through a desktop
-harness, and compare the responses with Hercutalk's. Differences must be
+Feed the same JSON-RPC lines to our server through the desktop harness, and
+compare the responses with Hercutalk's. Differences must be
 either fixed or documented as intended, for example module-qualified names.
 
 ## Phase 3: MVP in the browser
@@ -155,7 +158,7 @@ Configurable callback in `jupyter_widgets`, `jupyter_forms` and
 
 | Id | Question | Leaning |
 |---|---|---|
-| O1 | Prolog variant: accept a cell containing only clauses directly, as hhu-stups' kernel does, as an implicit `%%user+` **[ext]**? Hercutalk enters code through magics only | decide in Phase 2, after seeing how the translated `term_handling` handles it |
+| O1 | Prolog variant: accept a cell containing only clauses directly, as hhu-stups' kernel does, as an implicit `%%user+` **[ext]**? Hercutalk enters code through magics only | decide in Phase 2, after reading how Hercutalk's `term_handling` handles it |
 | O2 | `residual_goals` final shape | agree with Hercutalk |
 | O3 | Where imported libraries live in the lite site (`/drive/lib` or the bundle) | decide in Phase 3 from WebShumway's import code |
 
@@ -174,5 +177,6 @@ To raise early, because several items change his code or depend on it:
 6. The `jupyter:display/2` and `residual_goals` extensions.
 7. The feature table schema (ADR-073).
 8. How Hercutalk web is distributed, and where it lives (ADR-066 D3).
-9. Courtesy note: the translated server files keep the MIT notices and pin
-   the Hercutalk version.
+9. Courtesy note: the Prolog variant's server is written against the
+   protocol and tested against Hercutalk's responses, and carries none of
+   its code.
