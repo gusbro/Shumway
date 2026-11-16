@@ -1858,7 +1858,8 @@ public sealed partial class IlPredicateCompiler
                     // meta-call + backtrackable builtins need resume cursors /
                     // the enclosing-call machinery — not a flat body.
                     // precomputed flags instead of name compares.
-                    if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable)
+                    if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable
+                        || entry.OpensCatchScope)
                         return false;
                     pc += OpcodeTable.Get((byte)op).Size;
                     continue;

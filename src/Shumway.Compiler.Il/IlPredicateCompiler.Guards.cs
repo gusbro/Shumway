@@ -614,7 +614,8 @@ public sealed partial class IlPredicateCompiler
                         && Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out int bid))
                     {
                         var bentry = Shumway.Builtins.BuiltinsRegistry.GetById(bid);
-                        if (bentry.IsCall || bentry.IsDollarCall || bentry.IsBacktrackable)
+                        if (bentry.IsCall || bentry.IsDollarCall || bentry.IsBacktrackable
+                            || bentry.OpensCatchScope)
                         {
                             CountGuardOpReject(Opcode.CallBuiltin, pc);
                             return false;
@@ -701,7 +702,8 @@ public sealed partial class IlPredicateCompiler
                     // builtins need the CP machinery → reject.
                     var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
                         BytecodeIO.ReadInt32(code, pc + 1));
-                    if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable)
+                    if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable
+                        || entry.OpensCatchScope)
                     {
                         CountGuardOpReject(op, pc);
                         return false;
@@ -1409,7 +1411,8 @@ public sealed partial class IlPredicateCompiler
                     {
                         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
                             BytecodeIO.ReadInt32(code, pc + 1));
-                        if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable)
+                        if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable
+                            || entry.OpensCatchScope)
                         {
                             CpFreeGuardStats.BumpShapeDetail(
                                 $"builtin:{entry.Name}/{entry.Arity}");
