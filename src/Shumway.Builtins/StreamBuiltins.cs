@@ -1565,9 +1565,11 @@ public static class StreamBuiltins
     {
         if (!h.IsReader) return false;            // a writer is never "at end"
         if (h.PastEof) return true;
-        // user_input's underlying console reader doesn't support
-        // non-blocking Peek — report "not at end" conservatively.
-        if (ReferenceEquals(h, engine.Streams!.UserInput)) return false;
+        // user_input: a console cannot be asked without stopping until a
+        // line is typed, so it is not at its end until the end was read. A
+        // source that can be waited on says.
+        if (ReferenceEquals(h, engine.Streams!.UserInput))
+            return h.Reader is { } input && input.TryAtEndOfInput(out bool atEnd) && atEnd;
         if (h.Reader is not null) return h.Reader.Peek() < 0;
         return h.PeekByte() < 0;
     }

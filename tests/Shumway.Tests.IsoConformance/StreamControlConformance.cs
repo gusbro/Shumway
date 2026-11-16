@@ -439,12 +439,39 @@ public class StreamControlConformance : IDisposable
     // ---------- at_end_of_stream ----------
 
     [Fact]
-    public void AtEndOfStream0_UserInput_Fails()
+    public void AtEndOfStream0_UserInput_OfAReaderThatDoesNotSay_Fails()
     {
-        // We conservatively report user_input as not at end (peeking
-        // a console reader would block).
-        var e = new PrologEngine();
+        // A host's reader may be a person typing: asking would wait for a
+        // line. Not at its end until the end has been read.
+        var e = new PrologEngine { In = new System.IO.StringReader("") };
         Assert.False(e.Query("at_end_of_stream.").Success);
+        Assert.True(e.Query("get_char(C), C == end_of_file, at_end_of_stream.").Success);
+    }
+
+    /// <summary>A reader whose source can be waited on, as a file or a pipe
+    /// behind the standard input.</summary>
+    private sealed class WaitingReader(string text)
+        : System.IO.StringReader(text), Shumway.Core.IEndOfInputReader
+    {
+        public bool PeekWaitsForInput => true;
+    }
+
+    [Fact]
+    public void AtEndOfStream_UserInput_OfAReaderThatWaits_TellsTheEnd()
+    {
+        var e = new PrologEngine { In = new WaitingReader("ab") };
+        Assert.True(e.Query(
+            @"\+ at_end_of_stream, get_char(a), \+ at_end_of_stream(user_input), "
+            + "get_char(b), at_end_of_stream, at_end_of_stream(user_input), "
+            // Asking consumed nothing.
+            + "peek_char(C), C == end_of_file.").Success);
+    }
+
+    [Fact]
+    public void AtEndOfStream_UserInput_OfAnEmptyReaderThatWaits_IsAtItsEnd()
+    {
+        var e = new PrologEngine { In = new WaitingReader("") };
+        Assert.True(e.Query("at_end_of_stream.").Success);
     }
 
     [Fact]

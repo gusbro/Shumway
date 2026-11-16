@@ -1540,6 +1540,14 @@ again after it got the end should open the file with
 A peek at the end, such as `peek_code/2`, gives the end and does not move
 the stream past it. `at_end_of_stream/1` never raises.
 
+On the standard input, `at_end_of_stream/0,1` waits for the next character
+when the input is a file or a pipe, and holds once there is none, as it does
+for any file: a program that reads its requests from a pipe ends its loop on
+it. At a console it does not wait for a line to be typed, and the input is
+not at its end until the end has been read. The reader an embedding host
+gives to `PrologEngine.In` is treated as a console unless it implements
+`IEndOfInputReader`.
+
 ### Reading one key
 
 `get_unbuffered_char(Char)` and `get_unbuffered_code(Code)` read from the
