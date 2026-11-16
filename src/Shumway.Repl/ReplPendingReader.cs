@@ -8,8 +8,14 @@ namespace Shumway.Repl;
 /// stream-fed top-level behaviour (SWI). When the buffer runs dry mid-goal,
 /// more input is acquired from the console via the callback.</summary>
 internal sealed class ReplPendingReader
-    : System.IO.TextReader, Shumway.Core.IKeyReader, Shumway.Core.IEncodedReader
+    : System.IO.TextReader, Shumway.Core.IKeyReader, Shumway.Core.IEncodedReader,
+      Shumway.Core.IEndOfInputReader
 {
+    /// <summary>Redirected, the input is a file or a pipe: a peek waits for its
+    /// next line and the end is the end. At a console it would wait for the
+    /// person to type.</summary>
+    public bool PeekWaitsForInput => Console.IsInputRedirected;
+
     /// <summary>What the top level reads: UTF-8 when redirected (see ReplTopLevel), the
     /// console's otherwise.</summary>
     public System.Text.Encoding Encoding => Console.IsInputRedirected
