@@ -1178,16 +1178,14 @@ internal sealed class BundleLoader
     // its bytecode is copied into each engine's persistent buffer (per-engine
     // Call→CallIl patches land in the copy), and static switch tables are
     // never mutated (in-place mutation applies to dynamics only).
-    private static readonly Dictionary<string, Shumway.Compiler.Wam.Linker.LinkResult>
-        _sharedStaticLinks = new();
-    private static readonly object _sharedStaticLinksLock = new();
-
-    // Crude growth bound: a long-lived process churning distinct static
-    // programs (a test suite, a REPL consulting repeatedly) would otherwise
-    // accumulate full program images forever. The pool scenario this cache
-    // exists for uses a handful of distinct programs, so wholesale reset on
-    // overflow is simpler than LRU and costs one relink per evicted program.
+    // A growth bound: a long-lived process churning distinct static programs
+    // (a test suite, a REPL consulting repeatedly) would otherwise hold every
+    // program image forever. Not a wholesale reset when full: another thread
+    // linking one program then dropped the link two engines were sharing.
     private const int SharedStaticLinkCapacity = 64;
+    private static readonly OldestOutCache<string, Shumway.Compiler.Wam.Linker.LinkResult>
+        _sharedStaticLinks = new(SharedStaticLinkCapacity);
+    private static readonly object _sharedStaticLinksLock = new();
 
     /// <summary>Test/diagnostic: the number of real static-region link runs
     /// (identical static programs link once for the whole process).</summary>
@@ -1204,14 +1202,12 @@ internal sealed class BundleLoader
         string key = StaticLinkKey(staticPreds, loadOffset);
         lock (_sharedStaticLinksLock)
         {
-            if (_sharedStaticLinks.TryGetValue(key, out var hit))
+            if (_sharedStaticLinks.Find(key) is { } hit)
             {
                 LastStaticLinkWasSharedHit = true;
                 return hit;
             }
             LastStaticLinkWasSharedHit = false;
-            if (_sharedStaticLinks.Count >= SharedStaticLinkCapacity)
-                _sharedStaticLinks.Clear();
             var link = new Shumway.Compiler.Wam.Linker
             {
                 // Superseded predicate versions a reconsult left behind: laid
@@ -1220,7 +1216,7 @@ internal sealed class BundleLoader
                 DeadIndices = E.StaticDeadIndices,
             }.Link(staticPreds, loadOffset: loadOffset);
             System.Threading.Interlocked.Increment(ref StaticLinkBuildCount);
-            _sharedStaticLinks[key] = link;
+            _sharedStaticLinks.Add(key, link);
             return link;
         }
     }
