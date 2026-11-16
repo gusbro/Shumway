@@ -1,0 +1,28 @@
+### call
+retry.
+### call
+member(X, [a, b, c]).
+### call
+retry.
+### call
+retry.
+### call
+retry.
+### call
+retry.
+### call
+member(X, [1, 2]).
+### call
+member(Y, [p, q]).
+### call
+retry.
+### call
+retry.
+### call
+retry.
+### call
+retry.
+### call
+member(X, [1, 2, 3]), X > 1.
+retry.
+retry.

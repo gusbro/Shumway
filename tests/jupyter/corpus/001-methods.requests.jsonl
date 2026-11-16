@@ -1,0 +1,5 @@
+{"jsonrpc":"2.0","id":0,"method":"backend"}
+{"jsonrpc":"2.0","id":0,"method":"version"}
+{"jsonrpc":"2.0","id":7,"method":"no_such_method"}
+{"jsonrpc":"2.0","id":8,"method":"call","params":{"cod":"true."}}
+{"jsonrpc":"2.0","id":1,"method":"call","params":{"code":"true."}}

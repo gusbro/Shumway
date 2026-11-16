@@ -1,0 +1,20 @@
+### call
+X = 1. Y = 2.
+### call
+member(X, [a, b]).
+write(between), nl.
+retry.
+retry.
+retry.
+### call
+retry.
+### call
+X = 1.
+throw(middle).
+X = 3.
+### call
+X = 1.
+Y = .
+### call
+write(one), nl.
+write(two), nl.

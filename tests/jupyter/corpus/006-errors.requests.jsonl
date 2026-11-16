@@ -1,0 +1,9 @@
+{"jsonrpc":"2.0","id":1,"method":"call","params":{"code":"throw(my_error)."}}
+{"jsonrpc":"2.0","id":2,"method":"call","params":{"code":"X is foo + 1."}}
+{"jsonrpc":"2.0","id":3,"method":"call","params":{"code":"no_such_predicate_here(1)."}}
+{"jsonrpc":"2.0","id":4,"method":"call","params":{"code":"atom_length(X, Y)."}}
+{"jsonrpc":"2.0","id":5,"method":"call","params":{"code":"write(before), throw(oops)."}}
+{"jsonrpc":"2.0","id":6,"method":"call","params":{"code":"X = ."}}
+{"jsonrpc":"2.0","id":7,"method":"call","params":{"code":"foo(."}}
+{"jsonrpc":"2.0","id":8,"method":"call","params":{"code":"X = 1"}}
+{"jsonrpc":"2.0","id":9,"method":"call","params":{"code":"catch(throw(e), E, true)."}}

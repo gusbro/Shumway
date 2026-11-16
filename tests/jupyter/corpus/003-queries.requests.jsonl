@@ -1,0 +1,11 @@
+{"jsonrpc":"2.0","id":1,"method":"call","params":{"code":"X = 1, Y = foo(X)."}}
+{"jsonrpc":"2.0","id":2,"method":"call","params":{"code":"true."}}
+{"jsonrpc":"2.0","id":3,"method":"call","params":{"code":"fail."}}
+{"jsonrpc":"2.0","id":4,"method":"call","params":{"code":"X = Y."}}
+{"jsonrpc":"2.0","id":5,"method":"call","params":{"code":"X = f(Y, _Z, _), Y = 'hello world'."}}
+{"jsonrpc":"2.0","id":6,"method":"call","params":{"code":"L = [1, 2.5, \"text\", 'Quoted', [a|T]], T = []."}}
+{"jsonrpc":"2.0","id":7,"method":"call","params":{"code":"X is 2 ** 100."}}
+{"jsonrpc":"2.0","id":8,"method":"call","params":{"code":"atom_length(abc, N)."}}
+{"jsonrpc":"2.0","id":9,"method":"call","params":{"code":""}}
+{"jsonrpc":"2.0","id":10,"method":"call","params":{"code":"% only a comment"}}
+{"jsonrpc":"2.0","id":11,"method":"call","params":{"code":"X = 1.\nY = 2.\nfail.\nZ = 3."}}

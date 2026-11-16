@@ -1,0 +1,14 @@
+### call
+X = hola(Y, A, B), Y = como(Z), A = 'C'.
+### call
+X = Y, Z = 'X'.
+### call
+X = Y, Y = Z.
+### call
+X = f(Y), Y = Z.
+### call
+X = f(Y, 'Y').
+### call
+X = Y, W = g(X, Y, 'X').
+### call
+X = 'Y'.

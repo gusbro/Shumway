@@ -1,0 +1,18 @@
+{"jsonrpc":"2.0","id":1,"method":"call","params":{"code":"X = 1."}}
+{"jsonrpc":"2.0","id":2,"method":"call","params":{"code":"retry."}}
+{"jsonrpc":"2.0","id":3,"method":"call","params":{"code":"retry."}}
+{"jsonrpc":"2.0","id":4,"method":"call","params":{"code":"member(X, [a, b])."}}
+{"jsonrpc":"2.0","id":5,"method":"call","params":{"code":"Y = 2."}}
+{"jsonrpc":"2.0","id":6,"method":"call","params":{"code":"retry."}}
+{"jsonrpc":"2.0","id":7,"method":"call","params":{"code":"retry."}}
+{"jsonrpc":"2.0","id":8,"method":"call","params":{"code":"retry."}}
+{"jsonrpc":"2.0","id":9,"method":"call","params":{"code":"retry."}}
+{"jsonrpc":"2.0","id":10,"method":"call","params":{"code":"member(X, [a, b]), !."}}
+{"jsonrpc":"2.0","id":11,"method":"call","params":{"code":"retry."}}
+{"jsonrpc":"2.0","id":12,"method":"call","params":{"code":"retry."}}
+{"jsonrpc":"2.0","id":13,"method":"call","params":{"code":"write(side), nl, member(X, [1, 2])."}}
+{"jsonrpc":"2.0","id":14,"method":"call","params":{"code":"throw(stop)."}}
+{"jsonrpc":"2.0","id":15,"method":"call","params":{"code":"retry."}}
+{"jsonrpc":"2.0","id":16,"method":"call","params":{"code":"fail."}}
+{"jsonrpc":"2.0","id":17,"method":"call","params":{"code":"retry."}}
+{"jsonrpc":"2.0","id":18,"method":"call","params":{"code":"retry."}}

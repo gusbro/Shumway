@@ -1,0 +1,14 @@
+### call
+foo(X) :- bar(X).
+### call
+:- write(directive), nl.
+### call
+a --> b.
+### call
+foo(1).
+### call
+X = 1.
+foo(X) :- bar(X).
+Y = 2.
+### call
+(foo :- bar), true.

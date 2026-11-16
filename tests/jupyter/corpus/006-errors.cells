@@ -1,0 +1,18 @@
+### call
+throw(my_error).
+### call
+X is foo + 1.
+### call
+no_such_predicate_here(1).
+### call
+atom_length(X, Y).
+### call
+write(before), throw(oops).
+### call
+X = .
+### call
+foo(.
+### call
+X = 1
+### call
+catch(throw(e), E, true).
