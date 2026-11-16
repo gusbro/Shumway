@@ -14,6 +14,10 @@ public sealed class NotebookServerTests : IDisposable
 
     public void Dispose() => _notebooks.Dispose();
 
+    // Text as it is, where the default writes < and ' as escapes.
+    private static readonly JsonSerializerOptions Plain =
+        new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
     private static string Call(int id, string code)
         => JsonSerializer.Serialize(new { jsonrpc = "2.0", id, method = "call", @params = new { code } });
 
@@ -352,6 +356,57 @@ public sealed class NotebookServerTests : IDisposable
         Assert.Equal("""["Name","Value"]""", table["VariableNames"]!.ToJsonString());
         Assert.Contains(table["ValuesLists"]!.AsArray(), row => row!.ToJsonString() == """["bounded","false"]""");
         Assert.Contains(table["ValuesLists"]!.AsArray(), row => (string)row![0]! == "double_quotes");
+    }
+
+    [Theory]
+    [InlineData(@"X in 1..5.", "{}", @"[""X in 1..5""]")]
+    [InlineData(@"X in 1..5, X #> 2.", "{}", @"[""X in 3..5""]")]
+    [InlineData(@"X in 1..3, Y in 1..3, X #< Y.", "{}", @"[""X in 1..2"",""X#<Y"",""Y in 2..3""]")]
+    [InlineData(@"X in 1..5, L = [X, a].", @"{""L"":""[X,a]""}", @"[""X in 1..5""]")]
+    [InlineData(@"X in 1..5, Y = X.", @"{""Y"":""X""}", @"[""X in 1..5""]")]
+    [InlineData(@"dif(X, a).", "{}", @"[""dif(X,a)""]")]
+    [InlineData(@"freeze(X, write('A b')).", "{}", @"[""freeze(X,write('A b'))""]")]
+    [InlineData(@"X in 1..5, X = 3.", @"{""X"":""3""}", null)]
+    [InlineData(@"X = f(_), Y = 1.", @"{""X"":""f(_)"",""Y"":""1""}", null)]
+    public void TheConstraintsLeftOnAQuerysVariables_AreItsResidualGoals(string code, string bindings, string? residual)
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+        First(server, "use_module(library(clpfd)), use_module(library(coroutining)).");
+
+        JsonNode entry = First(server, code);
+
+        Assert.Equal("success", (string)entry["status"]!);
+        Assert.Equal(bindings, System.Text.RegularExpressions.Regex.Replace(entry["bindings"]!.ToJsonString(), @"_G?\d+", "_"));
+        Assert.Equal(residual, entry["residual_goals"]?.ToJsonString(Plain));
+    }
+
+    [Fact]
+    public void ResidualGoals_FollowEachSolution()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+        First(server, "use_module(library(clpfd)).");
+
+        JsonNode first = First(server, "X in 1..9, member(Low, [3, 7]), X #> Low.");
+        JsonNode second = First(server, "retry.");
+
+        Assert.Equal("""["X in 4..9"]""", first["residual_goals"]!.ToJsonString());
+        Assert.Equal("""["X in 8..9"]""", second["residual_goals"]!.ToJsonString());
+    }
+
+    [Theory]
+    [InlineData("foo(X) :- bar(X).")]
+    [InlineData(":- dynamic(foo/1).")]
+    [InlineData("greeting --> [hello].")]
+    public void AClauseInAnOrdinaryCell_IsAnErrorThatSaysWhereClausesGo(string clause)
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+
+        JsonNode answer = Answer(server, Call(1, $"X = 1.\n{clause}\nY = 2."))["result"]!;
+
+        Assert.Equal("1", (string)answer["1"]!["bindings"]!["X"]!);
+        Assert.Equal(-4712, (int)answer["2"]!["error"]!["code"]!);
+        Assert.Equal("A clause is not a query. To define predicates, start the cell with %%user.", Message(answer["2"]!));
+        Assert.Equal("2", (string)answer["3"]!["bindings"]!["Y"]!);
     }
 
     [Fact]

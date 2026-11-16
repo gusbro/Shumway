@@ -1,0 +1,6 @@
+{"jsonrpc":"2.0","id":1,"method":"call","params":{"code":"foo(X) :- bar(X)."}}
+{"jsonrpc":"2.0","id":2,"method":"call","params":{"code":":- write(directive), nl."}}
+{"jsonrpc":"2.0","id":3,"method":"call","params":{"code":"a --> b."}}
+{"jsonrpc":"2.0","id":4,"method":"call","params":{"code":"foo(1)."}}
+{"jsonrpc":"2.0","id":5,"method":"call","params":{"code":"X = 1.\nfoo(X) :- bar(X).\nY = 2."}}
+{"jsonrpc":"2.0","id":6,"method":"call","params":{"code":"(foo :- bar), true."}}

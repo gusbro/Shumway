@@ -98,7 +98,7 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
     public void TheCorpus_IsThere()
     {
         List<string> sessions = SessionNames();
-        Assert.True(sessions.Count >= 18, $"only {sessions.Count} sessions in {Corpus}");
+        Assert.True(sessions.Count >= 20, $"only {sessions.Count} sessions in {Corpus}");
         foreach (string session in sessions)
         {
             Assert.NotEmpty(Lines(session, "requests"));
@@ -186,7 +186,9 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
     /// <item>the number in the name of a variable that has no name;</item>
     /// <item>the version of the engine the recording was made with;</item>
     /// <item>the reference's empty list as a JSON array: every binding is
-    /// text here.</item>
+    /// text here;</item>
+    /// <item>the residual goals of a query, a key only our server sends: the
+    /// reference says nothing of a constrained variable.</item>
     /// </list></summary>
     private static JsonNode? Comparable(JsonNode? node, bool version, string? under = null)
     {
@@ -197,6 +199,7 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
                 foreach (var (key, value) in pairs)
                 {
                     if (key is "prolog_message" or "logtalk_message") result["message_text"] = "";
+                    else if (key == "residual_goals") continue;
                     else if (version && key == "result" && value is JsonValue) result[key] = "version";
                     else result[key] = Comparable(value, version, under == "bindings" ? "binding" : key);
                 }

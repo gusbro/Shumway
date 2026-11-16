@@ -274,6 +274,9 @@ run(query(Goal, Names), Alive, Spent0, Spent, Cell0, Cell, Next) :-
         Spent = Spent0, Cell = none, Next = stop,
         answered(Cell0, obj([status-str(halt)]), cell(Id, _, Results)),
         send_results(Id, Results)
+    ;   clause_term(Goal) ->
+        Spent = Spent0, Next = continue,
+        failed(Cell0, -4712, 'Exception', jupyter(clause_in_cell), Cell)
     ;   catch(with_previous(Goal, Names, Resolved), Error, true),
         (   nonvar(Error) ->
             Spent = Spent0, Next = continue,
@@ -322,6 +325,13 @@ names_of([Name=Variable|Names], Variables, Named) :-
     ;   Named = Rest
     ),
     names_of(Names, Variables, Rest).
+
+% A term that can only be a clause. A fact cannot be told from a query, so
+% a cell is never loaded as a program by guessing: this is an error that
+% says where clauses go.
+clause_term((_ :- _)).
+clause_term((:- _)).
+clause_term((_ --> _)).
 
 retry_goal(Goal) :- Goal == retry.
 retry_goal(Goal) :- Goal == jupyter:retry.
@@ -395,10 +405,12 @@ solved(Error, Exit, Names, Alive, Spent0, Spent, Cell0, Cell, Next) :-
         failed(Cell0, -4712, 'Exception', Error, Cell)
     ;   output(Output),
         bindings(Names, Bindings),
+        residual_goals(Names, Residual),
         % What the helpers of module jupyter left for this answer.
         '$jupyter_extras'(Extras),
+        append(Residual, Extras, More),
         answered(Cell0, obj([status-str(success), type-str(query),
-                             bindings-obj(Bindings), output-str(Output)|Extras]), Cell1),
+                             bindings-obj(Bindings), output-str(Output)|More]), Cell1),
         remember(Names),
         (   Exit == last -> Spent is Spent0 + 1, Cell = Cell1, Next = continue
         ;   Spent = Spent0, Cell = none,
@@ -441,6 +453,37 @@ named([Name=Variable|Earlier], Value, Found) :-
     (   named(Earlier, Value, Found) -> true
     ;   Variable == Value -> Found = Name
     ).
+
+% The constraints left on the variables of the query, as the goals that
+% would put them back, each written with the query's names: a key of the
+% answer, or nothing when there are none.
+residual_goals(Names, Residual) :-
+    values_of(Names, Values),
+    term_attvars(Values, Constrained),
+    (   Constrained == [] -> Residual = []
+    ;   copy_term(Values, Copies, Goals),
+        (   Goals == [] -> Residual = []
+        ;   copy_names(Names, Copies, CopyNames),
+            goal_texts(Goals, CopyNames, Texts),
+            Residual = [residual_goals-Texts]
+        )
+    ).
+
+values_of([], []).
+values_of([_=Value|Names], [Value|Values]) :- values_of(Names, Values).
+
+% The names of the query, for the copies that are still variables.
+copy_names([], [], []).
+copy_names([Name=_|Names], [Copy|Copies], CopyNames) :-
+    (   var(Copy) -> CopyNames = [Name=Copy|Rest]
+    ;   CopyNames = Rest
+    ),
+    copy_names(Names, Copies, Rest).
+
+goal_texts([], _, []).
+goal_texts([Goal|Goals], Names, [str(Text)|Texts]) :-
+    with_output_to(string(Text), write_term(Goal, [quoted(true), variable_names(Names)])),
+    goal_texts(Goals, Names, Texts).
 
 remember([]).
 remember([Name=Value|Names]) :-
@@ -539,5 +582,7 @@ error_object(Code, Message, Text, Output, obj([code-Code, message-str(Message), 
 error_text(Ball, Text) :-
     (   Ball = jupyter(no_previous_value(Name)) ->
         with_output_to(string(Text), format("$~w has no value from an earlier query", [Name]))
+    ;   Ball == jupyter(clause_in_cell) ->
+        atom_chars('A clause is not a query. To define predicates, start the cell with %%user.', Text)
     ;   '$jupyter_error_text'(Ball, Text)
     ).
