@@ -140,9 +140,9 @@ public sealed class QualifiedReflectionTests
             Assert.True(e.Query(
                 "findall(P, predicate_property(qr_top:dpub(_), P), "
                 + "[static, defined, imported_from(qr_dep)]).").Success);
-            // At the definer: no imported_from.
+            // At the definer: no imported_from, and that it exports it.
             Assert.True(e.Query(
-                "findall(P, predicate_property(qr_dep:dpub(_), P), [static, defined]).")
+                "findall(P, predicate_property(qr_dep:dpub(_), P), [static, defined, exported]).")
                 .Success);
         }
         finally { Directory.Delete(dir, recursive: true); }
@@ -219,7 +219,11 @@ public sealed class QualifiedReflectionTests
             sees_own_prop  :- predicate_property(loc(_), static).
             """);
         Assert.True(e.Query("qr_ctx:sees_own_cp.").Success);
-        Assert.True(e.Query("qr_ctx:sees_global_cp.").Success);
+        // Asked with no module, the module is asked, and it does not define
+        // the builtin (ADR-038, third amendment). predicate_property/2 is
+        // what tells that msort/2 can be called.
+        Assert.False(e.Query("qr_ctx:sees_global_cp.").Success);
+        Assert.True(e.Query("predicate_property(qr_ctx:msort(_, _), built_in).").Success);
         Assert.True(e.Query("qr_ctx:sees_own_clause.").Success);
         Assert.True(e.Query("qr_ctx:sees_own_prop.").Success);
     }

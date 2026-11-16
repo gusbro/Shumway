@@ -1269,6 +1269,26 @@ public sealed partial class PrologEngine
             if (seen.Add(fid)) yield return fid;
     }
 
+    /// <summary>The functors of the global namespace, which is <c>user</c>'s:
+    /// the dynamic store's and the heads of every module that is not
+    /// export-qualified. A <c>:- module/2</c> file's predicates are its own,
+    /// the private ones and the exported ones alike (ADR-038): another module
+    /// reaches an export through its import table, not here.</summary>
+    internal IEnumerable<int> GlobalStaticAndDynamicFunctors()
+    {
+        var seen = new HashSet<int>();
+        foreach (int fid in _dynStore.Functors)
+            if (!_dynStore.IsImplicitOnly(fid) && seen.Add(fid)) yield return fid;
+        foreach (int fid in GlobalStaticHeadFunctors())
+            if (seen.Add(fid)) yield return fid;
+    }
+
+    private HashSet<int> GlobalStaticHeadFunctors()
+    {
+        StaticHeadFunctors();
+        return _globalStaticHeadFunctorsCache!;
+    }
+
     /// <summary>The set of every static head functor across all modules,
     /// built lazily and cached. Invalidated (<c>_staticHeadFunctorsCache =
     /// null</c>) at every static-clause mutation. Membership is O(1); building
@@ -1279,9 +1299,11 @@ public sealed partial class PrologEngine
     {
         if (_staticHeadFunctorsCache is not null) return _staticHeadFunctorsCache;
         var set = new HashSet<int>();
+        var global = new HashSet<int>();
         var nonTerminals = new HashSet<int>();
         foreach (var manifest in _modules.Values)
         {
+            bool isGlobal = !manifest.IsExportQualified;
             foreach (var c in manifest.Clauses)
             {
                 if (TryExtractDefinedHead(c, out string n, out int a))
@@ -1289,6 +1311,7 @@ public sealed partial class PrologEngine
                     int hf = FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a);
                     set.Add(hf);
+                    if (isGlobal) global.Add(hf);
                     // Which of them a grammar rule defines, for
                     // predicate_property(H, non_terminal): the same scan
                     // already has the clause in hand.
@@ -1299,13 +1322,20 @@ public sealed partial class PrologEngine
             // predicate exist even with no clauses of its own.
             set.UnionWith(manifest.DiscontiguousFunctors);
             set.UnionWith(manifest.MultifileFunctors);
+            if (isGlobal)
+            {
+                global.UnionWith(manifest.DiscontiguousFunctors);
+                global.UnionWith(manifest.MultifileFunctors);
+            }
         }
         // Source-less bundle entries have no AST to scan — their predicates
         // live in the precompiled set. Without them a FromBundle engine
         // answered predicate_property / ground current_predicate with plain
         // failure for every loaded predicate (its own program included).
         set.UnionWith(_precompiledStaticPredicates.Keys);
+        global.UnionWith(_precompiledStaticPredicates.Keys);
         _nonTerminalFunctorsCache = nonTerminals;
+        _globalStaticHeadFunctorsCache = global;
         _staticHeadFunctorsCache = set;
         return set;
     }
@@ -1344,6 +1374,18 @@ public sealed partial class PrologEngine
         return StaticHeadFunctors().Contains(functorId);
     }
 
+    /// <summary>True iff <paramref name="functorId"/> is a predicate of the
+    /// global namespace: a builtin, a dynamic of the global store, or a static
+    /// one of a module that is not export-qualified. What a module sees when
+    /// it neither defines nor imports the name.</summary>
+    internal bool HasGlobalPredicate(int functorId)
+    {
+        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out _))
+            return true;
+        if (_dynStore.IsDynamic(functorId)) return true;
+        return GlobalStaticHeadFunctors().Contains(functorId);
+    }
+
     /// <summary>The §7.8 control constructs are callable (call/1 accepts
     /// them) but live in no registry — current_predicate excludes them,
     /// while predicate_property reports them built_in (SWI/SICStus
@@ -1371,7 +1413,7 @@ public sealed partial class PrologEngine
     internal List<int> PredicatePropertyAtomIds(int functorId)
     {
         var props = new List<int>();
-        if (!HasPredicate(functorId) && !IsControlConstructFid(functorId))
+        if (!HasGlobalPredicate(functorId) && !IsControlConstructFid(functorId))
             return props;
         int kind;
         bool redefined = _redefinedFunctors.Contains(functorId);
