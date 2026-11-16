@@ -85,7 +85,8 @@ public sealed class StreamRegistry
 
     /// <summary>The terminal handle of <c>user_input</c>, the
     /// terminal-default reader. Always registered; its underlying
-    /// reader is <see cref="System.Console.In"/>. While
+    /// reader is the host's (<see cref="SetUserInput"/>), or
+    /// <see cref="System.Console.In"/> when it gave none. While
     /// <c>set_stream/2</c> has moved the alias to another stream, this
     /// handle has no alias.</summary>
     public StreamHandle UserInput { get; }
@@ -171,6 +172,13 @@ public sealed class StreamRegistry
             return null;
         }
     }
+
+    /// <summary>Makes <c>user_input</c> read from <paramref name="input"/>, or
+    /// from the host's standard input when null, from its next read on. The
+    /// handle stays the one the program holds, aliases and position
+    /// included.</summary>
+    public void SetUserInput(TextReader? input)
+        => UserInput.Reader!.Rebind(input ?? HostInput(), readsHostInput: input is null);
 
     /// <summary>The host's standard input, or an empty reader when it has none.
     /// A browser-wasm host has no stdin at all: <c>Console.In</c> does not return
