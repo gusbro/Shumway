@@ -237,6 +237,25 @@ public sealed class HostSessionTests : IDisposable
     }
 
     [Fact]
+    public void Input_IsAsked_WhenTheBootRanAQuery()
+    {
+        // The page's boot queries before the session wires the input:
+        // installing the standard library's wasm module links the program.
+        var page = new Page();
+        HostSession a = _host.Create("a", page, _ =>
+        {
+            var engine = new PrologEngine();
+            Assert.True(engine.Query("true.").Success);
+            return engine;
+        });
+        On(a, () => { a.StartEngine(); return true; });
+        page.OnAsk = () => Task.Run(() => a.Input.Supply("answer(7)."));
+
+        Assert.Contains("X = answer(7)", First(a, @"read(X).").Text);
+        Assert.True(page.Asked > 0);
+    }
+
+    [Fact]
     public void EachSession_HasItsOwnWorkingDirectory()
     {
         string dirA = Dir("alpha"), dirB = Dir("beta");

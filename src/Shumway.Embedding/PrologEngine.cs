@@ -919,13 +919,24 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
 
     /// <summary>The source <c>user_input</c> reads from — <c>read/1</c>,
     /// <c>get_char/1</c> and the rest. Null means the host's standard input
-    /// (and end-of-file where the host has none, as a browser does). Set it
-    /// before the first query: the stream registry is built during query setup
-    /// and <c>user_input</c> keeps whatever reader it was handed then. A reader
-    /// that also implements <see cref="Shumway.Core.IKeyReader"/> gives
-    /// <c>get_unbuffered_char/1</c> and <c>get_unbuffered_code/1</c> single
-    /// keys.</summary>
-    public System.IO.TextReader? In { get; set; }
+    /// (and end-of-file where the host has none, as a browser does). It can be
+    /// set at any time, before or after a query: <c>user_input</c> reads from
+    /// the new source from its next read on. A reader that also implements
+    /// <see cref="Shumway.Core.IKeyReader"/> gives <c>get_unbuffered_char/1</c>
+    /// and <c>get_unbuffered_code/1</c> single keys.</summary>
+    public System.IO.TextReader? In
+    {
+        get => _in;
+        set
+        {
+            _in = value;
+            // The registry is built at the first query, or earlier by
+            // whatever boots the engine; user_input then held the reader of
+            // that moment.
+            _streams?.SetUserInput(value);
+        }
+    }
+    private System.IO.TextReader? _in;
 
     /// <summary>Per-engine state for Tier-0 → Tier-1 auto-promotion: an
     /// invocation counter per functor plus a cache of successfully

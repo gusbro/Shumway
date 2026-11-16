@@ -310,7 +310,18 @@ public sealed class PositionTrackingReader : TextReader
 
     /// <summary>The wrapped reader (typically a <c>StreamReader</c> for a
     /// file stream, or <c>Console.In</c> for <c>user_input</c>).</summary>
-    public TextReader Inner { get; }
+    public TextReader Inner { get; private set; }
+
+    /// <summary>Reads from <paramref name="inner"/> from now on, keeping the
+    /// position: the stream is the same, its source is another. What was
+    /// read ahead from the old source is dropped.</summary>
+    internal void Rebind(TextReader inner, bool readsHostInput)
+    {
+        Inner = inner ?? throw new ArgumentNullException(nameof(inner));
+        ReadsHostInput = readsHostInput;
+        _buffered = Empty;
+        _buffered2 = Empty;
+    }
 
     /// <summary>Characters consumed so far — the stream's logical
     /// position.</summary>
