@@ -86,10 +86,13 @@ do.
   main thread through the Contents API (ADR-070). The plotting plan has no
   Pyodide, so no worker kernel needs `/api/drive` either (ADR-072).
 - **The lite site registers its own service worker**, built from the same
-  source as WebShumway's (headers, `isolate.js` boot) and shipped in
-  `@shumway/web-runtime` (ADR-073). It is registered at the lite site's
-  root. It does not rely on WebShumway's worker happening to cover `/lite/`
-  by scope, so the two sites deploy independently.
+  source as WebShumway's (headers, `isolate.js` boot; ADR-073). It is
+  registered at the lite site's root, whose scope is narrower than the
+  demo's and so wins for the notebook pages. The two differ in the COEP
+  value they send (D13), which is why the demo's worker cannot serve both.
+  The lite site loads the demo's `_framework` (ADR-073), and its worker
+  reads and fills the same cache of those files, so the runtime is
+  downloaded once for the two.
 - **WebShumway's `sw.js` becomes a good neighbour:** on `activate` it deletes
   only caches carrying its own prefix. This fix stands on its own and goes
   into WebShumway first.
@@ -130,8 +133,9 @@ do.
 - **Host with real headers (Cloudflare Pages, Netlify).** Technically the
   cleanest option, but it means leaving GitHub Pages for this alone. Kept in
   reserve.
-- **Rely on WebShumway's worker covering `/lite/`.** Couples the deployment
-  of the two sites. Rejected.
+- **Rely on WebShumway's worker covering `/lite/`.** It sends one COEP value
+  to every browser, and the notebook pages need another in two of the three
+  engines (D13). Rejected.
 - **`require-corp` in the lite site too.** One behaviour in every browser and
   no detection, at the cost of those images everywhere. Rejected while the
   detection stays this small.

@@ -98,7 +98,7 @@ GitHub, nbviewer and JupyterLab recognise these notebooks as Prolog.
 
 - The Prolog variant has no dependency on Logtalk and can ship without it.
 - Hercutalk web is cheap only if the Prolog variant stays protocol-compatible
-  (ADR-067) and its packages stay server-agnostic (ADR-073).
+  (ADR-067) and the kernel core stays server-agnostic (ADR-073).
 - Notebooks are not shared between the two variants. That is intended: they
   are different languages.
 

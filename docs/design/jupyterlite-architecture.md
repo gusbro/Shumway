@@ -30,7 +30,7 @@ supports Shumway as a backend (the `shumwaylgt` integration script in Logtalk).
  Browser page (JupyterLite, cross-origin isolated by our service worker)
  ┌───────────────────────────────────────────────────────────────────────┐
  │ JupyterLab UI ── kernel messages ──► ShumwayKernel (TS, BaseKernel)   │
- │                                       @shumway/jupyter-kernel-core    │
+ │                                       the kernel extension, its core  │
  │                                         │ handle_request(json) : Task │
  │                                         ▼                             │
  │  .NET runtime (browser-wasm, threads), one per page                   │
@@ -81,20 +81,24 @@ supports Shumway as a backend (the `shumwaylgt` integration script in Logtalk).
   kernels in one runtime would trample each other's directory (ADR-070,
   ADR-071).
 
-## Packages
+## Pieces
 
-See ADR-073 for the reasoning behind this split.
+See ADR-073 for the reasoning, and for the rule it keeps: a clone builds and
+tests Shumway with the .NET SDK alone, and Node and Python are needed only to
+build the notebook site.
 
-| # | Package | Kind | Contents |
+| # | Piece | Kind | Contents |
 |---|---|---|---|
-| 1 | Shumway web host library | .NET | sessions per instance, boot, cancellation, page input; extracted from `Shumway.Web` |
-| 2 | Shumway Jupyter wasm app | .NET browser-wasm | `[JSExport]` session API; the server bundle is chosen per session |
-| 3 | `@shumway/web-runtime` | npm | isolation check, service worker, runtime loader, MEMFS mirror with pluggable target |
-| 4 | `@shumway/jupyter-kernel-core` | npm | generic `BaseKernel`, JSON-RPC client, renderers, completion, inspection, input, interrupt |
-| 5 | `jupyterlite-shumway-prolog` | Python wrapping a labextension | kernelspec, Prolog server bundle, logos, CodeMirror mode |
-| | `jupyterlite-logtalk` (future) | Moura's | depends on 3 and 4, adds the Hercutalk + embedded Logtalk bundle |
+| 1 | Web host library | .NET, in the solution | sessions per instance, boot, cancellation, page input |
+| 2 | Notebook server | .NET, in the solution | the JSON-RPC server and what hosts it in a session |
+| 3 | The wasm app | .NET browser-wasm, `Shumway.Web` | the demo's exports and the session API, in one app; the server bundle is chosen per session |
+| 4 | The runtime's JavaScript | plain modules in the demo's `wwwroot` | isolation check, service worker, runtime loader, MEMFS mirror with pluggable target |
+| 5 | The kernel extension | JupyterLab extension, `jupyterlite/` | a server-agnostic core (`BaseKernel`, JSON-RPC client, renderers, completion, inspection, input, interrupt) and the Prolog variant (kernelspec, server bundle, logos, CodeMirror mode) |
+| 6 | The site | `jupyter lite build`, `jupyterlite/` | 5, the configuration, example notebooks |
+| | Hercutalk web (future) | Moura's | the core of 5, split into a package of its own then, with the Hercutalk and embedded Logtalk bundle |
 
-The WebShumway demo becomes a consumer of 1 and 3 with a single session.
+The demo and the notebook site share 3 and 4: one runtime download, one copy
+of the runtime's JavaScript.
 
 ## Decision index
 
@@ -115,7 +119,7 @@ The WebShumway demo becomes a consumer of 1 and 3 with a single session.
 | D13 | `require-corp` in WebShumway; in the lite site COEP chosen by engine (WebKit → `require-corp`), for the images of markdown cells | 069 |
 | D14 | Files: mirror between the Contents API and MEMFS around each cell; no OPFS in the lite site | 070 |
 | D15 | Rich outputs in standard MIME, in phases: tables → Graphviz → Vega-Lite → widgets | 072 |
-| D16 | Package layout above, protocol versioned separately | 073 |
+| D16 | One extension and one wasm app, built apart from the solution; protocol versioned separately | 073 |
 | D17 | Feature table as YAML, every row backed by an acceptance cell | 073 |
 | | Per-engine working directory as an option of the host | 071 |
 

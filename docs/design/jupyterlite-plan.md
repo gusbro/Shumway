@@ -108,15 +108,21 @@ either fixed or documented as intended, for example module-qualified names.
 
 ## Phase 3: MVP in the browser
 
-- **.NET:** the Jupyter wasm app, exposing the session API.
+The layout is ADR-073's: one wasm app, one extension, and a build apart
+from the solution.
+
+- **.NET:** the demo's wasm app exports the session API, with the notebook
+  server in it.
 - Precompile the server into a bundle (ADR-067 D10), with the time a
   notebook takes to open measured before and after.
-- **`@shumway/web-runtime`:**
+- Set the default session limit that Phase 0 left open, with the server
+  loaded in a browser, and run `jupyter:trace/1` on the wasm tier.
+- **The runtime's JavaScript**, shared with the demo from where it is:
   - `isolate.js`;
-  - the service worker (ADR-069);
+  - the service worker, with the COEP value by engine (ADR-069);
   - the loader;
   - the mirror with the Contents API target (ADR-070).
-- **`@shumway/jupyter-kernel-core`:**
+- **The kernel extension, its core:**
   - the `BaseKernel` subclass, calling `SessionRequest`;
   - response mapping;
   - Phase-1 outputs (ADR-072): text, bindings, errors, tables, `display_data`
@@ -126,8 +132,10 @@ either fixed or documented as intended, for example module-qualified names.
   - input;
   - interrupt as restart, with a notice;
   - session limit.
-- **`jupyterlite-shumway-prolog`:** the kernelspec (ADR-066 D11), the
-  bundle, logos and CodeMirror mode.
+- **The kernel extension, the Prolog variant:** the kernelspec (ADR-066
+  D11), the bundle, logos and CodeMirror mode.
+- **The rule's test:** no project of the solution refers to `jupyterlite/`
+  or runs a Node or Python command.
 - **Site:**
   - `jupyter lite build`, with JupyterLite's service worker disabled and
     `shumway_prolog` as the default kernel;
