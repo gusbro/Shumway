@@ -2,25 +2,31 @@
 % offers as jupyter::Name is jupyter:Name here.
 %
 % A helper that shows something other than text leaves it for the server as
-% additional data of the query's answer: a key of the protocol and its JSON
-% value. The server takes them when the query has a solution.
+% additional data of the query's answer ('$jupyter_extra'/2).
+%
+% doc/3 is the one description of each helper: help/0 prints it, and the
+% kernel asks for it to show beside the code.
 
 :- module(jupyter, [print_table/1, print_table/2, print_and_save_table/3,
-                    '$jupyter_table'/2, '$jupyter_saved_table'/4,
-                    '$jupyter_extras'/1]).
+                    print_variable_bindings/0, print_queries/0, print_queries/1,
+                    print_query_time/0, pwd/0, cd/1,
+                    help/0, magic/0, version/0, version/4, versions/0,
+                    '$jupyter_table'/2, '$jupyter_saved_table'/4, '$jupyter_docs'/1]).
+
+:- use_module(jupyter_session).
 
 :- meta_predicate(print_table(0)).
 :- meta_predicate(print_and_save_table(0, *, *)).
 :- meta_predicate('$jupyter_table'(0, *)).
 :- meta_predicate('$jupyter_saved_table'(0, *, *, *)).
 
-%! print_table(:Goal) | Notebook | Shows a table with a row for each solution of Goal and a column for each of its variables. A variable whose name starts with an underscore gets no column. Called from a program, where the variables have no names, the columns are named A, B and so on.
+% ----- tables -----
+
 print_table(Goal) :-
     term_variables(Goal, Variables),
     lettered(Variables, 0, Names),
     '$jupyter_table'(Goal, Names).
 
-%! print_table(+Rows, +Names) | Notebook | Shows a table of Rows, a list of lists of values, under the column names of Names. An empty Names names the columns A, B and so on.
 print_table(Rows, Names) :-
     must_be_rows(Rows),
     (   Names == [], Rows = [Row|_] ->
@@ -41,9 +47,8 @@ print_table(Rows, Names) :-
 
 table(Headers, Texts) :-
     header_strings(Headers, Strings),
-    extra(print_table, obj(['ValuesLists'-Texts, 'VariableNames'-Strings])).
+    '$jupyter_extra'(print_table, obj(['ValuesLists'-Texts, 'VariableNames'-Strings])).
 
-%! print_and_save_table(:Goal, +Format, +File) | Notebook | As print_table/1, and writes the table to File as well, a line for the column names and one for each row. Format is csv, with commas between the values, or tsv, with tabs.
 print_and_save_table(Goal, Format, File) :-
     term_variables(Goal, Variables),
     lettered(Variables, 0, Names),
@@ -60,9 +65,9 @@ print_and_save_table(Goal, Format, File) :-
     setup_call_cleanup(open(File, write, Stream),
                        write_lines([Strings|Texts], Separator, Stream),
                        close(Stream)),
-    extra(print_and_save_table,
-          obj(['ValuesLists'-Texts, 'VariableNames'-Strings,
-               'Format'-str(Format), 'File'-str(File)])).
+    '$jupyter_extra'(print_and_save_table,
+                     obj(['ValuesLists'-Texts, 'VariableNames'-Strings,
+                          'Format'-str(Format), 'File'-str(File)])).
 
 separator(Format, Separator) :-
     (   var(Format) -> throw(error(instantiation_error, print_and_save_table/3))
@@ -154,28 +159,203 @@ rows(Rows) :-
     is_list(Row),
     rows(More).
 
-% ----- additional data -----
+% ----- what the session remembers -----
 
-% extra(+Key, +Json): Key of the answer of the query that is running. A
-% later value for the same key replaces the earlier one.
-extra(Key, Json) :-
-    extras(Pairs),
-    without(Pairs, Key, Others),
-    nb_setval('$jupyter_extras', [Key-Json|Others]).
+print_variable_bindings :-
+    '$jupyter_values'(Pairs),
+    print_values(Pairs).
 
-extras(Pairs) :-
-    catch(nb_getval('$jupyter_extras', Pairs), error(_, _), Pairs = []).
+print_values([]).
+print_values([Name-Value|Pairs]) :-
+    format("$~w = ", [Name]),
+    write_term(Value, [quoted(true)]),
+    nl,
+    print_values(Pairs).
 
-without([], _, []).
-without([Key-Json|Pairs], Wanted, Others) :-
-    (   Key == Wanted -> Others = Rest
-    ;   Others = [Key-Json|Rest]
+print_queries :-
+    '$jupyter_queries'(Queries),
+    print_texts(Queries).
+
+print_queries(Ids) :-
+    (   is_list(Ids) -> true
+    ;   throw(error(type_error(list, Ids), print_queries/1))
     ),
-    without(Pairs, Wanted, Rest).
+    '$jupyter_queries'(Queries),
+    of_requests(Queries, Ids, Wanted),
+    print_texts(Wanted).
 
-% '$jupyter_extras'(-Pairs): the additional data left since the last call,
-% first to last, as Key-Json.
-'$jupyter_extras'(Pairs) :-
-    extras(Latest),
-    nb_setval('$jupyter_extras', []),
-    reverse(Latest, Pairs).
+of_requests([], _, []).
+of_requests([query(Id, Text, Seconds)|Queries], Ids, Wanted) :-
+    (   member(Wanted0, Ids), Wanted0 == Id -> Wanted = [query(Id, Text, Seconds)|Rest]
+    ;   Wanted = Rest
+    ),
+    of_requests(Queries, Ids, Rest).
+
+% One query to a line, as a program that runs them all.
+print_texts([]).
+print_texts([query(_, Text, _)]) :-
+    !,
+    format("~s.~n", [Text]).
+print_texts([query(_, Text, _)|Queries]) :-
+    format("~s,~n", [Text]),
+    print_texts(Queries).
+
+print_query_time :-
+    '$jupyter_queries'(Queries),
+    (   last_of(Queries, query(_, Text, Seconds)) ->
+        format("Query:   ~s~nRuntime: ~w s~n", [Text, Seconds])
+    ;   format("No query has run yet.~n", [])
+    ).
+
+last_of([Query], Query) :- !.
+last_of([_|Queries], Query) :- last_of(Queries, Query).
+
+% ----- the session's directory -----
+
+pwd :-
+    working_directory(Directory, Directory),
+    format("Working directory: ~q~n", [Directory]).
+
+cd(Directory) :-
+    working_directory(_, Directory).
+
+% ----- versions -----
+
+version :-
+    version(Major, Minor, Patch, _),
+    format("Shumway notebook server ~w.~w.~w~n", [Major, Minor, Patch]).
+
+% The server is part of the engine: its version is the engine's, and Status
+% is the commit the engine was built from, or release.
+version(Major, Minor, Patch, Status) :-
+    current_prolog_flag(version_data, Data),
+    Data =.. [_, Major, Minor, Patch, Details],
+    (   member(git-Commit, Details) -> Status = Commit
+    ;   Status = release
+    ).
+
+versions :-
+    version(Major, Minor, Patch, _),
+    format("Shumway Prolog ~w.~w.~w~n", [Major, Minor, Patch]),
+    version.
+
+% ----- help -----
+
+help :-
+    findall(Text, doc_text(_, Text), Texts),
+    print_docs(Texts).
+
+print_docs([]).
+print_docs([Text]) :-
+    !,
+    format("~s~n", [Text]).
+print_docs([Text|Texts]) :-
+    format("~s~n~n--------------------------------------------------------------------------------~n~n", [Text]),
+    print_docs(Texts).
+
+% '$jupyter_docs'(-Pairs): Key-Text for each helper, Key being
+% 'jupyter:Name/Arity'.
+'$jupyter_docs'(Pairs) :-
+    findall(Key-Text, ( doc_text(Name/Arity, Text), doc_key(Name, Arity, Key) ), Pairs).
+
+doc_key(Name, Arity, Key) :-
+    with_output_to(string(Chars), format("jupyter:~w/~w", [Name, Arity])),
+    atom_chars(Key, Chars).
+
+doc_text(Indicator, Text) :-
+    doc(Indicator, Usage, Lines),
+    with_output_to(string(Text), ( format("~w~n", [Usage]), print_indented(Lines) )).
+
+print_indented([]).
+print_indented([Line|Lines]) :-
+    format("~n    ~w", [Line]),
+    print_indented(Lines).
+
+doc(halt/0, 'jupyter:halt or halt', [
+    'Stops the session.',
+    'The next cell starts a new one, with nothing of what this one defined.',
+    'Must be the whole query.']).
+doc(retry/0, 'jupyter:retry or retry', [
+    'Asks the latest query that can still give one for its next solution.',
+    'Must be the whole query.']).
+doc(help/0, 'jupyter:help', [
+    'Prints this description of the predicates of module jupyter.']).
+doc(magic/0, 'jupyter:magic', [
+    'Prints the description of the cell and line magics.']).
+doc(version/0, 'jupyter:version', [
+    'Prints the version of the notebook server.']).
+doc(version/4, 'jupyter:version(-Major, -Minor, -Patch, -Status)', [
+    'The version of the notebook server, which is the engine''s.',
+    'Status is the commit the engine was built from, or release.']).
+doc(versions/0, 'jupyter:versions', [
+    'Prints the versions of the engine and of the notebook server.']).
+doc(pwd/0, 'jupyter:pwd', [
+    'Prints the working directory of the session.']).
+doc(cd/1, 'jupyter:cd(+Directory)', [
+    'Changes the working directory of the session.']).
+doc(print_variable_bindings/0, 'jupyter:print_variable_bindings', [
+    'Prints the latest value each variable of an earlier query was given.',
+    'In a query, $Var stands for the latest value of Var.']).
+doc(print_queries/0, 'jupyter:print_queries or print_queries', [
+    'Prints the queries that had a solution, in the order they ran.']).
+doc(print_queries/1, 'jupyter:print_queries(+Ids) or print_queries(+Ids)', [
+    'Prints the queries of the cells whose execution counts are in Ids.']).
+doc(print_query_time/0, 'jupyter:print_query_time', [
+    'Prints the latest query that had a solution and the CPU time it took.']).
+doc(print_table/1, 'jupyter:print_table(+Goal) or print_table(+Goal)', [
+    'Shows a table with a row for each solution of Goal and a column for',
+    'each of its variables. A variable whose name starts with an underscore',
+    'gets no column. Called from a program, where variables have no names,',
+    'the columns are named A, B and so on.']).
+doc(print_table/2, 'jupyter:print_table(+Rows, +Names)', [
+    'Shows a table of Rows, a list of lists of values, under the column',
+    'names of Names. An empty Names names the columns A, B and so on.']).
+doc(print_and_save_table/3, 'jupyter:print_and_save_table(+Goal, +Format, +File) or print_and_save_table(+Goal, +Format, +File)', [
+    'As print_table/1, and writes the table to File as well: a line for the',
+    'column names and one for each row. Format is csv, with commas between',
+    'the values, or tsv, with tabs.']).
+
+magic :-
+    forall(magic_line(Line), format("~w~n", [Line])).
+
+magic_line('Cell magic, on the first line of a cell:').
+magic_line('').
+magic_line('    %%user').
+magic_line('        Writes the rest of the cell to user.pl and loads it').
+magic_line('    %%user+').
+magic_line('        Appends the rest of the cell to user.pl and loads it').
+magic_line('    %%file FILE').
+magic_line('        Writes the rest of the cell to FILE and loads it').
+magic_line('    %%file+ FILE').
+magic_line('        Appends the rest of the cell to FILE and loads it').
+magic_line('    %%load FILE').
+magic_line('        The same as %%file FILE').
+magic_line('    %%save FILE').
+magic_line('        Writes the rest of the cell to FILE').
+magic_line('').
+magic_line('    %%table').
+magic_line('        Shows each query of the cell as the table of its solutions').
+magic_line('    %%csv FILE').
+magic_line('        As %%table, and writes the table to FILE with commas between the values').
+magic_line('    %%tsv FILE').
+magic_line('        As %%table, and writes the table to FILE with tabs between the values').
+magic_line('').
+magic_line('    %%highlight').
+magic_line('        Shows the cell as code, without running it').
+magic_line('').
+magic_line('Line magic, as the whole cell:').
+magic_line('').
+magic_line('    %bindings').
+magic_line('        Prints the latest value of each variable of earlier queries').
+magic_line('    %queries').
+magic_line('        Prints the queries that had a solution').
+magic_line('    %pwd').
+magic_line('        Prints the working directory of the session').
+magic_line('    %help').
+magic_line('        Prints the description of the predicates of module jupyter').
+magic_line('    %versions').
+magic_line('        Prints the versions of the engine and of the notebook server').
+magic_line('    %flags').
+magic_line('        Shows a table of the Prolog flags and their values').
+magic_line('    %magic').
+magic_line('        Prints this description').

@@ -26,6 +26,7 @@
 :- module(jupyter_server, [jupyter_serve/0]).
 
 :- use_module(jupyter_json).
+:- use_module(jupyter_session).
 :- use_module(jupyter).
 
 %! jupyter_serve | Notebook server | Answers the requests of jupyter_requests on jupyter_responses until the stream ends or a cell calls halt.
@@ -90,6 +91,8 @@ known(call).
 known(backend).
 known(version).
 known(protocol).
+known(jupyter_predicate_docs).
+known(enable_logging).
 
 % method(+Method, +Id, +Params, -Cell)
 % A cell is read whole before any of it runs: a syntax error anywhere is the
@@ -118,14 +121,59 @@ method(version, Id, _, none) :-
     send_result(Id, str(Version)).
 method(protocol, Id, _, none) :-
     send_result(Id, obj([version-1, implementation-str(shumway)])).
+method(jupyter_predicate_docs, Id, _, none) :-
+    '$jupyter_docs'(Docs),
+    doc_strings(Docs, Pairs),
+    send_result(Id, obj(Pairs)).
+% The answer is whether a log file was created: this server keeps none.
+method(enable_logging, Id, _, none) :-
+    send_result(Id, false).
+
+doc_strings([], []).
+doc_strings([Key-Text|Docs], [Key-str(Text)|Pairs]) :-
+    doc_strings(Docs, Pairs).
 
 % cell_content(+Code, -Content): queries(Queries), or nothing when the
 % cell has nothing to run.
 cell_content(Code, Content) :-
     (   magic(Code, Magic) -> magic_content(Magic, Content)
+    ;   line_magic(Code, Query) -> Content = queries([Query])
     ;   cell_queries(Code, Queries),
-        Content = queries(Queries)
+        (   completion_data(Queries) -> Content = nothing
+        ;   Content = queries(Queries)
+        )
     ).
+
+% What a kernel asks for when it starts. The reference answers it with
+% nothing; the names to complete are not sent yet.
+completion_data([query(Goal, _)]) :-
+    Goal == jupyter:update_completion_data.
+
+% ----- line magics -----
+
+% A cell that is %NAME and nothing else, with a NAME below. Any other such
+% cell is a comment.
+line_magic(Code, query(Goal, Names)) :-
+    reverse(Code, Reversed),
+    ending(Reversed, ReversedName),
+    reverse(ReversedName, ['%'|NameChars]),
+    atom_chars(Name, NameChars),
+    line_magic(Name, Goal, Names).
+
+% Without the blanks and line ends it starts with.
+ending([C|Cs], Rest) :-
+    ( C == ' ' ; C == '\t' ; C == '\r' ; C == '\n' ),
+    !,
+    ending(Cs, Rest).
+ending(Chars, Chars).
+
+line_magic(bindings, jupyter:print_variable_bindings, []).
+line_magic(queries, jupyter:print_queries, []).
+line_magic(help, jupyter:help, []).
+line_magic(pwd, jupyter:pwd, []).
+line_magic(magic, jupyter:magic, []).
+line_magic(versions, jupyter:versions, []).
+line_magic(flags, jupyter:print_table(current_prolog_flag(Name, Value)), ['Name'=Name, 'Value'=Value]).
 
 % ----- cell magics -----
 
@@ -231,7 +279,9 @@ run(query(Goal, Names), Alive, Spent0, Spent, Cell0, Cell, Next) :-
             Spent = Spent0, Next = continue,
             failed(Cell0, -4712, 'Exception', Error, Cell)
         ;   helpers(Resolved, Names, Called),
-            solve(Called, Names, Alive, Spent0, Spent, Cell0, Cell, Next)
+            % As it was written, before it runs and binds its variables.
+            with_output_to(string(Text), write_term(Goal, [quoted(true), variable_names(Names)])),
+            solve(Called, Names, Text, Alive, Spent0, Spent, Cell0, Cell, Next)
         )
     ).
 
@@ -296,15 +346,17 @@ retry(Alive, Spent0, Spent, Cell0, Cell, Next) :-
 % The query's solutions, one for each time control comes back here. After a
 % solution the server goes on inside this clause, so the query's choice
 % points stay; a retry fails back into them.
-solve(Goal, Names, Alive, Spent0, Spent, Cell0, Cell, Next) :-
+solve(Goal, Names, Text, Alive, Spent0, Spent, Cell0, Cell, Next) :-
     output(_),
     '$jupyter_extras'(_),
     nb_setval('$jupyter_cell', none),
+    statistics(cputime, Started),
     (   catch(solution(Goal, Exit), Error, true),
-        resumed(Cell0, Cell1),
+        resumed(Cell0, Cell1, First),
+        ran(First, Error, Cell1, Text, Started),
         solved(Error, Exit, Names, Alive, Spent0, Spent, Cell1, Cell, Next)
     ->  true
-    ;   resumed(Cell0, Cell1),
+    ;   resumed(Cell0, Cell1, _),
         output(Output),
         error_object(-4711, 'Failure', [], Output, Failure),
         answered(Cell1, obj([status-str(error), error-Failure]), Cell),
@@ -313,11 +365,21 @@ solve(Goal, Names, Alive, Spent0, Spent, Cell0, Cell, Next) :-
 
 % The cell as the retry that came back here left it, or as it was when the
 % query started.
-resumed(Cell0, Cell) :-
+% First tells the query's first solution from one a retry asked for.
+resumed(Cell0, Cell, First) :-
     nb_getval('$jupyter_cell', Left),
-    (   Left == none -> Cell = Cell0
-    ;   Cell = Left,
+    (   Left == none -> Cell = Cell0, First = true
+    ;   Cell = Left, First = false,
         nb_setval('$jupyter_cell', none)
+    ).
+
+% A query joins the session's history when it has its first solution.
+ran(First, Error, cell(Id, _, _), Text, Started) :-
+    (   First == true, var(Error) ->
+        statistics(cputime, Now),
+        Seconds is Now - Started,
+        '$jupyter_ran'(Id, Text, Seconds)
+    ;   true
     ).
 
 output(Text) :-
@@ -380,19 +442,12 @@ named([Name=Variable|Earlier], Value, Found) :-
     ;   Variable == Value -> Found = Name
     ).
 
-% The value a query gave a variable is kept under a global variable of the
-% engine, one for each name.
 remember([]).
 remember([Name=Value|Names]) :-
-    (   nonvar(Value), \+ hidden(Name) ->
-        value_key(Name, Key),
-        nb_setval(Key, Value)
+    (   nonvar(Value), \+ hidden(Name) -> '$jupyter_remember'(Name, Value)
     ;   true
     ),
     remember(Names).
-
-value_key(Name, Key) :-
-    atom_concat('$jupyter_value ', Name, Key).
 
 % $Var stands for the latest value an earlier query gave Var. When the query
 % has no other use of Var, Var itself takes that value, and so is shown.
@@ -427,8 +482,7 @@ used([Variable-Value|Uses], Wanted, Found) :-
 
 previous_value(Variable, Names, Value) :-
     name_of(Names, Variable, Name),
-    value_key(Name, Key),
-    (   catch(nb_getval(Key, Value), error(_, _), fail) -> true
+    (   '$jupyter_value'(Name, Value) -> true
     ;   throw(jupyter(no_previous_value(Name)))
     ).
 

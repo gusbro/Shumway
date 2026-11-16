@@ -56,6 +56,7 @@ public sealed class NotebookServer
         ServerPredicates.Register();
         // In the order they import each other.
         engine.ConsultString(Source("jupyter_json.pl"));
+        engine.ConsultString(Source("jupyter_session.pl"));
         engine.ConsultString(Source("jupyter.pl"));
         engine.ConsultString(Source("jupyter_server.pl"));
     }

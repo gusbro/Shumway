@@ -57,6 +57,28 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
         [("016-saved-tables", 6)] = (
             "A format that is neither csv nor tsv is an error. The reference passes it on to its client.",
             """{"jsonrpc":"2.0","id":6,"result":{"1":{"status":"error","error":{"code":-4712,"message":"Exception","data":{"prolog_message":""}}}}}"""),
+        [("018-predicate-docs", 2)] = (
+            "No log file is kept, and the answer is a boolean. The reference answers the text true.",
+            """{"jsonrpc":"2.0","id":0,"result":false}"""),
+    };
+
+    /// <summary>Requests whose answer carries text about the system it runs
+    /// on (its versions, its help, its flags, its directory, how it writes
+    /// the name of a helper): the answers are compared without that text.
+    /// What ours says is checked in <see cref="NotebookServerTests"/>.</summary>
+    private static readonly HashSet<(string Session, int Request)> OwnText = new()
+    {
+        ("017-line-magics", 4),     // %queries: jupyter:Name here, jupyter::Name there
+        ("017-line-magics", 5),     // %pwd
+        ("017-line-magics", 6),     // %versions
+        ("017-line-magics", 7),     // %magic
+        ("017-line-magics", 8),     // %help
+        ("017-line-magics", 9),     // %flags: the flags of each system
+        ("017-line-magics", 16),    // print_queries
+        ("017-line-magics", 18),    // print_query_time
+        ("017-line-magics", 19),    // pwd
+        ("017-line-magics", 20),    // version
+        ("018-predicate-docs", 1),  // the description of each helper
     };
 
     private static List<string> SessionNames()
@@ -76,13 +98,15 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
     public void TheCorpus_IsThere()
     {
         List<string> sessions = SessionNames();
-        Assert.True(sessions.Count >= 16, $"only {sessions.Count} sessions in {Corpus}");
+        Assert.True(sessions.Count >= 18, $"only {sessions.Count} sessions in {Corpus}");
         foreach (string session in sessions)
         {
             Assert.NotEmpty(Lines(session, "requests"));
             Assert.True(File.Exists(Path.Combine(Corpus, session + ".expected.jsonl")), session);
         }
         foreach (var key in Intended.Keys)
+            Assert.Contains(key.Session, sessions);
+        foreach (var key in OwnText)
             Assert.Contains(key.Session, sessions);
     }
 
@@ -106,7 +130,12 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
                     $"{session} #{i + 1}: the reference answers as we do, so the difference is no longer one");
                 wanted = intended.Ours;
             }
-            if (!Same(ours, wanted, requests[i]))
+            bool ownText = OwnText.Contains((session, i + 1));
+            // An entry whose text the reference now writes as we do has to go.
+            if (ownText)
+                Assert.False(Same(ours, theirs, requests[i]),
+                    $"{session} #{i + 1}: the texts are the same, so they need not be left out");
+            if (!Same(ours, wanted, requests[i], ownText))
                 differences.Add($"#{i + 1} {requests[i]}\n   ours:   {ours ?? "(no answer)"}\n   wanted: {wanted ?? "(no answer)"}");
         }
         Assert.True(differences.Count == 0, $"{session}:\n{string.Join("\n", differences)}");
@@ -116,12 +145,38 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
         => File.ReadAllLines(Path.Combine(Corpus, $"{session}.{kind}.jsonl"))
             .Where(line => line.Length > 0).ToArray();
 
-    private static bool Same(string? ours, string? theirs, string request)
+    private static bool Same(string? ours, string? theirs, string request, bool ownText = false)
     {
         if (ours is null || theirs is null) return ours is null && theirs is null;
         bool version = request.Contains("\"method\":\"version\"", StringComparison.Ordinal);
-        return JsonNode.DeepEquals(Comparable(JsonNode.Parse(ours), version),
-                                   Comparable(JsonNode.Parse(theirs), version));
+        JsonNode? left = Comparable(JsonNode.Parse(ours), version);
+        JsonNode? right = Comparable(JsonNode.Parse(theirs), version);
+        return ownText
+            ? JsonNode.DeepEquals(WithoutOwnText(left), WithoutOwnText(right))
+            : JsonNode.DeepEquals(left, right);
+    }
+
+    /// <summary>A response without what a helper writes about the system it
+    /// runs on: the output of a query, the table it shows, and the result of
+    /// a method that is not a call.</summary>
+    private static JsonNode? WithoutOwnText(JsonNode? node)
+    {
+        switch (node)
+        {
+            case JsonObject pairs:
+                var result = new JsonObject();
+                foreach (var (key, value) in pairs)
+                {
+                    bool own = key is "output" or "print_table"
+                        || (key == "result" && value is JsonObject answer && !answer.ContainsKey("1"));
+                    result[key] = own ? "own text" : WithoutOwnText(value);
+                }
+                return result;
+            case JsonArray items:
+                return new JsonArray(items.Select(WithoutOwnText).ToArray());
+            default:
+                return node?.DeepClone();
+        }
     }
 
     /// <summary>A response with what is not compared taken out:

@@ -251,6 +251,109 @@ public sealed class NotebookServerTests : IDisposable
         Assert.Equal("done", (string)both["output"]!);
     }
 
+    private static string Output(NotebookServer server, int id, string code)
+        => (string)Answer(server, Call(id, code))["result"]!["1"]!["output"]!;
+
+    [Fact]
+    public void WhatASessionRemembers_IsShown()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+        Answer(server, Call(1, "X = f(a), Y = [1, 2]."));
+        Answer(server, Call(2, "member(Z, [p, q])."));
+        Answer(server, Call(3, "fail."));
+        Answer(server, Call(4, "X = 'B c'."));
+
+        string bindings = Output(server, 5, "%bindings");
+        string queries = Output(server, 6, "%queries");
+        string some = Output(server, 7, "print_queries([2, 4]).");
+        string time = Output(server, 8, "jupyter:print_query_time.");
+
+        // The latest value of each, in the order they were first given one.
+        Assert.Equal("$X = 'B c'\n$Y = [1,2]\n$Z = p", bindings);
+        // The queries that had a solution, as they were written.
+        Assert.Equal("X=f(a),Y=[1,2],\nmember(Z,[p,q]),\nX='B c',\njupyter:print_variable_bindings.", queries);
+        Assert.Equal("member(Z,[p,q]),\nX='B c'.", some);
+        Assert.Matches(@"^Query:   print_queries\(\[2,4\]\)\nRuntime: [0-9.eE+-]+ s$", time);
+    }
+
+    [Fact]
+    public void TheDirectoryOfASession_IsItsOwn()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+        string directory = _notebooks.DirectoryOf("a");
+        string process = Directory.GetCurrentDirectory();
+        Directory.CreateDirectory(Path.Combine(directory, "inner"));
+
+        string before = Output(server, 1, "%pwd");
+        string after = Output(server, 2, "jupyter:cd(inner), jupyter:pwd.");
+        Answer(server, Call(3, "%%save here.txt\ntext"));
+
+        Assert.Equal($"Working directory: '{directory.Replace('\\', '/')}/'", before);
+        Assert.Equal($"Working directory: '{directory.Replace('\\', '/')}/inner/'", after);
+        Assert.True(File.Exists(Path.Combine(directory, "inner", "here.txt")));
+        Assert.Equal(process, Directory.GetCurrentDirectory());
+    }
+
+    [Fact]
+    public void TheVersions_AreTheEngines()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+
+        string versions = Output(server, 1, "%versions");
+        JsonNode parts = First(server, "jupyter:version(Major, Minor, Patch, Status).")["bindings"]!;
+        string number = (string)Answer(server, """{"jsonrpc":"2.0","id":0,"method":"version"}""")["result"]!;
+
+        Assert.Equal($"Shumway Prolog {number}\nShumway notebook server {number}", versions);
+        Assert.Equal(number, $"{(string)parts["Major"]!}.{(string)parts["Minor"]!}.{(string)parts["Patch"]!}");
+        Assert.NotEqual("", (string)parts["Status"]!);
+    }
+
+    [Fact]
+    public void EveryHelperAndEveryMagic_IsDescribed()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+        string[] helpers =
+        {
+            "halt/0", "retry/0", "help/0", "magic/0", "version/0", "version/4", "versions/0", "pwd/0", "cd/1",
+            "print_variable_bindings/0", "print_queries/0", "print_queries/1", "print_query_time/0",
+            "print_table/1", "print_table/2", "print_and_save_table/3",
+        };
+        string[] magics =
+        {
+            "%%user", "%%user+", "%%file FILE", "%%file+ FILE", "%%load FILE", "%%save FILE", "%%table",
+            "%%csv FILE", "%%tsv FILE", "%%highlight",
+            "%bindings", "%queries", "%pwd", "%help", "%versions", "%flags", "%magic",
+        };
+
+        JsonObject docs = Answer(server, """{"jsonrpc":"2.0","id":0,"method":"jupyter_predicate_docs"}""")["result"]!.AsObject();
+        string help = Output(server, 1, "%help");
+        string magic = Output(server, 2, "%magic");
+        // A helper called with what it does not take is told by its own name.
+        JsonNode called = First(server, "jupyter:no_such_helper.");
+
+        Assert.Equal(helpers.Select(helper => "jupyter:" + helper).Order(), docs.Select(doc => doc.Key).Order());
+        foreach (var (key, text) in docs)
+        {
+            string name = key["jupyter:".Length..key.IndexOf('/')];
+            Assert.StartsWith("jupyter:" + name, (string)text!);
+            Assert.Contains((string)text!, help);
+        }
+        foreach (string line in magics) Assert.Contains($"\n    {line}\n", magic);
+        Assert.Contains("existence_error", Message(called));
+    }
+
+    [Fact]
+    public void TheFlags_AreATable()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+
+        JsonNode table = First(server, "%flags")["print_table"]!;
+
+        Assert.Equal("""["Name","Value"]""", table["VariableNames"]!.ToJsonString());
+        Assert.Contains(table["ValuesLists"]!.AsArray(), row => row!.ToJsonString() == """["bounded","false"]""");
+        Assert.Contains(table["ValuesLists"]!.AsArray(), row => (string)row![0]! == "double_quotes");
+    }
+
     [Fact]
     public void ADeterministicQuery_IsNotKeptAlive()
     {

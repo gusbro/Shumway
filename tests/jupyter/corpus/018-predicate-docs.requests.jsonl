@@ -1,0 +1,3 @@
+{"jsonrpc":"2.0","id":0,"method":"jupyter_predicate_docs"}
+{"jsonrpc":"2.0","id":0,"method":"enable_logging"}
+{"jsonrpc":"2.0","id":1,"method":"call","params":{"code":"jupyter:update_completion_data."}}

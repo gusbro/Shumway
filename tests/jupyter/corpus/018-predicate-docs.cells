@@ -1,0 +1,8 @@
+### raw
+{"jsonrpc":"2.0","id":0,"method":"jupyter_predicate_docs"}
+### raw
+{"jsonrpc":"2.0","id":0,"method":"enable_logging"}
+### call
+jupyter:update_completion_data.
+### reference
+jupyter::update_completion_data.
