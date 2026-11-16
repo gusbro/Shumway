@@ -985,7 +985,7 @@ public sealed partial class BytecodeInterpreter
                     // debug evaluation promoting clpfd internals mid-stop is the
                     // real case) rewrote shared bytecode to CallIl; the rewrite is
                     // engine-global, the snapshot is not.
-                    ilFn ??= Tier1Dispatcher?.ResolveByFunctorId(functorId);
+                    ilFn ??= Tier1Dispatcher?.ResolveCallByFunctorId(functorId);
                     if (ilFn is null)
                     {
                         // The delegate was evicted after the site was
@@ -1094,7 +1094,7 @@ public sealed partial class BytecodeInterpreter
                     var ilFn = table is not null && (uint)functorId < (uint)table.Length
                         ? table[functorId] : null;
                     // Same stale-snapshot fallback and healing as CallIl above.
-                    ilFn ??= Tier1Dispatcher?.ResolveByFunctorId(functorId);
+                    ilFn ??= Tier1Dispatcher?.ResolveCallByFunctorId(functorId);
                     if (ilFn is null)
                     {
                         HealIlSite(code, pc, functorId, isExecute: true);

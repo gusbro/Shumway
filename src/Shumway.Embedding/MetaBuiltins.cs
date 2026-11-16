@@ -228,7 +228,8 @@ public static partial class MetaBuiltins
             Control, "trace",
             "Turns on the four-port tracer: from here on, every goal prints a line "
             + "at its call, exit, redo and fail ports. Takes effect immediately, "
-            + "including for the goals remaining in the current query.");
+            + "including for the goals remaining in the current query. While it is on "
+            + "the program runs interpreted.");
         BuiltinsRegistry.Register("notrace", 0, NoTrace,
             Control, "notrace", "Turns the four-port tracer off.");
 

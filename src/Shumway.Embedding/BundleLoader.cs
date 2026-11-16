@@ -596,9 +596,12 @@ internal sealed class BundleLoader
             }
         }
         // The interp gets its own copy; the pristine array is the template.
-        interp.IlByFunctorId = ilTable is null
+        // Under a tracer the query starts with no compiled code to call: a
+        // linked site misses the table and goes back to a plain call.
+        bool interpreted = E.IlPromotion.CallsStayInterpreted;
+        interp.IlByFunctorId = ilTable is null || interpreted
             ? null : (Func<Shumway.Core.Activation, int, bool>?[])ilTable.Clone();
-        InstallCpsTables(interp);
+        if (!interpreted) InstallCpsTables(interp);
         DiagIlTable(interp.IlByFunctorId);
 
         // Stage B.2 — build a fid-keyed view of
@@ -751,7 +754,9 @@ internal sealed class BundleLoader
     private void OnCalleePromoted(int calleeFid, Shumway.Compiler.Il.PredicateDelegate del)
     {
         var interp = _rewriteInterp;
-        if (interp is null) return;
+        // A tracer keeps calls on the interpreter: the table stays empty and
+        // the sites plain, and the next query's setup links them.
+        if (interp is null || E.IlPromotion.CallsStayInterpreted) return;
         // 1. Direct dispatch table (grow if needed; engine thread — no races).
         var table = interp.IlByFunctorId;
         if (table is null || calleeFid >= table.Length)
