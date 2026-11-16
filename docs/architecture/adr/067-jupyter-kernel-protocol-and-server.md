@@ -42,6 +42,12 @@ dgelessus (the hhu-stups origin). `jupyter_widgets`, `jupyter_forms` and
 - **The wire format is Hercutalk's**: same methods, same result shape, same
   additional-data keys. Extensions are allowed; they are marked as such in
   the protocol document and offered upstream.
+  - One key is named after the variant. The text of an error travels as
+    `prolog_message` from the Prolog server and as `logtalk_message` from the
+    Logtalk one. The kernel reads whichever is present.
+  - The text itself is the engine's own error message, the one the top-level
+    prints. The differential test (D8) compares the code and the shape of an
+    error, not this text.
 - **Inside the session, the server runs a request loop as Hercutalk's
   `loop/3` does**, nested inside a goal that succeeded, on the session's
   engine thread (ADR-068). It blocks reading the next request from
