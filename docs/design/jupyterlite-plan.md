@@ -72,15 +72,14 @@ of"). The manual pass over the guide's examples found two things:
 - Add the `protocol` method **[ext]**.
 - Apply the D8 exit condition once the first third of the corpus passes.
 
-**State (2026-11-16): in progress.**
-- Done: the harness and a corpus of 18 sessions; the request loop with
+**State (2026-11-16): the work is done; the phase is not closed yet.**
+- Done: the harness and a corpus of 21 sessions; the request loop with
   `retry`, `$Var` and `halt`; output capture; the file, table and line
   magics; the helpers behind them; the predicate docs; the `protocol`
-  method.
+  method; residual goals (O2); `trace/1`; the names for completion; the
+  message for a clause in an ordinary cell (O1).
 - The D8 exit condition did not apply: the server answers the whole corpus,
   and what differs is listed in the protocol document, §9.
-- Left: residual goals (O2), `trace/1`, the names for completion, and the
-  message for a clause in an ordinary cell (O1).
 - Moved to Phase 3: the precompiled bundle (D10). What it saves is the
   compilation of the server when a notebook opens, which is measured in a
   browser.

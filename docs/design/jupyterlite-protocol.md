@@ -128,7 +128,7 @@ reported for the **first** error, as in Hercutalk.
 
 | Key | Payload | Kernel renders as | Phase (ADR-072) |
 |---|---|---|---|
-| `predicate_atoms` | list of predicate names | completion data, no output | 1 |
+| `predicate_atoms` | list of predicate heads, arguments lettered (`append(A,B,C)`, `jupyter:print_table(A)`) | completion data, no output | 1 |
 | `print_table` | `{"VariableNames": [...], "ValuesLists": [[...], ...]}` | `text/markdown` table plus `text/plain` | 1 |
 | `print_and_save_table` | as above, plus format and file | table; **the server writes the file** | 1 |
 | `print_sld_tree` | DOT source | `image/svg+xml` via Graphviz WASM, plus DOT as `text/plain` | 2 |
@@ -234,6 +234,11 @@ Hercutalk comes to answer as the Prolog server does, so the list stays true.
 | The file of `print_and_save_table` | written by the client | written by the server, in the session's directory |
 | A table format other than `csv` or `tsv` | passed on to the client | `domain_error(table_format, F)` |
 | `enable_logging` | the text `"true"` | `false`: no log file is kept |
+| `jupyter:update_completion_data.` | an empty result: the code that collects the names is commented out | a query like any other, whose answer has `predicate_atoms`: the helpers, the predicates the engine documents and the ones the session defined |
+
+The completion request is the one row the corpus does not hold: Hercutalk's
+answer is empty, and ours is a list that changes with the engine's
+predicates. `NotebookServerTests` checks what ours has.
 
 **Text that is each system's own.** These are compared without their text:
 
@@ -241,7 +246,14 @@ Hercutalk comes to answer as the Prolog server does, so the list stays true.
 - the number in the name of a variable that has no name;
 - what `%versions`, `%help`, `%magic`, `%flags`, `%pwd`, `%queries`,
   `print_query_time` and `jupyter_predicate_docs` say. A helper is written
-  `jupyter:Name` here and `jupyter::Name` there.
+  `jupyter:Name` here and `jupyter::Name` there;
+- what `jupyter:trace(Goal)` prints. It is the engine's own tracer here.
+  Hercutalk's is Logtalk's debugger, which prints nothing when the engine
+  under it is Shumway.
+
+A query that is `trace` alone is an error in both. In the Prolog server a
+tracer that a query leaves on (`trace, Goal.`) goes off when the query ends,
+so it never traces the server.
 
 **Not visible on the wire.** In Hercutalk every query that had a solution
 stays alive until a `retry` exhausts it. The Prolog server keeps alive only a
