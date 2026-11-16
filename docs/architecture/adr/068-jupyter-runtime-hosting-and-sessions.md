@@ -199,8 +199,9 @@ measurement is still to do.
 
 - **The tier's own notes** ("compiling N predicates") still go to the page
   as a whole, not to a session.
-- **The session limit's default**, which waits for a tablet's figure
-  (below).
+- **The session limit's default.** D7 sets it with the server loaded, which
+  Phase 2 builds. The tablet's figure with `library(clpfd)` is below, "On a
+  tablet".
 - **Five megabytes that stay held after some boots** (below, "What a session
   is made of"): what holds them is not known.
 - **The stack of a session's thread** stays the runtime's default, about
@@ -292,10 +293,13 @@ walks over a term keep their own stacks. The runtime's memory came out at
 the at most 4.5 MB a thread the smaller stack would save. The stack stays the
 default.
 
-These are desktop figures. The device with the least memory that a notebook
-is used on is a tablet, and its figure needs the hook on the published site:
-a tablet reaches a development machine without https, and a page without
-https is not isolated.
+**On a tablet.** The figures above are a desktop's. The device with the
+least memory that a notebook is used on is a tablet, measured with the hook
+on the published site (a tablet reaches a development machine without https,
+and a page without https is not isolated). With `#sessionsmem=6`, six
+sessions with `library(clpfd)` loaded all answer with all of them open; the
+runtime's memory goes from 138 MB to 286.3 MB, and the managed heap is 79 MB,
+10.3 MB a session.
 
 ## Alternatives considered
 

@@ -1,7 +1,7 @@
 # Jupyter notebooks on WebShumway: plan
 
-Status: Phase 0 done except the browser half of V2; Phase 1 in progress
-(2026-11-15). The architecture is in
+Status: Phase 0 done but for the default session limit, which waits for the
+server (Phase 2); Phase 1 done (2026-11-15). The architecture is in
 [`jupyterlite-architecture.md`](jupyterlite-architecture.md); the decisions
 are in ADR-066 to ADR-073.
 
@@ -21,9 +21,11 @@ true, as the Documentation invariant requires.
 V1, F1 and F2 are done. In headless WebKit 27.2 the demo did not boot, and
 `require-corp` isolates where `credentialless` does not (ADR-069). F1 and F2
 went into WebShumway as a fix of their own, and with it published the demo
-boots on a real iPhone. V2 is measured in three desktop browsers (ADR-068):
-about 38 MB of the runtime's memory per session with `library(clpfd)` loaded.
-The tablet's figure and the default limit are still to do.
+boots on a real iPhone. V2 is measured in three desktop browsers and on a
+tablet (ADR-068): with `library(clpfd)` loaded, a session took about 38 MB of
+the runtime's memory before the sessions of a page shared their wasm modules,
+and on the tablet six sessions take the runtime from 138 MB to 286 MB. The
+default limit is set with the server loaded, in Phase 2.
 
 ## Phase 1: Host sessions (ADR-068, accepted)
 
@@ -40,12 +42,19 @@ The tablet's figure and the default limit are still to do.
   flags and operators are isolated.
 - Cancelling one session leaves the other untouched.
 
-**State (2026-11-15):** built, see ADR-068 "What was built". The page's own
-test passes as on `main` in Chromium, and the two-session test passes on the
-desktop and, in the browser, in Chromium, Firefox and WebKit (Firefox once
-the service worker stopped waiting for its claim, a fix of WebShumway's own).
-Open: the manual pass over the guide's examples, and sharing the bundles
-between the sessions of a page (ADR-068, "Memory and threads in a browser").
+**State: done (2026-11-15).** See ADR-068 "What was built". The page's own
+test passes as on `main`, and the two-session test passes on the desktop and,
+in the browser, in Chromium, Firefox and WebKit (Firefox once the service
+worker stopped waiting for its claim, a fix of WebShumway's own). The
+sessions of a page share their wasm modules (ADR-068, "What a session is made
+of"). The manual pass over the guide's examples found two things:
+- `read/1` answered `end_of_file` without asking, from before the sessions:
+  the page's boot ran a query before the session gave the engine its input.
+  Fixed in the engine (PR #247): the host's input takes effect whenever it is
+  set.
+- Once, in Chrome, after the first compile of Scryer's `clpz` and before a
+  reload, `X #> 3, X #< 6.` answered `true` without its residual constraint;
+  after a reload it showed. Not reproduced in headless Chromium; open.
 
 ## Phase 2: The Prolog server, headless (ADR-067)
 
