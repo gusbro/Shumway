@@ -28,6 +28,11 @@ export const wasmMemoryBytes = () => wasmModule?.HEAPU8?.byteLength ?? 0;
 /** How many threads the runtime was asked to make at boot. */
 export const threadPoolSize = () => poolSize;
 
+let sessionAskForInput = null;
+
+/** Who is told that a notebook session wants a line: (kernelId) => void. */
+export const onSessionAskForInput = (handler) => { sessionAskForInput = handler; };
+
 /**
  * Starts the runtime and the engine.
  * @param {(text: string) => void} onOutput receives everything Prolog writes,
@@ -51,6 +56,7 @@ export async function boot(onOutput, onAskForInput, onDiagnostic, onDebugStop, o
       // diagnostics: an undefined import would throw at the first call.
       writeError: onDiagnostic, writeNote: onNote ?? onDiagnostic,
       askForInput: onAskForInput,
+      sessionAskForInput: (kernelId) => sessionAskForInput?.(kernelId),
       debugStopped: (json) => onDebugStop?.(JSON.parse(json)),
     },
   });

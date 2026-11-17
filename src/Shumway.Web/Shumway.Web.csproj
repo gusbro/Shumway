@@ -68,6 +68,7 @@
     <ProjectReference Include="..\Shumway.TopLevel\Shumway.TopLevel.csproj" />
     <!-- Sessions (ADR-068): the engine, its thread, its input and its output. -->
     <ProjectReference Include="..\Shumway.WebHost\Shumway.WebHost.csproj" />
+    <ProjectReference Include="..\Shumway.Jupyter\Shumway.Jupyter.csproj" />
     <!-- The wasm Tier-1 spike (phase 0). Browser-only by nature. -->
     <ProjectReference Include="..\Shumway.Compiler.Wasm\Shumway.Compiler.Wasm.csproj" />
   </ItemGroup>
