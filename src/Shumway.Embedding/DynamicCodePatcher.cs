@@ -2407,14 +2407,14 @@ internal sealed class DynChainState
     /// the body follows it). Filled when the predicate is laid out and by the
     /// in-place asserts; a retract takes its clause out. The positional
     /// <see cref="Entries"/> do not describe that layout.</summary>
-    public readonly Dictionary<Clause, int> IndexedVarEntries = new(ReferenceEqualityComparer.Instance);
+    public readonly Dictionary<Clause, int> IndexedVarEntries = new();
 
     /// <summary>The single live entry holding a clause, or nothing while the
     /// clause has none or has ever had more than one -- the walk decides
     /// those. It is what lets a retract retire its entry without scanning
     /// the chain for it.</summary>
-    private readonly Dictionary<Clause, DynChainEntry?> _byClause =
-        new(ReferenceEqualityComparer.Instance);
+    // Keyed by the clause itself: a Clause is equal only to itself.
+    private readonly Dictionary<Clause, DynChainEntry?> _byClause = new();
 
     public bool TryGetSoleEntry(Clause c, out DynChainEntry? sole)
     {
