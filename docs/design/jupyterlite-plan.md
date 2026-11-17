@@ -25,7 +25,7 @@ boots on a real iPhone. V2 is measured in three desktop browsers and on a
 tablet (ADR-068): with `library(clpfd)` loaded, a session took about 38 MB of
 the runtime's memory before the sessions of a page shared their wasm modules,
 and on the tablet six sessions take the runtime from 138 MB to 286 MB. The
-default limit was set in Phase 3, with the server loaded in a page: six
+default limit was set in Phase 3, with the server loaded in a page: ten
 (ADR-068 D7).
 
 ## Phase 1: Host sessions (ADR-068, accepted)
@@ -114,7 +114,7 @@ from the solution.
   server in it. **Done (2026-11-16):** the page's `#notebook` hook drives
   sessions as a kernel will, and passes in headless Chromium, Firefox and
   WebKit, `jupyter:trace/1` over the wasm tier among its checks.
-- The default session limit that Phase 0 left open is six (ADR-068 D7).
+- The default session limit that Phase 0 left open is ten (ADR-068 D7).
 - The precompiled bundle of the server (ADR-067 D10) is not built: loading
   the server from source costs about 0.3 s once for a page.
 - **The runtime's JavaScript**, shared with the demo from where it is:

@@ -57,12 +57,22 @@ methods directly.
 - **The default** is set by measurement (plan, verification V2): the memory
   of an engine with the server loaded, on a desktop browser and on a tablet.
   A phone is not a target: a notebook is not usable on its screen.
-  **It is six (2026-11-16).** Six sessions with the notebook server loaded
-  take the runtime's memory from 138 MB to 286 MB and add about 9.5 MB of
-  managed heap each, the same in headless Chromium, Firefox and WebKit on a
-  desktop. A tablet held six sessions with `library(clpfd)` at the same 286
-  MB before the server existed; six with the server have not been run on
-  it.
+  **It is ten (2026-11-16).** Ten sessions with the notebook server loaded
+  take the runtime's memory from 138 MB to 344 MB, and six to 286 MB, with 9
+  to 11 MB of managed heap each, the same in headless Chromium, Firefox and
+  WebKit on a desktop. A tablet held six sessions with `library(clpfd)` at
+  286 MB before the server existed; it has not run the server.
+- **What the limit is for.** The sessions of a page share one runtime, whose
+  memory grows and never shrinks. A runtime that is refused more memory
+  ends, and every notebook of the page loses its state with it: the limit
+  makes that a refusal at the start of a kernel. JupyterLab keeps a kernel
+  alive after its notebook's tab is closed, so kernels add up without being
+  seen, and the kernel's message has to say how to free one. Threads are not
+  what runs out (below).
+- **A count stands in for memory.** One session that builds a large term can
+  exhaust the runtime alone, and ten idle ones do not. A limit on the
+  runtime's memory itself is the alternative, to be taken up if the count
+  proves wrong, a tablet's measurement being the likely reason.
 - **The WebShumway demo** is rewritten as a host with exactly one session, so
   there is one code path.
 
