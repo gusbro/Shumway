@@ -2,9 +2,10 @@
 
 ## Status
 
-Proposed (2026-11-14). Revised (2026-11-16) after measuring what a notebook
-site costs to build: the first version asked for five packages, two of them
-published to npm and one consumed by the demo. Records D16 and D17.
+Accepted (2026-11-16), as revised that day after measuring what a notebook
+site costs to build: the first version (2026-11-14) asked for five packages,
+two of them published to npm and one consumed by the demo. Records D16 and
+D17. Nothing is implemented.
 
 ## Context
 

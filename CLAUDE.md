@@ -348,7 +348,7 @@ When proposing changes:
 | Files in notebooks: a mirror between the contents store and MEMFS (proposed) | ADR-070 |
 | Working directory per engine, as an option of the host | ADR-071 |
 | Rich outputs in notebooks, no Python in the kernel (proposed) | ADR-072 |
-| What the notebook site adds to the build, protocol versioning, feature table (proposed) | ADR-073 |
+| What the notebook site adds to the build, protocol versioning, feature table | ADR-073 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | WAM instruction set | docs/design/wam-instruction-set.md |
