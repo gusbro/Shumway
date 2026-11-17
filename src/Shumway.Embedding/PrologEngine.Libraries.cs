@@ -1444,13 +1444,49 @@ public sealed partial class PrologEngine
         => !module.StartsWith('$') && _modules.ContainsKey(module);
 
     /// <summary>Whether <paramref name="module"/> defines the functor — the
-    /// membership form of <see cref="DefinedModulePredicates"/>.</summary>
+    /// membership form of <see cref="DefinedModulePredicates"/>, asking each
+    /// of its sources instead of enumerating them: predicate_property/2 asks
+    /// this for every call, and a module of thousands of clauses made each
+    /// question a walk over all of them.</summary>
     internal bool ModuleDefinesFunctor(string module, int fid)
     {
         if (ModuleOwnsDynamicFunctor(module, fid)) return true;
-        foreach (var (_, f) in DefinedModulePredicates(module))
-            if (f == fid) return true;
-        return false;
+        if (!IsVisibleModule(module)) return false;
+        ModuleManifest manifest = _modules[module];
+        // $-names never surface, as in the enumeration.
+        var (atomId, _) = Shumway.Core.FunctorTable.Lookup(fid);
+        string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
+        if (name is not { Length: > 0 } || name.IndexOf('$') >= 0) return false;
+        if (ModuleClauseHeadFunctors(module, manifest).Contains(fid)) return true;
+        if (manifest.DynamicFunctors.Contains(fid)) return true;
+        if (_dynamicDeclaringModule.TryGetValue(fid, out string? declarer) && declarer == module)
+            return true;
+        if (manifest.PublicFunctors.Contains(fid)) return true;
+        if (_precompiledModuleLocals.TryGetValue(module, out var bundleLocals)
+            && bundleLocals.Contains(fid))
+            return true;
+        return module == DefaultModuleName && !IsPreludeFunctor(fid)
+            && ((_dynStore.Functors.Contains(fid) && !_dynStore.IsImplicitOnly(fid))
+                || GlobalStaticHeadFunctors().Contains(fid));
+    }
+
+    private readonly Dictionary<string, (object ClausesRef, int ClauseCount, HashSet<int> Heads)>
+        _moduleClauseHeadsCache = new();
+
+    /// <summary>The head functors of a module's clauses, kept until its
+    /// clause list changes.</summary>
+    private HashSet<int> ModuleClauseHeadFunctors(string module, ModuleManifest manifest)
+    {
+        if (_moduleClauseHeadsCache.TryGetValue(module, out var e)
+            && ReferenceEquals(e.ClausesRef, manifest.Clauses)
+            && e.ClauseCount == manifest.Clauses.Count)
+            return e.Heads;
+        var heads = new HashSet<int>();
+        foreach (var c in manifest.Clauses)
+            if (c.Kind != Shumway.Compiler.Ast.ClauseKind.Directive)
+                heads.Add(ConsultPipeline.HeadFunctorIdOf(c));
+        _moduleClauseHeadsCache[module] = (manifest.Clauses, manifest.Clauses.Count, heads);
+        return heads;
     }
 
     /// <summary>The module <paramref name="module"/> imports the functor
