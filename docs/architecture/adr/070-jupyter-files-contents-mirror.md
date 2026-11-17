@@ -2,8 +2,11 @@
 
 ## Status
 
-Accepted (2026-11-16). Nothing is implemented. Records D14. Its
-working-directory requirement depends on ADR-071, which is built.
+Accepted (2026-11-16). Records D14. Its working-directory requirement
+depends on ADR-071, which is built. The mirror is built (`mirror.js`, with
+the demo's workspaces on it) and measured against JupyterLite 0.8.7's
+contents manager ("What was built"); the kernel that calls it around each
+cell is not.
 
 ## Context
 
@@ -38,10 +41,40 @@ working-directory requirement depends on ADR-071, which is built.
   process (ADR-068). ADR-071 provides it and is a prerequisite: there is
   no interim that swaps the process directory under a lock.
 
+## What was built (2026-11-17)
+
+`mirror.js` copies between two sides, each a list, a read, a write and a
+remove. The demo's workspaces use it with origin-private storage as the
+store; a notebook page uses it with the contents manager. Measured in
+headless Chromium, Firefox and WebKit, with a JupyterLab page of JupyterLite
+0.8.7 running the demo's runtime:
+
+- A file saved in the editor is there for `consult/1`, in its directory. A
+  file a cell wrote is in the file browser, with the directory it made. An
+  edit replaces the file, and a deletion on either side reaches the other.
+- **`last_modified` is reliable**: a file the mirror wrote comes back with
+  the time its save answered, so a second copy sends nothing.
+- **Text is saved as text.** The contents keep the format a save gives
+  them, and the editor does not open a text file kept as base64. What the
+  engine wrote is text when its bytes are UTF-8 with no zero byte.
+- **Notebooks are not mirrored**, in either direction. They are the
+  reader's documents, and one is saved again each time a cell runs.
+- **The contents are listed only after the manager says something
+  changed.** Listing is slow in WebKit: 0.3 s for four files and 7 s for
+  150, against 10 to 30 ms in the other two, and a kernel lists before
+  every cell. The manager signals every save, rename and deletion made
+  through it, by the editor or the file browser; with nothing signalled the
+  copy costs nothing. Copying 150 new files takes 0.3 s in Chromium and
+  Firefox and 14 s in WebKit.
+- **Not built:** an empty directory is not mirrored, since a side lists
+  files. Where imported libraries live is still open.
+
 ## Consequences
 
 - Files are synced at cell boundaries. A file changed by another tab *during*
   a long-running cell is not seen until the next cell. That is acceptable.
+- A change made in another tab is not signalled to this one, so it is seen
+  only after something changes here too.
 - Large drives make the "before" sync cost proportional to what changed, not
   to the drive's size, as long as `last_modified` is reliable. If it proves
   unreliable, fall back to content hashes for small files.

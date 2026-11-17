@@ -117,13 +117,16 @@ from the solution.
 - The default session limit that Phase 0 left open is ten (ADR-068 D7).
 - The precompiled bundle of the server (ADR-067 D10) is not built: loading
   the server from source costs about 0.3 s once for a page.
-- **The runtime's JavaScript**, shared with the demo from where it is:
+- **The runtime's JavaScript**, shared with the demo from where it is.
+  **Done (2026-11-17)**, each part checked in the three browser engines
+  with the two sites served as Pages serves them:
   - `isolate.js`, told where the worker is;
   - the service worker, one for the two sites, with the COEP value by
     engine for the notebook site (ADR-069, amended);
   - the loader, which starts the runtime with no engine of the page's own
     and finds it through `runtime.json`;
-  - the mirror with the Contents API target (ADR-070).
+  - the mirror with the Contents API target (ADR-070), run against
+    JupyterLite's own contents manager.
 - **The kernel extension, its core:**
   - the `BaseKernel` subclass, calling `SessionRequest`;
   - response mapping;
