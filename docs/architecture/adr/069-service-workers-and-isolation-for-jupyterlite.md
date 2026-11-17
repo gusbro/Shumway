@@ -5,8 +5,12 @@
 Accepted (2026-11-16). Records D12 and D13. Verification V1 of the plan has
 results (Context), and they changed D13: WebShumway sends one value to every
 engine, and the choice by engine is the lite site's alone. The WebShumway side
-of D12 and D13 is implemented (ADR-042, amended); the lite site's part is
-not.
+of D12 and D13 is implemented (ADR-042, amended).
+
+Amended the same day, when the notebook site's part was built: D12 had the
+notebook site register a worker of its own, and that worker does not reach
+the runtime's threads (Context, "A worker of the notebook site's own"). One
+worker, the demo's, serves the two sites and chooses the COEP value by path.
 
 ## Context
 
@@ -76,42 +80,55 @@ host sends no CORP (measured with two public image hosts) loads under
 engine. WebShumway embeds no such image. A notebook's markdown cells commonly
 do.
 
+**A worker of the notebook site's own does not reach the runtime's threads
+(2026-11-16).** The notebook site loads the demo's `_framework` (ADR-073).
+The runtime's threads are workers, and their script is in that directory. In
+an isolated page a worker's script must arrive with a COEP header, and the
+browser picks the service worker that answers for the script by the script's
+address, not by the page that asks. A worker registered under the notebook
+site is therefore not asked, nobody adds the header, and the script is
+refused: in headless Chromium and Firefox the runtime never finished
+starting. With the demo's worker in charge of the notebook page instead, the
+runtime starts and three sessions open at once, in Chromium, Firefox and
+WebKit. A thread's script sent with `require-corp` runs in a page sent with
+`credentialless`.
+
 ## Decision
 
-### D12: One service worker in the lite site: ours
+### D12: One service worker for the two sites: the demo's
 
 - **Disable JupyterLite's service worker** with the `disabledExtensions`
   entry above. None of its jobs apply to us: our kernel is not in a worker
   (ADR-068), stdin goes through page input, and files are mirrored from the
   main thread through the Contents API (ADR-070). The plotting plan has no
   Pyodide, so no worker kernel needs `/api/drive` either (ADR-072).
-- **The lite site registers its own service worker**, built from the same
-  source as WebShumway's (headers, `isolate.js` boot; ADR-073). It is
-  registered at the lite site's root, whose scope is narrower than the
-  demo's and so wins for the notebook pages. The two differ in the COEP
-  value they send (D13), which is why the demo's worker cannot serve both.
-  The lite site loads the demo's `_framework` (ADR-073), and its worker
-  reads and fills the same cache of those files, so the runtime is
-  downloaded once for the two.
+- **The notebook site is served by the demo's service worker**, whose scope
+  holds it. A notebook page loads a copy of `isolate.js` that says where
+  that worker is, and goes through the same first-visit reload as the demo.
+  There is one registration and one cache, so the runtime is downloaded
+  once for the two, and no worker takes a page over from another.
+- **The worker keeps each page under its own path.** It kept every
+  navigation under one name, which was right while its scope held one page:
+  with two sites, a visit to one replaced what a visit to the other got with
+  no network.
 - **WebShumway's `sw.js` becomes a good neighbour:** on `activate` it deletes
   only caches carrying its own prefix. This fix stands on its own and goes
   into WebShumway first.
 
-### D13: `require-corp` in WebShumway, COEP chosen by engine in the lite site
+### D13: `require-corp` in WebShumway, COEP chosen by engine for the notebook site
 
 - **WebShumway sends `require-corp` to every browser.** All three engines
   implement it, and nothing the page loads needs the other value (Context).
   There is no detection of the browser engine. ADR-042 is amended.
-- **The lite site chooses by engine**, because of the images in markdown
-  cells:
+- **For what is under the notebook site's directory the worker chooses by
+  engine**, because of the images in markdown cells:
   - `credentialless` where it is implemented (Chromium, Firefox);
   - `require-corp` in WebKit, where an image from a host without CORP does
     not show.
 
   Detection must match **WebKit that is not Chromium**, not "iOS": iPadOS
   presents itself as a Mac by default, and Mac Safari has the same limitation.
-  The lite site's worker is built from WebShumway's source with this one
-  difference.
+  Everything else, the runtime's files among it, keeps `require-corp`.
 
 ## Consequences
 
@@ -124,6 +141,10 @@ do.
 - iPhone, iPad and Mac Safari users gain WebShumway itself, not only
   notebooks.
 - In WebKit, a notebook's image from a host that sends no CORP does not show.
+- The demo's worker knows the name of the notebook site's directory. The two
+  are one deployment (ADR-073), so the name is in one repository.
+- The notebook site does not work without the demo beside it: its runtime
+  and its worker are the demo's.
 
 ## Alternatives considered
 
@@ -133,9 +154,12 @@ do.
 - **Host with real headers (Cloudflare Pages, Netlify).** Technically the
   cleanest option, but it means leaving GitHub Pages for this alone. Kept in
   reserve.
-- **Rely on WebShumway's worker covering `/lite/`.** It sends one COEP value
-  to every browser, and the notebook pages need another in two of the three
-  engines (D13). Rejected.
+- **A worker of the notebook site's own**, registered at its root. This was
+  D12 as first accepted. It does not reach the runtime's threads (Context).
+  Rejected by measurement.
+- **A copy of `_framework` in the notebook site**, so that a worker of its
+  own reaches the threads. A second 62 MB download for a reader of both
+  sites, which ADR-073 rules out. Rejected.
 - **`require-corp` in the lite site too.** One behaviour in every browser and
   no detection, at the cost of those images everywhere. Rejected while the
   detection stays this small.

@@ -118,9 +118,11 @@ from the solution.
 - The precompiled bundle of the server (ADR-067 D10) is not built: loading
   the server from source costs about 0.3 s once for a page.
 - **The runtime's JavaScript**, shared with the demo from where it is:
-  - `isolate.js`;
-  - the service worker, with the COEP value by engine (ADR-069);
-  - the loader;
+  - `isolate.js`, told where the worker is;
+  - the service worker, one for the two sites, with the COEP value by
+    engine for the notebook site (ADR-069, amended);
+  - the loader, which starts the runtime with no engine of the page's own
+    and finds it through `runtime.json`;
   - the mirror with the Contents API target (ADR-070).
 - **The kernel extension, its core:**
   - the `BaseKernel` subclass, calling `SessionRequest`;

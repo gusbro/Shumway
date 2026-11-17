@@ -59,8 +59,9 @@ supports Shumway as a backend (the `shumwaylgt` integration script in Logtalk).
 4. **Kernel (TypeScript).** A JupyterLite `BaseKernel` subclass that maps
    Jupyter messages to JSON-RPC requests and renders responses as standard
    MIME bundles (ADR-067, ADR-072). Little code: the logic is in layer 2.
-5. **Site.** A `jupyter lite build` output with our service worker in place
-   of JupyterLite's (ADR-069), deployed under `/lite` on Shumway's Pages.
+5. **Site.** A `jupyter lite build` output with JupyterLite's service worker
+   disabled and the demo's in charge of it (ADR-069), deployed under `/lite`
+   on Shumway's Pages.
 
 ## The decisive design facts
 
@@ -115,7 +116,7 @@ of the runtime's JavaScript.
 | D9 | Helpers in a Prolog module `jupyter` | 067 |
 | D10 | Server precompiled into the bundle | 067 |
 | D11 | Identity: `shumway_prolog`, standard Prolog `language_info`, site default kernel | 066 |
-| D12 | Disable JupyterLite's service worker; our own, derived from WebShumway's; WebShumway's stops deleting other caches | 069 |
+| D12 | Disable JupyterLite's service worker; WebShumway's serves the two sites, and stops deleting other caches | 069 |
 | D13 | `require-corp` in WebShumway; in the lite site COEP chosen by engine (WebKit → `require-corp`), for the images of markdown cells | 069 |
 | D14 | Files: mirror between the Contents API and MEMFS around each cell; no OPFS in the lite site | 070 |
 | D15 | Rich outputs in standard MIME, in phases: tables → Graphviz → Vega-Lite → widgets | 072 |

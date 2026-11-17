@@ -73,6 +73,10 @@ else. Node and Python are needed only to build the notebook site, as
   publish and a second 62 MB download that shares no cache with the demo's.
   The server bundle stays a parameter of session creation, so one runtime
   serves Prolog and Logtalk.
+  The runtime's entry is published under a name that changes with its
+  contents, and the demo's page finds it through its import map. A notebook
+  page has no such map, so the publish writes `runtime.json`, whose name is
+  fixed and which names the entry.
 - **No npm package for the runtime's JavaScript.** The files stay where the
   demo has them, and the extension's build takes them from there. A package
   the demo consumed would put Node in the demo's build.
