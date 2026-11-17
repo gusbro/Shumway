@@ -95,6 +95,15 @@ build. `dotnet clean` removes it, so a stale executable never lingers on
 someone's PATH. Under `-p:ShumwayNetFx=true` (ADR-043) the .NET Framework
 flavour lands in `dist/<configuration>/net48/`.
 
+In Release the assemblies in the directory carry native code for the machine
+that built them (.NET's ReadyToRun). A tool, and an executable that
+`shumway-link --exe` or `shumway --save-toplevel` builds from the directory,
+starts without the JIT compiling the engine first: `shumway -g halt` takes
+0.6 s instead of 1.1. The code is for the .NET the SDK ships with; on another
+platform or major version the runtime compiles the IL the assemblies still
+hold. The first Release build downloads the SDK's ReadyToRun compiler for the
+platform (36 MB); `-p:ShumwayReadyToRun=false` keeps the directory IL only.
+
 For a single self-contained executable instead, see
 [Native AOT](native-aot.md) or `shumway-link --exe`.
 

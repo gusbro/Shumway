@@ -39,6 +39,29 @@
   </PropertyGroup>
 
   <!--
+    A Release toolchain carries native code (ReadyToRun) for the platform that
+    builds it: the tools and the executables they build start without the JIT
+    compiling the engine, and a short run gains the most. The code is for the
+    .NET the SDK ships with; on another platform or major version the runtime
+    ignores it and compiles the IL the assemblies still hold.
+    -p:ShumwayReadyToRun=false keeps the toolchain IL only.
+
+    crossgen2 comes from the SDK's NuGet package for its platform, which
+    only this project downloads: no tool's own restore changes. It
+    compiles against the shared runtime the SDK installed. Each assembly is
+    compiled on its own, when it changed: the IL is staged under obj/, so the
+    copy into dist/ never goes back and forth between the two forms.
+  -->
+  <PropertyGroup>
+    <ShumwayReadyToRun Condition="'$(ShumwayReadyToRun)' == '' and '$(Configuration)' == 'Release'">true</ShumwayReadyToRun>
+    <ShumwayReadyToRun Condition="'$(ShumwayReadyToRun)' == ''">false</ShumwayReadyToRun>
+    <_ShumwayCrossgen2Id>microsoft.netcore.app.crossgen2.$(NETCoreSdkRuntimeIdentifier.ToLowerInvariant())</_ShumwayCrossgen2Id>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(ShumwayReadyToRun)' == 'true' and '$(TargetFramework)' == 'net10.0'">
+    <PackageDownload Include="$(_ShumwayCrossgen2Id)" Version="[$(BundledNETCoreAppPackageVersion)]" />
+  </ItemGroup>
+
+  <!--
     The CLIs. Keep this list and the globs in CollectToolchain in step.
 
     Only the three that multi-target (ADR-043) exist for net48; referencing a
@@ -94,15 +117,62 @@
       <!-- The example programs, kept under the web site's static files. -->
       <ShumwayDistFile Include="$(ShumwayRepoRoot)src/Shumway.Web/wwwroot/examples/*.pl" DistSubdir="examples/" />
     </ItemGroup>
+
+    <PropertyGroup>
+      <_ShumwayCrossgen2>$([MSBuild]::EnsureTrailingSlash('$(NuGetPackageRoot)'))$(_ShumwayCrossgen2Id)/$(BundledNETCoreAppPackageVersion)/tools/crossgen2</_ShumwayCrossgen2>
+      <_ShumwayCrossgen2 Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(_ShumwayCrossgen2).exe</_ShumwayCrossgen2>
+      <_ShumwaySharedRuntime>$(NetCoreRoot)shared/Microsoft.NETCore.App/$(BundledNETCoreAppPackageVersion)/</_ShumwaySharedRuntime>
+      <_ShumwayPrecompile>false</_ShumwayPrecompile>
+      <_ShumwayPrecompile Condition="'$(ShumwayReadyToRun)' == 'true' and '$(TargetFramework)' == 'net10.0'
+                                     and Exists('$(_ShumwayCrossgen2)') and Exists('$(_ShumwaySharedRuntime)')">true</_ShumwayPrecompile>
+      <_ShumwayIlDir>$(IntermediateOutputPath)toolchain-il/</_ShumwayIlDir>
+      <_ShumwayNativeDir>$(IntermediateOutputPath)toolchain-r2r/</_ShumwayNativeDir>
+    </PropertyGroup>
+    <Message Importance="high" Condition="'$(ShumwayReadyToRun)' == 'true' and '$(TargetFramework)' == 'net10.0' and '$(_ShumwayPrecompile)' != 'true'"
+             Text="Shumway toolchain: no crossgen2 $(BundledNETCoreAppPackageVersion) or shared runtime $(BundledNETCoreAppPackageVersion) found: the assemblies stay IL only." />
+    <!-- The assemblies at the root of each tool's output, once each. -->
+    <ItemGroup Condition="'$(_ShumwayPrecompile)' == 'true'">
+      <_ShumwayIlAssembly Include="@(ShumwayDistFile)"
+                          Condition="'%(Extension)' == '.dll' and '%(RecursiveDir)' == '' and '%(ShumwayDistFile.DistSubdir)' == ''" />
+      <ShumwayDistFile Remove="@(_ShumwayIlAssembly)" />
+    </ItemGroup>
     <Copy SourceFiles="@(ShumwayDistFile)"
           DestinationFiles="@(ShumwayDistFile->'$(ShumwayDistDir)%(DistSubdir)%(RecursiveDir)%(Filename)%(Extension)')"
           SkipUnchangedFiles="true" />
-    <Message Importance="high" Text="Shumway toolchain -> $(ShumwayDistDir)" />
+    <Copy Condition="'$(_ShumwayPrecompile)' == 'true'" SourceFiles="@(_ShumwayIlAssembly)"
+          DestinationFolder="$(_ShumwayIlDir)" SkipUnchangedFiles="true" />
+    <ItemGroup Condition="'$(_ShumwayPrecompile)' == 'true'">
+      <_ShumwayStagedAssembly Include="$(_ShumwayIlDir)*.dll" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Inputs and outputs pair one to one, so only the assemblies that changed
+       compile again. -->
+  <Target Name="PrecompileToolchain" AfterTargets="CollectToolchain"
+          Condition="'$(_ShumwayPrecompile)' == 'true'"
+          Inputs="@(_ShumwayStagedAssembly)"
+          Outputs="@(_ShumwayStagedAssembly->'$(_ShumwayNativeDir)%(Filename)%(Extension)')">
+    <MakeDir Directories="$(_ShumwayNativeDir)" />
+    <Exec Command="&quot;$(_ShumwayCrossgen2)&quot; &quot;%(_ShumwayStagedAssembly.FullPath)&quot; -o &quot;$(_ShumwayNativeDir)%(_ShumwayStagedAssembly.Filename)%(_ShumwayStagedAssembly.Extension)&quot; -r &quot;$(_ShumwayIlDir)*.dll&quot; -r &quot;$(_ShumwaySharedRuntime)*.dll&quot; -O"
+          StandardOutputImportance="low" />
+  </Target>
+
+  <Target Name="PlaceToolchainAssemblies" AfterTargets="PrecompileToolchain"
+          Condition="'$(TargetFramework)' != ''">
+    <ItemGroup>
+      <_ShumwayToolchainAssembly Condition="'$(_ShumwayPrecompile)' == 'true'"
+                                 Include="@(_ShumwayStagedAssembly->'$(_ShumwayNativeDir)%(Filename)%(Extension)')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_ShumwayToolchainAssembly)" DestinationFolder="$(ShumwayDistDir)" SkipUnchangedFiles="true" />
+    <Message Importance="high" Condition="'$(_ShumwayPrecompile)' == 'true'"
+             Text="Shumway toolchain -> $(ShumwayDistDir) (ReadyToRun for $(NETCoreSdkRuntimeIdentifier))" />
+    <Message Importance="high" Condition="'$(_ShumwayPrecompile)' != 'true'"
+             Text="Shumway toolchain -> $(ShumwayDistDir)" />
   </Target>
 
   <!-- A stale executable on someone's PATH is worse than a missing one. -->
   <Target Name="CleanToolchain" AfterTargets="Clean">
-    <RemoveDir Directories="$(ShumwayDistDir)" />
+    <RemoveDir Directories="$(ShumwayDistDir);$(IntermediateOutputPath)toolchain-il/;$(IntermediateOutputPath)toolchain-r2r/" />
   </Target>
 
 </Project>

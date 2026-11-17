@@ -136,7 +136,9 @@ $env:PATH = "$PWD\dist\Release;$env:PATH"      # PowerShell
 ```
 
 (`-c Debug` is the same layout under `dist/Debug/`, but the engine is markedly
-slower, so use Release unless you are debugging Shumway itself.)
+slower, so use Release unless you are debugging Shumway itself. Release also
+compiles the assemblies to native code for your machine, so the tools start
+sooner; its first build downloads the SDK's compiler for that.)
 
 ### Run
 
