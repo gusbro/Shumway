@@ -18,6 +18,13 @@ internal static class SwiShim
     /// to (and the auto-load consults).</summary>
     public const string LibraryName = "swi";
 
+    /// <summary>SWI's own flags its library sources set in directives
+    /// (<c>:- set_prolog_flag(generate_debug_info, false)</c> heads dozens of
+    /// them): under the swi dialect <c>set_prolog_flag/2</c> accepts them
+    /// without effect, where elsewhere they are unknown flags.</summary>
+    internal static readonly System.Collections.Generic.HashSet<string> IgnoredFlags =
+        new(System.StringComparer.Ordinal) { "generate_debug_info", "quasi_quotations", "float_format" };
+
     /// <summary>SWI's attribute hook, <c>attr_unify_hook(AttValue, Other)</c>,
     /// over the engine's own (ADR-040): before the first clause of a module's
     /// <c>attr_unify_hook/2</c> in a source, that module gets

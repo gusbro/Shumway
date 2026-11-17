@@ -891,6 +891,7 @@ public static class ShmoLinker
                         new List<QualifiedPredicateRef>(), ShmoBuildMode.Release, perrs,
                         arityCompat: obj.ArityCompat,
                         operatorDefs: obj.Operators,   // preserve op/3 defs
+                        flagSettings: obj.Flags,
                         multifileSet: MultifileSeedSet(obj),
                         // ADR-038 — carry the resolved import table (preserve mangling).
                         isExportQualified: obj.IsExportQualified,
@@ -966,6 +967,7 @@ public static class ShmoLinker
                     nativeFunctions: obj.NativeFunctions,
                     nativeDecls: obj.NativeDecls,
                     operators: obj.Operators,
+                    flags: obj.Flags,
                     isExportQualified: obj.IsExportQualified,
                     exports: obj.Exports,
                     imports: obj.Imports,
@@ -1353,6 +1355,7 @@ public static class ShmoLinker
                 new List<QualifiedPredicateRef>(), obj.BuildMode, errors,
                 arityCompat: obj.ArityCompat,
                 operatorDefs: obj.Operators,   // preserve op/3 defs
+                flagSettings: obj.Flags,
                 multifileSet: MultifileSeedSet(obj),
                 // ADR-038 — carry the resolved import table so this recompile
                 // does not lose the import mangling.
@@ -1479,6 +1482,7 @@ public static class ShmoLinker
                 new List<QualifiedPredicateRef>(), obj.BuildMode, errors,
                 arityCompat: obj.ArityCompat,
                 operatorDefs: obj.Operators,
+                flagSettings: obj.Flags,
                 multifileSet: MultifileSeedSet(obj),
                 // ADR-038 — carry the resolved import table (preserve mangling).
                 isExportQualified: obj.IsExportQualified,
@@ -1965,6 +1969,7 @@ public static class ShmoLinker
             new List<QualifiedPredicateRef>(), obj.BuildMode, errors,
             arityCompat: obj.ArityCompat,
             operatorDefs: obj.Operators,
+            flagSettings: obj.Flags,
             multifileSet: MultifileSeedSet(obj),
             isExportQualified: obj.IsExportQualified,
             exports: obj.Exports,
@@ -2236,6 +2241,7 @@ public static class ShmoLinker
             BundleWriter.WriteNativeInterop(bw, e.NativeFunctions, e.NativeDecls);
             // Operator trailer.
             BundleWriter.WriteOperators(bw, e.Operators);
+            BundleWriter.WriteFlags(bw, e.Flags);
             // ADR-038 — export-qualification trailer (shared serialiser).
             BundleWriter.WriteExportQualification(bw, e);
         }

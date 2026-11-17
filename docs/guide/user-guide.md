@@ -1295,7 +1295,17 @@ link-time meaning:
 | `:- ensure_linked [a/1, b/2].` | List form of the above. |
 
 Other directives (`set_prolog_flag/2`, etc.) are honoured at consult time
-but do not affect link-time decisions.
+but do not affect link-time decisions. A `:- set_prolog_flag(F, V)` directive
+sets the flag as the consult reads it, and as the builtin does: a flag the
+engine does not know, or a value outside the flag's domain, is reported with
+the builtin's error, as any directive that raises is, and the load goes on.
+
+A `set_prolog_flag/2` directive also travels with its module, and compiled
+through the consult (`--consult`), so does every call to `set_prolog_flag/2`
+that succeeded while the module loaded, an `initialization` goal's among
+them. Loading the `.shum` makes those calls again, in order, once the bundle
+is in, so a flag such as `lenient_escapes` or `double_quotes` governs what a
+linked program reads at run time as it does after consulting the source.
 
 `?- Goal.` in Prolog text is the Edinburgh spelling of a directive and is
 equivalent to `:- Goal.` so the goal runs at consult time. This makes a 

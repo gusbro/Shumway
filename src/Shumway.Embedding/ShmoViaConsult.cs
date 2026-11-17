@@ -268,6 +268,7 @@ public static class ShmoViaConsult
                 buildMode: buildMode,
                 errors: localErrors,
                 operatorDefs: ops.Count > 0 ? ops : null,
+                flagSettings: e.ModuleFlags(name) is { Count: > 0 } moduleFlags ? moduleFlags : null,
                 isExportQualified: manifest.IsExportQualified,
                 exports: exports,
                 imports: imports,

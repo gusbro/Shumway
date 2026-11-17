@@ -233,7 +233,8 @@ public sealed class BundleEntry
         IReadOnlyList<PredicateRef>? exports = null,
         IReadOnlyList<ShmoImportEntry>? imports = null,
         string? dialect = null,
-        IReadOnlyList<byte[]>? clauseTerms = null)
+        IReadOnlyList<byte[]>? clauseTerms = null,
+        IReadOnlyList<ShmoFlagSetting>? flags = null)
     {
         ModuleName = moduleName;
         Source = source;
@@ -252,13 +253,14 @@ public sealed class BundleEntry
         Imports = imports ?? Array.Empty<ShmoImportEntry>();
         Dialect = dialect;
         ClauseTerms = clauseTerms ?? Array.Empty<byte[]>();
+        Flags = flags ?? Array.Empty<ShmoFlagSetting>();
     }
 
     /// <summary>The same entry with another compiled payload.</summary>
     internal BundleEntry WithCompiledBytecode(byte[]? compiledBytecode) => new(
         ModuleName, Source, compiledBytecode, CompiledIl, Defined, CompiledIlPatches,
         CompiledIlEntries, DynamicSeeds, NativeBlocks, NativeFunctions, NativeDecls, Operators,
-        IsExportQualified, Exports, Imports, Dialect, ClauseTerms);
+        IsExportQualified, Exports, Imports, Dialect, ClauseTerms, Flags);
 
     /// <summary>The module's raw static clauses (<see cref="TermCodec"/>
     /// blobs, the <see cref="ShmoObject.ClauseTerms"/> of its object), so a
@@ -299,4 +301,8 @@ public sealed class BundleEntry
     /// (see <see cref="ShmoObject.Operators"/>), replayed into the engine's
     /// operator table at <c>LoadBundle</c>.</summary>
     public IReadOnlyList<ShmoOperatorDef> Operators { get; }
+
+    /// <summary>The module's <c>:- set_prolog_flag/2</c> directives (see
+    /// <see cref="ShmoObject.Flags"/>), applied at <c>LoadBundle</c>.</summary>
+    public IReadOnlyList<ShmoFlagSetting> Flags { get; }
 }

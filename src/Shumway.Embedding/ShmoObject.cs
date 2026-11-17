@@ -80,6 +80,20 @@ public readonly record struct ShmoOperatorDef(int Priority, string Type, string 
     public override string ToString() => $"op({Priority}, {Type}, {Name})";
 }
 
+/// <summary>One <c>set_prolog_flag(Flag, Value)</c> of a module's load, in
+/// the order the load made them: compiled from the file alone, its
+/// directives; compiled through the consult (<c>--consult</c>), every call
+/// that succeeded while the module loaded, an <c>initialization</c> goal's
+/// among them. <see cref="Value"/> is the value as <c>writeq</c> writes it.
+/// Carried through <c>.shmo</c> to <c>.shum</c>; <c>LoadBundle</c> makes the
+/// calls again as the runtime builtin does, so a flag such as
+/// <c>lenient_escapes</c> or <c>double_quotes</c> governs what the program
+/// reads at run time.</summary>
+public readonly record struct ShmoFlagSetting(string Flag, string Value)
+{
+    public override string ToString() => $"set_prolog_flag({Flag}, {Value})";
+}
+
 /// <summary>ADR-038 — one entry of an export-qualified module's import table
 /// carried in the <c>.shmo</c>: the bare indicator this module imported, and the
 /// name of the export-qualified module that provides it (so a call to
@@ -245,7 +259,8 @@ public sealed class ShmoObject
         IReadOnlyList<ShmoImportEntry>? imports = null,
         IReadOnlyList<ShmoLibraryDep>? libraryDeps = null,
         string? dialect = null,
-        ShumwayVersion? generatorVersion = null)
+        ShumwayVersion? generatorVersion = null,
+        IReadOnlyList<ShmoFlagSetting>? flags = null)
     {
         GeneratorVersion = generatorVersion ?? ShumwayVersion.Current;
         ModuleName = moduleName;
@@ -268,6 +283,7 @@ public sealed class ShmoObject
         Imports = imports ?? System.Array.Empty<ShmoImportEntry>();
         LibraryDeps = libraryDeps ?? System.Array.Empty<ShmoLibraryDep>();
         Dialect = dialect;
+        Flags = flags ?? System.Array.Empty<ShmoFlagSetting>();
     }
 
     /// <summary>ADR-040 — the source dialect this module was compiled under
@@ -315,6 +331,11 @@ public sealed class ShmoObject
     /// runtime term reading in a source-stripped bundle parses with the same
     /// operators the source declared.</summary>
     public IReadOnlyList<ShmoOperatorDef> Operators { get; }
+
+    /// <summary>The <c>set_prolog_flag/2</c> calls this module's load ran, in
+    /// order (see <see cref="ShmoFlagSetting"/>). <c>LoadBundle</c> runs them
+    /// again, after the module's operators.</summary>
+    public IReadOnlyList<ShmoFlagSetting> Flags { get; }
 }
 
 /// <summary>ADR-022 — one embedded native block's marshalling data, carried

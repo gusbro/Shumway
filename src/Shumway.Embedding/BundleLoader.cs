@@ -285,6 +285,7 @@ internal sealed class BundleLoader
                     dynamicSeeds: shmo.DynamicSeeds,
                     nativeBlocks: shmo.NativeBlocks,
                     operators: shmo.Operators,
+                    flags: shmo.Flags,
                     isExportQualified: shmo.IsExportQualified,
                     exports: shmo.Exports,
                     imports: shmo.Imports,
@@ -457,6 +458,12 @@ internal sealed class BundleLoader
             .Distinct().ToList();
         foreach (string module in LastLoadedModules)
             if (module != PrologEngine.DefaultModuleName) E._modulesFromBundles.Add(module);
+
+        // The set_prolog_flag/2 calls the modules' loads made, in entry order.
+        // Nothing loaded above reads them: a source-less entry is not read,
+        // and one with source made its own calls when it was consulted.
+        foreach (var entry in effectiveEntries)
+            foreach (var fs in entry.Flags) E.ApplyBundleFlag(fs);
 
         // Cross-process functor-id drift diagnostic (see PersistedIlBuilder).
         var dumpFidsEnv = System.Environment.GetEnvironmentVariable("SHUMWAY_PERSIST_DUMP_FIDS");

@@ -1506,7 +1506,32 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     private sealed class OpCollectFrame
     {
         public readonly List<(string Name, int Precedence, OperatorType Type)> Ops = new();
+        public readonly List<ShmoFlagSetting> Flags = new();
         public string? Module;
+    }
+
+    // The set_prolog_flag/2 calls each module's consult made, in the order they ran.
+    private readonly Dictionary<string, List<ShmoFlagSetting>> _moduleFlags = new();
+
+    /// <summary>The <c>set_prolog_flag/2</c> calls that succeeded while a
+    /// module's consult ran, in the order they ran (empty if none).</summary>
+    internal IReadOnlyList<ShmoFlagSetting> ModuleFlags(string moduleName) =>
+        _moduleFlags.TryGetValue(moduleName, out var l)
+            ? l
+            : System.Array.Empty<ShmoFlagSetting>();
+
+    /// <summary>Whether a consult is collecting what its module defines.</summary>
+    internal bool CollectingConsult => _opCollect.Count > 0;
+
+    /// <summary>Records a <c>set_prolog_flag/2</c> the consult in progress ran
+    /// (<paramref name="value"/> as <c>writeq</c> writes it), for the module its
+    /// collection frame commits.</summary>
+    internal void NoteConsultFlag(string flag, string value)
+    {
+        // A dialect library's load restores these when it ends: what it set
+        // stays with it, and is no module's to carry.
+        if (_loadingDialect is not null && DialectScopedFlags.Contains(flag)) return;
+        if (_opCollect.Count > 0) _opCollect.Peek().Flags.Add(new ShmoFlagSetting(flag, value));
     }
     private readonly Stack<OpCollectFrame> _opCollect = new();
 
@@ -1534,7 +1559,13 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     {
         if (_opCollect.Count == 0) return;
         var f = _opCollect.Pop();
-        if (f.Module is not { } m || f.Ops.Count == 0) return;
+        if (f.Module is not { } m) return;
+        if (f.Flags.Count > 0)
+        {
+            if (!_moduleFlags.TryGetValue(m, out var flags)) _moduleFlags[m] = flags = new();
+            flags.AddRange(f.Flags);
+        }
+        if (f.Ops.Count == 0) return;
         if (!_moduleOperators.TryGetValue(m, out var list))
             _moduleOperators[m] = list = new List<(string, int, OperatorType)>();
         foreach (var o in f.Ops)

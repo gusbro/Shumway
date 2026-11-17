@@ -2054,20 +2054,14 @@ internal sealed class ConsultPipeline
                 // see the execution loop at the end of this method.
                 (initializationGoals ??= new List<Term>()).Add(initDir.Args[0]);
             }
-            else if (body is CompoundTerm spf
-                     && spf.Functor == "set_prolog_flag"
-                     && spf.Args.Length == 2
-                     && spf.Args[0] is AtomTerm spfFlag
-                     && spf.Args[1] is AtomTerm spfValue)
+            else if (body is CompoundTerm { Functor: "set_prolog_flag", Args.Length: 2 } spf)
             {
-                // flags that the parser doesn't already
-                // pre-process (double_quotes is the only one) get
-                // applied at consult time. Mirrors the runtime
-                // set_prolog_flag/2 builtin so the directive form
-                // takes effect before subsequent clauses are
-                // processed (e.g. implicit_dynamic toggles the
-                // CollectImplicitDynamics pre-scan).
-                E.ApplyConsultSetPrologFlag(spfFlag.Name, spfValue.Name);
+                // Set now, so the rest of this consult sees it, and as the
+                // runtime builtin sets it: an unknown flag or a value outside
+                // its domain is reported as any directive that raises, and the
+                // load goes on. The reader has applied double_quotes and
+                // arity_compat to its own lexing already.
+                SetFlagFromDirective(spf);
             }
             else if (Shumway.Compiler.Modes.ModeDirectiveParser.TryParseAll(
                 body, out var modeDecls, out string? modeError))
@@ -2923,6 +2917,23 @@ internal sealed class ConsultPipeline
             if (elided.Length <= DirectiveTextLimit) return prefix + elided;
         }
         return prefix + text[..DirectiveTextLimit] + "...";
+    }
+
+    /// <summary>A <c>:- set_prolog_flag(F, V)</c> directive, set as the runtime
+    /// builtin sets it; what the builtin raises is reported as a raising
+    /// directive's goal is (<see cref="RunConsultGoal"/>).</summary>
+    private void SetFlagFromDirective(CompoundTerm directive)
+    {
+        try
+        {
+            MetaBuiltins.ApplySetPrologFlag(E, directive.Args[0], directive.Args[1], E._liveConsultEngine);
+        }
+        catch (ShumwayPrologException ex)
+        {
+            Term ball = IsoError.CloseContext(ex.Term, "set_prolog_flag", 2);
+            E.Warn($"Warning: directive raised: {DescribeDirective(directive)}: "
+                + AstTermRenderer.Render(ball, 999, E.Operators, quoted: true));
+        }
     }
 
     /// <summary>Runs a consult-time goal (a <c>:- Goal</c> directive, an

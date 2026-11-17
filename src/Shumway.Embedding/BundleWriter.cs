@@ -170,7 +170,8 @@ public static class BundleWriter
                     exports: effective[i].Exports,
                     imports: effective[i].Imports,
                     dialect: effective[i].Dialect,
-                    clauseTerms: effective[i].ClauseTerms);
+                    clauseTerms: effective[i].ClauseTerms,
+                    flags: effective[i].Flags);
             }
             for (int i = 0; i < effective.Length; i++)
             {
@@ -238,6 +239,7 @@ public static class BundleWriter
             WriteNativeBlocks(bw, entry.NativeBlocks);
             WriteNativeInterop(bw, entry.NativeFunctions, entry.NativeDecls);
             WriteOperators(bw, entry.Operators);
+            WriteFlags(bw, entry.Flags);
             WriteExportQualification(bw, entry);
         }
         // Foreign-assemblies trailer after the
@@ -346,7 +348,7 @@ public static class BundleWriter
                     operators: e.Operators,
                     isExportQualified: e.IsExportQualified,
                     exports: e.Exports, imports: e.Imports,
-                    dialect: e.Dialect, clauseTerms: e.ClauseTerms));
+                    dialect: e.Dialect, clauseTerms: e.ClauseTerms, flags: e.Flags));
             else if (!string.IsNullOrEmpty(e.Source))
                 sources.Add(e.Source);
         }
@@ -950,6 +952,18 @@ public static class BundleWriter
             bw.Write(od.Priority);
             WriteLengthPrefixedUtf8(bw, od.Type);
             WriteLengthPrefixedUtf8(bw, od.Name);
+        }
+    }
+
+    /// <summary>Per-entry <c>:- set_prolog_flag/2</c> directives, applied at
+    /// LoadBundle. Shared by both .shum writers and the .shmo writer.</summary>
+    internal static void WriteFlags(BinaryWriter bw, IReadOnlyList<ShmoFlagSetting> flags)
+    {
+        bw.Write((uint)flags.Count);
+        foreach (var f in flags)
+        {
+            WriteLengthPrefixedUtf8(bw, f.Flag);
+            WriteLengthPrefixedUtf8(bw, f.Value);
         }
     }
 
