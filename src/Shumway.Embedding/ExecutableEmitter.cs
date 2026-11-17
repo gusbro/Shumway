@@ -489,7 +489,7 @@ internal static class Program
         string linkerDir = Path.GetDirectoryName(
             Assembly.GetExecutingAssembly().Location) ?? "";
         var references = new StringBuilder();
-        var dlls = new List<string>(EnumerateRequiredAssemblies(linkerDir));
+        var dlls = new List<string>(EnumerateRequiredAssemblies(linkerDir, extraReferences));
         dlls.AddRange(extraReferences);
         foreach (string dll in dlls)
         {
@@ -556,21 +556,51 @@ internal static class Program
 #endif
     }
 
-    internal static IEnumerable<string> EnumerateRequiredAssemblies(string dir)
+    /// <summary>The assemblies in <paramref name="dir"/>, the linker's own
+    /// directory, that a program built on the engine needs: what
+    /// Shumway.Embedding references, directly or not, Shumway.Libraries (the
+    /// engine loads it by name), and what each of <paramref name="roots"/>
+    /// references. The roots themselves are the caller's to reference.</summary>
+    internal static IEnumerable<string> EnumerateRequiredAssemblies(string dir,
+        IReadOnlyList<string>? roots = null)
     {
-        // Every Shumway.*.dll alongside the linker is a
-        // candidate engine dependency. The publish step's reference
-        // resolution prunes anything actually unused. On net48 the linker's
-        // own directory holds the net48 flavors plus the compatibility
-        // packages (System.Memory etc.) — include those too, since the
-        // Framework stub has no NuGet restore to bring them in.
+#if NETFRAMEWORK
+        // The net48 toolchain holds the engine and the compatibility packages
+        // (System.Memory etc.) the Framework stub cannot restore, and no tool's
+        // own assembly: the wasm baker is net10 only.
         foreach (string file in Directory.GetFiles(dir, "Shumway.*.dll"))
             yield return file;
-#if NETFRAMEWORK
         foreach (string file in Directory.GetFiles(dir, "System.*.dll"))
             yield return file;
         string bcl = Path.Combine(dir, "Microsoft.Bcl.AsyncInterfaces.dll");
         if (File.Exists(bcl)) yield return bcl;
+#else
+        // Not every Shumway.*.dll beside the linker: a reference is published
+        // whether the program uses it or not, so a tool's own assembly (the wasm
+        // baker, and the package it pulls in) would ride along in every
+        // executable.
+        var named = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pending = new Stack<(string Path, bool Include)>();
+        void Reach(string path, bool include)
+        {
+            if (File.Exists(path) && named.Add(Path.GetFileNameWithoutExtension(path)))
+                pending.Push((path, include));
+        }
+        Reach(Path.Combine(dir, typeof(PrologEngine).Assembly.GetName().Name + ".dll"), true);
+        Reach(Path.Combine(dir, LibraryBundles.AssemblyName + ".dll"), true);
+        if (roots is not null)
+            foreach (string root in roots) Reach(root, false);
+        while (pending.Count > 0)
+        {
+            var (path, include) = pending.Pop();
+            if (include) yield return path;
+            using var pe = new System.Reflection.PortableExecutable.PEReader(File.OpenRead(path));
+            if (!pe.HasMetadata) continue;
+            var metadata = System.Reflection.Metadata.PEReaderExtensions.GetMetadataReader(pe);
+            foreach (var handle in metadata.AssemblyReferences)
+                Reach(Path.Combine(dir,
+                    metadata.GetString(metadata.GetAssemblyReference(handle).Name) + ".dll"), true);
+        }
 #endif
     }
 

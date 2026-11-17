@@ -114,7 +114,9 @@ dotnet restore
 # PATH and `shumway`, `shumway-compile`, `shumway-link`, `shumway-lib`,
 # `shumway-disasm`, `shumway-dap` are available directly. Prefer it to
 # `dotnet run --project`, which re-evaluates the project every invocation
-# (~5.8 s against ~0.65 s). Collected by build/Shumway.Dist.
+# (~5.8 s against ~0.65 s). Collected by build/Shumway.Dist. In Release the
+# collected assemblies are precompiled (ReadyToRun) for this machine;
+# -p:ShumwayReadyToRun=false keeps them IL only.
 dotnet build
 
 # Run all tests
