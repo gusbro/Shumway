@@ -542,7 +542,8 @@ internal static class Program
     <SelfContained>{selfContained}</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-{compressionProp}    <ImplicitUsings>enable</ImplicitUsings>
+{compressionProp}    <TieredPGO>false</TieredPGO>
+    <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>

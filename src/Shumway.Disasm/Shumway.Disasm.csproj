@@ -13,6 +13,10 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <!-- .NET's dynamic PGO runs newly compiled code instrumented before it
+         optimizes it. A tool's run is short enough to spend much of itself
+         in that code, and a long one gains nothing measurable from it. -->
+    <TieredPGO>false</TieredPGO>
     <RollForward>Major</RollForward>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
