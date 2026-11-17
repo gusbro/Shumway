@@ -329,6 +329,11 @@ public sealed partial class BytecodeInterpreter
     private InterpreterResult RunCore(ProgramView code, int startPc)
     {
         ArgumentNullException.ThrowIfNull(code.Primary);
+        // The activation's program is the program, as the dispatch loop below
+        // takes it. A caller's view can be older: a load since the query began
+        // moved the code to a larger array, and a catch resumes into what it
+        // added.
+        if (_engine.CurrentProgram is not null) code = _engine.GetProgramView();
         // A resume-marker start PC is legal: a --strip-wam predicate has no WAM
         // address, so CurrentFunctorAddresses maps its functor to
         // EncodeResumeMarker(fid, 0) and a caller that resolved it that way (e.g.
