@@ -1859,6 +1859,22 @@ if (persistMode) {
     try { await fetch('/collect', { method: 'POST', body: t }); } catch { }
   }
   try { window.close(); } catch { }
+} else if (location.hash.startsWith('#notebook')) {
+  // #notebook, or #notebook=<sessions>[&threads=<pool>]: notebook sessions
+  // driven as a kernel drives them (ADR-068).
+  let closing;
+  try {
+    const count = parseInt(location.hash.split('=')[1] ?? '2', 10) || 2;
+    const { run } = await import('./notebookprobe.js');
+    const lines = [];
+    closing = await run(count, (line) => { lines.push(line); emit(line); });
+    emit(closing);
+    closing = lines.join('') + closing;
+  } catch (ex) {
+    closing = '--- notebook probe: done (STOPPED: ' + (ex && ex.message ? ex.message : ex) + ') ---\n';
+    emit(closing);
+  }
+  try { await fetch('/collect', { method: 'POST', body: closing }); } catch { }
 } else if (location.hash.startsWith('#sessionsmem')) {
   // #sessionsmem=<sessions>[&what=<level>][&threads=<pool>]: what a session
   // costs (ADR-068).
