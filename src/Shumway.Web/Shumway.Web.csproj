@@ -92,6 +92,24 @@
     <RemoveDir Directories="$(PublishDir)" Condition="'$(PublishDir)' != '' AND Exists('$(PublishDir)')" />
   </Target>
 
+  <!-- ADR-073: a notebook page loads this app's runtime from another
+       directory. The runtime's entry is published under a name that changes
+       with its contents, which index.html's import map knows and a page
+       elsewhere does not: runtime.json, whose name is fixed, says it. -->
+  <Target Name="WriteRuntimeManifest" AfterTargets="Publish">
+    <ItemGroup>
+      <_RuntimeEntry Include="$(PublishDir)wwwroot\_framework\dotnet.*.js"
+                     Exclude="$(PublishDir)wwwroot\_framework\dotnet.native.*.js;$(PublishDir)wwwroot\_framework\dotnet.runtime.*.js" />
+    </ItemGroup>
+    <Error Condition="'@(_RuntimeEntry->Count())' != '1'"
+           Text="runtime.json needs exactly one runtime entry in _framework; found: @(_RuntimeEntry)" />
+    <PropertyGroup>
+      <_RuntimeEntryName>@(_RuntimeEntry->'%(Filename)%(Extension)')</_RuntimeEntryName>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(PublishDir)wwwroot\runtime.json" Overwrite="true"
+                      Lines="{ &quot;entry&quot;: &quot;_framework/$(_RuntimeEntryName)&quot; }" />
+  </Target>
+
   <!-- The browser cannot emit IL (see RuntimeCaps), so declare it as a link-time
        constant: the trimmer folds RuntimeCaps.SupportsRuntimeCodegen to false,
        deletes every Tier-1 branch behind it, and the IL compiler falls out of

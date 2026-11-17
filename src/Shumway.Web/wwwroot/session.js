@@ -34,34 +34,65 @@ let sessionAskForInput = null;
 export const onSessionAskForInput = (handler) => { sessionAskForInput = handler; };
 
 /**
- * Starts the runtime and the engine.
- * @param {(text: string) => void} onOutput receives everything Prolog writes,
- *        as it is written — a program that prints while it searches should be
- *        watchable while it runs.
+ * Starts the runtime, with no engine in it, and resolves to its exports. A
+ * notebook page stops here: its engines are its kernels' sessions (ADR-068).
+ *
+ * @param {object} [options]
+ * @param {string} [options.entry] the URL of the runtime's `dotnet.js`. A page
+ *        of this site leaves it out. A page of another directory has no import
+ *        map that knows the published name, and reads it from `runtime.json`.
+ * @param {number} [options.threads] how many threads the runtime makes at
+ *        boot, when the page will hold more sessions than the default allows
+ *        to start at once.
+ * @param {object} [options.ui] what the page's own session calls: `write`,
+ *        `writeError`, `writeNote`, `askForInput`, `debugStopped`. One left
+ *        out does nothing: an undefined import would throw at its first call.
  */
-export async function boot(onOutput, onAskForInput, onDiagnostic, onDebugStop, onNote) {
-  const { dotnet } = await import('./_framework/dotnet.js');
-  // The runtime makes its threads at boot. A hook that opens more sessions
-  // than the page's own asks for the threads it needs: &threads=<n>.
-  const threads = parseInt(/[#&]threads=(\d+)/.exec(location.hash)?.[1] ?? '0', 10);
+export async function startRuntime({ entry = './_framework/dotnet.js', threads = 0, ui = {} } = {}) {
+  // The runtime asserts about SharedArrayBuffer and says nothing a reader of
+  // the page can act on.
+  if (!globalThis.crossOriginIsolated)
+    throw new Error('the page is not cross-origin isolated');
+  const { dotnet } = await import(entry);
   const runtime = await (threads > 0
     ? dotnet.withConfig({ pthreadPoolInitialSize: threads }) : dotnet).create();
   const { setModuleImports, getConfig, getAssemblyExports, runMain } = runtime;
   wasmModule = runtime.Module;
   poolSize = getConfig().pthreadPoolInitialSize ?? 0;
+  const nothing = () => { };
   setModuleImports('main.js', {
     ui: {
-      write: (t) => { if (typeof t === 'string' && t.startsWith('[tier]')) { try { fetch('/collect', { method: 'POST', body: t }); } catch {} } return onOutput(t); },
-      // A caller that does not distinguish notes still gets them, as
-      // diagnostics: an undefined import would throw at the first call.
-      writeError: onDiagnostic, writeNote: onNote ?? onDiagnostic,
-      askForInput: onAskForInput,
+      write: ui.write ?? nothing,
+      writeError: ui.writeError ?? nothing,
+      writeNote: ui.writeNote ?? ui.writeError ?? nothing,
+      askForInput: ui.askForInput ?? nothing,
       sessionAskForInput: (kernelId) => sessionAskForInput?.(kernelId),
-      debugStopped: (json) => onDebugStop?.(JSON.parse(json)),
+      debugStopped: (json) => ui.debugStopped?.(JSON.parse(json)),
     },
   });
   engine = (await getAssemblyExports(getConfig().mainAssemblyName)).Shumway.Web.WebShumwayApp;
   await runMain();
+  return engine;
+}
+
+/**
+ * Starts the runtime and the page's own engine.
+ * @param {(text: string) => void} onOutput receives everything Prolog writes,
+ *        as it is written — a program that prints while it searches should be
+ *        watchable while it runs.
+ */
+export async function boot(onOutput, onAskForInput, onDiagnostic, onDebugStop, onNote) {
+  await startRuntime({
+    // A hook that opens more sessions than the page's own asks for the
+    // threads it needs: &threads=<n>.
+    threads: parseInt(/[#&]threads=(\d+)/.exec(location.hash)?.[1] ?? '0', 10),
+    ui: {
+      write: (t) => { if (typeof t === 'string' && t.startsWith('[tier]')) { try { fetch('/collect', { method: 'POST', body: t }); } catch {} } return onOutput(t); },
+      writeError: onDiagnostic, writeNote: onNote ?? onDiagnostic,
+      askForInput: onAskForInput,
+      debugStopped: onDebugStop,
+    },
+  });
   return engine.Boot();
 }
 

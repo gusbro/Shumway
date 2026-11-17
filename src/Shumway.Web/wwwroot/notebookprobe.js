@@ -137,6 +137,6 @@ export async function run(count, say) {
   const heapEnd = await api.ManagedHeapBytes();
   say(`note with ${ids.length} sessions: managed heap ${mb(heapEnd)} MB `
     + `(${mb((heapEnd - heapStart) / Math.max(1, ids.length))} MB a session), `
-    + `runtime memory ${mb(session.wasmMemoryBytes())} MB, tier ${await session.tierName()}\n`);
+    + `runtime memory ${mb(session.wasmMemoryBytes())} MB, tier ${await api.SessionTier(ids[0] ?? '')}\n`);
   return `--- notebook probe: done, ${failures} failed ---\n`;
 }

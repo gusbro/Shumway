@@ -58,22 +58,39 @@ function stash(request, response) {
 const cached = (request) =>
   bounded(caches.match(request), 1500).catch(() => null);
 
+// ADR-069 D13. `require-corp` is the value every engine implements: WebKit
+// ignores `credentialless`, and a page it ignores it on is not isolated and
+// cannot boot. The demo sends it to every browser; its cross-origin reads are
+// CORS fetches, which `require-corp` allows.
+// The notebook site, a directory of this one, gets `credentialless` where the
+// engine implements it: a markdown cell shows images from hosts that send no
+// CORP header, and only that value lets them through. WebKit that is not
+// Chromium keeps `require-corp`; "iOS" would be the wrong test, since iPadOS
+// says it is a Mac and Safari on a Mac has the same limit.
+// One worker for the two sites, not one each: the runtime's threads are
+// workers whose scripts are in this site's _framework, a worker script needs
+// these headers too, and a worker registered under the notebook site is not
+// asked about what is outside it.
+
+/** The directory this worker is served from: the root of its site. */
+const ROOT = new URL('./', self.location.href).pathname;
+const NOTEBOOKS = ROOT + 'lite/';
+const WEBKIT = /AppleWebKit\//.test(navigator.userAgent)
+  && !/Chrom(e|ium)\//.test(navigator.userAgent);
+const coep = (url) =>
+  (!WEBKIT && url.pathname.startsWith(NOTEBOOKS) ? 'credentialless' : 'require-corp');
+
 /**
- * The response the page should get, isolated.
- *
- * `require-corp`, the value every engine implements: WebKit ignores
- * `credentialless`, and a page it ignores it on is not isolated and cannot
- * boot. The library importer's cross-origin reads are CORS fetches, which
- * `require-corp` allows.
+ * The response the page should get for `url`, isolated.
  * A response whose body cannot be re-read (an opaque cross-origin one) is
  * returned untouched — it is not ours to relabel.
  */
-function isolated(response) {
+function isolated(response, url) {
   if (!response || response.type === 'opaque' || response.type === 'opaqueredirect')
     return response;
   const headers = new Headers(response.headers);
   headers.set('Cross-Origin-Opener-Policy', 'same-origin');
-  headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
+  headers.set('Cross-Origin-Embedder-Policy', coep(url));
   // Same-origin subresources need this to be embeddable in an isolated
   // document; the server sends it where it can, and this covers where it
   // cannot.
@@ -139,15 +156,22 @@ self.addEventListener('fetch', (event) => {
   // A navigation goes to the network first so a republished app is picked up,
   // and falls back to the cache when there is none — which is what makes the
   // installed app start offline.
+  // A page is kept under its own path, whatever its query: the scope holds
+  // more than one page (a notebook site under the demo's, and that site's
+  // own), and one kept under another's name is what an offline visit to the
+  // other would get.
   if (request.mode === 'navigate') {
+    const page = url.origin + url.pathname;
     event.respondWith((async () => {
       try {
         const fresh = await fetch(request);
-        stash('./', fresh);
-        return isolated(fresh);
+        if (fresh.ok) stash(page, fresh);
+        return isolated(fresh, url);
       } catch {
-        const hit = (await cached('./')) ?? (await cached('./index.html'));
-        return hit ? isolated(hit) : Response.error();
+        let hit = await cached(page);
+        if (!hit && url.pathname === ROOT + 'index.html') hit = await cached('./');
+        if (!hit && url.pathname === ROOT) hit = await cached('./index.html');
+        return hit ? isolated(hit, url) : Response.error();
       }
     })());
     return;
@@ -159,10 +183,10 @@ self.addEventListener('fetch', (event) => {
   if (immutable(url)) {
     event.respondWith((async () => {
       const hit = await cached(request);
-      if (hit) return isolated(hit);
+      if (hit) return isolated(hit, url);
       const fresh = await fetch(request);
       if (fresh.ok) stash(request, fresh);
-      return isolated(fresh);
+      return isolated(fresh, url);
     })());
     return;
   }
@@ -174,10 +198,10 @@ self.addEventListener('fetch', (event) => {
     try {
       const fresh = await fetch(request);
       if (fresh.ok) stash(request, fresh);
-      return isolated(fresh);
+      return isolated(fresh, url);
     } catch {
       const hit = await cached(request);
-      return hit ? isolated(hit) : Response.error();
+      return hit ? isolated(hit, url) : Response.error();
     }
   })());
 });

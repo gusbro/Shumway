@@ -4,7 +4,8 @@
 
 Shipped ([Phase 38](../../history/phase-38-closure.md), 2026-08-07). Amended
 2026-11-14 (§3): the embedder policy is `require-corp`, and the service worker
-deletes only its own caches.
+deletes only its own caches. Amended 2026-11-16 (§3): the worker also serves
+the notebook site, a directory of this one.
 
 `src/Shumway.Web/`, a static site that runs the
 full engine (Tier-0, and Tier-1 in WebAssembly since
@@ -104,6 +105,15 @@ read the listing.
 On activation the service worker deletes the older generations of its own
 cache and no other: the origin of a Pages site is shared by every project of
 its owner (amended 2026-11-14; it deleted every cache of the origin).
+
+The same worker serves the notebook site, the directory `lite/` of this one
+(ADR-069; amended 2026-11-16). That site runs this app's runtime, whose
+threads are workers with their script in `_framework`, and a worker
+registered under `lite/` is not asked about a script outside it. What is
+under `lite/` is sent with `credentialless` where the engine implements it,
+for the images of markdown cells; the rest keeps `require-corp`. A page is
+kept for offline use under its own path: under one name for all, a visit to
+one site replaced the other's.
 
 ### 4. Filesystem: MEMFS, mirrored to OPFS
 
