@@ -511,6 +511,12 @@ public sealed partial class BytecodeInterpreter
         }
     }
 
+    // Compiled optimized at its first call, never precompiled: the loop runs a
+    // whole query in one call, and precompiled (ReadyToRun) code is not
+    // replaced in the middle of a loop, so a long query would run all of it
+    // unoptimized. 0x0200 is AggressiveOptimization, which .NET Framework's
+    // enum lacks and its runtime ignores.
+    [System.Runtime.CompilerServices.MethodImpl((System.Runtime.CompilerServices.MethodImplOptions)0x0200)]
     private InterpreterResult Dispatch(ProgramView code)
     {
         // cache the program array across dispatch iterations.

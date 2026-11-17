@@ -141,8 +141,10 @@
           SkipUnchangedFiles="true" />
     <Copy Condition="'$(_ShumwayPrecompile)' == 'true'" SourceFiles="@(_ShumwayIlAssembly)"
           DestinationFolder="$(_ShumwayIlDir)" SkipUnchangedFiles="true" />
+    <!-- From this build's list, not the directory: a file staged by an
+         earlier build may no longer be one to compile. -->
     <ItemGroup Condition="'$(_ShumwayPrecompile)' == 'true'">
-      <_ShumwayStagedAssembly Include="$(_ShumwayIlDir)*.dll" />
+      <_ShumwayStagedAssembly Include="@(_ShumwayIlAssembly->'$(_ShumwayIlDir)%(Filename)%(Extension)'->Distinct())" />
     </ItemGroup>
   </Target>
 
