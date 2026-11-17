@@ -4,6 +4,7 @@
 // wasm tier, what a session with the server loaded costs, and the tracer.
 
 import * as session from './session.js';
+import { createMirror, memoryFiles, toBase64 } from './mirror.js';
 
 const call = (id, code) =>
   JSON.stringify({ jsonrpc: '2.0', id, method: 'call', params: { code } });
@@ -12,6 +13,60 @@ const call = (id, code) =>
 const first = (line) => JSON.parse(line).result['1'];
 
 const mb = (bytes) => (bytes / 1048576).toFixed(1);
+
+/**
+ * The mirror of ADR-070 between the first session's files and a store that
+ * stands for the notebook's contents: what a kernel does around each cell.
+ */
+async function mirrorChecks(api, ask, check) {
+  const text = (base64) => new TextDecoder().decode(Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)));
+  const base64 = (string) => toBase64(new TextEncoder().encode(string));
+  const kept = new Map();
+  let clock = 0;
+  const store = {
+    list: async () => [...kept].map(([path, file]) => ({ path, modified: file.modified })),
+    read: async (path) => kept.get(path)?.content ?? null,
+    write: async (path, content) => { kept.set(path, { content, modified: ++clock }); return clock; },
+    remove: async (path) => { kept.delete(path); },
+  };
+  const edit = (path, string) => kept.set(path, { content: base64(string), modified: ++clock });
+  const mirror = createMirror(memoryFiles(api, '/notebooks'), store, { oneAtATime: true });
+
+  // The session's directory is /notebooks/kernel-1.
+  edit('kernel-1/facts.pl', 'colour(red).\n');
+  edit('kernel-1/lib/more.pl', 'shade(dark).\n');
+  let copy = await mirror.pull();
+  let entry = await ask(40, "consult(facts), consult('lib/more'), colour(C), shade(S).");
+  check(copy.copied === 2 && entry.bindings?.C === 'red' && entry.bindings?.S === 'dark',
+    'a file of the store is there for consult/1, in its directory', JSON.stringify([copy, entry]));
+
+  // What the session made before the mirror was there: the %%user cell's file.
+  copy = await mirror.push();
+  check(copy.copied === 1 && kept.has('kernel-1/user.pl'),
+    'the file of the %%user cell reaches the store', JSON.stringify([copy, [...kept.keys()]]));
+
+  await ask(41, "open('out.txt', write, S), write(S, hello), close(S).");
+  copy = await mirror.push();
+  check(copy.copied === 1 && kept.has('kernel-1/out.txt') && text(kept.get('kernel-1/out.txt').content) === 'hello',
+    'a file the cell wrote reaches the store, and only that one', JSON.stringify([copy, [...kept.keys()]]));
+
+  copy = await mirror.pull();
+  check(copy.copied === 0 && copy.removed === 0, 'with nothing changed, nothing is copied', JSON.stringify(copy));
+
+  edit('kernel-1/facts.pl', 'colour(blue).\n');
+  kept.delete('kernel-1/out.txt');
+  copy = await mirror.pull();
+  entry = await ask(42, "open('facts.pl', read, S), read(S, colour(C)), close(S), "
+    + "( exists_file('out.txt') -> Out = there ; Out = gone ).");
+  check(copy.copied === 1 && copy.removed === 1 && entry.bindings?.C === 'blue' && entry.bindings?.Out === 'gone',
+    'an edit in the store replaces the file, and one deleted there is deleted here',
+    JSON.stringify([copy, entry]));
+
+  await ask(43, "delete_file('lib/more.pl').");
+  copy = await mirror.push();
+  check(copy.removed === 1 && !kept.has('kernel-1/lib/more.pl') && kept.has('kernel-1/facts.pl'),
+    'a file the cell deleted leaves the store', JSON.stringify([copy, [...kept.keys()]]));
+}
 
 /**
  * @param {number} count how many sessions to open
@@ -105,6 +160,8 @@ export async function run(count, say) {
     entry = await ask(13, 'X is foo + 1.');
     check(entry.status === 'error' && entry.error?.code === -4712,
       'an error is an answer', JSON.stringify(entry));
+
+    await mirrorChecks(api, ask, check);
   }
 
   // Every session still answers with all of them open, and each has its own
@@ -137,6 +194,6 @@ export async function run(count, say) {
   const heapEnd = await api.ManagedHeapBytes();
   say(`note with ${ids.length} sessions: managed heap ${mb(heapEnd)} MB `
     + `(${mb((heapEnd - heapStart) / Math.max(1, ids.length))} MB a session), `
-    + `runtime memory ${mb(session.wasmMemoryBytes())} MB, tier ${await session.tierName()}\n`);
+    + `runtime memory ${mb(session.wasmMemoryBytes())} MB, tier ${await api.SessionTier(ids[0] ?? '')}\n`);
   return `--- notebook probe: done, ${failures} failed ---\n`;
 }

@@ -181,11 +181,14 @@ internal static partial class WebShumwayApp
     internal static Task<string> TierName() => OnEngine(TierNow);
 
     private static string TierNow()
+        => _debugMode ? "Tier-0 interpreter" : TierOf(S.TopLevel?.Engine, Tier);
+
+    private static string TierOf(PrologEngine? engine, WasmTierSettings tier)
     {
-        if (_debugMode || Tier.Disabled || !Shumway.Core.RuntimeCaps.SupportsWasmCodegen
-            || S.TopLevel?.Engine.IlPromotion.Wasm is not { Enabled: true })
+        if (tier.Disabled || !Shumway.Core.RuntimeCaps.SupportsWasmCodegen
+            || engine?.IlPromotion.Wasm is not { Enabled: true })
             return "Tier-0 interpreter";
-        return Tier.Cps
+        return tier.Cps
             ? "Tier-1 WebAssembly, continuation functions"
             : "Tier-1 WebAssembly";
     }

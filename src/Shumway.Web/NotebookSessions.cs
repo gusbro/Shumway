@@ -15,6 +15,8 @@ internal static partial class WebShumwayApp
     private static int _notebookLimit = 10;
     private static SessionHost? _notebooks;
     private static readonly Dictionary<string, NotebookServer> NotebookServers = new();
+    // A session's own: jit_compile/1 changes them.
+    private static readonly Dictionary<string, WasmTierSettings> NotebookTiers = new();
     // What the last session's start was spent on, for the #notebook hook.
     private static string _lastSessionStart = "";
 
@@ -49,12 +51,13 @@ internal static partial class WebShumwayApp
         if (bundle != "prolog") return $"There is no notebook server '{bundle}'.";
         _notebooks ??= new SessionHost(_jsThread, _notebookLimit);
         HostSession session;
+        var tier = new WasmTierSettings();
         try
         {
             session = _notebooks.Create(kernelId, new NotebookPage(kernelId), _ =>
             {
                 long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                Shumway.Embedding.PrologEngine engine = BootEngine(new WasmTierSettings());
+                Shumway.Embedding.PrologEngine engine = BootEngine(tier);
                 long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
                 NotebookServer.Install(engine);
                 _lastSessionStart =
@@ -80,7 +83,11 @@ internal static partial class WebShumwayApp
                 return true;
             }).ConfigureAwait(false);
             NotebookServer server = NotebookServer.Start(session);
-            lock (NotebookServers) NotebookServers[kernelId] = server;
+            lock (NotebookServers)
+            {
+                NotebookServers[kernelId] = server;
+                NotebookTiers[kernelId] = tier;
+            }
             return "";
         }
         catch (Exception ex)
@@ -137,9 +144,24 @@ internal static partial class WebShumwayApp
         lock (NotebookServers)
         {
             NotebookServers.Remove(kernelId, out server);
+            NotebookTiers.Remove(kernelId);
         }
         server?.Close();
         if (_notebooks is { } host) await host.Close(kernelId).ConfigureAwait(false);
+    }
+
+    /// <summary>What runs a session's goals, the wasm tier or the
+    /// interpreter, for the kernel's banner. Empty when there is no such
+    /// session.</summary>
+    [JSExport]
+    internal static Task<string> SessionTier(string kernelId)
+    {
+        WasmTierSettings? tier;
+        lock (NotebookServers) tier = NotebookTiers.GetValueOrDefault(kernelId);
+        // Read from here, not on the session's thread: the server's loop
+        // holds that thread for as long as the session lives (ADR-067 D5).
+        return Task.FromResult(tier is null || _notebooks?.Find(kernelId) is not { } session
+            ? "" : TierOf(session.TopLevel?.Engine, tier));
     }
 
     /// <summary>What the last session's start was spent on: booting its
