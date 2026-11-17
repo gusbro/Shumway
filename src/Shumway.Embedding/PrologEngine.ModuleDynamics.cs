@@ -105,11 +105,14 @@ public sealed partial class PrologEngine
     /// the global dynamic set, the meta-argument specs and, for a module that
     /// owns its dynamics, the view of the global namespace it resolves
     /// unknown names against.</summary>
+    /// <param name="scopesOperators">Whether the module's text is under
+    /// <c>:- module/2</c>; when not given, what the loaded module says.</param>
     internal ModuleRewrite.Context NewRewriteContext(string module, HashSet<int> locals,
         IReadOnlyDictionary<int, string> imports, bool ownsDynamics,
-        bool qualifiedResolver = false)
+        bool qualifiedResolver = false, bool? scopesOperators = null)
         => new ModuleRewrite.Context(module, locals, _dynStore.Functors, imports)
         {
+            ScopesOperators = scopesOperators ?? IsExportQualifiedModule(module),
             OwnsDynamics = ownsDynamics,
             IsVisibleGlobal = ownsDynamics ? IsVisibleGlobalFunctor : null,
             SourceOwnsDynamics = ownsDynamics ? ModuleOwnsDynamics : null,
@@ -119,6 +122,11 @@ public sealed partial class PrologEngine
             MetaArgSpec = MetaArgSpec,
             QualifiedStaticResolver = qualifiedResolver ? ResolveQualifiedStatic : null,
         };
+
+    /// <summary>Whether <paramref name="module"/> is loaded and was declared
+    /// with <c>:- module/2</c>.</summary>
+    internal bool IsExportQualifiedModule(string module)
+        => _modules.TryGetValue(module, out var m) && m.IsExportQualified;
 
     private readonly Dictionary<string, ModuleRewrite.Context> _ownedDynamicContexts = new();
 

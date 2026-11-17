@@ -1813,7 +1813,7 @@ public sealed partial class PrologEngine
         if (_precompiledModuleLocals.TryGetValue(moduleName, out var bundleLocals))
             locals.UnionWith(bundleLocals);
         var ctx = NewRewriteContext(moduleName, locals, manifest.Imports, manifest.OwnsDynamics,
-            qualifiedResolver: true);
+            qualifiedResolver: true, scopesOperators: manifest.IsExportQualified);
         var rewritten = new List<Clause>(transformed.Count);
         foreach (var c in transformed)
             rewritten.Add(ModuleRewrite.Rewrite(c, ctx));

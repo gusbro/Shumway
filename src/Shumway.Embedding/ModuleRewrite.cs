@@ -84,6 +84,13 @@ public static class ModuleRewrite
         /// Null: every source does.</summary>
         public Func<string, bool>? SourceOwnsDynamics { get; init; }
 
+        /// <summary>ADR-046: whether op/3 and current_op/3 in this text use the
+        /// module's own operator layer. Only text under <c>:- module/2</c>
+        /// has one. Other text defines its operators in <c>user</c>, as its
+        /// <c>:- op</c> directives do, even when it is given a module: a
+        /// <c>:- module/1</c> name, or the file's name in a link.</summary>
+        public bool ScopesOperators { get; init; }
+
         /// <summary>Whether a bare functor is a dynamic predicate the module
         /// owns: declared, routed from its source or asserted into it. A
         /// clause with such a head compiles under the module's name. For a
@@ -367,12 +374,14 @@ public static class ModuleRewrite
                     // ADR-046 — op/3 and current_op/3 are module-sensitive:
                     // a runtime op inside module code targets the module's
                     // layer; current_op sees the module's effective view.
-                    case ("op", 3):
+                    // Only under :- module/2: other text is read with user's
+                    // table, so an operator it defines has to go there.
+                    case ("op", 3) when ctx.ScopesOperators:
                         return new CompoundTerm("$op_ctx", new[]
                             { (Term)new AtomTerm(ctx.ModuleName),
                               c.Args[0], c.Args[1], c.Args[2] })
                             { Position = c.Position };
-                    case ("current_op", 3):
+                    case ("current_op", 3) when ctx.ScopesOperators:
                         return new CompoundTerm("$current_op_ctx", new[]
                             { (Term)new AtomTerm(ctx.ModuleName),
                               c.Args[0], c.Args[1], c.Args[2] })

@@ -836,6 +836,7 @@ public static class ShmoCompiler
         var rewriteCtx = new ModuleRewrite.Context(
             moduleName, localFids, dynamicFids, importFidMap)
         {
+            ScopesOperators = isExportQualified,
             MetaArgSpec = metaArgSpec ?? ModuleRewrite.DefaultMetaArgSpec,
             QualifiedStaticResolver = qualifiedResolver,
             OwnsDynamics = isExportQualified && !arityCompat,
