@@ -82,6 +82,9 @@ src/
 
 tests/                      # The six-project gate (see CONTRIBUTING.md) +
 │                           # Benchmarks, Smoke.Net48, conformity/
+jupyterlite/                # The notebook site: a JupyterLite kernel on the WebShumway
+│                           # runtime. Built apart from the solution, with Node and
+│                           # Python; no project may depend on it (jupyterlite/README.md)
 docs/
 ├── README.md               # Index of all documentation
 ├── guide/                  # User-facing guides + compatibility status

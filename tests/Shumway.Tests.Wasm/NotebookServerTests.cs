@@ -255,6 +255,40 @@ public sealed class NotebookServerTests : IDisposable
         Assert.Equal("done", (string)both["output"]!);
     }
 
+    [Fact]
+    public void WhatAQueryDisplays_ComesWithItsAnswer_InTheOrderShown()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+        First(server, "%%user\n" + @"dot(C) :- atom_concat('<svg><circle fill=""', C, A), atom_concat(A, '""/></svg>', Svg), jupyter:display('image/svg+xml', Svg).");
+
+        JsonNode two = First(server, @"dot(red), jupyter:display(""text/markdown"", ""**done**""), X = 1.");
+        JsonNode none = First(server, "X = 2.");
+
+        Assert.Equal(
+            """[{"mime":"image/svg+xml","data":"<svg><circle fill=\"red\"/></svg>"},{"mime":"text/markdown","data":"**done**"}]""",
+            two["display_data"]!.ToJsonString(new System.Text.Json.JsonSerializerOptions
+            {
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            }));
+        Assert.Equal("1", (string)two["bindings"]!["X"]!);
+        // What one query displayed is not the next one's.
+        Assert.Null(none["display_data"]);
+    }
+
+    [Theory]
+    [InlineData(@"jupyter:display(_, text).", "instantiation_error")]
+    [InlineData(@"jupyter:display('text/html', 12).", "type_error(text")]
+    [InlineData(@"jupyter:display('text/html', [a|_]).", "type_error(text")]
+    public void WhatIsNotText_IsNotDisplayed(string code, string expected)
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+
+        JsonNode answer = First(server, code);
+
+        Assert.Equal("error", (string)answer["status"]!);
+        Assert.Contains(expected, answer["error"]!.ToJsonString());
+    }
+
     private static string Output(NotebookServer server, int id, string code)
         => (string)Answer(server, Call(id, code))["result"]!["1"]!["output"]!;
 
@@ -320,7 +354,7 @@ public sealed class NotebookServerTests : IDisposable
         {
             "halt/0", "retry/0", "help/0", "magic/0", "version/0", "version/4", "versions/0", "pwd/0", "cd/1",
             "print_variable_bindings/0", "print_queries/0", "print_queries/1", "print_query_time/0",
-            "print_table/1", "print_table/2", "print_and_save_table/3", "trace/1",
+            "print_table/1", "print_table/2", "print_and_save_table/3", "trace/1", "display/2",
             "update_completion_data/0",
         };
         string[] magics =

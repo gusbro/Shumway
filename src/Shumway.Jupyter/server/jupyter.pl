@@ -49,6 +49,23 @@ table(Headers, Texts) :-
     header_strings(Headers, Strings),
     '$jupyter_extra'(print_table, obj(['ValuesLists'-Texts, 'VariableNames'-Strings])).
 
+% ----- display -----
+
+% display(+Mime, +Data): Data, a text, shown as the MIME type Mime with the
+% answer of the query. Not exported: display/2 is a name a program may want.
+display(Mime, Data) :-
+    text_atom(Mime, MimeText),
+    text_atom(Data, DataText),
+    '$jupyter_extra_item'(display_data, obj([mime-str(MimeText), data-str(DataText)])).
+
+text_atom(Text, Atom) :-
+    (   var(Text) -> throw(error(instantiation_error, display/2))
+    ;   is_list(Text), catch(atom_chars(Chars, Text), error(_, _), fail) -> Atom = Chars
+    ;   is_list(Text), catch(atom_codes(Codes, Text), error(_, _), fail) -> Atom = Codes
+    ;   atom(Text) -> Atom = Text
+    ;   throw(error(type_error(text, Text), display/2))
+    ).
+
 print_and_save_table(Goal, Format, File) :-
     term_variables(Goal, Variables),
     lettered(Variables, 0, Names),
@@ -377,6 +394,10 @@ doc(print_queries/1, 'jupyter:print_queries(+Ids) or print_queries(+Ids)', [
     'Prints the queries of the cells whose execution counts are in Ids.']).
 doc(print_query_time/0, 'jupyter:print_query_time', [
     'Prints the latest query that had a solution and the CPU time it took.']).
+doc(display/2, 'jupyter:display(+Mime, +Data)', [
+    'Shows Data, a text, as the MIME type Mime: image/svg+xml, text/html,',
+    'text/markdown, or a type whose name ends in json, whose Data is the',
+    'JSON text. Each call in a query shows one more.']).
 doc(print_table/1, 'jupyter:print_table(+Goal) or print_table(+Goal)', [
     'Shows a table with a row for each solution of Goal and a column for',
     'each of its variables. A variable whose name starts with an underscore',

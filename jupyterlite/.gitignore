@@ -1,0 +1,5 @@
+# What the builds make.
+extension/lib/
+extension/labextension/
+*.tsbuildinfo
+.jupyterlite.doit.db

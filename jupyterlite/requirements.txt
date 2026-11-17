@@ -1,0 +1,4 @@
+# What `jupyter lite build` and `jupyter labextension build` need.
+# Pinned, and moved on purpose (ADR-073).
+jupyterlite-core==0.8.7
+jupyterlab==4.5.11

@@ -1,0 +1,14 @@
+{
+  "name": "@shumway/jupyterlite-tests",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Checks of the notebook site in headless browsers",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "kernel": "node kernel.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.65.1"
+  }
+}
