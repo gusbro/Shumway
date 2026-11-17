@@ -57,6 +57,12 @@ methods directly.
 - **The default** is set by measurement (plan, verification V2): the memory
   of an engine with the server loaded, on a desktop browser and on a tablet.
   A phone is not a target: a notebook is not usable on its screen.
+  **It is six (2026-11-16).** Six sessions with the notebook server loaded
+  take the runtime's memory from 138 MB to 286 MB and add about 9.5 MB of
+  managed heap each, the same in headless Chromium, Firefox and WebKit on a
+  desktop. A tablet held six sessions with `library(clpfd)` at the same 286
+  MB before the server existed; six with the server have not been run on
+  it.
 - **The WebShumway demo** is rewritten as a host with exactly one session, so
   there is one code path.
 

@@ -1,8 +1,7 @@
 # Jupyter notebooks on WebShumway: plan
 
-Status: Phase 0 done but for the default session limit, which waits for the
-server in a browser (Phase 3); Phase 1 done (2026-11-15); Phase 2 done
-(2026-11-16). The architecture is in
+Status: Phase 0 done; Phase 1 done (2026-11-15); Phase 2 done (2026-11-16);
+Phase 3 started, with the server running in a page. The architecture is in
 [`jupyterlite-architecture.md`](jupyterlite-architecture.md); the decisions
 are in ADR-066 to ADR-073.
 
@@ -26,8 +25,8 @@ boots on a real iPhone. V2 is measured in three desktop browsers and on a
 tablet (ADR-068): with `library(clpfd)` loaded, a session took about 38 MB of
 the runtime's memory before the sessions of a page shared their wasm modules,
 and on the tablet six sessions take the runtime from 138 MB to 286 MB. The
-default limit is set with the server loaded in a browser, in Phase 3: Phase 2
-built the server on the desktop only.
+default limit was set in Phase 3, with the server loaded in a page: six
+(ADR-068 D7).
 
 ## Phase 1: Host sessions (ADR-068, accepted)
 
@@ -112,11 +111,12 @@ The layout is ADR-073's: one wasm app, one extension, and a build apart
 from the solution.
 
 - **.NET:** the demo's wasm app exports the session API, with the notebook
-  server in it.
-- Precompile the server into a bundle (ADR-067 D10), with the time a
-  notebook takes to open measured before and after.
-- Set the default session limit that Phase 0 left open, with the server
-  loaded in a browser, and run `jupyter:trace/1` on the wasm tier.
+  server in it. **Done (2026-11-16):** the page's `#notebook` hook drives
+  sessions as a kernel will, and passes in headless Chromium, Firefox and
+  WebKit, `jupyter:trace/1` over the wasm tier among its checks.
+- The default session limit that Phase 0 left open is six (ADR-068 D7).
+- The precompiled bundle of the server (ADR-067 D10) is not built: loading
+  the server from source costs about 0.3 s once for a page.
 - **The runtime's JavaScript**, shared with the demo from where it is:
   - `isolate.js`;
   - the service worker, with the COEP value by engine (ADR-069);

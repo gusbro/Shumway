@@ -344,8 +344,8 @@ When proposing changes:
 | Jupyter notebooks on WebShumway: scope, variants, identity (proposed) | ADR-066 |
 | The notebook kernel protocol and the Prolog-side server | ADR-067 |
 | Hosting the runtime in a notebook page: one engine per kernel | ADR-068 |
-| Service workers and cross-origin isolation for the notebook site (proposed) | ADR-069 |
-| Files in notebooks: a mirror between the contents store and MEMFS (proposed) | ADR-070 |
+| Service workers and cross-origin isolation for the notebook site | ADR-069 |
+| Files in notebooks: a mirror between the contents store and MEMFS | ADR-070 |
 | Working directory per engine, as an option of the host | ADR-071 |
 | Rich outputs in notebooks, no Python in the kernel (proposed) | ADR-072 |
 | What the notebook site adds to the build, protocol versioning, feature table | ADR-073 |

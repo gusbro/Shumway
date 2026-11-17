@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (2026-11-15). Nothing is implemented. Records D5, D8, D9 and D10.
+Accepted (2026-11-15). Records D5, D8, D9 and D10. The server is built
+(`src/Shumway.Jupyter`); D10 is not, by a decision of 2026-11-16 recorded
+under it.
 Two decisions changed before anything was written:
 - D5 was first "one call per request, no loop". It was reversed once the
   retry mechanism below was found in Hercutalk's code.
@@ -150,6 +152,14 @@ The server modules are compiled ahead of time into the bundle the session
 loads, so opening a notebook does not consult them from source. This is the
 same idea as Logtalk's embedding of a precompiled core, which Hercutalk web
 will use for Logtalk.
+
+**Not built (2026-11-16).** Measured with the server running in a page, in
+headless Chromium, Firefox and WebKit on a desktop: loading the server from
+source takes 232 to 316 ms the first time in a page and 14 to 44 ms for each
+later session, out of a session start of 0.8 to 1.5 s the first time and 0.2
+to 0.5 s after. That is the most a bundle can save, once for a page. The
+sessions consult the server from source, and the bundle waits for a
+measurement that asks for it: a tablet's has not been taken.
 
 ## Consequences
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-14). Records D12 and D13. Verification V1 of the plan has
+Accepted (2026-11-16). Records D12 and D13. Verification V1 of the plan has
 results (Context), and they changed D13: WebShumway sends one value to every
 engine, and the choice by engine is the lite site's alone. The WebShumway side
 of D12 and D13 is implemented (ADR-042, amended); the lite site's part is

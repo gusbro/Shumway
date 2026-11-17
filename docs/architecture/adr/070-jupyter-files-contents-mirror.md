@@ -2,8 +2,8 @@
 
 ## Status
 
-Proposed (2026-11-14). Design only; nothing is implemented. Records D14. Its
-working-directory requirement depends on ADR-071.
+Accepted (2026-11-16). Nothing is implemented. Records D14. Its
+working-directory requirement depends on ADR-071, which is built.
 
 ## Context
 
