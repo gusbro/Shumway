@@ -121,6 +121,73 @@ public class Adr046ModuleOperatorTests
         Assert.True(e.Query("atom_to_term('a iso46op b', T, _), T = iso46op(a, b).").Success);
     }
 
+    // A program that declares an operator while it runs and then reads with
+    // it, as Logtalk's compiler does for an entity's `uses` of an operator.
+    private const string DeclaresThenReads =
+        "declare46 :- op(700, xfx, zz46).\n"
+        + "sees46(P-T) :- current_op(P, T, zz46).\n"
+        + "reads46(X) :- term_to_atom(X, 'a zz46 b').\n";
+
+    private const string DeclaresThenReadsQuery =
+        "declare46, sees46(700-xfx), reads46(zz46(a, b)), current_op(700, xfx, zz46).";
+
+    [Fact]
+    public void RuntimeOp_InAModule1Text_IsUsers_SoItsOwnReadsSeeIt()
+    {
+        var e = new PrologEngine();
+        e.ConsultString(":- module(m46f).\n:- public declare46/0, sees46/1, reads46/1.\n"
+            + DeclaresThenReads);
+
+        Assert.True(e.Query(DeclaresThenReadsQuery).Success);
+    }
+
+    [Fact]
+    public void RuntimeOp_InABareFileLinkedThroughAConsult_IsUsers_SoItsOwnReadsSeeIt()
+    {
+        // The link gives the bare file a module named after it, as it does
+        // Logtalk's logtalk.pl; its text is still bare.
+        string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+            "shumway-op46-" + System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(dir);
+        try
+        {
+            string root = System.IO.Path.Combine(dir, "ops46.pl");
+            System.IO.File.WriteAllText(root, DeclaresThenReads);
+            var errors = new System.Collections.Generic.List<ShmoCompileError>();
+            var objects = ShmoViaConsult.Compile(
+                root, System.Array.Empty<string>(), ShmoBuildMode.Release, errors);
+            Assert.Empty(errors);
+            Assert.Contains(objects, o => o.ModuleName == "ops46");
+            var link = ShmoLinker.Link(new LinkConfig
+            {
+                Objects = objects.Select(o => o.Object).ToArray(),
+                Library = true,
+                AllowUndefined = true,
+            });
+            Assert.True(link.Success, string.Join("; ", link.Diagnostics));
+
+            var e = new PrologEngine();
+            e.LoadBundle(BundleReader.FromBytes(BundleWriter.ToBytes(link.Bundle!)));
+            e.PromoteBareBundleModulesToUser();
+
+            Assert.True(e.Query(DeclaresThenReadsQuery).Success);
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void RuntimeOp_InAModule2Text_StaysInTheModule_WhichItsCurrentOpSees()
+    {
+        var e = new PrologEngine();
+        e.ConsultString(":- module(m46g, [declare46/0, sees46/1]).\n" + DeclaresThenReads);
+
+        Assert.True(e.Query("m46g:declare46, m46g:sees46(700-xfx).").Success);
+        Assert.False(e.Query("current_op(_, _, zz46).").Success);
+    }
+
     [Fact]
     public void Bundle_ScopesPrivateOps_AndReAdvertisesExportedOnes()
     {

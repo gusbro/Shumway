@@ -2272,7 +2272,7 @@ internal sealed class ConsultPipeline
                 => multifileCtx ??= E.NewRewriteContext(
                     moduleName,
                     ComputeConsultLocalFunctors(clauses, publics),
-                    ConsultImports(), ownsDynamics);
+                    ConsultImports(), ownsDynamics, scopesOperators: isExportQualified);
 
             // Reconsult: the predicates this source defines are replaced, not
             // extended. Done here rather than by scanning the text first,
@@ -2763,7 +2763,7 @@ internal sealed class ConsultPipeline
                 moduleName, pendingMultifile,
                 () => E.NewRewriteContext(moduleName,
                     ComputeConsultLocalFunctors(clauses, publics),
-                    ConsultImports(), ownsDynamics));
+                    ConsultImports(), ownsDynamics, scopesOperators: isExportQualified));
 
         // ISO §7.4.2 general goal directives run now, after the batch commit
         // and in source order — before initialization/1 (§7.4.2.7), which ISO

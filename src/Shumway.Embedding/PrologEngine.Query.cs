@@ -1089,7 +1089,8 @@ public sealed partial class PrologEngine
                 moduleLocalsCache[name] = locals;
 
                 var ctx = NewRewriteContext(name, locals, manifest.Imports,
-                    manifest.OwnsDynamics, qualifiedResolver: true);
+                    manifest.OwnsDynamics, qualifiedResolver: true,
+                    scopesOperators: manifest.IsExportQualified);
                 // ADR-035 — a library's helpers are library code too. MetaTransform
                 // lowers control constructs into generated predicates ('$call_conj' and
                 // friends), which are not in manifest.Clauses and so cannot be marked at
@@ -1229,7 +1230,10 @@ public sealed partial class PrologEngine
                             seedLocals ?? EmptyLocalsSentinel,
                             _dynStore.Functors,
                             ImportsOf(seedModule))
-                        { MetaArgSpec = MetaArgSpec };
+                        {
+                            MetaArgSpec = MetaArgSpec,
+                            ScopesOperators = IsExportQualifiedModule(seedModule),
+                        };
                         namedDynCtx[seedModule] = fidCtx;
                     }
                 }
