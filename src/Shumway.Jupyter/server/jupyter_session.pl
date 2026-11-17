@@ -10,7 +10,7 @@
 
 :- module(jupyter_session, ['$jupyter_remember'/2, '$jupyter_value'/2, '$jupyter_values'/1,
                             '$jupyter_ran'/3, '$jupyter_queries'/1,
-                            '$jupyter_extra'/2, '$jupyter_extras'/1]).
+                            '$jupyter_extra'/2, '$jupyter_extra_item'/2, '$jupyter_extras'/1]).
 
 global(Key, Value, Default) :-
     catch(nb_getval(Key, Value), error(_, _), Value = Default).
@@ -85,6 +85,16 @@ query_key(Number, Key) :-
     global('$jupyter_extras', Pairs, []),
     without(Pairs, Key, Others),
     nb_setval('$jupyter_extras', [Key-Json|Others]).
+
+% '$jupyter_extra_item'(+Key, +Json): one more item of Key, a list, in the
+% answer of the query that is running. The items stay in the order given.
+'$jupyter_extra_item'(Key, Json) :-
+    global('$jupyter_extras', Pairs, []),
+    (   memberchk(Key-Items, Pairs) -> append(Items, [Json], All)
+    ;   All = [Json]
+    ),
+    without(Pairs, Key, Others),
+    nb_setval('$jupyter_extras', [Key-All|Others]).
 
 without([], _, []).
 without([Key-Json|Pairs], Wanted, Others) :-
