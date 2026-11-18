@@ -133,6 +133,20 @@ public sealed class AttributedTailGrowthTests
     public void TheYieldComesBeforeACut(string query)
         => Assert.True(Holds(query), query);
 
+    // ----- a cut runs the pending batch as one goal -----
+    // The split's continuation is pending when the cut comes, and a hook of
+    // the split it yields rejects it. The batch backtracks into the
+    // continuation's next split before the cut commits; run item by item, it
+    // gave up with that split's choice point standing, and the backtrack
+    // resumed it with the batch gone.
+
+    [Theory]
+    [InlineData(@"( @A #= @B, append(A, B, [1,2,3,4]) -> true ), A == [1,2], B == [3,4]")]
+    [InlineData(@"once((@A #= @B, append(A, B, [1,2,3,4,5,6]))), A == [1,2,3], B == [4,5,6]")]
+    [InlineData(@"@A #= @B, append(A, B, [1,2,3,4]), !, A == [1,2], B == [3,4]")]
+    public void ACutBacktracksIntoTheSplitsNextLevel(string query)
+        => Assert.True(Holds(query), query);
+
     // ----- reverse/2 -----
 
     [Fact]

@@ -216,11 +216,35 @@ public sealed partial class BytecodeInterpreter
         for (int i = 0; i < regCount; i++) savedRegs[i] = _engine.GetRegister(i);
         int savedB = _engine.B;
 
-        bool ok = RunWakeups(code);
+        bool ok = _engine.TryGetWakeDriverAddress(out int driverAddr)
+            ? RunWakeDriver(code, driverAddr)
+            : RunWakeups(code);
 
         if (ok && _engine.B > savedB) _engine.Cut(savedB);   // once-semantics
         for (int i = 0; i < regCount; i++) _engine.SetRegister(i, savedRegs[i]);
         return ok;
+    }
+
+    /// <summary>The whole batch as one goal of the wake driver, so that a
+    /// hook that fails backtracks into the choice points an earlier item of
+    /// the batch left before the drain gives up: a goal queued behind the
+    /// hooks leaves one, as <c>append/3</c> does to go on with its split
+    /// (docs/design/builtin-continues-after-wakeups.md). Run item by item,
+    /// the drain failed with those choice points still standing, and the
+    /// caller's backtrack resumed them with the drain gone.</summary>
+    private bool RunWakeDriver(ProgramView code, int driverAddr)
+    {
+        // The caller holds the registers it saved, heap cells, across the run.
+        _engine.EnterGcInhibit();
+        try
+        {
+            _engine.SetRegister(0, _engine.TakeWakeBatchList());
+            return RunGoalInEngine(code, driverAddr);
+        }
+        finally
+        {
+            _engine.ExitGcInhibit();
+        }
     }
 
     /// <summary>Drains the wakeup queue: for each batch, runs
