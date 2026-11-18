@@ -63,7 +63,12 @@ the yield. The deferred path costs nothing to programs without hooks.
 - **The yield comes before any cut.** A cut is a goal boundary (the
   interpreter and the IL both flush the batch before committing), so the
   goal has pushed its choice point by the time the cut runs, and the cut
-  removes it as it removes any other.
+  removes it as it removes any other. The flush runs the batch as one goal
+  of the driver, the batches its items queue included: a hook that rejects
+  what the goal yielded backtracks into the goal's choice point, and the
+  next yield is tried before the cut commits. Run item by item, the flush
+  gave up with that choice point standing, and the backtrack that followed
+  resumed it with the flush gone.
 - **Backtracking drops the goal with the binding.** A batch item names the
   home of the binding it belongs to, and a backtrack that undoes the binding
   drops the item (`DropDeadWakeups`). The goal names the tail it bound.
@@ -111,4 +116,6 @@ termination where the length is bounded before the enumeration,
 a frozen goal that rejects every extension ends the enumeration at the
 known cells, the `append/3` split under a bounded length stops at the last
 split the bound admits, and a cut right after the enumeration commits to
-the first position.
+the first position. Under a cut, `( @A #= @B, append(A, B, L) -> true )`,
+`once/1` and a `!` after the split find the halves of a list of four and of
+six; the flush run item by item raised a type error there instead.
