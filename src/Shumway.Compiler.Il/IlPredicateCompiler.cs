@@ -116,11 +116,13 @@ public sealed partial class IlPredicateCompiler
     /// <summary>Finalize an emit into a delegate, dumping its IL first when
     /// <c>SHUMWAY_IL_DUMP</c> is set. Call instead of <c>emit.CreateDelegate</c> at
     /// every compile site so the dump covers them all.</summary>
-    private PredicateDelegate FinishEmit(IlEmit emit, string header, bool regionTailDone = false)
+    private PredicateDelegate FinishEmit(IlEmit emit, string header, bool regionTailDone = false,
+        bool declinePastJitLimits = false)
     {
         if (!regionTailDone) EmitRegionTail(emit);
         if (TryFinishCps(emit, header, out var cpsBase))   // ADR-061
             return NoteArtifactDelegate(cpsBase, emit.Literals);
+        if (declinePastJitLimits) ThrowIfPastJitLimits(emit);
         DumpIl(emit, header);
         DumpRegionCost(emit);
         LastEmitShape = new EmitShape(emit.InstructionCount, emit.SwitchTargetCount, emit.BlockCount);
@@ -155,7 +157,7 @@ public sealed partial class IlPredicateCompiler
     /// (<c>shumway-link --dump-il</c>) shows the exact IL the bundle ships — post-prune,
     /// region mode, forced roots — rather than the runtime all-as-roots superset.</summary>
     private System.Reflection.Emit.MethodBuilder FinishPersistedEmit(
-        IlEmit emit, string header, bool regionTailDone = false)
+        IlEmit emit, string header, bool regionTailDone = false, bool declinePastJitLimits = false)
     {
         if (!regionTailDone) EmitRegionTail(emit);
         if (_persistOptimized) emit.OptimizeAtOnce();
@@ -170,8 +172,24 @@ public sealed partial class IlPredicateCompiler
         }
         DumpRegionCost(emit);
         var method = emit.CreateMethod();
+        // Declined after the method is complete: its type is still built, and
+        // the bundle keeps the predicate's bytecode instead.
+        if (declinePastJitLimits) ThrowIfPastJitLimits(emit);
         _persistIlBytes += method.GetILGenerator().ILOffset;
         return method;
+    }
+
+    // A table of facts keeps its method past the limits: a call runs a
+    // dispatch and one head, which measured about even compiled and
+    // interpreted. A predicate with rules runs its bodies in the method, and
+    // past the limits ran slower than on the interpreter.
+    private static bool DeclinesPastJitLimits(CompiledPredicate predicate)
+        => !IsFactPredicate(predicate);
+
+    private static void ThrowIfPastJitLimits(IlEmit emit)
+    {
+        if (IlJitLimits.DeclineWhenExceeded && IlJitLimits.Exceeded(emit, out string limit))
+            throw new IlJitLimitsException(limit);
     }
 
     private static readonly MethodInfo CellAtomMethod =
@@ -1003,7 +1021,8 @@ public sealed partial class IlPredicateCompiler
             AttachRegisterFile(emit);   // ADR-060
             EmitSingleClauseLeafBody(emit, predicate, calleeMap);
             return FinishEmit(emit,
-                $"single-leaf fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity}");
+                $"single-leaf fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity}",
+                declinePastJitLimits: DeclinesPastJitLimits(predicate));
         }
         lock (IndexedDelegateHolder.RegistrationLock)
             return CompileSingleClauseWithMetaCpUnlocked(
@@ -1229,7 +1248,8 @@ public sealed partial class IlPredicateCompiler
 
         return FinishPersistedEmit(emit,
             $"persist fid={predicate.FunctorId} {FidName(predicate.FunctorId)}"
-            + $"/{predicate.Arity} clauses={predicate.ClauseCount}");
+            + $"/{predicate.Arity} clauses={predicate.ClauseCount}",
+            declinePastJitLimits: DeclinesPastJitLimits(predicate));
     }
 
     private PredicateDelegate CompileSingleClauseWithMetaCpUnlocked(
@@ -1245,7 +1265,8 @@ public sealed partial class IlPredicateCompiler
             typeof(Func<Activation, int, bool>),   // runtime path: SelfFromHolder → Func
             ruleInlineSites);                  // precomputed by the caller
         var del = FinishEmit(emit,
-            $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}");
+            $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}",
+            declinePastJitLimits: DeclinesPastJitLimits(predicate));
         IndexedDelegateHolder.Register(holderKey, del);
         _nextHolderKey = holderKey + 1;
         return del;

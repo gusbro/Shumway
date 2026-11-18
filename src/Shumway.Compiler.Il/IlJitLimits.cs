@@ -103,6 +103,14 @@ internal static class IlJitLimits
         return digits == 0 || cap == 0 ? DefaultInlineLocals : (int)Math.Min(cap, int.MaxValue / 2);
     }
 
+    /// <summary>Whether a predicate with rules whose own method is past these
+    /// limits is declined: the JIT would compile the method without
+    /// optimization, and the interpreter runs such a predicate faster. A table
+    /// of facts keeps its method; a region plans against the limits itself.
+    /// <c>SHUMWAY_IL_JIT_LIMITS=0</c> compiles it anyway.</summary>
+    public static bool DeclineWhenExceeded { get; set; }
+        = Environment.GetEnvironmentVariable("SHUMWAY_IL_JIT_LIMITS") != "0";
+
     /// <summary>Whether the method as emitted so far is past any limit;
     /// <paramref name="what"/> names the first one.</summary>
     public static bool Exceeded(IlEmit emit, out string what)
@@ -115,4 +123,13 @@ internal static class IlJitLimits
         what = "";
         return false;
     }
+}
+
+/// <summary>A predicate with rules compiles to a method past
+/// <see cref="IlJitLimits"/>: the predicate stays on the interpreter. A <see cref="NotSupportedException"/>,
+/// as for a predicate outside the IL subset, so a bundle's build leaves its
+/// bytecode in place.</summary>
+public sealed class IlJitLimitsException : NotSupportedException
+{
+    public IlJitLimitsException(string limit) : base($"past the JIT's limits: {limit}") { }
 }
