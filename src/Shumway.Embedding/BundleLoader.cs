@@ -216,7 +216,11 @@ internal sealed class BundleLoader
         Justification = "Only reached when the bundle declares foreign assemblies, "
         + "which are loaded from disk beside it and are outside the trimmer's view "
         + "by construction.")]
-    internal void LoadBundleCore(Bundle bundle, string? bundleDir)
+    /// <param name="deferredInitialization">When given, the entries'
+    /// initialization goals are added to it, for the caller to run, instead of
+    /// run here.</param>
+    internal void LoadBundleCore(Bundle bundle, string? bundleDir,
+        List<(Shumway.Compiler.Ast.Term Goal, string Module)>? deferredInitialization = null)
     {
         ArgumentNullException.ThrowIfNull(bundle);
         // A bundle linked from Arity modules expects Arity call semantics:
@@ -286,6 +290,7 @@ internal sealed class BundleLoader
                     nativeBlocks: shmo.NativeBlocks,
                     operators: shmo.Operators,
                     flags: shmo.Flags,
+                    initializationGoals: shmo.InitializationGoals,
                     isExportQualified: shmo.IsExportQualified,
                     exports: shmo.Exports,
                     imports: shmo.Imports,
@@ -464,6 +469,15 @@ internal sealed class BundleLoader
         // and one with source made its own calls when it was consulted.
         foreach (var entry in effectiveEntries)
             foreach (var fs in entry.Flags) E.ApplyBundleFlag(fs);
+
+        // The initialization/1 goals of the modules compiled from the file
+        // alone, once the whole program is in (ISO 7.4.2.8), each in its
+        // module. One that fails or raises is reported and the next runs;
+        // halt ends the load.
+        foreach (var entry in effectiveEntries)
+            foreach (var goal in entry.InitializationGoals)
+                if (deferredInitialization is not null) deferredInitialization.Add((goal, entry.ModuleName));
+                else E.RunInitializationGoal(goal, entry.ModuleName);
 
         // Cross-process functor-id drift diagnostic (see PersistedIlBuilder).
         var dumpFidsEnv = System.Environment.GetEnvironmentVariable("SHUMWAY_PERSIST_DUMP_FIDS");

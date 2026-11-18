@@ -616,7 +616,11 @@ call.
    exports.
 
 A module that is not export-qualified is unchanged: its predicates are
-global, and it sees the global namespace.
+global, and it sees the global namespace. It also sees what `user` imports.
+Its text is `user`'s when consulted, and keeps that view when it is given a
+module, by `:- module/1` or by a link that names it after its file:
+`predicate_property/2` and `clause/2` with no module answer through `user`'s
+imports too.
 
 ### Consequences
 
@@ -632,4 +636,7 @@ global, and it sees the global namespace.
 `ModuleReflectionTests`: what `user` defines, the properties of an import,
 an export and a private, the unqualified form inside a module, the same
 module loaded as SWI-Prolog code, and a program's own `$`-named predicate,
-which the unqualified form still lists.
+which the unqualified form still lists. Text without `:- module/2`, loaded
+each way it can be (consulted, under `:- module/1`, compiled and linked,
+linked through a consult), sees what `user` imports; under `:- module/2` it
+does not.

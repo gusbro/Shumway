@@ -316,6 +316,13 @@ internal static class ReplTopLevel
                     engine.PromoteBareBundleModulesToUser();
                 }
             }
+            catch (Shumway.Core.PrologHaltException halted)
+            {
+                // An initialization goal of a bundle halted: the program ran.
+                MaybeDumpIlStats(engine);
+                MaybeDumpProfile(engine);
+                return halted.ExitCode;
+            }
             catch (Exception ex)
             {
                 PrintError(engine, ex);

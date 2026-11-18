@@ -398,8 +398,14 @@ public static partial class ExecutableEmitter
             ? $@"{debugBanner}
             var debugOptions = new Shumway.Embedding.Debugging.DebugOptions
             {{ WaitForAttach = {(debugWait ? "true" : "false")} }};{dapBake}
-            var engine = PrologEngine.FromBundle(LoadEmbeddedBundle(), debugOptions);"
-            : @"var engine = PrologEngine.FromBundle(LoadEmbeddedBundle());";
+            // The argv flag is the arguments without the program path, as
+            // the top level gives what follows --; a -- here is an argument.
+            // Set before the bundle's initialization goals run.
+            var engine = PrologEngine.FromBundle(LoadEmbeddedBundle(), debugOptions, args);"
+            : @"// The argv flag is the arguments without the program path, as
+            // the top level gives what follows --; a -- here is an argument.
+            // Set before the bundle's initialization goals run.
+            var engine = PrologEngine.FromBundle(LoadEmbeddedBundle(), null, args);";
 
         return $@"using Shumway.Embedding;
 using System.IO;
@@ -426,9 +432,6 @@ internal static class Program
                 Shumway.Compiler.Il.IlPredicateCompiler.DebugMode = true;
             if (System.Environment.GetEnvironmentVariable(""SHUMWAY_CP_TRACE"") == ""1"")
                 Shumway.Core.Activation.TraceCpStack = true;
-            // The argv flag is the arguments without the program path, as
-            // the top level gives what follows --; a -- here is an argument.
-            engine.Flags.Argv = args;
             var sol = engine.Query(@""{escaped}"");
             // halt/1 inside the goal is captured by the engine into
             // LastHaltExitCode; honour it as the process exit code,
@@ -439,6 +442,11 @@ internal static class Program
             if (engine.LastHaltExitCode is int haltCode)
                 return haltCode;
             return sol.Success ? 0 : 1;
+        }}
+        catch (Shumway.Core.PrologHaltException halted)
+        {{
+            // halt/0-1 in an initialization goal, which runs as the bundle loads.
+            return halted.ExitCode;
         }}
         catch (Shumway.Core.PrologAbortException)
         {{

@@ -1278,7 +1278,7 @@ public static partial class MetaBuiltins
             source = mod.Name == PrologEngine.DefaultModuleName
                 ? host.StaticClausesFor(fid)
                 : host.StaticClausesInModule(mod.Name, fid);
-        else if (host.ModuleImportSource(mod.Name, fid) is { } src)
+        else if (host.ViewImportSource(mod.Name, fid) is { } src)
             source = host.StaticClausesInModule(src, fid);
         else
             source = System.Array.Empty<Clause>();

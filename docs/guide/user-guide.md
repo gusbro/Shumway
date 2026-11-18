@@ -908,8 +908,8 @@ work *at load time* that its own clauses then depend on:
   `clpz`, `dcgs`, the `atts` machinery all do this);
 - **operators** (`:- op(...)`) declared by a *dependency* that the
   importing file's clauses need in order to parse;
-- **`:- initialization`** or other directives whose effects are part of
-  the compiled program.
+- **goal directives** (`:- assertz(...)`, any directive that is not a
+  declaration) whose effects are part of the compiled program.
 
 A file-at-a-time compile cannot see any of that (the hooks never run), so
 it either fails to parse or silently drops the generated clauses. **`--consult`
@@ -986,11 +986,20 @@ Two things to know going in:
   run and the clause would define a predicate named `:`. A file that only
   declares one of those hooks `multifile` or `dynamic`, with no clause, is
   not refused: the declaration installs nothing.
-- **A file-at-a-time compile does not run directives.** An
-  `:- initialization(G)` and a goal directive (`:- assertz(...)`, anything
-  that is not a declaration) are dropped, and each one is reported as a
-  warning naming it. `--consult` runs them while compiling, and the object
-  carries the state they leave in its dynamic predicates.
+- **A file-at-a-time compile does not run directives, and carries
+  `:- initialization`.** An `:- initialization(G)` goal runs when the bundle
+  loads, once all of it is in and in its module, as a compiled program runs
+  it when it starts. A goal directive (`:- assertz(...)`, anything that is not
+  a declaration) is dropped and reported as a warning naming it: write it as
+  `:- initialization(...)`, or compile with `--consult`. `--consult` runs both
+  while compiling; the object then carries the state they leave in its
+  dynamic predicates, and its `initialization` goals do not run again when
+  the bundle loads.
+- **Conditional compilation keeps the same clauses either way.** A
+  condition of `:- if`, `:- elif` is answered from the flags, the builtins,
+  the prelude, the libraries Shumway ships and what the file defined above
+  it, without running a query. A condition neither compile can answer is
+  reported and taken as false.
 
 ### Step 2: `shumway-link` (linker)
 

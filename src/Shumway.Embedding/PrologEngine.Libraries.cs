@@ -1506,12 +1506,24 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>The module <paramref name="module"/> imports the functor
-    /// from, or null — one hop of the import table, for the M:X viewpoint
-    /// resolution (predicate_property's imported_from, clause's view).</summary>
+    /// from, or null: one hop of its own import table.</summary>
     internal string? ModuleImportSource(string module, int fid)
         => _modules.TryGetValue(module, out ModuleManifest? m)
            && m.Imports.TryGetValue(fid, out string? src)
             ? src : null;
+
+    /// <summary>Where M's viewpoint takes an import from: M's table, then,
+    /// for a loaded module not declared with <c>:- module/2</c> (a
+    /// <c>:- module/1</c> name, a file's name in a link), <c>user</c>'s,
+    /// which its text sees when consulted (ADR-038, third amendment).</summary>
+    internal string? ViewImportSource(string module, int fid)
+    {
+        if (ModuleImportSource(module, fid) is { } src) return src;
+        return module != DefaultModuleName
+               && _modules.TryGetValue(module, out ModuleManifest? m) && !m.IsExportQualified
+            ? ModuleImportSource(DefaultModuleName, fid)
+            : null;
+    }
 
     /// <summary>Static clauses with head functor <paramref name="fid"/> in
     /// one module — <see cref="StaticClausesFor"/> restricted to

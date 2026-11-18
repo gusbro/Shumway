@@ -29,8 +29,9 @@ public sealed class IncludeDiagnosticsTests : IDisposable
     [Fact]
     public void AWarningInAnIncludedFileNamesThatFile()
     {
-        string root = Write("root.pl", ":- include(sub).\nmain.\n:- initialization(main).\n");
-        Write("sub.pl", "p(1).\n:- initialization(p(_)).\n");
+        // A goal directive is a warning of file-at-a-time compilation.
+        string root = Write("root.pl", ":- include(sub).\nmain.\n:- main.\n");
+        Write("sub.pl", "p(1).\n:- p(_).\n");
 
         var res = ShmoCompiler.TryCompileFile(root, ShmoBuildMode.Release);
 

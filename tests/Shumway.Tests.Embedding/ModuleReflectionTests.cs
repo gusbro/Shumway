@@ -10,7 +10,9 @@ namespace Shumway.Tests.Embedding;
 /// global namespace, which is <c>user</c>'s, has none of them: an importer
 /// sees an export through <c>imported_from/1</c>, and nobody outside sees a
 /// private. Asked with no module from inside such a file, the file is asked.
-/// The answers are the ones measured on the reference system for modules.</summary>
+/// The answers are the ones measured on the reference system for modules.
+/// Text without <c>:- module/2</c> sees what <c>user</c> imports, however it
+/// is loaded.</summary>
 public sealed class ModuleReflectionTests : IDisposable
 {
     private readonly string _dir = Path.Combine(
@@ -39,12 +41,27 @@ mine(1).
 :- dynamic(dyn/1).
 ";
 
+    // Text without :- module/2 asking about what user can call, as Logtalk's
+    // runtime asks whether a predicate user imported exists.
+    private const string Bare = @"
+bare_property(H, P) :- predicate_property(H, P).
+bare_clause(H, B) :- clause(H, B).
+";
+
+    // The same questions under :- module/2, which does not import mr_dep.
+    private const string Scoped = @"
+:- module(mr_scoped, [scoped_property/2, scoped_clause/2]).
+scoped_property(H, P) :- predicate_property(H, P).
+scoped_clause(H, B) :- clause(H, B).
+";
+
     public ModuleReflectionTests()
     {
         Directory.CreateDirectory(_dir);
         File.WriteAllText(Path.Combine(_dir, "mr_dep.pl"), Dep);
         File.WriteAllText(Path.Combine(_dir, "mr_in.pl"), Inside);
         File.WriteAllText(Path.Combine(_dir, "mr_user.pl"), Program);
+        File.WriteAllText(Path.Combine(_dir, "mr_bare.pl"), Bare);
     }
 
     public void Dispose() => Directory.Delete(_dir, recursive: true);
@@ -122,6 +139,81 @@ mine(1).
         Holds(e, @"all_inside(L), L == [all_inside/1, in_dyn/1, in_priv/0, in_pub/0, inside/1].");
         // The import shows where it is asked about.
         Holds(e, @"predicate_property(mr_in:dpub(_), imported_from(mr_dep)).");
+    }
+
+    /// <summary>The bare text loaded the four ways it can be: consulted into
+    /// user, under <c>:- module/1</c>, compiled on its own and linked, and
+    /// linked through a consult. The last two give it the file's name as its
+    /// module, as an executable with Logtalk embedded gets.</summary>
+    private PrologEngine LoadedBare(string how)
+    {
+        var e = new PrologEngine();
+        switch (how)
+        {
+            case "consulted":
+                e.ConsultString(Bare);
+                break;
+            case "module1":
+                e.ConsultString(":- module(mr_bare).\n:- public bare_property/2, bare_clause/2.\n" + Bare);
+                break;
+            case "compiled":
+            {
+                var r = ShmoCompiler.TryCompileSource(Bare, "mr_bare");
+                Assert.True(r.Success, string.Join("; ", r.Errors));
+                LoadLinked(e, new[] { ShmoReader.FromBytes(ShmoWriter.ToBytes(r.Object!)) });
+                break;
+            }
+            case "consult-linked":
+            {
+                var errors = new System.Collections.Generic.List<ShmoCompileError>();
+                var objects = ShmoViaConsult.Compile(Path.Combine(_dir, "mr_bare.pl"),
+                    Array.Empty<string>(), ShmoBuildMode.Release, errors);
+                Assert.Empty(errors);
+                Assert.Contains(objects, o => o.ModuleName == "mr_bare");
+                LoadLinked(e, System.Linq.Enumerable.ToArray(
+                    System.Linq.Enumerable.Select(objects, o => o.Object)));
+                break;
+            }
+        }
+        // What user imports after the text is in, as the application's loader
+        // does in the executable.
+        e.ConsultFile(Path.Combine(_dir, "mr_user.pl"));
+        return e;
+    }
+
+    private static void LoadLinked(PrologEngine e, ShmoObject[] objects)
+    {
+        var link = ShmoLinker.Link(new LinkConfig { Objects = objects, Library = true, AllowUndefined = true });
+        Assert.True(link.Success, string.Join("; ", link.Diagnostics));
+        e.LoadBundle(BundleReader.FromBytes(BundleWriter.ToBytes(link.Bundle!)));
+        e.PromoteBareBundleModulesToUser();
+    }
+
+    [Theory]
+    [InlineData("consulted")]
+    [InlineData("module1")]
+    [InlineData("compiled")]
+    [InlineData("consult-linked")]
+    public void TextWithoutModule2_SeesWhatUserImports_HoweverItIsLoaded(string how)
+    {
+        var e = LoadedBare(how);
+
+        Holds(e, @"bare_property(dpub(_), imported_from(mr_dep)).");
+        Holds(e, @"bare_property(dpub(_), defined).");
+        Holds(e, @"findall(X, bare_clause(dpub(X), true), L), L == [a].");
+        // What user cannot call, it does not see either.
+        Fails(e, @"bare_property(dpriv(_), _).");
+    }
+
+    [Fact]
+    public void TextUnderModule2_DoesNotSeeWhatUserImports()
+    {
+        var e = Loaded();
+        e.ConsultString(Scoped);
+
+        Holds(e, @"predicate_property(dpub(_), imported_from(mr_dep)).");
+        Fails(e, @"mr_scoped:scoped_property(dpub(_), _).");
+        Fails(e, @"mr_scoped:scoped_clause(dpub(_), _).");
     }
 
     [Fact]

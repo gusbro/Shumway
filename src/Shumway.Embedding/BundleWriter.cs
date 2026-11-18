@@ -171,7 +171,8 @@ public static class BundleWriter
                     imports: effective[i].Imports,
                     dialect: effective[i].Dialect,
                     clauseTerms: effective[i].ClauseTerms,
-                    flags: effective[i].Flags);
+                    flags: effective[i].Flags,
+                    initializationGoals: effective[i].InitializationGoals);
             }
             for (int i = 0; i < effective.Length; i++)
             {
@@ -240,6 +241,7 @@ public static class BundleWriter
             WriteNativeInterop(bw, entry.NativeFunctions, entry.NativeDecls);
             WriteOperators(bw, entry.Operators);
             WriteFlags(bw, entry.Flags);
+            WriteInitializationGoals(bw, entry.InitializationGoals);
             WriteExportQualification(bw, entry);
         }
         // Foreign-assemblies trailer after the
@@ -348,7 +350,8 @@ public static class BundleWriter
                     operators: e.Operators,
                     isExportQualified: e.IsExportQualified,
                     exports: e.Exports, imports: e.Imports,
-                    dialect: e.Dialect, clauseTerms: e.ClauseTerms, flags: e.Flags));
+                    dialect: e.Dialect, clauseTerms: e.ClauseTerms, flags: e.Flags,
+                    initializationGoals: e.InitializationGoals));
             else if (!string.IsNullOrEmpty(e.Source))
                 sources.Add(e.Source);
         }
@@ -965,6 +968,14 @@ public static class BundleWriter
             WriteLengthPrefixedUtf8(bw, f.Flag);
             WriteLengthPrefixedUtf8(bw, f.Value);
         }
+    }
+
+    /// <summary>Per-entry <c>:- initialization/1</c> goals, run at LoadBundle.
+    /// Shared by both .shum writers and the .shmo writer.</summary>
+    internal static void WriteInitializationGoals(BinaryWriter bw, IReadOnlyList<Shumway.Compiler.Ast.Term> goals)
+    {
+        bw.Write((uint)goals.Count);
+        foreach (var goal in goals) TermCodec.WriteTerm(bw, goal);
     }
 
     internal static void WriteNativeBlocks(BinaryWriter bw,
