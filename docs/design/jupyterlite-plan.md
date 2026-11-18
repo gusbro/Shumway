@@ -127,7 +127,9 @@ from the solution.
     and finds it through `runtime.json`;
   - the mirror with the Contents API target (ADR-070), run against
     JupyterLite's own contents manager.
-- **The kernel extension, its core:**
+- **The kernel extension, its core. Done (2026-11-17)**, checked in a
+  JupyterLab page of the built site in the three browser engines
+  (`jupyterlite/tests/kernel.mjs`):
   - the `BaseKernel` subclass, calling `SessionRequest`;
   - response mapping;
   - Phase-1 outputs (ADR-072): text, bindings, errors, tables, `display_data`
@@ -136,14 +138,19 @@ from the solution.
   - inspection from `jupyter_predicate_docs`;
   - input;
   - interrupt as restart, with a notice;
-  - session limit.
-- **The kernel extension, the Prolog variant:** the kernelspec (ADR-066
-  D11), the bundle, logos and CodeMirror mode.
-- **The rule's test:** no project of the solution refers to `jupyterlite/`
-  or runs a Node or Python command.
+  - session limit, which the site may set; a refused kernel says how to
+    free a place (`jupyterlite/tests/limit.mjs`).
+- **The kernel extension, the Prolog variant. Done:** the kernelspec
+  (ADR-066 D11), the bundle, a logo and a CodeMirror mode of our own, which
+  a `.pl` file gets too.
+- **The rule's test. Done:** no build file of the repository refers to
+  `jupyterlite/` or runs a Node or Python command
+  (`BuildNeedsOnlyDotNetTests`).
 - **Site:**
   - `jupyter lite build`, with JupyterLite's service worker disabled and
-    `shumway_prolog` as the default kernel;
+    `shumway_prolog` as the default kernel: **done**, by
+    `jupyterlite/build.mjs`, which also puts the runtime's JavaScript and
+    the isolation script in the site;
   - example notebooks;
   - deployed under `/lite`.
 - **Working directory:** each session starts in its notebook's directory,

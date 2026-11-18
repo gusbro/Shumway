@@ -136,8 +136,15 @@ reported for the **first** error, as in Hercutalk.
 | `show_data` | plot description (matplotlib-style) | **Vega-Lite** spec built by the server (§6) | 3 |
 | `input_html` | HTML with callbacks | `text/html`, once the callback is configurable | 4 |
 | `set_prolog_backend` | backend name | `not_applicable` on Shumway | |
-| `display_data` **[ext]** | `{"mime": "...", "data": "..."}`, from `jupyter:display/2` | that MIME, plus `text/plain` | 1 |
+| `display_data` **[ext]** | list of `{"mime": "...", "data": "..."}`, one for each call of `jupyter:display/2` in the query, in order | each as that MIME, plus `text/plain`; where the MIME's name ends in `json`, the data is parsed | 1 |
 | `residual_goals` **[ext]** | list of goal strings | shown after the bindings, one to a line | 1 |
+
+`display_data` is a list because a query may show more than one thing, a
+figure for each solution it walks, say, where a table is one for a query.
+`data` is text: markup for `image/svg+xml`, `text/html` and `text/markdown`,
+base64 for an image that is not text, and JSON text for a MIME such as
+Vega-Lite's. `jupyter:display/2` is not exported: `display/2` is a name a
+program may want for itself.
 
 `residual_goals` holds the constraints left on the variables of the query
 (`clpfd`, `dif`, `freeze`), as the goals Shumway's top level shows, each
@@ -204,6 +211,9 @@ mirrored in `jupyterlite-features.yaml`.
   matches Hercutalk: the server does not survive, the kernel recreates the
   session, and the cell output says so. A future engine ADR may make
   cancellation catchable, so the session keeps its state.
+  JupyterLite 0.8.7 does not tell a kernel that it was interrupted: its
+  `interrupt` drops the cells that wait and leaves the running one alone.
+  The extension wraps that call so that the kernel hears of it.
 - **Restart:** `SessionDispose`, then `SessionCreate`.
 - **`halt`** (§3): same as restart, triggered by the server.
 

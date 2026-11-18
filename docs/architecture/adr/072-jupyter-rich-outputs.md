@@ -2,11 +2,15 @@
 
 ## Status
 
-Proposed (2026-11-14). Design only; nothing is implemented. Records D4
-(revised) and D15.
+Records D4 (revised) and D15. Accepted in part:
 
-Accepted in part (2026-11-16): the residual constraints in a query's answer,
-below. The rest stays proposed.
+- 2026-11-16: the residual constraints in a query's answer, built (#248).
+- 2026-11-17: D4, phase 1 of D15, and `jupyter:display/2`, all built: the
+  kernel is TypeScript, and shows text, bindings, errors, tables and what
+  `jupyter:display/2` asks for.
+
+Phases 2, 3 and 4 of D15 (graphs, plots, widgets) stay proposed until the
+plan reaches them.
 
 ## Context
 
@@ -85,7 +89,8 @@ scripts run. Those files are Apache-2.0 (ADR-067).
 
 - **`jupyter:display(+Mime, +Data)`** emits a raw `display_data`: SVG, HTML
   or markdown built in Prolog, for example to draw CLP solutions. It is a new
-  additional-data key, marked as an extension in the protocol.
+  additional-data key, marked as an extension in the protocol. Each call in
+  a query adds one, so the key holds a list.
 - **Residual constraints in a query's answer (accepted 2026-11-16).**
   Hercutalk shows a `clpfd` variable as `X in Dom` (a `dom` entry in the
   binding) on the backends where it knows how to ask for the domain. On

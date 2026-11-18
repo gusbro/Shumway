@@ -2,8 +2,9 @@
 
 ## Status
 
-Proposed (2026-11-14). Design only; nothing is implemented. Records D1, D2,
-D3 and D11 of [`jupyterlite-architecture.md`](../../design/jupyterlite-architecture.md).
+Accepted (2026-11-17). Records D1, D2, D3 and D11 of
+[`jupyterlite-architecture.md`](../../design/jupyterlite-architecture.md).
+The kernel that carries D11's identity is built (`jupyterlite/extension`).
 
 ## Context
 
@@ -56,7 +57,7 @@ the reverse.
 
 | Piece | Lives in |
 |---|---|
-| Engine, WebShumway runtime packages, kernel core, Prolog variant | Shumway |
+| Engine, the wasm app and the runtime's JavaScript, kernel core, Prolog variant | Shumway |
 | Logtalk adapter, `shumwaylgt`, embedded Logtalk core for Shumway | `logtalk3` |
 | Hercutalk web (JupyterLite variant) | Hercutalk, or a separate integration repo |
 
