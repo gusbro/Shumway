@@ -156,6 +156,7 @@ public static class BundleReader
                 string opName = ReadLengthPrefixedUtf8(br);
                 operators.Add(new ShmoOperatorDef(opPrio, opType, opName));
             }
+            var flags = ReadFlags(br);
             // ADR-038 — export-qualification + import table per entry.
             bool isExportQualified = br.ReadBoolean();
             uint exCount = br.ReadUInt32();
@@ -194,7 +195,7 @@ public static class BundleReader
                 compiledIlPatches, compiledIlEntries, dynamicSeeds, nativeBlocks,
                 nativeFunctions, nativeDecls, operators,
                 isExportQualified: isExportQualified, exports: exports, imports: imports,
-                dialect: dialect, clauseTerms: clauseTerms);
+                dialect: dialect, clauseTerms: clauseTerms, flags: flags);
         }
         // Foreign-assemblies trailer.
         uint asmCount = br.ReadUInt32();
@@ -279,6 +280,16 @@ public static class BundleReader
             engineLibraries.Add(ReadLengthPrefixedUtf8(br));
         return new Bundle(entries, foreignAssemblies, snapshot, archiveMembers,
             nativeLibraries, generatorVersion, arityCompat, wasmModules, engineLibraries);
+    }
+
+    /// <summary>The section <see cref="BundleWriter.WriteFlags"/> writes.</summary>
+    internal static ShmoFlagSetting[] ReadFlags(BinaryReader br)
+    {
+        uint count = br.ReadUInt32();
+        var flags = new ShmoFlagSetting[count];
+        for (uint i = 0; i < count; i++)
+            flags[i] = new ShmoFlagSetting(ReadLengthPrefixedUtf8(br), ReadLengthPrefixedUtf8(br));
+        return flags;
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

@@ -291,6 +291,9 @@ public static class ShmoCompiler
         // list-name forms expanded) so they travel .shmo → .shum and
         // LoadBundle replays them into the runtime operator table.
         var operatorDefs = new List<ShmoOperatorDef>();
+        // The `:- set_prolog_flag/2` directives, in source order, for the
+        // load to apply as the consult does.
+        var flagSettings = new List<ShmoFlagSetting>();
         // ADR-056: this file's meta_predicate declarations, so its module
         // qualifies the closures it passes to them.
         var fileMetaTemplates = new Dictionary<int, Term>();
@@ -309,6 +312,10 @@ public static class ShmoCompiler
                     nativeDecls.Append(ndText.Content).Append('\n');
                     continue;
                 }
+                if (d.Args[0] is CompoundTerm { Functor: "set_prolog_flag", Args: [AtomTerm spfFlag, var spfValue] }
+                    && spfValue is AtomTerm or IntTerm)
+                    flagSettings.Add(new ShmoFlagSetting(spfFlag.Name,
+                        AstTermRenderer.RenderQuoted(spfValue)));
                 if (d.Args[0] is CompoundTerm { Functor: "op", Args.Length: 3 } opDir
                     && opDir.Args[0] is IntTerm opPrio
                     && opDir.Args[1] is AtomTerm opType)
@@ -464,6 +471,7 @@ public static class ShmoCompiler
             operatorDefs, multifileSet,
             isExportQualified: isExportQualified, exports: exportSet,
             imports: importEntries, libraryDeps: libraryDeps,
+            flagSettings: flagSettings,
             metaArgSpec: (fid, local) => fileMetaTemplates.TryGetValue(fid, out Term? t)
                 ? ModuleRewrite.MetaArgSpecOfTemplate(t,
                     system: Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _))
@@ -504,7 +512,8 @@ public static class ShmoCompiler
         Func<int, string?, int[]?>? metaArgSpec = null,
         Func<string, string, int, string?>? qualifiedResolver = null,
         Func<int, bool>? isVisibleGlobal = null,
-        Func<string, bool>? sourceOwnsDynamics = null)
+        Func<string, bool>? sourceOwnsDynamics = null,
+        IReadOnlyList<ShmoFlagSetting>? flagSettings = null)
     {
         // A clause for a predicate the prelude declares dynamic is a dynamic
         // clause here too (what the live consult does through its store),
@@ -987,7 +996,8 @@ public static class ShmoCompiler
             exports: exports?.ToList(),
             imports: imports,
             libraryDeps: libraryDeps,
-            dialect: dialect);
+            dialect: dialect,
+            flags: flagSettings);
         obj.DynamicSnapshotBytecode = dynamicSnapshotBytecode;
         return new ShmoCompileResult(obj, errors, warnings);
     }

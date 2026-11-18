@@ -71,33 +71,50 @@ public static partial class MetaBuiltins
         return acc;
     }
 
-    /// <summary><c>set_prolog_flag(Flag, Value)</c> — updates a parser-
-    /// visible flag. The parser-visible set is
-    /// <c>double_quotes</c> with values <c>codes</c>, <c>chars</c>,
-    /// <c>atom</c>, or <c>string</c>; other flags raise a domain error.
-    /// Setting <c>double_quotes</c> takes effect for the next parse —
-    /// either a query, an <c>assertz</c> of a clause carrying a string
-    /// literal, or a <c>:- consult</c> reading more source.</summary>
+    /// <summary><c>set_prolog_flag(Flag, Value)</c> — sets a flag. A flag the
+    /// engine does not know, or a value outside the flag's domain, raises the
+    /// ISO error. A <c>:- set_prolog_flag</c> directive and a bundle's load set
+    /// flags the same way (<see cref="ApplySetPrologFlag"/>).</summary>
     public static bool SetPrologFlag(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
                 "set_prolog_flag/2 requires the engine to be hosted by a PrologEngine.");
-
         Cell flagCell = ResolveLocal(engine, engine.GetRegister(0));
         Cell valueCell = ResolveLocal(engine, engine.GetRegister(1));
         if (flagCell.Tag == Tag.Ref || valueCell.Tag == Tag.Ref)
             throw new ShumwayPrologException(IsoError.InstantiationError(engine));
-        Term flagTerm = MaterializeRegister(engine, 0);
-        Term valueTerm = MaterializeRegister(engine, 1);
+        ApplySetPrologFlag(host, MaterializeRegister(engine, 0), MaterializeRegister(engine, 1), engine);
+        return true;
+    }
+
+    /// <summary>Sets a flag as <c>set_prolog_flag/2</c> does, for the builtin,
+    /// a consult's directive and a bundle's load alike; <paramref name="live"/>
+    /// is the activation the change reaches at once, if any. A flag set under a
+    /// consult is recorded for the module loading, as its operators are, so a
+    /// bundle compiled through the consult sets it again when it loads.</summary>
+    internal static void ApplySetPrologFlag(PrologEngine host, Term flagTerm, Term valueTerm, Activation? live)
+    {
+        if (SetFlagCore(host, flagTerm, valueTerm, live) && host.CollectingConsult)
+            host.NoteConsultFlag(((AtomTerm)flagTerm).Name, AstTermRenderer.RenderQuoted(valueTerm));
+    }
+
+    // False for a flag accepted without effect: an SWI source's own, loaded
+    // under the swi dialect.
+    private static bool SetFlagCore(PrologEngine host, Term flagTerm, Term valueTerm, Activation? live)
+    {
+        if (flagTerm is VarTerm || valueTerm is VarTerm)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
         // §8.17.1.3: the flag-value domain error's culprit is the pair
         // Flag+Value, not the value alone.
         Term FlagValuePair() =>
             new CompoundTerm("+", new[] { flagTerm, valueTerm });
-        if (flagCell.Tag != Tag.Atom)
-            throw new ShumwayPrologException(IsoError.TypeError("atom", flagTerm, engine));
+        if (flagTerm is not AtomTerm flagAtom)
+            throw new ShumwayPrologException(IsoError.TypeError("atom", flagTerm));
 
-        string flagName = AtomTable.GetById(flagCell.AsAtomId)?.Name ?? "";
+        string flagName = flagAtom.Name;
+        if (host.LoadingDialect == SwiShim.LibraryName && SwiShim.IgnoredFlags.Contains(flagName))
+            return false;
 
         // A flag that exists but is not user-settable raises
         // permission_error(modify, flag, F) (§8.17.1.3 c) — checked
@@ -115,28 +132,28 @@ public static partial class MetaBuiltins
             case "tabling":
             case "cwd_scope":
                 throw new ShumwayPrologException(IsoError.PermissionError(
-                    "modify", "flag", new AtomTerm(flagName), engine));
+                    "modify", "flag", new AtomTerm(flagName)));
         }
 
         // Checked before the atom rule below, which every other flag follows.
         if (flagName == "answer_max_depth")
         {
-            if (valueCell.Tag != Tag.Int)
+            if (valueTerm is not IntTerm depth)
                 throw new ShumwayPrologException(
-                    IsoError.TypeError("integer", valueTerm, engine));
-            if (valueCell.AsInt < 0)
+                    IsoError.TypeError("integer", valueTerm));
+            if (depth.Value < 0)
                 throw new ShumwayPrologException(
                     IsoError.DomainError("not_less_than_zero",
-                        new IntTerm(valueCell.AsInt), engine));
-            host.Flags.AnswerMaxDepth = (int)System.Math.Min(valueCell.AsInt, int.MaxValue);
+                        new IntTerm(depth.Value)));
+            host.Flags.AnswerMaxDepth = (int)System.Math.Min(depth.Value, int.MaxValue);
             return true;
         }
 
-        if (valueCell.Tag != Tag.Atom)
+        if (valueTerm is not AtomTerm valueAtom)
             throw new ShumwayPrologException(
-                IsoError.TypeError("atom", valueTerm, engine));
+                IsoError.TypeError("atom", valueTerm));
 
-        string valueName = AtomTable.GetById(valueCell.AsAtomId)?.Name ?? "";
+        string valueName = valueAtom.Name;
 
         if (flagName == "double_quotes")
         {
@@ -147,7 +164,7 @@ public static partial class MetaBuiltins
                 "atom"   => Shumway.Compiler.Parsing.DoubleQuotesMode.Atom,
                 "string" => Shumway.Compiler.Parsing.DoubleQuotesMode.String,
                 _ => throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair(), engine)),
+                    IsoError.DomainError("flag_value", FlagValuePair())),
             };
             return true;
         }
@@ -160,7 +177,7 @@ public static partial class MetaBuiltins
             catch (System.ArgumentException)
             {
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             }
             return true;
         }
@@ -168,11 +185,11 @@ public static partial class MetaBuiltins
         {
             if (valueName != "error" && valueName != "fail" && valueName != "warning")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.Unknown = valueName;
             // take effect mid-query: dispatch reads the
             // live engine's OnUnknown, not the host flags.
-            engine.OnUnknown = valueName switch
+            if (live is not null) live.OnUnknown = valueName switch
             {
                 "fail" => Shumway.Core.UnknownAction.Fail,
                 "warning" => Shumway.Core.UnknownAction.Warning,
@@ -187,9 +204,9 @@ public static partial class MetaBuiltins
             string? norm = Shumway.Core.TextEncodings.NameToEngineName(valueName);
             if (norm is null)
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.DefaultTextEncoding = norm;
-            if (engine.Streams is { } reg) reg.DefaultEncodingName = norm;
+            (live?.Streams ?? host.Streams).DefaultEncodingName = norm;
             return true;
         }
         if (flagName == "lenient_escapes")
@@ -200,7 +217,7 @@ public static partial class MetaBuiltins
             // Logtalk adapter sets it, matching the reference backend.
             if (valueName != "true" && valueName != "false")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.LenientEscapes = valueName == "true";
             return true;
         }
@@ -208,7 +225,7 @@ public static partial class MetaBuiltins
         {
             if (valueName != "error" && valueName != "warning")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.DiscontiguousCheck = valueName;
             return true;
         }
@@ -220,14 +237,14 @@ public static partial class MetaBuiltins
             // handles a mid-file flip.
             if (valueName != "true" && valueName != "false")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.ArityCompat = valueName == "true";
             if (valueName == "true")
             {
                 // Arity call semantics: undefined predicates FAIL. An
                 // explicit set_prolog_flag(unknown, _) afterwards overrides.
                 host.Flags.Unknown = "fail";
-                engine.OnUnknown = Shumway.Core.UnknownAction.Fail;
+                if (live is not null) live.OnUnknown = Shumway.Core.UnknownAction.Fail;
                 // Arity's double-quoted literals are code lists. The engine
                 // default went to chars (ADR-047 decision 4), so the dialect
                 // has to say so — and its DCGs pack just the same, since both
@@ -251,14 +268,14 @@ public static partial class MetaBuiltins
         {
             if (valueName != "false" && valueName != "true" && valueName != "error")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.OccursCheck = valueName;
             // Applies from the next unification, not the next query: the
             // engine snapshot exists for query setup, but a program that
             // sets the flag mid-body means it — leaving the running
             // activation on the old mode would be the very "set it and
             // nothing changes" the flag was reported for.
-            engine.OccursMode = valueName switch
+            if (live is not null) live.OccursMode = valueName switch
             {
                 "true" => 1, "error" => 2, _ => 0,
             };
@@ -268,7 +285,7 @@ public static partial class MetaBuiltins
         {
             if (valueName != "normal" && valueName != "silent")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.Verbose = valueName;
             return true;
         }
@@ -276,7 +293,7 @@ public static partial class MetaBuiltins
         {
             if (valueName != "true" && valueName != "false")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.ImplicitDynamic = valueName == "true";
             return true;
         }
@@ -287,15 +304,16 @@ public static partial class MetaBuiltins
             // within one query.
             if (valueName != "true" && valueName != "false")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
-            host.Flags.PreferRationals = engine.PreferRationals = valueName == "true";
+                    IsoError.DomainError("flag_value", FlagValuePair()));
+            host.Flags.PreferRationals = valueName == "true";
+            if (live is not null) live.PreferRationals = host.Flags.PreferRationals;
             return true;
         }
         if (flagName == "compile_mode")
         {
             if (valueName != "debug" && valueName != "release")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.EmitDebugInfo = host.Flags.DebugCodegen = valueName == "debug";
             return true;
         }
@@ -307,9 +325,9 @@ public static partial class MetaBuiltins
             // the Immediate window mid-session).
             if (valueName != "on" && valueName != "off")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.DebugLco = valueName == "on";
-            engine.LastCallOptimisation = host.Flags.DebugLco;
+            if (live is not null) live.LastCallOptimisation = host.Flags.DebugLco;
             return true;
         }
         if (flagName == "char_conversion")
@@ -318,7 +336,7 @@ public static partial class MetaBuiltins
             // (the table) is applied.
             if (valueName != "on" && valueName != "off")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.CharConversionEnabled = valueName == "on";
             return true;
         }
@@ -328,13 +346,13 @@ public static partial class MetaBuiltins
             // the flag itself is required; accepted and stored.
             if (valueName != "on" && valueName != "off")
                 throw new ShumwayPrologException(
-                    IsoError.DomainError("flag_value", FlagValuePair(), engine));
+                    IsoError.DomainError("flag_value", FlagValuePair()));
             host.Flags.Debug = valueName == "on";
             return true;
         }
 
         throw new ShumwayPrologException(
-            IsoError.DomainError("prolog_flag", new AtomTerm(flagName), engine));
+            IsoError.DomainError("prolog_flag", new AtomTerm(flagName)));
     }
 
     /// <summary><c>current_prolog_flag(Flag, Value)</c> — reads a flag's

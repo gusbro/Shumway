@@ -2147,71 +2147,24 @@ public sealed partial class PrologEngine
                         AppendDynamicClauseIncrementalCore(engine, fid, c);
     }
 
-    /// <summary>Applies a <c>:- set_prolog_flag(Flag, Value)</c>
-    /// directive at consult time so subsequent clauses in the same
-    /// consult see the new value. The parser already pre-processes
-    /// the parser-visible flags (e.g. <c>double_quotes</c>); this
-    /// handles the rest of the recognised set. Unknown flags are
-    /// silently ignored at consult time — the runtime builtin
-    /// surfaces the diagnostic.</summary>
-    internal void ApplyConsultSetPrologFlag(string flagName, string valueName)
+    /// <summary>A <c>set_prolog_flag/2</c> a bundle carries, set again as the
+    /// runtime builtin sets it. One the loading engine refuses (a flag it does
+    /// not know) is reported, and the load goes on.</summary>
+    internal void ApplyBundleFlag(ShmoFlagSetting setting)
     {
-        switch (flagName)
+        var parser = new Shumway.Compiler.Parsing.Parser(
+            new Shumway.Compiler.Lexer.Lexer(setting.Value + " ."),
+            Shumway.Compiler.Parsing.OperatorTable.Default());
+        Term value = parser.ReadClauseTerm();
+        try
         {
-            case "discontiguous_check":
-                if (valueName is "error" or "warning")
-                    _flags.DiscontiguousCheck = valueName;
-                break;
-            case "implicit_dynamic":
-                if (valueName == "true") _flags.ImplicitDynamic = true;
-                else if (valueName == "false") _flags.ImplicitDynamic = false;
-                break;
-            case "prefer_rationals":
-                if (valueName == "true") _flags.PreferRationals = true;
-                else if (valueName == "false") _flags.PreferRationals = false;
-                break;
-            case "lenient_escapes":
-                if (valueName == "true") _flags.LenientEscapes = true;
-                else if (valueName == "false") _flags.LenientEscapes = false;
-                break;
-            case "encoding":
-                if (Shumway.Core.TextEncodings.NameToEngineName(valueName)
-                    is string encNorm)
-                {
-                    _flags.DefaultTextEncoding = encNorm;
-                    Streams.DefaultEncodingName = encNorm;
-                }
-                break;
-            case "arity_compat":
-                // consult-time directive form. The ClauseReader's
-                // pre-pass already flipped the live lexer for this file; this
-                // records it for subsequent consults. Arity call semantics
-                // ride along: undefined predicates FAIL (a later explicit
-                // set_prolog_flag(unknown, _) overrides).
-                if (valueName == "true") { _flags.ArityCompat = true; _flags.Unknown = "fail"; }
-                else if (valueName == "false") _flags.ArityCompat = false;
-                break;
-            case "unknown":
-                if (valueName == "error" || valueName == "fail" || valueName == "warning")
-                    _flags.Unknown = valueName;
-                break;
-            case "occurs_check":
-                if (valueName == "false" || valueName == "true" || valueName == "error")
-                    _flags.OccursCheck = valueName;
-                break;
-            case "verbose":
-                if (valueName == "normal" || valueName == "silent")
-                    _flags.Verbose = valueName;
-                break;
-            case "compile_mode":
-                // Takes effect for predicates compiled later in this consult.
-                if (valueName == "debug") _flags.EmitDebugInfo = _flags.DebugCodegen = true;
-                else if (valueName == "release") _flags.EmitDebugInfo = _flags.DebugCodegen = false;
-                break;
-            // double_quotes is handled by ClauseReader's directive
-            // pre-pass (it has to take effect during lexing of the
-            // subsequent tokens, before consult-time directive
-            // processing even sees it).
+            MetaBuiltins.ApplySetPrologFlag(this, new AtomTerm(setting.Flag), value, _liveConsultEngine);
+        }
+        catch (ShumwayPrologException ex)
+        {
+            Term ball = IsoError.CloseContext(ex.Term, "set_prolog_flag", 2);
+            Warn($"Warning: flag of a loaded bundle raised: {setting}: "
+                + AstTermRenderer.Render(ball, 999, Operators, quoted: true));
         }
     }
 

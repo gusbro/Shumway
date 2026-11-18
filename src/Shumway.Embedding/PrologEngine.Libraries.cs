@@ -271,9 +271,24 @@ public sealed partial class PrologEngine
             ? body()
             : WithDialect(dialect!, body);
 
+    // The dialect of the library load in progress, if any. Not the
+    // library_dialect preference, which a user sets for good.
+    private string? _loadingDialect;
+
+    /// <summary>The dialect of the library load in progress, or null.</summary>
+    internal string? LoadingDialect => _loadingDialect;
+
+    /// <summary>The flags a dialect library's load saves and restores (see
+    /// <see cref="WithDialect{T}"/>): what the library sets of them stays with
+    /// it.</summary>
+    internal static readonly HashSet<string> DialectScopedFlags =
+        new(System.StringComparer.Ordinal) { "double_quotes", "lenient_escapes", "discontiguous_check" };
+
     private T WithDialect<T>(string dialect, System.Func<T> body)
     {
         string? savedDialect = _activeLibraryDialect;
+        string? savedLoading = _loadingDialect;
+        _loadingDialect = dialect;
         var savedDq = Flags.DoubleQuotes;
         bool savedSep = Flags.DigitSeparators;
         _activeLibraryDialect = dialect;
@@ -339,6 +354,7 @@ public sealed partial class PrologEngine
         finally
         {
             _activeLibraryDialect = savedDialect;
+            _loadingDialect = savedLoading;
             Flags.DoubleQuotes = savedDq;
             Flags.DigitSeparators = savedSep;
             Flags.LenientBareOperatorOperands = savedLenientOps;

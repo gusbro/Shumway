@@ -215,6 +215,7 @@ public static class ShmoReader
             string name = ReadLengthPrefixedUtf8(br);
             operators[i] = new ShmoOperatorDef(prio, type, name);
         }
+        var flags = BundleReader.ReadFlags(br);
 
         // ADR-038 — export-qualification trailer.
         bool isExportQualified = br.ReadBoolean();
@@ -267,7 +268,7 @@ public static class ShmoReader
             operators,
             isExportQualified: isExportQualified, exports: exports,
             imports: imports, libraryDeps: libraryDeps, dialect: dialect,
-            generatorVersion: generatorVersion);
+            generatorVersion: generatorVersion, flags: flags);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)
