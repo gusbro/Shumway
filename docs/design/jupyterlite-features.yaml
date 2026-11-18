@@ -61,7 +61,7 @@ groups:
 
   - name: Cell magics
     rows:
-      - { id: c-user, feature: "%%user, %%user+", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, note: "user.pl + consult in the Prolog variant", test: todo, phase: 3 }
+      - { id: c-user, feature: "%%user, %%user+", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, note: "NAME.user.pl for NAME.ipynb (user.pl in a console) + consult in the Prolog variant; Hercutalk writes one user.lgt per directory", test: todo, phase: 3 }
       - { id: c-file, feature: "%%file, %%file+, %%save, %%load", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }
       - { id: c-highlight, feature: "%%highlight", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }
       - { id: c-table, feature: "%%table, %%csv, %%tsv", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }

@@ -54,6 +54,12 @@ headless Chromium, Firefox and WebKit, with a JupyterLab page of JupyterLite
   edit replaces the file, and a deletion on either side reaches the other.
 - **`last_modified` is reliable**: a file the mirror wrote comes back with
   the time its save answered, so a second copy sends nothing.
+- **The engine's file times are kept to the second**, and a file a cell
+  rewrote within the second of the cell before it was not copied (found by
+  the kernel's checks, 2026-11-18). The engine's side tells one version of a
+  file from the next by its size and a hash of its content. The hash is
+  kept once the second of the file's time is over, so a cell reads only the
+  files written in the last two seconds.
 - **Text is saved as text.** The contents keep the format a save gives
   them, and the editor does not open a text file kept as base64. What the
   engine wrote is text when its bytes are UTF-8 with no zero byte.

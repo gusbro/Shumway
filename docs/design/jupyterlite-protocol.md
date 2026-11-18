@@ -40,7 +40,7 @@ Decisions behind this document: ADR-067 (protocol and server) and ADR-072
 
 | Method | Params | Result | Shumway notes |
 |---|---|---|---|
-| `call` | `{"code": "<cell text>"}` | per-term results (§3); `""` for an empty cell; `{}` for a cell with nothing to run (`%%save`, `%%highlight`) | the core of everything |
+| `call` | `{"code": "<cell text>", "notebook": "<file name>"}`; `notebook` is optional | per-term results (§3); `""` for an empty cell; `{}` for a cell with nothing to run (`%%save`, `%%highlight`) | the core of everything. `notebook` is the file name of the cell's notebook, which the kernel sends with every cell; a console sends none |
 | `backend` | none | atom: the backend's `prolog_dialect` | answers `shumway` |
 | `enable_logging` | none | boolean: whether a log file was created | answers `false`: no log file is kept |
 | `version` | none | `"Major.Minor.Patch"` of the backend | Shumway's version |
@@ -188,8 +188,12 @@ and proposed to Hercutalk so that both variants show constraints alike.
   `%%user+`, `%%file F`, `%%file+ F`, `%%save F`, `%%load F`, `%%highlight`,
   `%%table`, `%%csv F`, `%%tsv F`, `%%tree`, `%%data`. A first line that
   names none of them is a comment. In the Prolog variant `%%user` writes
-  `user.pl` and consults it, where Hercutalk writes `user.lgt` and loads it.
-  The load is a query of the cell: its answer carries what loading wrote.
+  a file of the notebook and consults it, where Hercutalk writes `user.lgt`
+  and loads it. The file of `NAME.ipynb` is `NAME.user.pl`, so notebooks in
+  one directory keep apart; a call without `notebook` uses `user.pl`. A
+  notebook renamed since its last `%%user` cell takes its file along, unless
+  a file of the new name is already there. The load is a query of the cell:
+  its answer carries what loading wrote.
 - **Line magics** are a cell that is `%NAME` and nothing else: `%bindings`,
   `%queries`, `%help`, `%pwd`, `%magic`, `%versions`, `%flags`. Each runs a
   helper of `jupyter`.
