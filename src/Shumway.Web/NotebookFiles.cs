@@ -10,13 +10,47 @@ namespace Shumway.Web;
 /// notebook server holds for as long as the session lives.</summary>
 internal static partial class WebShumwayApp
 {
-    private static double ModifiedOf(string file)
-        => new DateTimeOffset(File.GetLastWriteTimeUtc(file)).ToUnixTimeMilliseconds();
+    // What tells one version of a file from the next. Not its time: the
+    // in-memory file system keeps it to the second, and a cell that rewrites
+    // a file within the second of the cell before it would not be copied.
+    // The size and a hash of the content do. A file's version is kept once
+    // the second of its time is over, as a later write has to move that time.
+    private static readonly Dictionary<string, (long Modified, long Size, string Version)> Settled = new();
+
+    private static string VersionOf(string file)
+    {
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var info = new FileInfo(file);
+        long modified = new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeMilliseconds();
+        lock (Settled)
+        {
+            if (Settled.TryGetValue(file, out var known) && known.Modified == modified && known.Size == info.Length)
+                return known.Version;
+        }
+        string version = info.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + ":" + Fnv1a(File.ReadAllBytes(file)).ToString("x16", System.Globalization.CultureInfo.InvariantCulture);
+        if (now - modified >= 2000)
+        {
+            lock (Settled) Settled[file] = (modified, info.Length, version);
+        }
+        return version;
+    }
+
+    private static ulong Fnv1a(byte[] bytes)
+    {
+        ulong hash = 14695981039346656037;
+        foreach (byte b in bytes)
+        {
+            hash ^= b;
+            hash *= 1099511628211;
+        }
+        return hash;
+    }
 
     /// <summary>The files under <paramref name="root"/>, at any depth, as a
     /// JSON array of <c>{path, modified, size}</c>: the path relative to the
-    /// root with <c>/</c>, the time in milliseconds. Empty when there is no
-    /// such directory.</summary>
+    /// root with <c>/</c>, and what tells this version of the file from
+    /// another. Empty when there is no such directory.</summary>
     [JSExport]
     internal static Task<string> FilesList(string root)
     {
@@ -31,7 +65,7 @@ internal static partial class WebShumwayApp
                 {
                     json.WriteStartObject();
                     json.WriteString("path", Path.GetRelativePath(full, file).Replace('\\', '/'));
-                    json.WriteNumber("modified", ModifiedOf(file));
+                    json.WriteString("modified", VersionOf(file));
                     json.WriteNumber("size", new FileInfo(file).Length);
                     json.WriteEndObject();
                 }
@@ -48,14 +82,14 @@ internal static partial class WebShumwayApp
         => Task.FromResult(File.Exists(path) ? Convert.ToBase64String(File.ReadAllBytes(path)) : null);
 
     /// <summary>Writes a file from base64, making the directories above it,
-    /// and answers its modification time, in milliseconds.</summary>
+    /// and answers what <see cref="FilesList"/> will say of it.</summary>
     [JSExport]
-    internal static Task<double> FileWrite(string path, string base64)
+    internal static Task<string> FileWrite(string path, string base64)
     {
         if (Path.GetDirectoryName(path) is { Length: > 0 } directory)
             Directory.CreateDirectory(directory);
         File.WriteAllBytes(path, Convert.FromBase64String(base64));
-        return Task.FromResult(ModifiedOf(path));
+        return Task.FromResult(VersionOf(Path.GetFullPath(path)));
     }
 
     /// <summary>Removes a file. False when there was none.</summary>

@@ -208,6 +208,75 @@ public sealed class NotebookServerTests : IDisposable
         Assert.False(File.Exists(Path.Combine(_notebooks.DirectoryOf("b"), "facts.pl")));
     }
 
+    /// <summary>A call as a kernel sends it from the notebook
+    /// <paramref name="notebook"/>.</summary>
+    private static string CallFrom(string notebook, string code)
+        => JsonSerializer.Serialize(new { jsonrpc = "2.0", id = 1, method = "call", @params = new { code, notebook } });
+
+    private string TextIn(string folder, string name)
+        => File.ReadAllText(Path.Combine(_notebooks.DirectoryOf(folder), name)).Replace("\r\n", "\n");
+
+    [Theory]
+    [InlineData("notes.ipynb", "notes.user.pl")]
+    [InlineData("two words.ipynb", "two words.user.pl")]
+    [InlineData("untitled", "untitled.user.pl")]
+    [InlineData("", "user.pl")]
+    public void TheUserFile_IsNamedAfterTheNotebook(string notebook, string file)
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+
+        Answer(server, CallFrom(notebook, "%%user\nnamed(1)."));
+
+        Assert.Equal("named(1).\n", TextIn("a", file));
+        Assert.Single(Directory.GetFiles(_notebooks.DirectoryOf("a")));
+    }
+
+    [Fact]
+    public void TwoNotebooksInOneDirectory_KeepTheirUserFilesApart()
+    {
+        NotebookServer a = _notebooks.Open("a", folder: "shared").Server;
+        NotebookServer b = _notebooks.Open("b", folder: "shared").Server;
+
+        Answer(a, CallFrom("first.ipynb", "%%user\nmine(a)."));
+        Answer(b, CallFrom("second.ipynb", "%%user\nmine(b)."));
+        Answer(b, CallFrom("second.ipynb", "%%user+\nmine(c)."));
+        JsonNode inA = Answer(a, CallFrom("first.ipynb", "findall(X, mine(X), L)."))["result"]!["1"]!;
+        JsonNode inB = Answer(b, CallFrom("second.ipynb", "findall(X, mine(X), L)."))["result"]!["1"]!;
+
+        Assert.Equal("[a]", (string)inA["bindings"]!["L"]!);
+        Assert.Equal("[b,c]", (string)inB["bindings"]!["L"]!);
+        Assert.Equal("mine(a).\n", TextIn("shared", "first.user.pl"));
+        Assert.Equal("mine(b).\nmine(c).\n", TextIn("shared", "second.user.pl"));
+        Assert.False(File.Exists(Path.Combine(_notebooks.DirectoryOf("shared"), "user.pl")));
+    }
+
+    [Fact]
+    public void ARenamedNotebook_TakesItsUserFileAlong()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+
+        Answer(server, CallFrom("before.ipynb", "%%user\np(1)."));
+        Answer(server, CallFrom("after.ipynb", "%%user+\np(2)."));
+        JsonNode all = Answer(server, CallFrom("after.ipynb", "findall(X, p(X), L)."))["result"]!["1"]!;
+
+        Assert.Equal("[1,2]", (string)all["bindings"]!["L"]!);
+        Assert.Equal("p(1).\np(2).\n", TextIn("a", "after.user.pl"));
+        Assert.False(File.Exists(Path.Combine(_notebooks.DirectoryOf("a"), "before.user.pl")));
+    }
+
+    [Fact]
+    public void ARenameOntoAFileThatExists_LeavesBothFilesAsTheyWere()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+        File.WriteAllText(Path.Combine(_notebooks.DirectoryOf("a"), "taken.user.pl"), "q(0).\n");
+
+        Answer(server, CallFrom("mine.ipynb", "%%user\nq(1)."));
+        Answer(server, CallFrom("taken.ipynb", "%%user+\nq(2)."));
+
+        Assert.Equal("q(1).\n", TextIn("a", "mine.user.pl"));
+        Assert.Equal("q(0).\nq(2).\n", TextIn("a", "taken.user.pl"));
+    }
+
     [Fact]
     public void ACellThatDoesNotParse_IsAnError_AndLoadsNothing()
     {

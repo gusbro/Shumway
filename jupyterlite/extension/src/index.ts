@@ -20,7 +20,7 @@ const kernel: JupyterFrontEndPlugin<void> = {
     kernelspecs.register({
       spec,
       create: async (options: IKernel.IOptions): Promise<IKernel> => {
-        const made = new ServerKernel(options, variant, app.serviceManager.contents);
+        const made = new ServerKernel(options, variant, app.serviceManager.contents, app.serviceManager.sessions);
         running.set(options.id, made);
         made.disposed.connect(() => {
           if (running.get(options.id) === made) running.delete(options.id);

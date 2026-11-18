@@ -3,7 +3,8 @@
 // its answers. Nothing here names a language: what is the variant's comes in
 // as IVariant (ADR-073).
 
-import type { Contents, KernelMessage } from '@jupyterlab/services';
+import { PathExt } from '@jupyterlab/coreutils';
+import type { Contents, KernelMessage, Session } from '@jupyterlab/services';
 import { BaseKernel, type IKernel } from '@jupyterlite/services';
 
 import {
@@ -28,10 +29,13 @@ const request = (id: number, method: string, params?: object): string =>
   JSON.stringify(params ? { jsonrpc: '2.0', id, method, params } : { jsonrpc: '2.0', id, method });
 
 export class ServerKernel extends BaseKernel implements IKernel {
-  constructor(options: IKernel.IOptions, variant: IVariant, contents: Contents.IManager) {
+  constructor(
+    options: IKernel.IOptions, variant: IVariant, contents: Contents.IManager, sessions: Session.IManager
+  ) {
     super(options);
     this._variant = variant;
     this._contents = contents;
+    this._sessions = sessions;
     // The directory of the notebook, as the engine sees it. A location may
     // carry the name of its drive.
     const location = options.location.includes(':')
@@ -107,6 +111,20 @@ export class ServerKernel extends BaseKernel implements IKernel {
     return answer === '' ? null : JSON.parse(answer);
   }
 
+  /** The file name of the notebook this kernel runs, after which the server
+   *  names the notebook's own files; null for a console. Asked at each cell:
+   *  a notebook can be renamed while its kernel runs. A console that shares
+   *  the kernel has a session too, which is not the notebook's. */
+  private async _notebook(): Promise<string | null> {
+    try {
+      await this._sessions.refreshRunning();
+      for (const model of this._sessions.running())
+        if (model.kernel?.id === this.id && model.path.endsWith('.ipynb'))
+          return PathExt.basename(model.path);
+    } catch { /* the server's own name */ }
+    return null;
+  }
+
   private async _refreshPredicates(): Promise<void> {
     const answer = await this._ask(request(0, 'call', { code: this._variant.completionQuery }));
     const names = answer ? render(answer, this._variant.texts).predicates : null;
@@ -166,11 +184,13 @@ export class ServerKernel extends BaseKernel implements IKernel {
 
     // What changed in the file browser and the editor is there for the cell.
     await mirrored(() => mirror.pull());
+    const notebook = await this._notebook();
     this._running = true;
     this._interrupted = false;
     let answer: any;
     try {
-      answer = await this._ask(request(this.executionCount, 'call', { code: content.code }));
+      answer = await this._ask(request(this.executionCount, 'call',
+        notebook ? { code: content.code, notebook } : { code: content.code }));
     } finally {
       this._running = false;
     }
@@ -246,6 +266,7 @@ export class ServerKernel extends BaseKernel implements IKernel {
 
   private _variant: IVariant;
   private _contents: Contents.IManager;
+  private _sessions: Session.IManager;
   private _directory: string;
   private _started: Promise<void>;
   private _runtime: IRuntime | null = null;

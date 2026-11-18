@@ -99,7 +99,8 @@ known(enable_logging).
 % answer to the request.
 method(call, Id, Params, Cell) :-
     (   Params = obj(Pairs), memberchk(code-str(Code), Pairs) ->
-        catch(cell_content(Code, Content), Error, true),
+        user_file(Pairs, UserFile),
+        catch(cell_content(Code, UserFile, Content), Error, true),
         (   nonvar(Error) ->
             Cell = none,
             error_text(Error, Text),
@@ -133,10 +134,24 @@ doc_strings([], []).
 doc_strings([Key-Text|Docs], [Key-str(Text)|Pairs]) :-
     doc_strings(Docs, Pairs).
 
-% cell_content(+Code, -Content): queries(Queries), or nothing when the
-% cell has nothing to run.
-cell_content(Code, Content) :-
-    (   magic(Code, Magic) -> magic_content(Magic, Content)
+% The file of %%user: NAME.user.pl for the notebook NAME.ipynb the kernel
+% names, so that notebooks in one directory keep apart; user.pl when it
+% names none, as for a console.
+user_file(Pairs, File) :-
+    (   memberchk(notebook-str(Chars), Pairs), Chars \== [] ->
+        atom_chars(Notebook, Chars),
+        (   sub_atom(Notebook, Before, 6, 0, '.ipynb') ->
+            sub_atom(Notebook, 0, Before, _, Name)
+        ;   Name = Notebook
+        ),
+        atom_concat(Name, '.user.pl', File)
+    ;   File = 'user.pl'
+    ).
+
+% cell_content(+Code, +UserFile, -Content): queries(Queries), or nothing
+% when the cell has nothing to run.
+cell_content(Code, UserFile, Content) :-
+    (   magic(Code, Magic) -> magic_content(Magic, UserFile, Content)
     ;   line_magic(Code, Query) -> Content = queries([Query])
     ;   cell_queries(Code, Queries),
         Content = queries(Queries)
@@ -180,8 +195,8 @@ magic(Code, Magic) :-
     atom_chars(Name, NameChars),
     magic(Name, Argument, Text, Magic).
 
-magic(user, [], Text, file('user.pl', write, load, Text)).
-magic('user+', [], Text, file('user.pl', append, load, Text)).
+magic(user, [], Text, user(write, Text)).
+magic('user+', [], Text, user(append, Text)).
 magic(file, [C|Cs], Text, file(File, write, load, Text)) :- atom_chars(File, [C|Cs]).
 magic('file+', [C|Cs], Text, file(File, append, load, Text)) :- atom_chars(File, [C|Cs]).
 magic(load, [C|Cs], Text, file(File, write, load, Text)) :- atom_chars(File, [C|Cs]).
@@ -206,8 +221,11 @@ leading(Chars, Chars).
 
 % The text goes to its file. A file that is loaded is a query of the cell:
 % its answer carries what loading wrote and the error it raised.
-magic_content(highlight, nothing).
-magic_content(file(File, Mode, Action, Text), Content) :-
+magic_content(highlight, _, nothing).
+magic_content(user(Mode, Text), File, Content) :-
+    follow_rename(File),
+    magic_content(file(File, Mode, load, Text), File, Content).
+magic_content(file(File, Mode, Action, Text), _, Content) :-
     setup_call_cleanup(open(File, Mode, Stream),
                        format(Stream, "~s~n", [Text]),
                        close(Stream)),
@@ -215,7 +233,7 @@ magic_content(file(File, Mode, Action, Text), Content) :-
     ;   Content = nothing
     ).
 % Each query of the cell is shown as the table of its solutions.
-magic_content(table(Text, How), queries(Tables)) :-
+magic_content(table(Text, How), _, queries(Tables)) :-
     cell_queries(Text, Queries),
     tables(Queries, How, Tables).
 
@@ -225,6 +243,16 @@ tables([query(Goal, Names)|Queries], How, [query(Table, Names)|Tables]) :-
     ;   Table = jupyter:print_table(Goal)
     ),
     tables(Queries, How, Tables).
+
+% A notebook renamed since its last %%user cell takes its file along, so
+% that %%user+ goes on from what the cells before it wrote.
+follow_rename(File) :-
+    (   nb_current(jupyter_user_file, Last), Last \== File,
+        exists_file(Last), \+ exists_file(File) ->
+        rename(Last, File)
+    ;   true
+    ),
+    nb_setval(jupyter_user_file, File).
 
 % A cell with a clause that does not parse is an error of the cell: nothing
 % of it is loaded, where a load from a program reports the clause and goes on.
