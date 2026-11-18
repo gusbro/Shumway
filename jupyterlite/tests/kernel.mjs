@@ -155,8 +155,8 @@ try {
       await run(kernel, "open('out.txt', write, S), write(S, hello), close(S).");
       const out = await contents.get('out.txt', { content: true }).catch((e) => ({ error: String(e) }));
       const listed = (await contents.get('', { content: true })).content.map((c) => c.name).sort();
-      check(out.content === 'hello' && listed.includes('user.pl'),
-        'a file a cell wrote is in the file browser', [out, listed]);
+      check(out.content === 'hello' && listed.includes('first-steps.user.pl') && !listed.includes('user.pl'),
+        "a file a cell wrote is in the file browser, and %%user writes the notebook's own", [out, listed]);
 
       // A query that never ends, interrupted.
       const endless = run(kernel, 'repeat, fail.');
@@ -192,7 +192,50 @@ try {
           && other.id !== kernel.id,
         'two notebooks have a session each, each in its directory', [r, elsewhere]);
       const subFiles = (await contents.get('sub', { content: true })).content.map((c) => c.name).sort();
-      check(subFiles.includes('user.pl'), 'and the files of each are in its directory', subFiles);
+      check(subFiles.includes('second.user.pl'), 'and the files of each are in its directory', subFiles);
+
+      // A third notebook beside the first: each keeps its own %%user file,
+      // and %%user+ loads only what its own cells wrote.
+      const text = async (path) => (await contents.get(path, { content: true }).catch(() => ({ content: null }))).content;
+      await contents.save('third.ipynb', { type: 'notebook', format: 'json', content: {
+        cells: [], nbformat: 4, nbformat_minor: 5,
+        metadata: { kernelspec: { name: 'shumway_prolog', display_name: 'Prolog (Shumway)', language: 'prolog' } } } });
+      const third = await app.commands.execute('docmanager:open', { path: 'third.ipynb' });
+      await third.context.ready;
+      await third.sessionContext.ready;
+      const thirdKernel = kernelOf(third);
+      await run(thirdKernel, '%%user\nonly_third(1).');
+      await run(thirdKernel, '%%user+\nonly_third(2).');
+      let own = await text('third.user.pl');
+      const firsts = await text('first-steps.user.pl');
+      check(own === 'only_third(1).\nonly_third(2).\n' && /grandparent/.test(firsts ?? '') && !/only_third/.test(firsts),
+        'two notebooks in one directory keep their %%user files apart', [own, firsts]);
+
+      // Renamed while its kernel runs, a notebook takes its file along.
+      await contents.rename('third.ipynb', 'renamed.ipynb');
+      const sessions = app.serviceManager.sessions;
+      for (let tries = 0; tries < 40; tries++) {
+        await sessions.refreshRunning();
+        if ([...sessions.running()].some((m) => m.kernel?.id === thirdKernel.id && m.path.endsWith('renamed.ipynb'))) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      await run(thirdKernel, '%%user+\nonly_third(3).');
+      r = await run(thirdKernel, 'findall(X, only_third(X), L).');
+      own = await text('renamed.user.pl');
+      check(own === 'only_third(1).\nonly_third(2).\nonly_third(3).\n' && (await text('third.user.pl')) === null
+          && r.texts[0] === 'L = [1,2,3]',
+        'a renamed notebook takes its %%user file along', [own, r.texts]);
+
+      // A console has no notebook: its file is user.pl.
+      const shell = await app.commands.execute('console:create', { kernelPreference: { name: 'shumway_prolog' } });
+      await shell.sessionContext.ready;
+      await run(shell.sessionContext.session.kernel, '%%user\nfrom_console(1).');
+      own = await text('user.pl');
+      check(own === 'from_console(1).\n', 'a console writes user.pl', own);
+      // Rewritten at once, to the same size: the file browser has the second.
+      await run(shell.sessionContext.session.kernel, '%%user\nfrom_console(2).');
+      own = await text('user.pl');
+      check(own === 'from_console(2).\n', 'a file rewritten within a second is copied as the second cell left it', own);
 
       await kernel.restart();
       r = await run(kernelOf(panel), 'X = restarted.');

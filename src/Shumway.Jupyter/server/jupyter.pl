@@ -417,9 +417,10 @@ magic :-
 magic_line('Cell magic, on the first line of a cell:').
 magic_line('').
 magic_line('    %%user').
-magic_line('        Writes the rest of the cell to user.pl and loads it').
+magic_line('        Writes the rest of the cell to NAME.user.pl, for the notebook NAME.ipynb,').
+magic_line('        or to user.pl in a console, and loads it').
 magic_line('    %%user+').
-magic_line('        Appends the rest of the cell to user.pl and loads it').
+magic_line('        Appends the rest of the cell to that file and loads it').
 magic_line('    %%file FILE').
 magic_line('        Writes the rest of the cell to FILE and loads it').
 magic_line('    %%file+ FILE').

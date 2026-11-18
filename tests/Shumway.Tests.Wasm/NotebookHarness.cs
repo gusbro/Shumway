@@ -25,7 +25,9 @@ internal sealed class NotebookHarness : IDisposable
         public void AskForInput() { Interlocked.Increment(ref Asked); OnAsk?.Invoke(); }
     }
 
-    public (NotebookServer Server, HostSession Session) Open(string id, Page? page = null)
+    /// <summary>A session in the directory <paramref name="folder"/>, its own
+    /// unless named: two notebooks of one directory share it.</summary>
+    public (NotebookServer Server, HostSession Session) Open(string id, Page? page = null, string? folder = null)
     {
         HostSession session = _host.Create(id, page ?? new Page(), _ =>
         {
@@ -33,8 +35,8 @@ internal sealed class NotebookHarness : IDisposable
             NotebookServer.Install(engine);
             return engine;
         });
-        // A directory of its own: a cell that writes a file writes it there.
-        string directory = DirectoryOf(id);
+        // A cell that writes a file writes it there.
+        string directory = DirectoryOf(folder ?? id);
         Directory.CreateDirectory(directory);
         Task<bool> started = session.OnEngine(() =>
         {
