@@ -1310,6 +1310,18 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         return LoadBundleBare(bundle, bundleDir: null, debug);
     }
 
+    /// <summary>As <see cref="FromBundle(Bundle, Debugging.DebugOptions)"/>, with the
+    /// program's arguments, the <c>argv</c> flag, set before the bundle's
+    /// <c>:- initialization</c> goals run: what an executable's <c>Main</c>
+    /// passes.</summary>
+    public static PrologEngine FromBundle(Bundle bundle, Debugging.DebugOptions? debug,
+        IReadOnlyList<string> argv)
+    {
+        ArgumentNullException.ThrowIfNull(bundle);
+        ArgumentNullException.ThrowIfNull(argv);
+        return LoadBundleBare(bundle, bundleDir: null, debug, argv);
+    }
+
     /// <summary>File-path overload of <see cref="FromBundle(Bundle)"/>.</summary>
     public static PrologEngine FromBundle(string path)
     {
@@ -1328,9 +1340,11 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     }
 
     private static PrologEngine LoadBundleBare(
-        Bundle bundle, string? bundleDir, Debugging.DebugOptions? debug = null)
+        Bundle bundle, string? bundleDir, Debugging.DebugOptions? debug = null,
+        IReadOnlyList<string>? argv = null)
     {
         var engine = new PrologEngine(consultPrelude: false);
+        if (argv is not null) engine.Flags.Argv = argv;
         // ADR-035 — a host that asked for a debuggable engine gets the switch thrown before
         // any module is consulted (debuggability is a compile-time property), exactly as when
         // the host builds the engine by hand. The prelude below is consulted and marked
@@ -1373,7 +1387,8 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
             // predicate_property/2 reports them like a live engine.
             engine.SeedMetaTemplatesFromSource(Prelude.Source);
         }
-        engine.LoadBundleCore(bundle, bundleDir);
+        var initialization = new List<(Term Goal, string Module)>();
+        engine.LoadBundleCore(bundle, bundleDir, initialization);
         // ADR-035 — the baked prelude is still the prelude: not the user's code,
         // never debuggable. Without this a debug-compiled program on a baked-
         // prelude engine (the browser's stdlib bundle, every --exe) steps into
@@ -1387,6 +1402,10 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         // so an attach-to-debug-from-the-first-goal launcher can safely wait for the debugger.
         if (waitForAttach && debugSession is not null)
             engine.WaitForDebuggerReady(debugSession, debug!.AttachTimeout);
+        // The program's initialization goals, once a debugger that was to
+        // attach has: a breakpoint in one of them is hit.
+        foreach (var (goal, module) in initialization)
+            engine.RunInitializationGoal(goal, module);
         return engine;
     }
 

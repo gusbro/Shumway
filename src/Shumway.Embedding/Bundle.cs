@@ -234,7 +234,8 @@ public sealed class BundleEntry
         IReadOnlyList<ShmoImportEntry>? imports = null,
         string? dialect = null,
         IReadOnlyList<byte[]>? clauseTerms = null,
-        IReadOnlyList<ShmoFlagSetting>? flags = null)
+        IReadOnlyList<ShmoFlagSetting>? flags = null,
+        IReadOnlyList<Shumway.Compiler.Ast.Term>? initializationGoals = null)
     {
         ModuleName = moduleName;
         Source = source;
@@ -254,13 +255,14 @@ public sealed class BundleEntry
         Dialect = dialect;
         ClauseTerms = clauseTerms ?? Array.Empty<byte[]>();
         Flags = flags ?? Array.Empty<ShmoFlagSetting>();
+        InitializationGoals = initializationGoals ?? Array.Empty<Shumway.Compiler.Ast.Term>();
     }
 
     /// <summary>The same entry with another compiled payload.</summary>
     internal BundleEntry WithCompiledBytecode(byte[]? compiledBytecode) => new(
         ModuleName, Source, compiledBytecode, CompiledIl, Defined, CompiledIlPatches,
         CompiledIlEntries, DynamicSeeds, NativeBlocks, NativeFunctions, NativeDecls, Operators,
-        IsExportQualified, Exports, Imports, Dialect, ClauseTerms, Flags);
+        IsExportQualified, Exports, Imports, Dialect, ClauseTerms, Flags, InitializationGoals);
 
     /// <summary>The module's raw static clauses (<see cref="TermCodec"/>
     /// blobs, the <see cref="ShmoObject.ClauseTerms"/> of its object), so a
@@ -305,4 +307,8 @@ public sealed class BundleEntry
     /// <summary>The module's <c>:- set_prolog_flag/2</c> directives (see
     /// <see cref="ShmoObject.Flags"/>), applied at <c>LoadBundle</c>.</summary>
     public IReadOnlyList<ShmoFlagSetting> Flags { get; }
+
+    /// <summary>The module's <c>:- initialization/1</c> goals (see
+    /// <see cref="ShmoObject.InitializationGoals"/>), run at <c>LoadBundle</c>.</summary>
+    public IReadOnlyList<Shumway.Compiler.Ast.Term> InitializationGoals { get; }
 }

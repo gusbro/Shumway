@@ -260,7 +260,8 @@ public sealed class ShmoObject
         IReadOnlyList<ShmoLibraryDep>? libraryDeps = null,
         string? dialect = null,
         ShumwayVersion? generatorVersion = null,
-        IReadOnlyList<ShmoFlagSetting>? flags = null)
+        IReadOnlyList<ShmoFlagSetting>? flags = null,
+        IReadOnlyList<Shumway.Compiler.Ast.Term>? initializationGoals = null)
     {
         GeneratorVersion = generatorVersion ?? ShumwayVersion.Current;
         ModuleName = moduleName;
@@ -284,6 +285,7 @@ public sealed class ShmoObject
         LibraryDeps = libraryDeps ?? System.Array.Empty<ShmoLibraryDep>();
         Dialect = dialect;
         Flags = flags ?? System.Array.Empty<ShmoFlagSetting>();
+        InitializationGoals = initializationGoals ?? System.Array.Empty<Shumway.Compiler.Ast.Term>();
     }
 
     /// <summary>ADR-040 — the source dialect this module was compiled under
@@ -336,6 +338,12 @@ public sealed class ShmoObject
     /// order (see <see cref="ShmoFlagSetting"/>). <c>LoadBundle</c> runs them
     /// again, after the module's operators.</summary>
     public IReadOnlyList<ShmoFlagSetting> Flags { get; }
+
+    /// <summary>The module's <c>:- initialization/1</c> goals, in source order,
+    /// when it was compiled from the file alone: <c>LoadBundle</c> runs them
+    /// once the bundle is in, as a compiled program runs them when it starts.
+    /// Compiled through the consult they ran then, and none travel.</summary>
+    public IReadOnlyList<Shumway.Compiler.Ast.Term> InitializationGoals { get; }
 }
 
 /// <summary>ADR-022 — one embedded native block's marshalling data, carried

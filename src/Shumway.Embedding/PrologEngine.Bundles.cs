@@ -23,8 +23,9 @@ public sealed partial class PrologEngine
     /// predicates from its dependencies' loads these before it.</summary>
     public void LoadLibraryDependencies(Bundle bundle) => Bundles.LoadLibraryDependencies(bundle);
 
-    internal void LoadBundleCore(Bundle bundle, string? bundleDir)
-        => Bundles.LoadBundleCore(bundle, bundleDir);
+    internal void LoadBundleCore(Bundle bundle, string? bundleDir,
+        List<(Term Goal, string Module)>? deferredInitialization = null)
+        => Bundles.LoadBundleCore(bundle, bundleDir, deferredInitialization);
 
     /// <summary>Arity <c>save/0,1</c> — snapshots consult history + dynamic
     /// clauses to a bundle file.</summary>

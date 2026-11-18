@@ -15,6 +15,11 @@ public sealed partial class PrologEngine
     public void ConsultFile(string path)
         => HostChange(() => Consults.ConsultFile(_directory.Resolve(path)));
 
+    /// <summary>A loaded bundle's <c>:- initialization/1</c> goal, run in its
+    /// module as a consult runs one.</summary>
+    internal void RunInitializationGoal(Term goal, string moduleName)
+        => Consults.RunInitializationGoal(goal, moduleName);
+
     internal void ConsultFileLive(string path, Shumway.Core.Activation liveEngine, string? intoModule = null)
         => Consults.ConsultFileLive(_directory.Resolve(path), liveEngine, intoModule);
 

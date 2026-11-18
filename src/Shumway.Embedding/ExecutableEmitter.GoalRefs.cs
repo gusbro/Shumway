@@ -99,6 +99,17 @@ public static partial class ExecutableEmitter
         return true;
     }
 
+    /// <summary>The references of a goal already read, as
+    /// <see cref="TryCollectGoalRefs"/> collects them.</summary>
+    internal static void CollectGoalRefs(Term goal,
+        out List<PredicateRef> callRefs, out List<PredicateRef> termRefs)
+    {
+        callRefs = new List<PredicateRef>();
+        termRefs = new List<PredicateRef>();
+        CollectGoalRefs(goal, callPosition: true, callRefs, termRefs,
+            new HashSet<PredicateRef>(), new HashSet<PredicateRef>());
+    }
+
     private static void CollectGoalRefs(Term t, bool callPosition,
         List<PredicateRef> callRefs, List<PredicateRef> termRefs,
         HashSet<PredicateRef> seenCall, HashSet<PredicateRef> seenTerm)

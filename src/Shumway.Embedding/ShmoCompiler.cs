@@ -50,7 +50,7 @@ public static class ShmoCompiler
         "discontiguous", "multifile", "table", "mode", "native",
         "c", "prolog", "meta_predicate", "non_counted_backtracking", "use_module",
         // ISO include/1 (expanded before this pass) + initialization/1
-        // (collected by the consult path; carried as an entry goal here).
+        // (carried to the load).
         "include", "initialization",
         // ADR-022 — the synthetic directive the ClauseReader
         // emits to carry a captured `:- c` region's raw declaration text. An
@@ -89,8 +89,9 @@ public static class ShmoCompiler
     };
 
     /// <summary>The indicator of a directive the consult runs and this pass
-    /// drops: <c>initialization/1</c>, or a goal (what the consult pipeline
-    /// runs as one, by the same test); null for a declaration.</summary>
+    /// drops: a goal (what the consult pipeline runs as one, by the same
+    /// test); null for a declaration. <c>initialization/1</c> is carried to
+    /// the load, as a compiled program runs it when it starts.</summary>
     private static string? GoalNotRun(Term directive)
     {
         (string name, int arity) = directive switch
@@ -100,7 +101,6 @@ public static class ShmoCompiler
             _ => ("", 0),
         };
         if (name.Length == 0) return null;
-        if (name == "initialization" && arity == 1) return "initialization/1";
         // Atoms the consult reads as declarations before its goal test.
         if (arity == 0 && name is "disable_debug" or "enable_debug") return null;
         if (RecognizedDirectives.Contains(name) || SilentlyIgnoredDirectives.Contains(name))
@@ -297,13 +297,48 @@ public static class ShmoCompiler
         // ADR-056: this file's meta_predicate declarations, so its module
         // qualifies the closures it passes to them.
         var fileMetaTemplates = new Dictionary<int, Term>();
+        // The `:- initialization/1` goals, in source order: the bundle's load
+        // runs them, as a compiled program runs them when it starts.
+        var initializationGoals = new List<Term>();
+        // Conditional compilation keeps the clauses the consult keeps: the
+        // same conditions, asked of what this file has read so far.
+        var conditionFlags = new Shumway.Compiler.Parsing.PrologFlags { ArityCompat = arityCompat };
+        if (arityCompat)
+            ConditionalCompilation.NoteFlag(conditionFlags, new AtomTerm("arity_compat"), new AtomTerm("true"));
+        SourcePosition conditionAt = default;
+        var conditional = new ConditionalCompilation(new ConditionContext(
+            conditionFlags,
+            PredicateKnown: (name, arity) =>
+            {
+                var pi = new PredicateRef(name, arity);
+                if (dynamicSet.Contains(pi) || multifileSet.Contains(pi)) return true;
+                foreach (var cl in rawClauses)
+                    if (TryExtractHead(cl) is { } h && h.Equals(pi)) return true;
+                return PreludePublics.Value.Contains(pi);
+            },
+            LibraryKnown: _ => false,
+            FileExists: name => File.Exists(Path.GetFullPath(name)),
+            Unsupported: cond => warnings.Add(ShmoCompileError.At(
+                $"unsupported :- if/elif condition ({cond}) treated as false", conditionAt))));
 
         foreach (var clause in allClauses)
         {
             if (clause.Kind == ClauseKind.Directive
+                && clause.Term is CompoundTerm { Functor: ":-", Args: [var conditionBody] })
+            {
+                conditionAt = clause.Position;
+                if (conditional.TryConsume(conditionBody)) continue;
+            }
+            if (!conditional.Including) continue;
+            if (clause.Kind == ClauseKind.Directive
                 && clause.Term is CompoundTerm d
                 && d.Functor == ":-" && d.Args.Length == 1)
             {
+                if (d.Args[0] is CompoundTerm { Functor: "initialization", Args: [var initGoal] })
+                {
+                    initializationGoals.Add(initGoal);
+                    continue;
+                }
                 if (d.Args[0] is CompoundTerm { Functor: "meta_predicate", Args.Length: 1 } metaDir)
                     ModuleRewrite.RecordMetaTemplate(fileMetaTemplates, metaDir.Args[0]);
                 if (d.Args[0] is CompoundTerm nd && nd.Functor == "$native_decls"
@@ -314,8 +349,11 @@ public static class ShmoCompiler
                 }
                 if (d.Args[0] is CompoundTerm { Functor: "set_prolog_flag", Args: [AtomTerm spfFlag, var spfValue] }
                     && spfValue is AtomTerm or IntTerm)
+                {
                     flagSettings.Add(new ShmoFlagSetting(spfFlag.Name,
                         AstTermRenderer.RenderQuoted(spfValue)));
+                    ConditionalCompilation.NoteFlag(conditionFlags, spfFlag, spfValue);
+                }
                 if (d.Args[0] is CompoundTerm { Functor: "op", Args.Length: 3 } opDir
                     && opDir.Args[0] is IntTerm opPrio
                     && opDir.Args[1] is AtomTerm opType)
@@ -447,8 +485,8 @@ public static class ShmoCompiler
                 }
                 else if (GoalNotRun(d.Args[0]) is { } notRun)
                     warnings.Add(ShmoCompileError.At(
-                        $"directive {notRun} is not run by file-at-a-time compilation; "
-                        + "--consult runs it",
+                        $"directive {notRun} is ignored by file-at-a-time compilation: "
+                        + "run it from initialization/1, or compile with --consult",
                         clause.Position));
                 continue;
             }
@@ -472,6 +510,7 @@ public static class ShmoCompiler
             isExportQualified: isExportQualified, exports: exportSet,
             imports: importEntries, libraryDeps: libraryDeps,
             flagSettings: flagSettings,
+            initializationGoals: initializationGoals,
             metaArgSpec: (fid, local) => fileMetaTemplates.TryGetValue(fid, out Term? t)
                 ? ModuleRewrite.MetaArgSpecOfTemplate(t,
                     system: Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _))
@@ -513,7 +552,8 @@ public static class ShmoCompiler
         Func<string, string, int, string?>? qualifiedResolver = null,
         Func<int, bool>? isVisibleGlobal = null,
         Func<string, bool>? sourceOwnsDynamics = null,
-        IReadOnlyList<ShmoFlagSetting>? flagSettings = null)
+        IReadOnlyList<ShmoFlagSetting>? flagSettings = null,
+        IReadOnlyList<Term>? initializationGoals = null)
     {
         // A clause for a predicate the prelude declares dynamic is a dynamic
         // clause here too (what the live consult does through its store),
@@ -997,7 +1037,8 @@ public static class ShmoCompiler
             imports: imports,
             libraryDeps: libraryDeps,
             dialect: dialect,
-            flags: flagSettings);
+            flags: flagSettings,
+            initializationGoals: initializationGoals);
         obj.DynamicSnapshotBytecode = dynamicSnapshotBytecode;
         return new ShmoCompileResult(obj, errors, warnings);
     }
@@ -1267,6 +1308,16 @@ public static class ShmoCompiler
     // ------------------------------------------------------------------------
     // Clause head extraction
     // ------------------------------------------------------------------------
+
+    // Built on first use: compiling the prelude is not free, and only a
+    // condition that names neither a builtin nor this file's predicate asks.
+    private static readonly Lazy<HashSet<PredicateRef>> PreludePublics = new(() =>
+    {
+        var publics = new HashSet<PredicateRef>();
+        foreach (var d in ShmoLinker.PreludeObject.Defined)
+            if (d.Visibility == PredicateVisibility.Public) publics.Add(d.Indicator);
+        return publics;
+    });
 
     private static PredicateRef? TryExtractHead(Clause c)
     {

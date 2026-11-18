@@ -388,6 +388,33 @@ public static class ShmoLinker
                 roots.Add((mod, el, $"ensure_linked from '{obj.ModuleName}'"));
             }
         }
+        // initialization/1 goals run when the bundle loads: what they call is
+        // reached from them, as from a --goal, resolved in their module first.
+        foreach (var obj in objects)
+            foreach (var goal in obj.InitializationGoals)
+            {
+                ExecutableEmitter.CollectGoalRefs(goal, out var callRefs, out var termRefs);
+                foreach (var (refs, speculative) in new[] { (callRefs, false), (termRefs, true) })
+                    foreach (var r in refs)
+                    {
+                        string why = $"initialization goal of '{obj.ModuleName}'";
+                        var own = moduleDefined[obj.ModuleName];
+                        var mangled = new PredicateRef(obj.ModuleName + "$" + r.Name, r.Arity);
+                        if (own.ContainsKey(r)) { roots.Add((obj.ModuleName, r, why)); continue; }
+                        if (own.ContainsKey(mangled)) { roots.Add((obj.ModuleName, mangled, why)); continue; }
+                        if (ResolveDefiningModule(r, globalPublic, globalDynamic) is { } mod)
+                        {
+                            roots.Add((mod, r, why));
+                            continue;
+                        }
+                        if (preludePublics.Contains(r)) { preludeUsed.Add(r); continue; }
+                        if (speculative || builtinPredicates.Contains(r)) continue;
+                        Emit(config.AllowUndefined ? LinkSeverity.Warning : LinkSeverity.Error,
+                            "initialization_not_found",
+                            $"An initialization goal of '{obj.ModuleName}' calls {r}, which is "
+                            + "not defined in any linked .shmo, builtin, or prelude.", obj.ModuleName);
+                    }
+            }
         // ADR-038 — an imported predicate is a declared dependency: keep the
         // source module's definition even when the only reference is a runtime
         // meta-call (which leaves no static call-graph edge). Adds a root per
@@ -700,6 +727,11 @@ public static class ShmoLinker
             }
         }
 
+        // A module's initialization goals run when the bundle loads, so the
+        // module stays whatever its goals reach (a goal of builtins alone).
+        foreach (var obj in objects)
+            if (obj.InitializationGoals.Count > 0) reachedModules.Add(obj.ModuleName);
+
         // ----- 7. Unreachable modules → warning + drop -----
         var unreachable = new List<string>();
         foreach (var obj in objects)
@@ -892,6 +924,7 @@ public static class ShmoLinker
                         arityCompat: obj.ArityCompat,
                         operatorDefs: obj.Operators,   // preserve op/3 defs
                         flagSettings: obj.Flags,
+                        initializationGoals: obj.InitializationGoals,
                         multifileSet: MultifileSeedSet(obj),
                         // ADR-038 — carry the resolved import table (preserve mangling).
                         isExportQualified: obj.IsExportQualified,
@@ -968,6 +1001,7 @@ public static class ShmoLinker
                     nativeDecls: obj.NativeDecls,
                     operators: obj.Operators,
                     flags: obj.Flags,
+                    initializationGoals: obj.InitializationGoals,
                     isExportQualified: obj.IsExportQualified,
                     exports: obj.Exports,
                     imports: obj.Imports,
@@ -1356,6 +1390,7 @@ public static class ShmoLinker
                 arityCompat: obj.ArityCompat,
                 operatorDefs: obj.Operators,   // preserve op/3 defs
                 flagSettings: obj.Flags,
+                initializationGoals: obj.InitializationGoals,
                 multifileSet: MultifileSeedSet(obj),
                 // ADR-038 — carry the resolved import table so this recompile
                 // does not lose the import mangling.
@@ -1483,6 +1518,7 @@ public static class ShmoLinker
                 arityCompat: obj.ArityCompat,
                 operatorDefs: obj.Operators,
                 flagSettings: obj.Flags,
+                initializationGoals: obj.InitializationGoals,
                 multifileSet: MultifileSeedSet(obj),
                 // ADR-038 — carry the resolved import table (preserve mangling).
                 isExportQualified: obj.IsExportQualified,
@@ -1970,6 +2006,7 @@ public static class ShmoLinker
             arityCompat: obj.ArityCompat,
             operatorDefs: obj.Operators,
             flagSettings: obj.Flags,
+            initializationGoals: obj.InitializationGoals,
             multifileSet: MultifileSeedSet(obj),
             isExportQualified: obj.IsExportQualified,
             exports: obj.Exports,
@@ -2242,6 +2279,7 @@ public static class ShmoLinker
             // Operator trailer.
             BundleWriter.WriteOperators(bw, e.Operators);
             BundleWriter.WriteFlags(bw, e.Flags);
+            BundleWriter.WriteInitializationGoals(bw, e.InitializationGoals);
             // ADR-038 — export-qualification trailer (shared serialiser).
             BundleWriter.WriteExportQualification(bw, e);
         }

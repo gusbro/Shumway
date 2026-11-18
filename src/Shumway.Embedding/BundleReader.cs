@@ -157,6 +157,7 @@ public static class BundleReader
                 operators.Add(new ShmoOperatorDef(opPrio, opType, opName));
             }
             var flags = ReadFlags(br);
+            var initializationGoals = ReadInitializationGoals(br);
             // ADR-038 — export-qualification + import table per entry.
             bool isExportQualified = br.ReadBoolean();
             uint exCount = br.ReadUInt32();
@@ -195,7 +196,8 @@ public static class BundleReader
                 compiledIlPatches, compiledIlEntries, dynamicSeeds, nativeBlocks,
                 nativeFunctions, nativeDecls, operators,
                 isExportQualified: isExportQualified, exports: exports, imports: imports,
-                dialect: dialect, clauseTerms: clauseTerms, flags: flags);
+                dialect: dialect, clauseTerms: clauseTerms, flags: flags,
+                initializationGoals: initializationGoals);
         }
         // Foreign-assemblies trailer.
         uint asmCount = br.ReadUInt32();
@@ -280,6 +282,15 @@ public static class BundleReader
             engineLibraries.Add(ReadLengthPrefixedUtf8(br));
         return new Bundle(entries, foreignAssemblies, snapshot, archiveMembers,
             nativeLibraries, generatorVersion, arityCompat, wasmModules, engineLibraries);
+    }
+
+    /// <summary>The section <see cref="BundleWriter.WriteInitializationGoals"/> writes.</summary>
+    internal static Shumway.Compiler.Ast.Term[] ReadInitializationGoals(BinaryReader br)
+    {
+        uint count = br.ReadUInt32();
+        var goals = new Shumway.Compiler.Ast.Term[count];
+        for (uint i = 0; i < count; i++) goals[i] = TermCodec.ReadTerm(br);
+        return goals;
     }
 
     /// <summary>The section <see cref="BundleWriter.WriteFlags"/> writes.</summary>

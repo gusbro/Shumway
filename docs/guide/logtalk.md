@@ -70,7 +70,8 @@ shumway-link --consult -o wumpus.shum --exe wumpus --goal "'::'(wumpus,main)" wu
 
 `--consult` runs the runtime's `initialization/1` goals while linking, and
 the executable starts from the state they leave in its dynamic predicates; a
-file-at-a-time link drops them, with a warning for each. `--goal` is the
+file-at-a-time link carries them, and the executable runs them when it
+starts, in the directory it starts in. `--goal` is the
 application's startup goal. The `loader.pl` the scripts write when asked is
 not needed: it consults the two files when the program starts, which the
 link has already done.

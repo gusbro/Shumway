@@ -138,9 +138,9 @@ p.
     [Fact]
     public void ADirectiveFileAtATimeDoesNotRunIsAWarning()
     {
-        // The consult runs initialization/1 and goal directives; compiled one
-        // file at a time they are dropped, so each one is reported. A
-        // declaration is not.
+        // The consult runs goal directives; compiled one file at a time they
+        // are dropped, so each one is reported. initialization/1 goals run
+        // when the bundle loads, and a declaration is neither.
         var r = ShmoCompiler.TryCompileSource(@":- dynamic(f/1).
 :- initialization(assertz(f(1))).
 :- assertz(f(0)).
@@ -150,18 +150,11 @@ p.
 g(1).
 ");
         Assert.True(r.Success);
-        Assert.Collection(r.Warnings,
-            w =>
-            {
-                Assert.Equal(2, w.Line);
-                Assert.Contains("initialization/1", w.Message);
-                Assert.Contains("--consult", w.Message);
-            },
-            w =>
-            {
-                Assert.Equal(3, w.Line);
-                Assert.Contains("assertz/1", w.Message);
-            });
+        var w = Assert.Single(r.Warnings);
+        Assert.Equal(3, w.Line);
+        Assert.Contains("assertz/1", w.Message);
+        Assert.Contains("--consult", w.Message);
+        Assert.Single(r.Object!.InitializationGoals);
     }
 
     [Fact]

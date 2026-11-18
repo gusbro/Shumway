@@ -1659,97 +1659,25 @@ internal sealed class ConsultPipeline
             static List<Clause> SingletonClause(Clause c) => new(1) { c };
         }
 
-        // Conditional compilation — `:- if(Cond) / :- elif(Cond) / :- else /
-        // :- endif`. A first-class feature (SWI, GProlog, SICStus): clauses in an
-        // inactive branch are dropped at load. A stack of (Active, AnyTaken)
-        // frames; "including" iff the top frame is active (a frame is active only
-        // when its parent was, so the top's flag suffices). Conditions are
-        // evaluated by a small evaluator against the current engine state — not a
-        // query, which cannot run mid-scan — covering the forms real programs use;
-        // anything else warns and is treated as false (the branch is skipped).
+        // Conditional compilation (`:- if/elif/else/endif`): a clause in an
+        // inactive branch is dropped before expansion. The conditions are the
+        // ones file-at-a-time compilation evaluates too (ConditionalCompilation).
         // Limitation: a `:- op` inside a skipped branch is still applied (the
         // reader applies ops eagerly at parse time).
-        var condStack = new List<(bool Active, bool AnyTaken)>();
-        bool CondIncluding() => condStack.Count == 0 || condStack[^1].Active;
-        bool CondOuter() => condStack.Count <= 1 || condStack[^2].Active;
-        bool CondPredExists(Term pi)
-        {
-            if (pi is not CompoundTerm { Functor: "/", Args: [AtomTerm n, IntTerm a] }) return false;
-            int fid = FunctorTable.Intern(
-                AtomTable.Intern(n.Name, permanent: true).Id, (int)a.Value);
-            if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _)) return true;
-            if (E._preludeFunctors.Contains(fid)) return true;
-            if (E._dynStore.IsDynamic(fid) || E._dynStore.HasClauses(fid)) return true;
-            if (E._precompiledStaticPredicates.ContainsKey(fid)) return true;
-            foreach (var cl in clauses) if (HeadFunctorIdOf(cl) == fid) return true;
-            return false;
-        }
-        bool EvalCond(Term cond) => cond switch
-        {
-            AtomTerm { Name: "true" } => true,
-            AtomTerm { Name: "fail" or "false" } => false,
-            CompoundTerm { Functor: ",", Args: [var a, var b] } => EvalCond(a) && EvalCond(b),
-            CompoundTerm { Functor: ";", Args: [var a, var b] } => EvalCond(a) || EvalCond(b),
-            CompoundTerm { Functor: "\\+" or "not", Args: [var a] } => !EvalCond(a),
-            CompoundTerm { Functor: "current_predicate", Args: [var pi] } => CondPredExists(pi),
-            CompoundTerm { Functor: "exists_source", Args: [var spec] } => CondExistsSource(spec),
-            CompoundTerm { Functor: "current_prolog_flag", Args: [AtomTerm f, var v] } => CondFlagIs(f.Name, v),
-            _ => CondWarnFalse(cond),
-        };
-        // exists_source(library(X)) / exists_source(File): does the source resolve?
-        bool CondExistsSource(Term spec)
-        {
-            if (spec is CompoundTerm { Functor: "library", Args: [AtomTerm lib] })
-                return E.TryResolveLibrary(lib.Name, out _)
-                    || CompatLibraries.TryGet(lib.Name, out _)
-                    || LibraryBundles.IsEngineLibrary(lib.Name);
-            if (spec is AtomTerm f)
-                return System.IO.File.Exists(E._directory.Resolve(f.Name))
-                    || System.IO.File.Exists(E._directory.Resolve(f.Name + ".pl"));
-            return false;
-        }
-        // current_prolog_flag(Flag, Value): compare against the engine's flag.
-        bool CondFlagIs(string flag, Term valueTerm)
-        {
-            string? actual = flag switch
+        var conditional = new ConditionalCompilation(new ConditionContext(
+            E._flags,
+            PredicateKnown: (name, arity) =>
             {
-                "bounded" => "false",
-                "dialect" => "shumway",
-                "double_quotes" => E._flags.DoubleQuotes.ToString().ToLowerInvariant(),
-                "unknown" => E._flags.Unknown,
-                "occurs_check" => E._flags.OccursCheck,
-                "verbose" => E._flags.Verbose,
-                _ => null,   // unknown flag → the condition cannot hold
-            };
-            return actual is not null && valueTerm is AtomTerm v && v.Name == actual;
-        }
-        bool CondWarnFalse(Term cond)
-        {
-            E.Warn($"warning: unsupported :- if/elif condition ({cond}) — treated as false");
-            return false;
-        }
-        // Handles an if/elif/else/endif directive body, returning true if it was
-        // one (and thus consumed). Everything else returns false to fall through.
-        bool TryCondCompile(Term cbody)
-        {
-            switch (cbody)
-            {
-                case CompoundTerm { Functor: "if", Args: [var g] }:
-                    { bool on = CondIncluding() && EvalCond(g); condStack.Add((on, on)); return true; }
-                case CompoundTerm { Functor: "elif", Args: [var g] }:
-                    if (condStack.Count == 0) return true;
-                    { var t = condStack[^1]; bool on = CondOuter() && !t.AnyTaken && EvalCond(g);
-                      condStack[^1] = (on, t.AnyTaken || on); return true; }
-                case AtomTerm { Name: "else" }:
-                    if (condStack.Count == 0) return true;
-                    { var t = condStack[^1]; bool on = CondOuter() && !t.AnyTaken;
-                      condStack[^1] = (on, true); return true; }
-                case AtomTerm { Name: "endif" }:
-                    if (condStack.Count > 0) condStack.RemoveAt(condStack.Count - 1);
-                    return true;
-                default: return false;
-            }
-        }
+                int fid = FunctorTable.Intern(AtomTable.Intern(name, permanent: true).Id, arity);
+                if (E._preludeFunctors.Contains(fid)) return true;
+                if (E._dynStore.IsDynamic(fid) || E._dynStore.HasClauses(fid)) return true;
+                if (E._precompiledStaticPredicates.ContainsKey(fid)) return true;
+                foreach (var cl in clauses) if (HeadFunctorIdOf(cl) == fid) return true;
+                return false;
+            },
+            LibraryKnown: name => E.TryResolveLibrary(name, out _),
+            FileExists: name => System.IO.File.Exists(E._directory.Resolve(name)),
+            Unsupported: cond => E.Warn($"warning: unsupported :- if/elif condition ({cond}) — treated as false")));
 
         foreach (var rawClause0 in rawClauses)
         {
@@ -1757,9 +1685,9 @@ internal sealed class ConsultPipeline
             // consumed; a clause in an inactive branch is dropped before expansion.
             if (rawClause0.Kind == ClauseKind.Directive
                 && rawClause0.Term is CompoundTerm { Args.Length: 1 } condWrap
-                && TryCondCompile(condWrap.Args[0]))
+                && conditional.TryConsume(condWrap.Args[0]))
                 continue;
-            if (!CondIncluding()) continue;
+            if (!conditional.Including) continue;
             // In-file term_expansion hooks + a same-file directive that needs
             // them (lazy_lists' `:- lazy_list_iterator(...)` macro directives).
             // Hooks normally compile only when this consult commits, so
@@ -2949,6 +2877,12 @@ internal sealed class ConsultPipeline
     /// whenever the program changed, so a load of many files with a directive
     /// each (every Logtalk entity) rebuilt it per file, quadratic in the files.
     /// A host consult has no running goal and runs each goal as a query.</para></summary>
+    /// <summary>A bundle's <c>:- initialization/1</c> goal, run in its module
+    /// as the consult runs one at the end of a file.</summary>
+    internal void RunInitializationGoal(Term goal, string moduleName)
+        => RunConsultGoal(QualifyGoalForModule(goal, moduleName),
+            "initialization goal", goal.ToString() ?? "");
+
     private void RunConsultGoal(Term goal, string what, string described)
     {
         bool ok;

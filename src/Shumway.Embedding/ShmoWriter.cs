@@ -148,6 +148,7 @@ public static class ShmoWriter
             WriteLengthPrefixedUtf8(bw, od.Name);
         }
         BundleWriter.WriteFlags(bw, obj.Flags);
+        BundleWriter.WriteInitializationGoals(bw, obj.InitializationGoals);
 
         // ADR-038 — export-qualification trailer: the export surface, resolved
         // import table, and library dependencies of a :- module/2 module.
