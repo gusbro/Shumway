@@ -423,6 +423,27 @@ The limit is in local references, the planner's measure
 block is cheaper to copy than to call through. Setting it very large
 restores the old form; 0 copies only the owned.
 
+## A predicate's own method
+
+A predicate compiled on its own, not as a region, is one method holding
+every clause, so a predicate of a few hundred clauses is past the limits.
+Measured with clauses `c(X, Y) :- X == kI, !, Y = r(kI, I).` called warm,
+back to back, processor capped at 99%: with 300 of them the method is past
+the limits and runs 1.4 to 1.5 times slower than the interpreter; with 80,
+inside the limits, it runs in 2.1 s against the interpreter's 3.0 s.
+
+Such a method of a predicate with rules is declined: emitted, measured
+against the limits and dropped (`IlJitLimitsException`), and the predicate
+stays on the interpreter. The promotion diagnostics give the reason as
+`compile-failed:past the JIT's limits` and the limit crossed. A bundle with
+IL keeps the predicate's bytecode instead. `SHUMWAY_IL_JIT_LIMITS=0`
+compiles the method anyway. The method is not split into smaller ones.
+
+A table of facts past the limits keeps its method: a call runs a dispatch
+and one head. A table of 4,200 facts called on keys it holds ran about
+even compiled and interpreted; on a key it lacks, both ran far slower than
+on one it holds, a cost of the index and not of the method.
+
 ## The wasm tier
 
 Not mirrored: the wasm tier emits one function per predicate and the browser

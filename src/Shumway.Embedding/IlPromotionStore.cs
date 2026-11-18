@@ -1479,13 +1479,23 @@ public sealed partial class IlPromotionStore
 
         var syncRoots = RootsFor(functorId);
         var syncCallees = Recording(calleeMap);
-        var syncResult = RunOnLargeStack(() =>
-            WithPools(targetPools, () =>
-                WithNativeInline(() => WithRoots(syncRoots, () =>
-                {
-                    using var wam = IlPredicateCompiler.WamChoicePoints(!isDynamic && IlPredicateCompiler.CpsMode);
-                    return Compiled(Compiler.CompileInstrumented(target, syncCallees));
-                }))));
+        IlPredicateCompiler.PgoCompileResult syncResult;
+        try
+        {
+            syncResult = RunOnLargeStack(() =>
+                WithPools(targetPools, () =>
+                    WithNativeInline(() => WithRoots(syncRoots, () =>
+                    {
+                        using var wam = IlPredicateCompiler.WamChoicePoints(!isDynamic && IlPredicateCompiler.CpsMode);
+                        return Compiled(Compiler.CompileInstrumented(target, syncCallees));
+                    }))));
+        }
+        catch (IlJitLimitsException ex)
+        {
+            MarkUnpromotable(functorId, "compile-failed:" + ex.Message);
+            settled = true;
+            return null;
+        }
         if (ChangedSince(syncCallees, viewEpoch))
         {
             _staleForView[functorId] = viewEpoch;
@@ -1631,9 +1641,20 @@ public sealed partial class IlPromotionStore
             }
             var syncPgoRoots = RootsFor(functorId);
             var syncPgoCallees = Recording(calleeMap);
-            var optimized = RunOnLargeStack(
-                () => WithFloatPool(functorId, () => WithNativeInline(() => WithRoots(syncPgoRoots,
-                    () => Compiled(Compiler.CompileOptimized(predicate, profileKey, syncPgoCallees))))));
+            PredicateDelegate optimized;
+            try
+            {
+                optimized = RunOnLargeStack(
+                    () => WithFloatPool(functorId, () => WithNativeInline(() => WithRoots(syncPgoRoots,
+                        () => Compiled(Compiler.CompileOptimized(predicate, profileKey, syncPgoCallees))))));
+            }
+            catch (IlJitLimitsException)
+            {
+                // The instrumented form stays: the optimized one inlines more.
+                Shumway.Compiler.Il.IlProfileCounters.Release(profileKey);
+                _pgoProfileKeys.Remove(functorId);
+                continue;
+            }
             InstallDelegate(functorId, optimized, ArtifactFor(functorId, optimized, predicate, syncPgoCallees, null));
             _pgoProfileKeys.Remove(functorId);
             _pgoOptimized.Add(functorId);
@@ -1716,12 +1737,21 @@ public sealed partial class IlPromotionStore
         }
         var warmRoots = RootsFor(functorId);
         var warmCallees = Recording(calleeMap);
-        var del = RunOnLargeStack(() =>
-            WithFloatPool(functorId, () => WithNativeInline(() => WithRoots(warmRoots, () =>
-            {
-                using var wam = IlPredicateCompiler.WamChoicePoints(IlPredicateCompiler.CpsMode);
-                return Compiled(Compiler.Compile(predicate, warmCallees));
-            }))));
+        PredicateDelegate del;
+        try
+        {
+            del = RunOnLargeStack(() =>
+                WithFloatPool(functorId, () => WithNativeInline(() => WithRoots(warmRoots, () =>
+                {
+                    using var wam = IlPredicateCompiler.WamChoicePoints(IlPredicateCompiler.CpsMode);
+                    return Compiled(Compiler.Compile(predicate, warmCallees));
+                }))));
+        }
+        catch (IlJitLimitsException ex)
+        {
+            MarkUnpromotable(functorId, "compile-failed:" + ex.Message);
+            return null;
+        }
         _mutationStamp.TryGetValue(functorId, out int warmStamp);
         if (!InstallCompiled(functorId, new IlPredicateCompiler.PgoCompileResult(del, -1), predicate, warmCallees,
                 isDynamic: false, _staticEpoch, warmStamp))
