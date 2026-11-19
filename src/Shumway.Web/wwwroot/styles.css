@@ -49,6 +49,32 @@ h1 { font-size: 1.3rem; margin: 0; letter-spacing: -.01em; }
 }
 .icon-button:hover { color: inherit; }
 
+/* The one tool with words: the notebook site is a place to go, not a panel of
+   this page. Drawn as the buttons beside it are. */
+.tool-link {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  height: 2.1rem;
+  padding: 0 .7rem;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: .5rem;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  color: var(--muted);
+  font-size: .9rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.tool-link:hover { color: inherit; background: color-mix(in srgb, currentColor 16%, transparent); }
+/* Without this the display above beats the hidden attribute. */
+.tool-link[hidden] { display: none; }
+@media (max-width: 36rem) {
+  .tool-link { padding: 0 .5rem; }
+  .tool-link span { display: none; }
+}
+
 /* --- panes -------------------------------------------------------------- */
 
 /* The two panes are the same height, top and bottom. They do not hold the same
