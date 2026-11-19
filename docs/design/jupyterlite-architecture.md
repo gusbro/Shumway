@@ -118,7 +118,7 @@ of the runtime's JavaScript.
 | D11 | Identity: `shumway_prolog`, standard Prolog `language_info`, site default kernel | 066 |
 | D12 | Disable JupyterLite's service worker; WebShumway's serves the two sites, and stops deleting other caches | 069 |
 | D13 | `require-corp` in WebShumway; in the notebook site COEP chosen by engine (WebKit → `require-corp`), for the images of markdown cells | 069 |
-| D14 | Files: mirror between the Contents API and MEMFS around each cell; no OPFS in the notebook site | 070 |
+| D14 | Files: mirror between the Contents API and MEMFS around each cell; no OPFS for the notebook's files. Library collections are the demo's, in its OPFS (O3) | 070 |
 | D15 | Rich outputs in standard MIME, in phases: tables → Graphviz → Vega-Lite → widgets | 072 |
 | D16 | One extension and one wasm app, built apart from the solution; protocol versioned separately | 073 |
 | D17 | Feature table as YAML, every row backed by an acceptance cell | 073 |

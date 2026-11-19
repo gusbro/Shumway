@@ -2,8 +2,8 @@
 # Source of truth: the markdown table is generated from this file, never edited by hand.
 # Every row needs a `test`: an acceptance cell run in CI (Playwright) against the built site.
 # A row may be `supported` only if its test passes.
-# Until the acceptance workflow is in CI (plan, Phase 3), the cells run in
-# jupyterlite/tests/kernel.mjs, against a built site in Chromium, Firefox and WebKit.
+# The cells run in jupyterlite/tests/kernel.mjs, against a built site in Chromium,
+# Firefox and WebKit, which CI runs (.github/workflows/notebooks.yml).
 # A protocol method's test is the notebook server's corpus (tests/jupyter/corpus), which
 # sends the request itself; `A  →  B` is a cell A followed by a cell B.
 #
@@ -51,6 +51,7 @@ groups:
       - { id: h-version, feature: "version/0, version/4, versions/0", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:versions.  →  jupyter:version(Ma, Mi, Pa, _).", phase: 3 }
       - { id: h-magic, feature: "magic/0", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:magic.", phase: 3 }
       - { id: h-pwd-cd, feature: "pwd/0, cd/1", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:pwd.  →  jupyter:cd('..'), jupyter:pwd.", phase: 3 }
+      - { id: h-import-library, feature: "import_library/1 [ext]", hercutalk_desktop: not_applicable, shumway_prolog_web: supported, test: "jupyter:import_library(swi:'lib.tar.gz').  →  use_module(library(x)).", phase: 3 }
       - { id: h-print-queries, feature: "print_queries/0,1", hercutalk_desktop: supported, shumway_prolog_web: supported, note: "print_queries/1 is checked by the server's tests", test: "jupyter:print_queries.", phase: 3 }
       - { id: h-print-query-time, feature: "print_query_time/0", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:print_query_time.", phase: 3 }
       - { id: h-print-bindings, feature: "print_variable_bindings/0", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:print_variable_bindings.", phase: 3 }

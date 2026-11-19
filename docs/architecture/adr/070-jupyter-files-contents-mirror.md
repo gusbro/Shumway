@@ -6,7 +6,8 @@ Accepted (2026-11-16). Records D14. Its working-directory requirement
 depends on ADR-071, which is built. The mirror is built (`mirror.js`, with
 the demo's workspaces on it) and measured against JupyterLite 0.8.7's
 contents manager ("What was built"); the kernel that calls it around each
-cell is not.
+cell is not. Amended 2026-11-19: where the library collections live (O3),
+the one store of the notebook site that is the demo's OPFS.
 
 ## Context
 
@@ -33,8 +34,10 @@ cell is not.
 - **Generalise WebShumway's mirror module to a pluggable target**, OPFS for
   the demo and the Contents API for the notebook site. It stays with the rest
   of the runtime's JavaScript, which the two sites share (ADR-073).
-- **No OPFS in the notebook site.** Two sources of truth would need
+- **No OPFS for the notebook's files.** Two sources of truth would need
   reconciliation, which the one-direction-at-a-time rule exists to avoid.
+  The library collections are kept in the demo's OPFS: see the amendment
+  below.
 - **The engine is unchanged.** It sees a file system, as it does in the demo.
 - **Each session starts in its notebook's directory** under `/drive`. That
   needs a working directory per engine, because several sessions share one
@@ -75,6 +78,49 @@ headless Chromium, Firefox and WebKit, with a JupyterLab page of JupyterLite
 - **Not built:** an empty directory is not mirrored, since a side lists
   files. Where imported libraries live is still open.
 
+## Amendment (2026-11-19): library collections (O3)
+
+**Decision.** The collections of libraries live where the demo keeps them,
+in the origin's OPFS under `libraries/`, and the notebook site, a directory
+of the demo, shares them.
+
+- **The page restores them** into MEMFS `/libraries` when it starts, as the
+  demo does, and every session puts them on its library path.
+- **Before each cell** the page brings in the collections another tab stored
+  since, and the server puts them on the session's path
+  (`'$jupyter_refresh_libraries'/0`). A collection the demo imports is there
+  for the next cell, with no restart.
+- **After each cell** the page stores what the cell compiled on demand, as
+  the demo does after a consult.
+- **`jupyter:import_library(Spec)`** imports one from a cell. Spec is a
+  dialect (`scryer`, `swi`, `trealla`), for the library the demo suggests for
+  it; `Dialect:Location`; or `Location`. A location is the URL of a GitHub
+  directory, of a Prolog file or of a `.zip` or `.tar.gz` archive, or such a
+  file of the session. The session asks the page and waits for its answer,
+  as `read/1` does; the page fetches with the demo's code and stores the
+  collection.
+- **A collection keeps where it came from** (`.source`, beside `.dialect`).
+  Importing it again from there does nothing, so a notebook's first cell
+  can import what the notebook needs. The same name from elsewhere is
+  refused. One imported before the marker existed is left as it is.
+
+**Why OPFS here and not for the files.** A notebook's files have two stores
+the user edits, the Contents API and MEMFS, and the mirror reconciles them
+at cell boundaries. A collection has one, OPFS: MEMFS holds a copy that
+changes only by an import or a compile, each stored at once. That is the
+demo's model, unchanged.
+
+**Alternatives considered.**
+
+- **`/drive/lib`, collections as files of the drive.** The mirror lists and
+  copies all of `/drive` around every cell: SWI's library is about 200
+  files, copying 150 new files takes 14 s in WebKit, and the compiled
+  bundles, megabytes each, would go back to the drive as base64. JupyterLab
+  does not upload a folder either. Rejected.
+- **The bundle: collections built into the deployment.** Third-party code
+  published as part of our site, and a bigger download for every visitor.
+  Rejected.
+
 ## Consequences
 
 - Files are synced at cell boundaries. A file changed by another tab *during*
@@ -84,9 +130,9 @@ headless Chromium, Firefox and WebKit, with a JupyterLab page of JupyterLite
 - Large drives make the "before" sync cost proportional to what changed, not
   to the drive's size, as long as `last_modified` is reliable. If it proves
   unreliable, fall back to content hashes for small files.
-- Library imports (Scryer and others through the library path) need a home
-  in the notebook site, for example `/drive/lib` or the bundle. That is
-  decided in the implementation, using WebShumway's import code.
+- Library collections live in the demo's OPFS, shared with it (amendment
+  above). A notebook that uses one works in a browser that has it, or that
+  its first cell imports it into.
 
 ## Alternatives considered
 
