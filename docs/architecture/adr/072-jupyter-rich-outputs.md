@@ -9,8 +9,11 @@ Records D4 (revised) and D15. Accepted in part:
   kernel is TypeScript, and shows text, bindings, errors, tables and what
   `jupyter:display/2` asks for.
 
-Phases 2, 3 and 4 of D15 (graphs, plots, widgets) stay proposed until the
-plan reaches them.
+- 2026-11-19: phase 2 of D15, graphs, drawn with dagre rather than
+  Graphviz (amendment below).
+
+Phases 3 and 4 of D15 (plots, widgets) stay proposed until the plan reaches
+them.
 
 ## Context
 
@@ -58,7 +61,7 @@ without our extension.
 | Phase | Server key(s) | Rendering |
 |---|---|---|
 | 1 | output, bindings, errors, `print_table`, `print_and_save_table`, `predicate_atoms` | TS; markdown tables. **The server writes the saved file itself**, and ADR-070's mirror makes it appear |
-| 2 | `print_sld_tree`, `print_transition_graph` (DOT) | Graphviz compiled to WASM (for example `@hpcc-js/wasm`), **loaded on first use**; emit SVG plus the DOT as `text/plain` |
+| 2 | `print_sld_tree`, `print_transition_graph` (DOT) | **dagre** lays out the DOT the servers write, **loaded on first use** (amendment below); emit SVG plus the DOT as `text/vnd.graphviz` and `text/plain` |
 | 3 | `show_data` | **Vega-Lite**: the spec is **produced by the Prolog/Logtalk server**, and the TS only emits it |
 | 4 | `input_html` (widgets, forms, inputs) | needs Hercutalk to make the callback configurable (below) |
 
@@ -107,13 +110,39 @@ tables, building SVG or specs, writing files) moves there. It then serves
 the desktop and the web alike, and shrinks what each frontend has to
 implement.
 
+## Amendment (2026-11-19): graphs drawn with dagre
+
+**Decision.** The kernel draws a graph's DOT with **dagre** (`@dagrejs/dagre`
+and `@dagrejs/graphlib`, MIT), not with Graphviz compiled to WASM.
+
+- The servers write the DOT the reference writes, under the same keys, so a
+  graph is the same text whatever draws it.
+- The kernel reads the part of DOT the servers write: nodes and edges, with
+  `label`, `shape`, `color`, `fillcolor`, `style` and `fontcolor`; default
+  attribute statements and subgraphs are read too. dagre lays it out, and
+  the kernel draws it as SVG, black on white as Graphviz draws.
+- The drawer is a script of its own, downloaded the first time an answer
+  has a graph.
+- The output keeps the DOT, as `text/vnd.graphviz` and `text/plain`, beside
+  the SVG: another drawer can take over from it later.
+- In a tree, such as a term's, the children of a node are drawn in the order
+  of its edges, so a term's arguments read left to right.
+
+**Why not Graphviz.** Graphviz is licensed under the Eclipse Public License
+1.0, which is not among the licences this repository allows (MIT, MS-PL,
+Apache, BSD), and the WASM build is about 2 MB against about 100 KB. What
+the notebooks draw (term trees and small transition graphs) dagre lays out
+well. If its drawings fall short, the drawer can change without touching the
+servers or the saved notebooks.
+
 ## Consequences
 
 - There is no Python anywhere, and the first visit downloads nothing for
   plots.
 - Plots look different from Hercutalk on the desktop unless Hercutalk adopts
   Vega-Lite.
-- Graphviz costs a download only for notebooks that draw graphs.
+- The graph drawer costs a download only for notebooks that draw graphs.
+- A graph does not look exactly as Graphviz draws it on the desktop.
 - Widgets wait for an upstream change.
 
 ## Alternatives considered

@@ -57,8 +57,9 @@ groups:
       - { id: h-print-bindings, feature: "print_variable_bindings/0", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:print_variable_bindings.", phase: 3 }
       - { id: h-print-table, feature: "print_table/1,2", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:print_table(member(X, [a, b])).", phase: 3 }
       - { id: h-print-save-table, feature: "print_and_save_table/3", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:print_and_save_table(member(N-S, [1-1, 2-4]), csv, 'squares.csv').", phase: 3 }
-      - { id: h-show-term, feature: "show_term/1", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 4 }
-      - { id: h-transition-graph, feature: "print_transition_graph/4", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 4 }
+      - { id: h-show-term, feature: "show_term/1", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "show_term(f(a, g(1, b))).", phase: 4 }
+      - { id: h-transition-graph, feature: "print_transition_graph/3,4", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:print_transition_graph(step/3, 1, 3, 2).", phase: 4 }
+      - { id: h-show-graph, feature: "show_graph/2", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "show_graph(state/2, move/3).", phase: 4 }
       - { id: h-sld-tree, feature: "print_sld_tree/1", hercutalk_desktop: partial, shumway_prolog_web: not_yet_supported, note: "not exported in 0.47.0 (commented out of the public list); the client still renders the key", test: todo, phase: 4 }
       - { id: h-show-data, feature: "show_data/1", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, note: "Vega-Lite on the web (ADR-072)", test: todo, phase: 5 }
       - { id: h-display, feature: "display/2 [ext]", hercutalk_desktop: not_yet_supported, shumway_prolog_web: supported, test: "jupyter:display('text/html', '<b>hi</b>').", phase: 3 }
@@ -70,7 +71,7 @@ groups:
       - { id: c-file, feature: "%%file, %%file+, %%save, %%load", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%%file colours.pl\ncolour2(blue).  →  %%file+ colours.pl\ncolour2(green).  →  %%load colours.pl\ncolour2(grey).  →  %%save notes.txt\nnot loaded (", phase: 3 }
       - { id: c-highlight, feature: "%%highlight", hercutalk_desktop: supported, shumway_prolog_web: supported, note: "runs nothing", test: "%%highlight\nfoo(X) :- bar(X).", phase: 3 }
       - { id: c-table, feature: "%%table, %%csv, %%tsv", hercutalk_desktop: supported, shumway_prolog_web: supported, note: "%%tsv is checked by the server's tests", test: "%%table\nmember(X-Y, [a-1, b-2]).  →  %%csv letters.csv\nmember(X, [a, b]).", phase: 3 }
-      - { id: c-tree, feature: "%%tree", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 4 }
+      - { id: c-tree, feature: "%%tree", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%%tree\n1 + 2 * 3 - 4", phase: 4 }
       - { id: c-data, feature: "%%data", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 5 }
 
   - name: Line magics

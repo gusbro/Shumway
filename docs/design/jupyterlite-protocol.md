@@ -131,7 +131,7 @@ reported for the **first** error, as in Hercutalk.
 | `predicate_atoms` | list of predicate heads, arguments lettered (`append(A,B,C)`, `jupyter:print_table(A)`) | completion data, no output | 1 |
 | `print_table` | `{"VariableNames": [...], "ValuesLists": [[...], ...]}` | `text/markdown` table plus `text/plain` | 1 |
 | `print_and_save_table` | as above, plus format and file | table; **the server writes the file** | 1 |
-| `print_sld_tree` | DOT source | `image/svg+xml` via Graphviz WASM, plus DOT as `text/plain` | 2 |
+| `print_sld_tree` | DOT source | `image/svg+xml` drawn by dagre, plus the DOT as `text/vnd.graphviz` and `text/plain` (ADR-072) | 2 |
 | `print_transition_graph` | DOT source | as above | 2 |
 | `show_data` | plot description (matplotlib-style) | **Vega-Lite** spec built by the server (§6) | 3 |
 | `input_html` | HTML with callbacks | `text/html`, once the callback is configurable | 4 |

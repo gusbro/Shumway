@@ -168,11 +168,19 @@ from the solution.
 
 ## Phase 4: Graphs
 
-Graphviz compiled to WASM, loaded on first use, for `print_sld_tree` and
-`print_transition_graph`.
+The servers write the DOT the reference writes; the kernel draws it with
+dagre, loaded on first use (ADR-072, amendment): `show_term/1`, `%%tree`,
+`print_transition_graph/3,4` and `show_graph/2`.
+
+`print_sld_tree/1` is left out for now (decided 2026-11-19). The reference
+does not export it, and what it drew was a tree of the calls its tracer saw.
+A tree of resolvents, clauses and substitutions, as textbooks draw one,
+would need a meta-interpreter in the server, and one that is not simple: it
+would have to show coroutining (`freeze/2`, `dif/2`, constraints), whose
+goals run when a variable is bound, not where they are written.
 
 **Acceptance:** the rows in the feature table pass, and notebooks that draw
-no graphs do not download Graphviz.
+no graphs do not download the drawer.
 
 ## Phase 5: Plots with Vega-Lite
 
