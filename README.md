@@ -50,6 +50,9 @@ when 10 is not installed. The test gate currently runs on Windows.
 
 ## Try it online: [gusbro.github.io/Shumway](https://gusbro.github.io/Shumway/)
 
+The same engine runs [Jupyter notebooks](https://gusbro.github.io/Shumway/jupyter/)
+in the browser, with example notebooks to start from.
+
 ## Highlights
 
 - **ISO Prolog** passing all seven of the [Neumerkel conformity suites](tests/conformity/README.md) (Aug 2026): syntax (365/365), number_chars/2 (67/67), variable_names/1 (63/63), dif/2 (26/26), length/2 (37/37), phrase/2,3 (58/58) and setup_call_cleanup/3 (23/23).

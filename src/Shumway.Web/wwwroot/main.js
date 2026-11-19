@@ -982,6 +982,15 @@ document.getElementById('reference-filter')
 
 document.getElementById('guide').addEventListener('click', () => guideDialog.showModal());
 
+// The notebook site is published beside the demo (ADR-073), but a demo hosted
+// on its own has none: its links show only when the site answers.
+fetch('jupyter/jupyter-lite.json', { method: 'HEAD', cache: 'no-store' })
+  .then((response) => {
+    if (!response.ok) return;
+    for (const element of document.querySelectorAll('[data-needs-notebooks]')) element.hidden = false;
+  })
+  .catch(() => { });
+
 // --- workspaces ----------------------------------------------------------
 // A workspace is a project: its own directory, its own files, and — because
 // switching starts a fresh engine — its own program. The buffer being edited is
