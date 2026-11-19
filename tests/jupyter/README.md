@@ -74,7 +74,8 @@ backend nothing is written to the corpus, and `-OutDir` is required.
 `tests/Shumway.Tests.Wasm/NotebookServerCorpusTests.cs` sends each session's
 requests to our server and compares its responses with the expected file.
 Not compared: the text of an error message and the name of its key, the
-number in the name of an unnamed variable, and the engine's version.
+name of an unnamed variable (a number in the reference's, `_A`, `_B`, ...
+in ours, as the top level writes it), and the engine's version.
 
 An expected file is never edited by hand. A difference our server keeps on
 purpose is declared in that test, with its reason, and the test fails if the

@@ -168,7 +168,8 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
     /// <list type="bullet">
     /// <item>the text of an error message, which is each system's own, and
     /// the name of its key, which is the variant's (ADR-067 D5);</item>
-    /// <item>the number in the name of a variable that has no name;</item>
+    /// <item>the name of a variable that has no name: a number in the
+    /// reference's, _A, _B, ... in ours, as the top level writes it;</item>
     /// <item>the version of the engine the recording was made with;</item>
     /// <item>the residual goals of a query, a key only our server sends: the
     /// reference says nothing of a constrained variable.</item>
@@ -196,6 +197,6 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
         }
     }
 
-    [GeneratedRegex(@"\b_G?\d+\b")]
+    [GeneratedRegex(@"\b_(?:G?\d+|[A-Z]\d*)\b")]
     private static partial Regex UnnamedVariable();
 }

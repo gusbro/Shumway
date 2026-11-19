@@ -209,6 +209,29 @@ public sealed class NotebookServerTests : IDisposable
     }
 
     [Fact]
+    public void AVariableTheQueryDidNotName_IsNamedAsTheTopLevelNamesIt()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+
+        JsonNode two = First(server, "length(L, 2), X = f(_Y, Z).");
+        JsonNode taken = First(server, "X = g(_A), length(L, 1).");
+        First(server, "use_module(library(clpfd)).");
+        JsonNode open = First(server, "@L #= N, L = [a|_].");
+
+        Assert.Equal("[_A,_B]", (string)two["bindings"]!["L"]!);
+        // The query's own names stay, a hidden one among them.
+        Assert.Equal("f(_Y,Z)", (string)two["bindings"]!["X"]!);
+        // A name the query uses is passed over.
+        Assert.Equal("g(_A)", (string)taken["bindings"]!["X"]!);
+        Assert.Equal("[_B]", (string)taken["bindings"]!["L"]!);
+        // The bindings and the residual goals name a variable alike.
+        Assert.Equal("[a|_A]", (string)open["bindings"]!["L"]!);
+        string[] residual = open["residual_goals"]!.AsArray().Select(g => (string)g!).ToArray();
+        Assert.Contains(residual, g => g.Contains("@[a|_A]"));
+        Assert.DoesNotContain(residual, g => g.Contains("_G"));
+    }
+
+    [Fact]
     public void AQueryThatReadsAPreviousValue_IsRememberedAsItWasWritten()
     {
         NotebookServer server = _notebooks.Open("a").Server;
@@ -486,7 +509,7 @@ public sealed class NotebookServerTests : IDisposable
     [InlineData(@"dif(X, a).", "{}", @"[""dif(X,a)""]")]
     [InlineData(@"freeze(X, write('A b')).", "{}", @"[""freeze(X,write('A b'))""]")]
     [InlineData(@"X in 1..5, X = 3.", @"{""X"":""3""}", null)]
-    [InlineData(@"X = f(_), Y = 1.", @"{""X"":""f(_)"",""Y"":""1""}", null)]
+    [InlineData(@"X = f(_), Y = 1.", @"{""X"":""f(_A)"",""Y"":""1""}", null)]
     public void TheConstraintsLeftOnAQuerysVariables_AreItsResidualGoals(string code, string bindings, string? residual)
     {
         NotebookServer server = _notebooks.Open("a").Server;
