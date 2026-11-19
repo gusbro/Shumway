@@ -6,8 +6,8 @@ using Shumway.Embedding;
 namespace Shumway.Jupyter;
 
 /// <summary>What the host gives the server's Prolog code: its two streams,
-/// the output a cell wrote, a stream over a cell's text and the text of an
-/// error.
+/// the output a cell wrote, a stream over a cell's text, the text of an
+/// error and the text of an answer.
 ///
 /// <para>The builtin table belongs to the process, so each predicate is
 /// registered once and finds the server of the engine that calls it.</para></summary>
@@ -30,6 +30,7 @@ internal static class ServerPredicates
             BuiltinsRegistry.Register("$jupyter_take_output", 1, TakeOutput);
             BuiltinsRegistry.Register("$jupyter_open_text", 2, OpenText);
             BuiltinsRegistry.Register("$jupyter_error_text", 2, ErrorText);
+            BuiltinsRegistry.Register("$jupyter_answer_text", 4, AnswerText);
             BuiltinsRegistry.Register("$jupyter_strict_syntax", 2, StrictSyntax);
             BuiltinsRegistry.Register("$jupyter_tracing", 1, Tracing);
             BuiltinsRegistry.Register("$jupyter_documented", 1, Documented);
@@ -85,6 +86,32 @@ internal static class ServerPredicates
     {
         Term ball = RegisterMarshalling.ReadRegisterAsTerm(activation, 0);
         return RegisterMarshalling.UnifyRegisterWithTerm(activation, 1, Text(Describe(ball)));
+    }
+
+    // '$jupyter_answer_text'(+Term, +Names, +Priority, -Chars): Term as the
+    // top level writes it in an answer, its variables named by Names, a list
+    // of Name=Variable, and bounded by Priority as an operand is: quoted, a
+    // list of characters as a string, cut short past answer_max_depth.
+    private static bool AnswerText(Activation activation)
+    {
+        var engine = (PrologEngine)activation.Host!;
+        Term term = RegisterMarshalling.ReadRegisterAsTerm(activation, 0);
+        Term names = RegisterMarshalling.ReadRegisterAsTerm(activation, 1);
+        Term bound = RegisterMarshalling.ReadRegisterAsTerm(activation, 2);
+        if (bound is not IntTerm { Value: >= 0 and <= 1200 } priority)
+            throw new ShumwayPrologException(IsoError.TypeError("integer", bound));
+        var renames = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (Term cursor = names; cursor is CompoundTerm { Functor: ".", Args.Length: 2 } cell; cursor = cell.Args[1])
+            if (cell.Args[0] is CompoundTerm { Functor: "=", Args.Length: 2 } pair
+                && pair.Args[0] is AtomTerm name && pair.Args[1] is VarTerm variable)
+                renames.TryAdd(variable.Name, name.Name);
+        Term shown = ResidualProjection.SubstituteVarNames(
+            ResidualProjection.ElideCycleMarkers(
+                Shumway.TopLevel.SolutionFormatter.Elide(term, engine.Flags.AnswerMaxDepth)),
+            renames);
+        string text = AstTermRenderer.Render(shown, (int)priority.Value, engine.Operators,
+            quoted: true, portrayText: true);
+        return RegisterMarshalling.UnifyRegisterWithTerm(activation, 3, Text(text));
     }
 
     // '$jupyter_strict_syntax'(+New, -Old): whether a clause that does not

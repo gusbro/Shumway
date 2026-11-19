@@ -185,7 +185,7 @@ try {
       const reloaded = await run(kernel, 'findall(C, colour2(C), L).');
       await run(kernel, '%%save notes.txt\nnot loaded (');
       saved = await fileText('notes.txt');
-      check(r.texts[0] === 'L = [blue,green]' && loaded.reply.status === 'ok' && reloaded.texts[0] === 'L = [grey]'
+      check(r.texts[0] === 'L = [blue, green]' && loaded.reply.status === 'ok' && reloaded.texts[0] === 'L = [grey]'
           && saved === 'not loaded (\n',
         '%%file, %%file+ and %%load write and load a file; %%save only writes it', [r, reloaded, saved]);
       r = await run(kernel, '%%highlight\nfoo(X) :- bar(X).');
@@ -280,7 +280,7 @@ try {
       r = await run(thirdKernel, 'findall(X, only_third(X), L).');
       own = await text('renamed.user.pl');
       check(own === 'only_third(1).\nonly_third(2).\nonly_third(3).\n' && (await text('third.user.pl')) === null
-          && r.texts[0] === 'L = [1,2,3]',
+          && r.texts[0] === 'L = [1, 2, 3]',
         'a renamed notebook takes its %%user file along', [own, r.texts]);
 
       // A console has no notebook: its file is user.pl.
@@ -338,9 +338,9 @@ try {
   // The example notebooks run from top to bottom, and show what they say.
   for (const [file, expected] of [
     ['grammars.ipynb', ['Who = world', 'Who = prolog', 'V = 9', 'Text | Value', "'(1+2)*3' | 9 "]],
-    ['constraints.ipynb', ['X in 4..5', 'X = 8', 'X = 9', 'L = [_A,_B,_C]', 'L = []', 'L = [_A]',
-      'A = [_A,_B,_C,_D],\\nB = [p,q]',
-      '[1,1] | 2 ', 'P = [9,5,6,7]+[1,0,8,5]=[1,0,6,5,2]', 'Qs | ', '[2,4,6,1,3,5] | ', '[5,3,1,6,4,2] | ']],
+    ['constraints.ipynb', ['X in 4..5', 'X = 8', 'X = 9', 'L = [_A, _B, _C]', 'L = []', 'L = [_A]',
+      'A = [_A, _B, _C, _D],\\nB = [ann, bob]',
+      '[1,1] | 2 ', 'P = ([9, 5, 6, 7]+[1, 0, 8, 5]=[1, 0, 6, 5, 2])', 'Qs | ', '[2,4,6,1,3,5] | ', '[5,3,1,6,4,2] | ']],
     ['tables-and-pictures.ipynb', ['N | Square | Power', '6 | 36 | 64 ', 'two', '<svg', 'width=\\"256\\"']],
   ]) {
     const ran = await runNotebook(file);

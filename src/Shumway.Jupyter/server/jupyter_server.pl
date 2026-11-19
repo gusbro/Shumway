@@ -20,6 +20,8 @@
 %   '$jupyter_open_text'(+Chars, -Stream): an input stream over a text;
 %   '$jupyter_error_text'(+Ball, -Chars): the line a top level shows for
 %     an error;
+%   '$jupyter_answer_text'(+Term, +Names, +Priority, -Chars): Term as a top
+%     level writes it in an answer, its variables named by Names;
 %   '$jupyter_strict_syntax'(+New, -Old): whether a clause that does not
 %     parse ends the load of its file.
 
@@ -303,13 +305,13 @@ run(query(Goal, Names), Alive, Spent0, Spent, Cell0, Cell, Next) :-
         failed(Cell0, -4712, 'Exception', jupyter(tracer_in_cell), Cell)
     ;   % As it was written: before $Var gives Var its value, and before
         % the query binds its variables.
-        with_output_to(string(Text), write_term(Goal, [quoted(true), variable_names(Names)])),
+        copy_term(Goal-Names, Written),
         catch(with_previous(Goal, Names, Resolved), Error, true),
         (   nonvar(Error) ->
             Spent = Spent0, Next = continue,
             failed(Cell0, -4712, 'Exception', Error, Cell)
         ;   helpers(Resolved, Names, Called),
-            solve(Called, Names, Text, Alive, Spent0, Spent, Cell0, Cell, Next)
+            solve(Called, Names, Written, Alive, Spent0, Spent, Cell0, Cell, Next)
         )
     ).
 
@@ -382,7 +384,7 @@ retry(Alive, Spent0, Spent, Cell0, Cell, Next) :-
 % solution the server goes on inside this clause, so the query's choice
 % points stay; a retry fails back into them.
 % A tracer the query left on would trace the server from here on.
-solve(Goal, Names, Text, Alive, Spent0, Spent, Cell0, Cell, Next) :-
+solve(Goal, Names, Written, Alive, Spent0, Spent, Cell0, Cell, Next) :-
     output(_),
     '$jupyter_extras'(_),
     nb_setval('$jupyter_cell', none),
@@ -390,7 +392,7 @@ solve(Goal, Names, Text, Alive, Spent0, Spent, Cell0, Cell, Next) :-
     (   catch(solution(Goal, Exit), Error, true),
         '$jupyter_tracing'(false),
         resumed(Cell0, Cell1, First),
-        ran(First, Error, Cell1, Text, Started),
+        ran(First, Error, Cell1, Written, Started),
         solved(Error, Exit, Names, Alive, Spent0, Spent, Cell1, Cell, Next)
     ->  true
     ;   '$jupyter_tracing'(false),
@@ -411,12 +413,13 @@ resumed(Cell0, Cell, First) :-
         nb_setval('$jupyter_cell', none)
     ).
 
-% A query joins the session's history when it has its first solution.
-ran(First, Error, cell(Id, _, _), Text, Started) :-
+% A query joins the session's history, as it was written, when it has its
+% first solution.
+ran(First, Error, cell(Id, _, _), Written, Started) :-
     (   First == true, var(Error) ->
         statistics(cputime, Now),
         Seconds is Now - Started,
-        '$jupyter_ran'(Id, Text, Seconds)
+        '$jupyter_ran'(Id, Written, Seconds)
     ;   true
     ).
 
@@ -477,7 +480,7 @@ bindings([Name=Value|More], Names, Seen, Bindings) :-
         (   named(Seen, Value, Earlier) -> Bindings = [Name-str(Earlier)|Rest]
         ;   Bindings = Rest
         )
-    ;   with_output_to(string(Text), write_term(Value, [quoted(true), variable_names(Names)])),
+    ;   '$jupyter_answer_text'(Value, Names, 699, Text),
         Bindings = [Name-str(Text)|Rest]
     ),
     bindings(More, Names, [Name=Value|Seen], Rest).
@@ -579,7 +582,7 @@ residual_goals(Goals, Names, Residual) :-
 
 goal_texts([], _, []).
 goal_texts([Goal|Goals], Names, [str(Text)|Texts]) :-
-    with_output_to(string(Text), write_term(Goal, [quoted(true), variable_names(Names)])),
+    '$jupyter_answer_text'(Goal, Names, 999, Text),
     goal_texts(Goals, Names, Texts).
 
 remember([]).

@@ -203,7 +203,7 @@ public sealed class NotebookServerTests : IDisposable
         string Text(string name) => File.ReadAllText(Path.Combine(_notebooks.DirectoryOf("a"), name)).Replace("\r\n", "\n");
         Assert.Equal("first line\nsecond (\n", Text("notes.txt"));
         Assert.Equal("fact(1).\nfact(2).\n", Text("facts.pl"));
-        Assert.Equal("[1,2]", (string)mine["bindings"]!["L"]!);
+        Assert.Equal("[1, 2]", (string)mine["bindings"]!["L"]!);
         Assert.Contains("existence_error", Message(theirs));
         Assert.False(File.Exists(Path.Combine(_notebooks.DirectoryOf("b"), "facts.pl")));
     }
@@ -216,34 +216,38 @@ public sealed class NotebookServerTests : IDisposable
         JsonNode two = First(server, "length(L, 2), X = f(_Y, Z).");
         JsonNode taken = First(server, "X = g(_A), length(L, 1).");
         First(server, "use_module(library(clpfd)).");
-        JsonNode open = First(server, "@L #= N, L = [a|_].");
+        JsonNode open = First(server, "@L #= N, L = [foo|_].");
 
-        Assert.Equal("[_A,_B]", (string)two["bindings"]!["L"]!);
+        Assert.Equal("[_A, _B]", (string)two["bindings"]!["L"]!);
         // The query's own names stay, a hidden one among them.
-        Assert.Equal("f(_Y,Z)", (string)two["bindings"]!["X"]!);
+        Assert.Equal("f(_Y, Z)", (string)two["bindings"]!["X"]!);
         // A name the query uses is passed over.
         Assert.Equal("g(_A)", (string)taken["bindings"]!["X"]!);
         Assert.Equal("[_B]", (string)taken["bindings"]!["L"]!);
         // The bindings and the residual goals name a variable alike.
-        Assert.Equal("[a|_A]", (string)open["bindings"]!["L"]!);
+        Assert.Equal("[foo | _A]", (string)open["bindings"]!["L"]!);
         string[] residual = open["residual_goals"]!.AsArray().Select(g => (string)g!).ToArray();
-        Assert.Contains(residual, g => g.Contains("@[a|_A]"));
+        Assert.Contains(residual, g => g.Contains("[foo | _A]"));
         Assert.DoesNotContain(residual, g => g.Contains("_G"));
     }
 
     [Fact]
-    public void AQueryThatReadsAPreviousValue_IsRememberedAsItWasWritten()
+    public void AQueryThatReadsAPreviousValue_IsPrintedAsAProgram()
     {
         NotebookServer server = _notebooks.Open("a").Server;
+        string Printed(int id, string code) => (string)Answer(server, Call(id, code))["result"]!["1"]!["output"]!;
 
-        First(server, "X = 3.");
-        JsonNode sum = First(server, "Y is $X + 1.");
-        JsonNode queries = First(server, "jupyter:print_queries.");
+        Answer(server, Call(1, "X = 3."));
+        JsonNode sum = Answer(server, Call(2, "Y is $X + 1."))["result"]!["1"]!;
+        string all = Printed(3, "jupyter:print_queries.");
+        string alone = Printed(4, "jupyter:print_queries([2]).");
 
         Assert.Equal("4", (string)sum["bindings"]!["Y"]!);
-        string printed = (string)queries["output"]!;
-        Assert.Contains("$X", printed);
-        Assert.DoesNotContain("$3", printed);
+        // An earlier query of the list names X: $X is that X.
+        Assert.Equal("X=3,\nY is X+1.", all);
+        // None does: $X stays, and is not the value it read.
+        Assert.Contains("$X", alone);
+        Assert.DoesNotContain("3", alone);
     }
 
     /// <summary>A call as a kernel sends it from the notebook
@@ -275,16 +279,16 @@ public sealed class NotebookServerTests : IDisposable
         NotebookServer a = _notebooks.Open("a", folder: "shared").Server;
         NotebookServer b = _notebooks.Open("b", folder: "shared").Server;
 
-        Answer(a, CallFrom("first.ipynb", "%%user\nmine(a)."));
-        Answer(b, CallFrom("second.ipynb", "%%user\nmine(b)."));
-        Answer(b, CallFrom("second.ipynb", "%%user+\nmine(c)."));
+        Answer(a, CallFrom("first.ipynb", "%%user\nmine(ann)."));
+        Answer(b, CallFrom("second.ipynb", "%%user\nmine(bob)."));
+        Answer(b, CallFrom("second.ipynb", "%%user+\nmine(cid)."));
         JsonNode inA = Answer(a, CallFrom("first.ipynb", "findall(X, mine(X), L)."))["result"]!["1"]!;
         JsonNode inB = Answer(b, CallFrom("second.ipynb", "findall(X, mine(X), L)."))["result"]!["1"]!;
 
-        Assert.Equal("[a]", (string)inA["bindings"]!["L"]!);
-        Assert.Equal("[b,c]", (string)inB["bindings"]!["L"]!);
-        Assert.Equal("mine(a).\n", TextIn("shared", "first.user.pl"));
-        Assert.Equal("mine(b).\nmine(c).\n", TextIn("shared", "second.user.pl"));
+        Assert.Equal("[ann]", (string)inA["bindings"]!["L"]!);
+        Assert.Equal("[bob, cid]", (string)inB["bindings"]!["L"]!);
+        Assert.Equal("mine(ann).\n", TextIn("shared", "first.user.pl"));
+        Assert.Equal("mine(bob).\nmine(cid).\n", TextIn("shared", "second.user.pl"));
         Assert.False(File.Exists(Path.Combine(_notebooks.DirectoryOf("shared"), "user.pl")));
     }
 
@@ -297,7 +301,7 @@ public sealed class NotebookServerTests : IDisposable
         Answer(server, CallFrom("after.ipynb", "%%user+\np(2)."));
         JsonNode all = Answer(server, CallFrom("after.ipynb", "findall(X, p(X), L)."))["result"]!["1"]!;
 
-        Assert.Equal("[1,2]", (string)all["bindings"]!["L"]!);
+        Assert.Equal("[1, 2]", (string)all["bindings"]!["L"]!);
         Assert.Equal("p(1).\np(2).\n", TextIn("a", "after.user.pl"));
         Assert.False(File.Exists(Path.Combine(_notebooks.DirectoryOf("a"), "before.user.pl")));
     }
@@ -504,10 +508,10 @@ public sealed class NotebookServerTests : IDisposable
     [InlineData(@"X in 1..5.", "{}", @"[""X in 1..5""]")]
     [InlineData(@"X in 1..5, X #> 2.", "{}", @"[""X in 3..5""]")]
     [InlineData(@"X in 1..3, Y in 1..3, X #< Y.", "{}", @"[""X in 1..2"",""X#<Y"",""Y in 2..3""]")]
-    [InlineData(@"X in 1..5, L = [X, a].", @"{""L"":""[X,a]""}", @"[""X in 1..5""]")]
+    [InlineData(@"X in 1..5, L = [X, a].", @"{""L"":""[X, a]""}", @"[""X in 1..5""]")]
     [InlineData(@"X in 1..5, Y = X.", @"{""Y"":""X""}", @"[""X in 1..5""]")]
-    [InlineData(@"dif(X, a).", "{}", @"[""dif(X,a)""]")]
-    [InlineData(@"freeze(X, write('A b')).", "{}", @"[""freeze(X,write('A b'))""]")]
+    [InlineData(@"dif(X, a).", "{}", @"[""dif(X, a)""]")]
+    [InlineData(@"freeze(X, write('A b')).", "{}", @"[""freeze(X, write('A b'))""]")]
     [InlineData(@"X in 1..5, X = 3.", @"{""X"":""3""}", null)]
     [InlineData(@"X = f(_), Y = 1.", @"{""X"":""f(_A)"",""Y"":""1""}", null)]
     public void TheConstraintsLeftOnAQuerysVariables_AreItsResidualGoals(string code, string bindings, string? residual)
@@ -567,7 +571,7 @@ public sealed class NotebookServerTests : IDisposable
         JsonNode first = First(server, "jupyter:trace(member(X, [a, b])).");
         JsonNode again = First(server, "retry.");
 
-        Assert.Equal("[1,2]", (string)traced["bindings"]!["L"]!);
+        Assert.Equal("[1, 2]", (string)traced["bindings"]!["L"]!);
         Assert.Equal(
             "   Call: (1) app([1], [2], _)\n   Call: (1) app([], [2], _)\n   Exit: (1) app([], [2], [2])\nafter",
             Unnamed((string)traced["output"]!));
