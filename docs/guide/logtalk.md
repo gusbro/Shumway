@@ -150,8 +150,8 @@ against Logtalk 3.101.0:
   collection, on a pristine tree with this repository's adapter, closes at
   **100% of the structurally supported set: 214 suites all fully green,
   11,634 tests, 0 failures** (measured 2026-09; the compute-heavy ML suites
-  may need a run without machine contention). `java` needs a JVM, and is
-  excluded as structurally N/A, documented rather than hidden. The
+  may need a run without machine contention). `java` needs a JVM: it is
+  excluded as structurally N/A, and the support page says so. The
   `sockets` library needs a branch for Shumway on Logtalk's side; 3.103.0
   has one for `process`. Details and reproduction in
   [`logtalk-library-support.md`](logtalk-library-support.md).
@@ -208,7 +208,7 @@ against Logtalk 3.101.0:
   systems do:
 
   - `length_2` (7): `length(a, N)` and other non-lists, a cyclic list
-    with a given length among them, fail rather than raise
+    with a given length among them, fail, with no
     `type_error(list, ...)`, as Neumerkel's `length/2` cases have it
     (`length(2, 0)` is false). SICStus and Scryer fail too.
   - `term_comparison` (4): `X = s(X,_), Y = s(Y,_), X @< Y` and three
@@ -229,7 +229,7 @@ against Logtalk 3.101.0:
     error tables of 8.11 list no error for that case.
 
   The one `syntax/numbers` failure is the lone `0''` above
-  (`lgt_number_30`, which the battery itself marks de facto rather than
+  (`lgt_number_30`, which the battery itself marks de facto, not
   standard). No failure is left open.
 
 ## Notes
