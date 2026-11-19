@@ -544,8 +544,10 @@ public static partial class MetaBuiltins
             Database, "consult(+File)",
             "Loads File and adds its clauses to the database, appending to any "
             + "existing predicates. File is an atom path; a .shum extension is loaded "
-            + "as a compiled bundle, everything else is read as Prolog source. An "
-            + "extensionless File that does not exist is retried as File.pl. File may "
+            + "as a compiled bundle, everything else is read as Prolog source. A file of "
+            + "a module with an export list makes its exports callable from user; so "
+            + "does a bundle, for each such module that no other module of it imports. "
+            + "An extensionless File that does not exist is retried as File.pl. File may "
             + "also be a list of specifications, each consulted in order, or the atom "
             + "user: clauses are then read from current input until end of input or a "
             + "line reading end_of_file.");

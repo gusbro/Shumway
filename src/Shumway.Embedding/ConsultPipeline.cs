@@ -61,7 +61,8 @@ internal sealed class ConsultPipeline
         path = ResolveSourcePath(path);
         if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
         {
-            E.LoadBundle(path);
+            E.LoadBundleLinkingLive(() => E.LoadBundle(path));
+            E.ImportLoadedBundleIntoUser();
             return;
         }
         try { LoadSourceFile(path, reconsult: false, intoModule); }
@@ -1130,12 +1131,6 @@ internal sealed class ConsultPipeline
     /// the ISO logical update view). Save/restore keeps nested consults sound.</summary>
     internal void ConsultFileLive(string path, Activation liveEngine, string? intoModule = null)
     {
-        // A .shum bundle load has no runtime dynamic-clause routing to patch.
-        if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
-        {
-            ConsultFile(path);
-            return;
-        }
         var prev = E._liveConsultEngine;
         E._liveConsultEngine = liveEngine;
         try { ConsultFile(path, intoModule); }
@@ -1147,11 +1142,6 @@ internal sealed class ConsultPipeline
     /// <see cref="ConsultFileLive"/> does for <c>consult/1</c>.</summary>
     internal void ReconsultFileLive(string path, Activation liveEngine, string? intoModule = null)
     {
-        if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
-        {
-            ReconsultFile(path);
-            return;
-        }
         var prev = E._liveConsultEngine;
         E._liveConsultEngine = liveEngine;
         try { ReconsultFile(path, intoModule); }
@@ -1212,7 +1202,8 @@ internal sealed class ConsultPipeline
                 foreach (int fid in defined)
                     AbolishPredicateInModule(targetModule, fid);
             }
-            E.LoadBundle(bundle);
+            E.LoadBundleLinkingLive(() => E.LoadBundle(bundle));
+            E.ImportLoadedBundleIntoUser();
         }
         else
         {
