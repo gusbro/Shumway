@@ -10,7 +10,7 @@
 // apart (dotnet publish src/Shumway.Web -c Release).
 //
 // --with-demo makes <dir> a whole deployment, the demo's publish at its
-// root and the notebook site under lite/, which is how the two are served
+// root and the notebook site under jupyter/, which is how the two are served
 // and how they can be tried locally.
 
 import { spawnSync } from 'node:child_process';
@@ -56,7 +56,7 @@ run(python, ['-m', 'jupyter', 'labextension', 'build', '.'], extension);
 
 // --- the site ------------------------------------------------------------
 const deployment = path.resolve(out);
-const lite = demo ? path.join(deployment, 'lite') : deployment;
+const notebooks = demo ? path.join(deployment, 'jupyter') : deployment;
 fs.rmSync(deployment, { recursive: true, force: true });
 if (demo) {
   fs.cpSync(path.resolve(demo), deployment, { recursive: true });
@@ -67,13 +67,13 @@ if (demo) {
 // Without the task database a rebuild into a new directory copies nothing.
 fs.rmSync(path.join(site, '.jupyterlite.doit.db'), { force: true });
 run(python, ['-m', 'jupyter', 'lite', 'build',
-  '--lite-dir', '.', '--output-dir', lite,
+  '--lite-dir', '.', '--output-dir', notebooks,
   // Only what this repository names, not what the environment has installed.
   '--ignore-sys-prefix',
   '--LiteBuildConfig.federated_extensions=../extension/labextension'], site);
 
 // --- the runtime's JavaScript, from where the demo has it ----------------
-const scripts = path.join(lite, 'shumway');
+const scripts = path.join(notebooks, 'shumway');
 fs.mkdirSync(scripts, { recursive: true });
 for (const file of ['isolate.js', 'session.js', 'mirror.js'])
   fs.copyFileSync(path.join(runtimeScripts, file), path.join(scripts, file));
@@ -82,8 +82,8 @@ for (const file of ['isolate.js', 'session.js', 'mirror.js'])
 // The worker is the demo's, two directories up from the script (ADR-069).
 const tag = '<script src="../shumway/isolate.js" data-worker="../../sw.js"></script>';
 let pages = 0;
-for (const entry of fs.readdirSync(lite, { withFileTypes: true })) {
-  const page = path.join(lite, entry.name, 'index.html');
+for (const entry of fs.readdirSync(notebooks, { withFileTypes: true })) {
+  const page = path.join(notebooks, entry.name, 'index.html');
   if (!entry.isDirectory() || !fs.existsSync(page)) continue;
   const html = fs.readFileSync(page, 'utf8');
   if (!html.includes('<head>')) throw new Error(`${page} has no <head> to put the isolation script in`);
@@ -91,4 +91,4 @@ for (const entry of fs.readdirSync(lite, { withFileTypes: true })) {
   pages++;
 }
 if (pages === 0) throw new Error('the site has no page: nothing would be isolated');
-console.log(`notebook site in ${lite}: ${pages} pages isolated`);
+console.log(`notebook site in ${notebooks}: ${pages} pages isolated`);

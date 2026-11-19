@@ -21,8 +21,8 @@ const types = {
  */
 export async function serve(directory, siteOptions = null) {
   const root = path.resolve(directory);
-  if (!fs.existsSync(path.join(root, 'lite', 'lab', 'index.html')))
-    throw new Error(`${root} is not a deployment: it has no lite/lab/index.html`);
+  if (!fs.existsSync(path.join(root, 'jupyter', 'lab', 'index.html')))
+    throw new Error(`${root} is not a deployment: it has no jupyter/lab/index.html`);
   const server = http.createServer((request, response) => {
     let name = decodeURIComponent(new URL(request.url, 'http://x').pathname);
     if (name.endsWith('/')) name += 'index.html';
@@ -36,7 +36,7 @@ export async function serve(directory, siteOptions = null) {
       'Content-Type': types[path.extname(file)] ?? 'application/octet-stream',
       'Cache-Control': 'no-store'
     });
-    if (siteOptions && name === '/lite/jupyter-lite.json') {
+    if (siteOptions && name === '/jupyter/jupyter-lite.json') {
       const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
       Object.assign(settings['jupyter-config-data'], siteOptions);
       response.end(JSON.stringify(settings));

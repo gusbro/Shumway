@@ -106,11 +106,11 @@ On activation the service worker deletes the older generations of its own
 cache and no other: the origin of a Pages site is shared by every project of
 its owner (amended 2026-11-14; it deleted every cache of the origin).
 
-The same worker serves the notebook site, the directory `lite/` of this one
+The same worker serves the notebook site, the directory `jupyter/` of this one
 (ADR-069; amended 2026-11-16). That site runs this app's runtime, whose
 threads are workers with their script in `_framework`, and a worker
-registered under `lite/` is not asked about a script outside it. What is
-under `lite/` is sent with `credentialless` where the engine implements it,
+registered under `jupyter/` is not asked about a script outside it. What is
+under `jupyter/` is sent with `credentialless` where the engine implements it,
 for the images of markdown cells; the rest keeps `require-corp`. A page is
 kept for offline use under its own path: under one name for all, a visit to
 one site replaced the other's.

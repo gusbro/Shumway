@@ -19,7 +19,7 @@ const check = (ok, what, detail) => {
 };
 
 try {
-  await page.goto(server.url + 'lite/lab/index.html');
+  await page.goto(server.url + 'jupyter/lab/index.html');
   await page.waitForFunction(() => window.crossOriginIsolated === true
       && !!window.jupyterapp?.serviceManager?.contents
       && !!document.querySelector('#jp-main-dock-panel, .jp-LabShell'),
