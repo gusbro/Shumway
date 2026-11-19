@@ -74,6 +74,11 @@ notebook from top to bottom.
 `limit.mjs` serves the site set to hold one kernel and checks that a second
 is refused with a message that says how to free a place.
 
+CI runs both in Chromium, Firefox and WebKit
+(`.github/workflows/notebooks.yml`) on a pull request or a push to `main`
+that changes `jupyterlite/` or the engine: the answers a notebook shows come
+from the engine.
+
 ## Configuration
 
 `site/jupyter-lite.json` takes two options of this site's own:
