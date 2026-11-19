@@ -9,11 +9,11 @@ Records D4 (revised) and D15. Accepted in part:
   kernel is TypeScript, and shows text, bindings, errors, tables and what
   `jupyter:display/2` asks for.
 
-- 2026-11-19: phase 2 of D15, graphs, drawn with dagre rather than
-  Graphviz (amendment below).
+- 2026-11-19: phase 2 of D15, graphs, drawn with dagre (amendment below).
+- 2026-11-19: phase 3 of D15, plots, with the Vega-Lite specification built
+  by the kernel (second amendment below).
 
-Phases 3 and 4 of D15 (plots, widgets) stay proposed until the plan reaches
-them.
+Phase 4 of D15 (widgets) stays proposed until the plan reaches it.
 
 ## Context
 
@@ -62,7 +62,7 @@ without our extension.
 |---|---|---|
 | 1 | output, bindings, errors, `print_table`, `print_and_save_table`, `predicate_atoms` | TS; markdown tables. **The server writes the saved file itself**, and ADR-070's mirror makes it appear |
 | 2 | `print_sld_tree`, `print_transition_graph` (DOT) | **dagre** lays out the DOT the servers write, **loaded on first use** (amendment below); emit SVG plus the DOT as `text/vnd.graphviz` and `text/plain` |
-| 3 | `show_data` | **Vega-Lite**: the spec is **produced by the Prolog/Logtalk server**, and the TS only emits it |
+| 3 | `show_data` | **Vega-Lite**: the server sends the reference's `show_data` description, the **kernel** builds the spec (second amendment below), and JupyterLab draws it |
 | 4 | `input_html` (widgets, forms, inputs) | needs Hercutalk to make the callback configurable (below) |
 
 **Phase 3 details:**
@@ -77,9 +77,9 @@ without our extension.
   silently.
 - **Static fallback.** GitHub does not render Vega-Lite, so a static SVG
   generated with the Vega already loaded by JupyterLab is a later step.
-- **Proposal for Hercutalk.** Desktop JupyterLab renders Vega-Lite natively,
-  so the same server-side spec would let Hercutalk on the desktop drop
-  matplotlib too.
+- **For Hercutalk.** Desktop JupyterLab renders Vega-Lite natively, so the
+  kernel's mapping would let Hercutalk on the desktop drop matplotlib too;
+  its server would not change.
 
 **Phase 4, widgets.** Today the server writes `fetch('http://IP:port')`
 into the HTML. The proposal to Hercutalk: `jupyter_widgets` emits a call to
@@ -134,6 +134,30 @@ Apache, BSD), and the WASM build is about 2 MB against about 100 KB. What
 the notebooks draw (term trees and small transition graphs) dagre lays out
 well. If its drawings fall short, the drawer can change without touching the
 servers or the saved notebooks.
+
+## Second amendment (2026-11-19): the kernel builds the Vega-Lite spec
+
+**Decision.** The server sends `show_data` as the reference's server does:
+the `Key-Value` pairs of the query's `Data`, as a JSON object. The kernel
+turns that description into a Vega-Lite v5 specification
+(`extension/src/core/data.ts`) and emits it as
+`application/vnd.vegalite.v5+json`, with a `text/plain` summary.
+JupyterLab's own Vega-Lite renderer, which the site already has, draws it.
+
+- An option the kernel does not draw is named in the cell output.
+- The reference writes every atom as text, `true` and `false` included; the
+  kernel reads those two as booleans where a boolean is meant, as the
+  reference's kernel does.
+
+**Why in the kernel.** The server stays the reference's, so the corpus
+compares its answers as they are; one mapping serves the Prolog and the
+Logtalk variants, where a server-side one would be written twice, once in
+each server; and Hercutalk's server does not change. The kernel was already
+the place where a description becomes something to look at, as a table or
+a graph does.
+
+**Dependencies.** None: JupyterLite builds JupyterLab with its Vega-Lite
+renderer, which loads Vega when a notebook first draws a plot.
 
 ## Consequences
 

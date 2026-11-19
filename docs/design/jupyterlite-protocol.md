@@ -133,7 +133,7 @@ reported for the **first** error, as in Hercutalk.
 | `print_and_save_table` | as above, plus format and file | table; **the server writes the file** | 1 |
 | `print_sld_tree` | DOT source | `image/svg+xml` drawn by dagre, plus the DOT as `text/vnd.graphviz` and `text/plain` (ADR-072) | 2 |
 | `print_transition_graph` | DOT source | as above | 2 |
-| `show_data` | plot description (matplotlib-style) | **Vega-Lite** spec built by the server (§6) | 3 |
+| `show_data` | plot description (matplotlib-style) | **Vega-Lite** spec built by the kernel (§6) | 3 |
 | `input_html` | HTML with callbacks | `text/html`, once the callback is configurable | 4 |
 | `set_prolog_backend` | backend name | `not_applicable` on Shumway | |
 | `display_data` **[ext]** | list of `{"mime": "...", "data": "..."}`, one for each call of `jupyter:display/2` in the query, in order | each as that MIME, plus `text/plain`; where the MIME's name ends in `json`, the data is parsed | 1 |
@@ -201,13 +201,16 @@ and proposed to Hercutalk so that both variants show constraints alike.
   key of §4 to the answer of its query. `print_table`, `print_and_save_table`
   and `print_queries` are also accepted without the module.
 
-## 6. Vega-Lite from `show_data` [ext, proposed upstream]
+## 6. Vega-Lite from `show_data`
 
-The server turns a `show_data` description into a Vega-Lite v5 spec. The
-kernel emits it as `application/vnd.vegalite.v5+json` plus a `text/plain`
-summary. Option names that cannot be mapped are reported in the cell output,
-never dropped silently. The mapping table lives with the code and is
-mirrored in `jupyterlite-features.yaml`.
+The server sends a `show_data` description as the reference's server does:
+the `Key-Value` pairs of the query's `Data` (or `_Data`) as a JSON object,
+`type` and the keys of the matplotlib function of that name, every atom as
+text. The kernel turns it into a Vega-Lite v5 spec and emits it as
+`application/vnd.vegalite.v5+json` plus a `text/plain` summary (ADR-072,
+second amendment). Option names that cannot be mapped are reported in the
+cell output, never dropped silently. The mapping lives with the code
+(`data.ts`), and each plot type has a row in `jupyterlite-features.yaml`.
 
 ## 7. Interrupt and restart
 

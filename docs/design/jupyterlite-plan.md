@@ -184,7 +184,9 @@ no graphs do not download the drawer.
 
 ## Phase 5: Plots with Vega-Lite
 
-- `show_data` → Vega-Lite spec, generated in the server.
+- `show_data` sends the reference's description; the kernel builds the
+  Vega-Lite spec (ADR-072, second amendment), and JupyterLab's renderer
+  draws it.
 - Mapping of the common options, with unknown options reported.
 - Polar and hexbin stay `not_yet_supported`.
 - A static SVG fallback for GitHub is optional.

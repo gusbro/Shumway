@@ -61,7 +61,7 @@ groups:
       - { id: h-transition-graph, feature: "print_transition_graph/3,4", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:print_transition_graph(step/3, 1, 3, 2).", phase: 4 }
       - { id: h-show-graph, feature: "show_graph/2", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "show_graph(state/2, move/3).", phase: 4 }
       - { id: h-sld-tree, feature: "print_sld_tree/1", hercutalk_desktop: partial, shumway_prolog_web: not_yet_supported, note: "not exported in 0.47.0 (commented out of the public list); the client still renders the key", test: todo, phase: 4 }
-      - { id: h-show-data, feature: "show_data/1", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, note: "Vega-Lite on the web (ADR-072)", test: todo, phase: 5 }
+      - { id: h-show-data, feature: "show_data/1", hercutalk_desktop: supported, shumway_prolog_web: supported, note: "Vega-Lite on the web (ADR-072)", test: "show_data(Data = [type-plot, x-[1, 2, 3], y-[1, 4, 9]]).", phase: 5 }
       - { id: h-display, feature: "display/2 [ext]", hercutalk_desktop: not_yet_supported, shumway_prolog_web: supported, test: "jupyter:display('text/html', '<b>hi</b>').", phase: 3 }
       - { id: h-set-backend, feature: "set_prolog_backend/1", hercutalk_desktop: supported, shumway_prolog_web: not_applicable, test: todo, phase: 3 }
 
@@ -72,7 +72,7 @@ groups:
       - { id: c-highlight, feature: "%%highlight", hercutalk_desktop: supported, shumway_prolog_web: supported, note: "runs nothing", test: "%%highlight\nfoo(X) :- bar(X).", phase: 3 }
       - { id: c-table, feature: "%%table, %%csv, %%tsv", hercutalk_desktop: supported, shumway_prolog_web: supported, note: "%%tsv is checked by the server's tests", test: "%%table\nmember(X-Y, [a-1, b-2]).  →  %%csv letters.csv\nmember(X, [a, b]).", phase: 3 }
       - { id: c-tree, feature: "%%tree", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%%tree\n1 + 2 * 3 - 4", phase: 4 }
-      - { id: c-data, feature: "%%data", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 5 }
+      - { id: c-data, feature: "%%data", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%%data\nData = [type-bar, x-[a, b], height-[1, 2]]", phase: 5 }
 
   - name: Line magics
     rows:
@@ -101,8 +101,20 @@ groups:
 
   - name: Plots (show_data)
     rows:
-      - { id: p-common, feature: "plot, scatter, bar, barh, hist, step, stackplot, errorbar, boxplot, pie, ecdf, log scales", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, note: "split per type once implemented", test: todo, phase: 5 }
-      - { id: p-stem-event, feature: "stem, eventplot", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 5 }
+      - { id: p-plot, feature: "plot", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%%data\nData = [type-plot, x-[1, 2, 3], y-[1, 4, 9], marker-o]", phase: 5 }
+      - { id: p-scatter, feature: "scatter", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%%data\nData = [type-scatter, x-[5, 7, 8], y-[99, 86, 87]]", phase: 5 }
+      - { id: p-bar, feature: "bar", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%%data\nData = [type-bar, x-[a, b], height-[12, 7], bar_label-[label_type-edge]]", phase: 5 }
+      - { id: p-barh, feature: "barh", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%%data\nData = [type-barh, y-[a, b], width-[5, 20]]", phase: 5 }
+      - { id: p-hist, feature: "hist", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%%data\nData = [type-hist, x-[1.5, 2.5, 2.5, 3], bins-3]", phase: 5 }
+      - { id: p-step, feature: "step", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%%data\nData = [type-step, x-[1, 2, 3], y-[0, 1, 0], where-post]", phase: 5 }
+      - { id: p-stackplot, feature: "stackplot", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%%data\nData = [type-stackplot, x-[1, 2], y-[[1, 2], [3, 4]], labels-[a, b]]", phase: 5 }
+      - { id: p-errorbar, feature: "errorbar", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%%data\nData = [type-errorbar, x-[1, 2], y-[2.1, 3.9], yerr-[0.3, 0.5]]", phase: 5 }
+      - { id: p-boxplot, feature: "boxplot", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%%data\nData = [type-boxplot, x-[[1, 2, 9], [3, 4, 5]]]", phase: 5 }
+      - { id: p-pie, feature: "pie", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%%data\nData = [type-pie, x-[45, 30], labels-['A', 'B'], autopct-'%1.1f%%']", phase: 5 }
+      - { id: p-ecdf, feature: "ecdf", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%%data\nData = [type-ecdf, x-[3, 1, 4, 1, 5]]", phase: 5 }
+      - { id: p-log, feature: "loglog, semilogx, semilogy", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%%data\nData = [type-loglog, x-[1, 2, 4], y-[2, 4, 16]]", phase: 5 }
+      - { id: p-stem, feature: "stem", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%%data\nData = [type-stem, x-[1, 2, 3], y-[1, -1, 2]]", phase: 5 }
+      - { id: p-eventplot, feature: "eventplot", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%%data\nData = [type-eventplot, positions-[[1, 3], [2, 5]]]", phase: 5 }
       - { id: p-polar-hexbin, feature: "polar, hexbin", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, note: "no reasonable Vega-Lite mapping", test: todo, phase: 5 }
 
   - name: Widgets
