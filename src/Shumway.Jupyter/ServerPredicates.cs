@@ -34,6 +34,8 @@ internal static class ServerPredicates
             BuiltinsRegistry.Register("$jupyter_strict_syntax", 2, StrictSyntax);
             BuiltinsRegistry.Register("$jupyter_tracing", 1, Tracing);
             BuiltinsRegistry.Register("$jupyter_documented", 1, Documented);
+            BuiltinsRegistry.Register("$jupyter_refresh_libraries", 0, RefreshLibraries);
+            BuiltinsRegistry.Register("$jupyter_import_library", 3, ImportLibrary);
             _registered = true;
         }
     }
@@ -184,6 +186,36 @@ internal static class ServerPredicates
                && indicator.Args[1] is IntTerm arity
             ? $"error: {formal} in {name}/{arity.Value}"
             : $"error: {formal}";
+    }
+
+    // '$jupyter_refresh_libraries': the page's collections on the search path,
+    // before a cell. Nothing for a server with no page behind it.
+    private static bool RefreshLibraries(Activation activation)
+    {
+        NotebookServer server = ServerOf(activation);
+        server.Libraries?.Refresh((PrologEngine)activation.Host!);
+        return true;
+    }
+
+    // '$jupyter_import_library'(+Dialect, +Location, -Note): jupyter.pl has
+    // checked the arguments; a location is a URL, an absolute path or ''.
+    private static bool ImportLibrary(Activation activation)
+    {
+        NotebookServer server = ServerOf(activation);
+        Term dialect = RegisterMarshalling.ReadRegisterAsTerm(activation, 0);
+        Term location = RegisterMarshalling.ReadRegisterAsTerm(activation, 1);
+        if (dialect is not AtomTerm { Name: var dialectName } || location is not AtomTerm { Name: var where })
+            throw new ShumwayPrologException(IsoError.TypeError("atom", dialect is AtomTerm ? location : dialect));
+        if (server.Libraries is not { } libraries)
+            throw new ShumwayPrologException(IsoError.SystemError(
+                "this session has no page to import a library into", activation));
+        string note;
+        try { note = libraries.Import((PrologEngine)activation.Host!, dialectName, where); }
+        catch (Exception ex) when (ex is not ShumwayPrologException)
+        {
+            throw new ShumwayPrologException(IsoError.SystemError(ex.Message, activation));
+        }
+        return RegisterMarshalling.UnifyRegisterWithTerm(activation, 2, Text(note));
     }
 
     private static Term Text(string text) => new StringTerm(text, TextKind.Chars);

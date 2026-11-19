@@ -21,8 +21,8 @@ project comes to depend on this directory.
 The kernel does not hold the engine. It asks the demo's wasm app for a
 session and sends it request lines; the server that answers them is
 `src/Shumway.Jupyter`. The runtime's JavaScript (`isolate.js`, `session.js`,
-`mirror.js`) stays in `src/Shumway.Web/wwwroot`, and the build copies it into
-the site.
+`mirror.js`, `libraries.js`) stays in `src/Shumway.Web/wwwroot`, and the build
+copies it into the site.
 
 ## Building
 
@@ -69,7 +69,10 @@ runs cells through the kernel: answers, errors, tables, `jupyter:display/2`,
 `read/1`, an interrupted query, files both ways, two notebooks at once, and
 the cells of the feature table
 ([`jupyterlite-features.yaml`](../docs/design/jupyterlite-features.yaml)).
-It opens a notebook saved by another Prolog kernel, and runs each example
+It opens a notebook saved by another Prolog kernel, uses a collection of
+libraries stored while the notebook is open, imports others with
+`jupyter:import_library/1` (from the notebook's files, and from a second
+local server that does or does not allow CORS), and runs each example
 notebook from top to bottom.
 `limit.mjs` serves the site set to hold one kernel and checks that a second
 is refused with a message that says how to free a place.
@@ -79,13 +82,35 @@ CI runs both in Chromium, Firefox and WebKit
 that changes `jupyterlite/` or the engine: the answers a notebook shows come
 from the engine.
 
+## Libraries
+
+The collections of libraries the demo imports (its **Libraries…** dialog) are
+the notebooks' too (ADR-070, O3): the browser keeps them in one place, the
+page restores them when it starts, and before each cell it brings in those
+another tab stored since. A library a cell compiles because it uses it is
+kept there as well.
+
+A notebook imports one itself with `jupyter:import_library(Spec)`:
+
+| Spec | What comes in |
+|---|---|
+| `scryer`, `swi`, `trealla` | the library of that system, from the GitHub directory the demo suggests |
+| `Dialect:Location` | what Location holds, loaded under Dialect |
+| `Location` | what Location holds, with no dialect (or the suggested one's, for its address) |
+
+A location is the URL of a GitHub directory, of a Prolog file or of a `.zip`
+or `.tar.gz` archive, or such a file of the notebook's. The collection is
+named after it, and keeps where it came from: importing it again from there
+does nothing, so a notebook's first cell can do it, and the same name from
+elsewhere is refused.
+
 ## Where it is published
 
 The demo's workflow (`.github/workflows/webshumway.yml`) builds this site
 without `--with-demo` and publishes it in the demo's `jupyter/`:
 [gusbro.github.io/Shumway/jupyter/](https://gusbro.github.io/Shumway/jupyter/).
-The build is cached by the contents of this directory and of the three
-runtime scripts it copies, so a push that changes only the engine
+The build is cached by the contents of this directory and of the runtime
+scripts it copies, so a push that changes only the engine
 republishes the demo with the cached site.
 
 ## Configuration

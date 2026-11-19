@@ -50,7 +50,7 @@ jobs:
       - name: Publish
         run: dotnet publish src/Shumway.Web -c Release -o publish
 
-      # The notebook site is made of jupyterlite/ and the three runtime scripts
+      # The notebook site is made of jupyterlite/ and the runtime scripts
       # build.mjs copies, not of the engine: a change to the engine alone
       # reuses it.
       - name: Restore the notebook site
@@ -58,7 +58,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: notebook-site
-          key: notebook-site-${{ hashFiles('jupyterlite/**', 'src/Shumway.Web/wwwroot/isolate.js', 'src/Shumway.Web/wwwroot/session.js', 'src/Shumway.Web/wwwroot/mirror.js') }}
+          key: notebook-site-${{ hashFiles('jupyterlite/**', 'src/Shumway.Web/wwwroot/isolate.js', 'src/Shumway.Web/wwwroot/session.js', 'src/Shumway.Web/wwwroot/mirror.js', 'src/Shumway.Web/wwwroot/libraries.js') }}
 
       - uses: actions/setup-node@v4
         if: steps.notebooks.outputs.cache-hit != 'true'

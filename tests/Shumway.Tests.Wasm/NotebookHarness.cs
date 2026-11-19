@@ -26,8 +26,10 @@ internal sealed class NotebookHarness : IDisposable
     }
 
     /// <summary>A session in the directory <paramref name="folder"/>, its own
-    /// unless named: two notebooks of one directory share it.</summary>
-    public (NotebookServer Server, HostSession Session) Open(string id, Page? page = null, string? folder = null)
+    /// unless named: two notebooks of one directory share it. The server has
+    /// the page's <paramref name="libraries"/>, or none.</summary>
+    public (NotebookServer Server, HostSession Session) Open(
+        string id, Page? page = null, string? folder = null, INotebookLibraries? libraries = null)
     {
         HostSession session = _host.Create(id, page ?? new Page(), _ =>
         {
@@ -45,7 +47,7 @@ internal sealed class NotebookHarness : IDisposable
             return true;
         });
         Assert.True(started.Wait(Patience), "the session did not start");
-        NotebookServer server = NotebookServer.Start(session);
+        NotebookServer server = NotebookServer.Start(session, libraries);
         _servers.Add(server);
         return (server, session);
     }

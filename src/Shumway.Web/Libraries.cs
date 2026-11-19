@@ -68,15 +68,20 @@ internal static partial class WebShumwayApp
     /// compile went.</para></summary>
     private const string DiagnosticSuffix = ".diag";
 
+    /// <summary>Where a collection came from: the URL or the file it was
+    /// imported from, so importing it again from there is known to be the
+    /// same collection and one from elsewhere under its name is refused.</summary>
+    private const string SourceMarker = ".source";
+
     /// <summary>How many warning lines one compile's diagnostic keeps.</summary>
     private const int DiagnosticLineLimit = 200;
 
-    /// <summary>Puts every imported library on the new engine's search path.
-    /// Called from StartEngine, so a reset engine knows them too.</summary>
-    internal static void RegisterLibraries()
+    /// <summary>Puts every imported library on <paramref name="engine"/>'s
+    /// search path: the page's engine at each start, a notebook session's at
+    /// its start and before each cell. Adding a directory twice adds it once.</summary>
+    internal static void RegisterLibraries(PrologEngine engine)
     {
         Directory.CreateDirectory(LibrariesRoot);
-        PrologEngine engine = S.Engine;
         engine.LibrarySourceResolver = (library, source) => CompileOnDemand(engine, library, source);
         foreach (string dir in Directory.GetDirectories(LibrariesRoot))
         {
@@ -86,10 +91,20 @@ internal static partial class WebShumwayApp
         }
     }
 
+    /// <summary>The page's own engine, or null in a notebook page, which
+    /// never starts one: its engines are its kernels' sessions (ADR-068).</summary>
+    private static PrologEngine? PageEngine => _only?.TopLevel?.Engine;
+
+    /// <summary>Where the library exports run: queued on the page's engine
+    /// when there is one, since a consult reads these files; on a pool thread
+    /// in a notebook page.</summary>
+    private static Task<T> OnLibraries<T>(Func<T> work)
+        => PageEngine is not null ? S.OnEngine(work) : Task.Run(work);
+
     /// <summary>The imported libraries, newline-separated, sorted.</summary>
     [JSExport]
     internal static Task<string> LibraryNames()
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             Directory.CreateDirectory(LibrariesRoot);
             var names = Directory.GetDirectories(LibrariesRoot)
@@ -102,7 +117,7 @@ internal static partial class WebShumwayApp
     /// <summary>The dialect a library loads under, or the empty string.</summary>
     [JSExport]
     internal static Task<string> LibraryDialect(string name)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             string marker = Path.Combine(ResolveLibrary(name), DialectMarker);
             return File.Exists(marker) ? File.ReadAllText(marker).Trim() : "";
@@ -112,7 +127,7 @@ internal static partial class WebShumwayApp
     /// Returns null, or the error text.</summary>
     [JSExport]
     internal static Task<string?> LibraryCreate(string name, string dialect)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             if (InvalidWorkspaceName(name) is { } bad) return bad;
             try
@@ -123,20 +138,87 @@ internal static partial class WebShumwayApp
                 if (string.IsNullOrWhiteSpace(dialect))
                 {
                     if (File.Exists(marker)) File.Delete(marker);
-                    S.Engine.AddLibraryDirectory(dir);
+                    PageEngine?.AddLibraryDirectory(dir);
                 }
                 else
                 {
                     // Tag first: an unknown dialect must not leave a marker
-                    // behind that every later boot would trip over.
-                    S.Engine.AddLibraryDirectory(dir, dialect.Trim());
+                    // behind that every later boot would trip over. A notebook
+                    // page has no engine to ask: its dialects come checked,
+                    // and a session registers an unknown one untagged.
+                    PageEngine?.AddLibraryDirectory(dir, dialect.Trim());
                     File.WriteAllText(marker, dialect.Trim());
                 }
-                S.Engine.AddLibraryDirectory(Path.Combine(dir, SourceDir));
+                PageEngine?.AddLibraryDirectory(Path.Combine(dir, SourceDir));
                 return null;
             }
             catch (Exception ex) { return ex.Message; }
         });
+
+    /// <summary>Where a collection was imported from, or the empty string
+    /// when that was not kept: it was imported before the marker existed.</summary>
+    [JSExport]
+    internal static Task<string> LibrarySource(string name)
+        => OnLibraries(() =>
+        {
+            string marker = Path.Combine(ResolveLibrary(name), SourceMarker);
+            return File.Exists(marker) ? File.ReadAllText(marker).Trim() : "";
+        });
+
+    /// <summary>Records where a collection was imported from. Returns null,
+    /// or the error text.</summary>
+    [JSExport]
+    internal static Task<string?> LibrarySetSource(string name, string source)
+        => OnLibraries(() =>
+        {
+            try
+            {
+                string dir = ResolveLibrary(name);
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, SourceMarker), source.Trim());
+                return (string?)null;
+            }
+            catch (Exception ex) { return ex.Message; }
+        });
+
+    /// <summary>The Prolog sources of a .zip, .tar.gz or .tar archive, as a
+    /// JSON array of <c>{path, text}</c>, or <c>{"error": ...}</c>.</summary>
+    [JSExport]
+    internal static Task<string> LibraryUnpack([JSMarshalAs<JSType.Array<JSType.Number>>] byte[] archive)
+        => Task.Run(() =>
+        {
+            using var buffer = new MemoryStream();
+            using (var json = new System.Text.Json.Utf8JsonWriter(buffer))
+            {
+                try
+                {
+                    IReadOnlyList<(string Path, string Text)> sources =
+                        Shumway.WebHost.LibraryArchive.Sources(archive);
+                    json.WriteStartArray();
+                    foreach ((string path, string text) in sources)
+                    {
+                        json.WriteStartObject();
+                        json.WriteString("path", path);
+                        json.WriteString("text", text);
+                        json.WriteEndObject();
+                    }
+                    json.WriteEndArray();
+                }
+                catch (Exception ex) when (ex is InvalidDataException or IOException)
+                {
+                    json.WriteStartObject();
+                    json.WriteString("error", ex.Message);
+                    json.WriteEndObject();
+                }
+            }
+            return System.Text.Encoding.UTF8.GetString(buffer.ToArray());
+        });
+
+    /// <summary>A file the engine sees, base64-encoded: an archive or a source
+    /// a notebook imports from its own files.</summary>
+    [JSExport]
+    internal static Task<string> LibraryReadLocal(string path)
+        => Task.Run(() => Convert.ToBase64String(File.ReadAllBytes(path)));
 
     /// <summary>Compiles a library's sources into a bundle beside them, which is
     /// then what <c>library(X)</c> resolves to.
@@ -555,7 +637,7 @@ internal static partial class WebShumwayApp
     /// tab and its headline.</summary>
     [JSExport]
     internal static Task<string> LibraryEntries(string name)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             string root = ResolveLibrary(name);
             string sources = Path.Combine(root, SourceDir);
@@ -597,7 +679,7 @@ internal static partial class WebShumwayApp
     /// empty string. What the library list's <c>details</c> shows.</summary>
     [JSExport]
     internal static Task<string> LibraryDiagnostic(string name, string library)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             string marker = Path.Combine(ResolveLibrary(name), library + DiagnosticSuffix);
             return File.Exists(marker) ? File.ReadAllText(marker) : "";
@@ -608,7 +690,7 @@ internal static partial class WebShumwayApp
     /// matters, since the batch that found out runs once, at import.</summary>
     [JSExport]
     internal static Task<string?> LibraryPutDiagnostic(string name, string library, string text)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             try
             {
@@ -624,7 +706,7 @@ internal static partial class WebShumwayApp
     /// path until the next engine — a path that resolves nothing is harmless.</summary>
     [JSExport]
     internal static Task<string?> LibraryRemove(string name)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             if (InvalidWorkspaceName(name) is { } bad) return bad;
             try
@@ -641,7 +723,7 @@ internal static partial class WebShumwayApp
     /// real thing. The dialect marker is not one of them.</summary>
     [JSExport]
     internal static Task<string> LibraryFiles(string name)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             string dir = Path.Combine(ResolveLibrary(name), SourceDir);
             if (!Directory.Exists(dir)) return "";
@@ -657,7 +739,7 @@ internal static partial class WebShumwayApp
     /// a byte array; the page stores the bytes.</summary>
     [JSExport]
     internal static Task<string> LibraryBundle(string name, string library)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             string path = Path.Combine(ResolveLibrary(name), library + ".shum");
             return File.Exists(path) ? Convert.ToBase64String(File.ReadAllBytes(path)) : "";
@@ -669,7 +751,7 @@ internal static partial class WebShumwayApp
     [JSExport]
     internal static Task<string?> LibraryPutBundle(
         string name, string library, [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] bundle)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             try
             {
@@ -684,7 +766,7 @@ internal static partial class WebShumwayApp
     /// <summary>A library file's contents, or null when there is no such file.</summary>
     [JSExport]
     internal static Task<string?> LibraryRead(string name, string file)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             string path = ResolveLibraryFile(name, file);
             return File.Exists(path) ? File.ReadAllText(path) : null;
@@ -693,7 +775,7 @@ internal static partial class WebShumwayApp
     /// <summary>Creates or replaces a library file. Returns null, or the error.</summary>
     [JSExport]
     internal static Task<string?> LibraryWrite(string name, string file, string content)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             try
             {

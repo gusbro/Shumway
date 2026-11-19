@@ -6,6 +6,8 @@
 //
 // The deployment is what `node jupyterlite/build.mjs --out <dir> --with-demo
 // <publish wwwroot>` makes. Exits with 1 when a check fails.
+import http from 'node:http';
+import zlib from 'node:zlib';
 import { webkit, chromium, firefox } from 'playwright';
 
 import { serve } from './serve.mjs';
@@ -13,6 +15,51 @@ import { serve } from './serve.mjs';
 const engineName = process.argv[3] ?? 'chromium';
 const server = await serve(process.argv[2]);
 const base = server.url;
+
+/** A .tar.gz of [name, text] entries, as a library's release is packed. */
+function tarGz(entries) {
+  const blocks = [];
+  for (const [name, text] of entries) {
+    const data = Buffer.from(text, 'utf8');
+    const header = Buffer.alloc(512);
+    header.write(name, 0, 100);
+    header.write('0000644\0', 100);
+    header.write('0000000\0', 108);
+    header.write('0000000\0', 116);
+    header.write(data.length.toString(8).padStart(11, '0') + '\0', 124);
+    header.write('00000000000\0', 136);
+    header.write('        ', 148);
+    header.write('0', 156);
+    header.write('ustar\0', 257);
+    header.write('00', 263);
+    let sum = 0;
+    for (const byte of header) sum += byte;
+    header.write(sum.toString(8).padStart(6, '0') + '\0 ', 148);
+    blocks.push(header, data, Buffer.alloc((512 - (data.length % 512)) % 512));
+  }
+  blocks.push(Buffer.alloc(1024));
+  return zlib.gzipSync(Buffer.concat(blocks));
+}
+
+// Another site, for jupyter:import_library/1 from a URL: under /cors/ it lets
+// other sites read its files, under /nocors/ it does not.
+const remoteFiles = {
+  '/cors/o3one.pl': ':- module(o3one, [one/1]).\none(1).\n',
+  '/other/o3one.pl': ':- module(o3one, [one/1]).\none(2).\n',
+  '/nocors/o3hidden.pl': ':- module(o3hidden, []).\n',
+  '/cors/o3url.tar.gz': tarGz([['o3url-1.0/o3_url.pl', ':- module(o3_url, [url_ok/1]).\nurl_ok(yes).\n'],
+    ['o3url-1.0/README', 'not a source']]),
+};
+const remote = http.createServer((request, response) => {
+  const path = new URL(request.url, 'http://x').pathname;
+  const body = remoteFiles[path];
+  const headers = path.startsWith('/nocors/') ? {} : { 'Access-Control-Allow-Origin': '*' };
+  if (body === undefined) { response.writeHead(404, headers); response.end(); return; }
+  response.writeHead(200, { ...headers, 'Content-Type': 'application/octet-stream' });
+  response.end(body);
+});
+await new Promise((resolve) => remote.listen(0, '127.0.0.1', resolve));
+const remoteUrl = `http://localhost:${remote.address().port}/`;
 
 const browser = await { webkit, chromium, firefox }[engineName].launch();
 const page = await (await browser.newContext()).newPage();
@@ -335,6 +382,134 @@ try {
   });
   for (const line of report) check(line.ok, line.what, line.detail);
 
+  // Library collections (ADR-070, O3): the ones the browser keeps for the
+  // demo, and jupyter:import_library/1. A notebook of its own.
+  const archive = tarGz([['o3drive/o3_tar.pl', ':- module(o3_tar, [tar_ok/1]).\ntar_ok(yes).\n']]).toString('base64');
+  const libraryReport = await page.evaluate(async ({ remote, archive }) => {
+    const app = window.jupyterapp;
+    const contents = app.serviceManager.contents;
+    const lines = [];
+    const check = (ok, what, detail) => lines.push({ ok: !!ok, what, detail: ok ? undefined : detail });
+    const strip = (text) => String(text).replace(/\x1b\[[0-9;]*m/g, '');
+    async function run(kernel, code) {
+      const outputs = [];
+      const future = kernel.requestExecute({ code, store_history: true });
+      future.onIOPub = (msg) => {
+        if (msg.header.msg_type === 'display_data' || msg.header.msg_type === 'execute_result')
+          outputs.push(msg.content.data);
+        else if (msg.header.msg_type === 'stream') outputs.push({ stream: msg.content.text });
+      };
+      const reply = await future.done;
+      return { reply: reply.content, texts: outputs.map((o) => strip(o['text/plain'] ?? o.stream ?? '')) };
+    }
+    const shown = (r) => r.texts.join('\n');
+    // What the browser keeps, as the demo keeps it.
+    const stored = async (path) => {
+      let here = await (await navigator.storage.getDirectory()).getDirectoryHandle('libraries');
+      const parts = path.split('/');
+      try {
+        for (const part of parts.slice(0, -1)) here = await here.getDirectoryHandle(part);
+        return await (await (await here.getFileHandle(parts.at(-1))).getFile()).text();
+      } catch { return null; }
+    };
+    const store = async (path, text) => {
+      let here = await (await navigator.storage.getDirectory()).getDirectoryHandle('libraries', { create: true });
+      const parts = path.split('/');
+      for (const part of parts.slice(0, -1)) here = await here.getDirectoryHandle(part, { create: true });
+      const writable = await (await here.getFileHandle(parts.at(-1), { create: true })).createWritable();
+      await writable.write(text);
+      await writable.close();
+    };
+    // A browser whose storage cannot be written (the Playwright build of
+    // WebKit on Windows) still imports; what it keeps is not checked there.
+    const writable = await (async () => {
+      try {
+        const file = await (await navigator.storage.getDirectory()).getFileHandle('o3-probe', { create: true });
+        const writer = await file.createWritable();
+        await writer.write('x');
+        await writer.close();
+        return true;
+      } catch { return false; }
+    })();
+    const skipped = [];
+
+    try {
+      await contents.save('libraries.ipynb', { type: 'notebook', format: 'json', content: {
+        cells: [], nbformat: 4, nbformat_minor: 5,
+        metadata: { kernelspec: { name: 'shumway_prolog', display_name: 'Prolog', language: 'prolog' } } } });
+      const panel = await app.commands.execute('docmanager:open', { path: 'libraries.ipynb' });
+      await panel.context.ready;
+      await panel.sessionContext.ready;
+      const kernel = panel.sessionContext.session.kernel;
+      let r = await run(kernel, 'X = ready.');
+      check(r.texts[0] === 'X = ready', 'the libraries notebook has a kernel', r);
+
+      // The demo imports a collection while this notebook is open.
+      if (writable) {
+        await store('o3stored/src/o3_stored.pl', ':- module(o3_stored, [stored/1]).\nstored(yes).\n');
+        r = await run(kernel, 'use_module(library(o3_stored)), stored(X).');
+        check(r.texts.includes('X = yes'), 'a collection the demo stored while the notebook is open is there for the next cell', r);
+        check(!!(await stored('o3stored/bundles/o3_stored')),
+          'and what the cell compiled to use it is kept for the demo and the next visit', r);
+      } else skipped.push('a collection the demo stored is there for the next cell, and what it compiled is kept');
+
+      // From an archive among the notebook's files.
+      await contents.save('o3drive.tar.gz', { type: 'file', format: 'base64', content: archive });
+      r = await run(kernel, "jupyter:import_library(swi:'o3drive.tar.gz').");
+      check(r.reply.status === 'ok' && /o3drive: 1 library from o3drive\.tar\.gz, dialect swi/.test(shown(r)),
+        'import_library brings in an archive of the notebook', r);
+      r = await run(kernel, 'use_module(library(o3_tar)), tar_ok(X).');
+      check(r.texts.includes('X = yes'), 'and its libraries load', r);
+      if (writable) {
+        check((await stored('o3drive/.dialect'))?.trim() === 'swi' && !!(await stored('o3drive/src/o3_tar.pl'))
+            && /o3drive\.tar\.gz$/.test((await stored('o3drive/.source')) ?? ''),
+          'the browser keeps it, with its dialect and where it came from',
+          [await stored('o3drive/.dialect'), await stored('o3drive/.source')]);
+      } else skipped.push('the browser keeps an imported collection, with its dialect and where it came from');
+
+      // From another site that lets other sites read it.
+      r = await run(kernel, `jupyter:import_library('${remote}cors/o3one.pl').`);
+      check(r.reply.status === 'ok' && /o3one: 1 library from localhost/.test(shown(r)),
+        'import_library brings in a Prolog file from a URL', r);
+      r = await run(kernel, 'use_module(library(o3one)), one(X).');
+      check(r.texts.includes('X = 1'), 'and it loads', r);
+      r = await run(kernel, `jupyter:import_library(scryer:'${remote}cors/o3url.tar.gz').`);
+      check(r.reply.status === 'ok' && /o3url: 1 library from localhost.*dialect scryer/.test(shown(r)),
+        'and an archive from a URL, with a dialect', r);
+      r = await run(kernel, 'use_module(library(o3_url)), url_ok(X).');
+      check(r.texts.includes('X = yes'), 'whose libraries load', r);
+
+      // Again from the same place: nothing to fetch.
+      r = await run(kernel, `jupyter:import_library('${remote}cors/o3one.pl').`);
+      check(r.reply.status === 'ok' && /o3one is here already, from http/.test(shown(r)),
+        'importing again from the same place leaves the collection as it is', r);
+      r = await run(kernel, `jupyter:import_library('${remote}other/o3one.pl').`);
+      check(r.reply.status === 'error' && /a collection named o3one is here already, from http/.test(shown(r)),
+        'the same name from somewhere else is refused, and says where the one here came from', r);
+      r = await run(kernel, `jupyter:import_library('${remote}nocors/o3hidden.pl').`);
+      check(r.reply.status === 'error' && /CORS/.test(shown(r)),
+        'a site that does not let other sites read it is named as the reason', r);
+
+      // A dialect's library, here already from where the page suggests it:
+      // nothing is fetched from GitHub.
+      const scryer = 'https://github.com/mthom/scryer-prolog/tree/master/src/lib';
+      if (writable) {
+        await store('scryer/.dialect', 'scryer');
+        await store('scryer/.source', scryer);
+        await store('scryer/src/o3_placeholder.pl', ':- module(o3_placeholder, []).\n');
+        r = await run(kernel, 'jupyter:import_library(scryer).');
+        check(r.reply.status === 'ok' && shown(r).includes(`scryer is here already, from ${scryer}`),
+          'import_library(scryer) is the library the page suggests, and one here is not fetched again', r);
+      } else skipped.push('import_library(scryer) is the library the page suggests, and one here is not fetched again');
+    } catch (ex) {
+      check(false, 'the library checks ran to their end', `${ex?.name}: ${ex?.message} ${ex?.stack ?? ''}`);
+    }
+    return { lines, skipped };
+  }, { remote: remoteUrl, archive });
+  for (const line of libraryReport.lines) check(line.ok, line.what, line.detail);
+  for (const what of libraryReport.skipped)
+    console.log(`skip [${engineName}] ${what}: this browser's storage cannot be written`);
+
   // The example notebooks run from top to bottom, and show what they say.
   for (const [file, expected] of [
     ['grammars.ipynb', ['Who = world', 'Who = prolog', 'V = 9', 'Text | Value', "'(1+2)*3' | 9 "]],
@@ -357,4 +532,5 @@ if (missing.size) console.log('not found:', [...missing].slice(0, 8));
 console.log(`[${engineName}] ${failures} failed`);
 await browser.close();
 server.close();
+remote.close();
 process.exit(failures ? 1 : 0);

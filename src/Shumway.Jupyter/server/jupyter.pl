@@ -9,7 +9,7 @@
 
 :- module(jupyter, [print_table/1, print_table/2, print_and_save_table/3,
                     print_variable_bindings/0, print_queries/0, print_queries/1,
-                    print_query_time/0, pwd/0, cd/1,
+                    print_query_time/0, pwd/0, cd/1, import_library/1,
                     help/0, magic/0, version/0, version/4, versions/0,
                     '$jupyter_table'/2, '$jupyter_saved_table'/4, '$jupyter_docs'/1]).
 
@@ -338,6 +338,63 @@ pwd :-
 cd(Directory) :-
     working_directory(_, Directory).
 
+% ----- libraries -----
+
+% import_library(+Spec): the page fetches the collection and keeps it, shared
+% with WebShumway (ADR-070, O3). Spec is a dialect, for the library the page
+% suggests for it; Dialect:Location; or Location, a URL or a file.
+import_library(Spec) :-
+    library_spec(Spec, Dialect, Location),
+    % The page's reason, with this predicate as the context.
+    catch('$jupyter_import_library'(Dialect, Location, Note),
+          error(system_error(Why), _),
+          throw(error(system_error(Why), import_library/1))),
+    format("~s~n", [Note]).
+
+library_spec(Spec, _, _) :-
+    var(Spec), !,
+    throw(error(instantiation_error, import_library/1)).
+library_spec(Dialect:Where, Dialect, Location) :- !,
+    library_dialect(Dialect),
+    library_location(Where, Location).
+library_spec(Spec, Spec, '') :-
+    atom(Spec), library_dialect_name(Spec), !.
+library_spec(Where, '', Location) :-
+    library_location(Where, Location).
+
+library_dialect(Dialect) :-
+    (   var(Dialect) -> throw(error(instantiation_error, import_library/1))
+    ;   \+ atom(Dialect) -> throw(error(type_error(atom, Dialect), import_library/1))
+    ;   library_dialect_name(Dialect) -> true
+    ;   throw(error(domain_error(library_dialect, Dialect), import_library/1))
+    ).
+
+% The dialects with a library the page suggests.
+library_dialect_name(scryer).
+library_dialect_name(swi).
+library_dialect_name(trealla).
+
+% A URL is the page's to fetch. Anything else names a file, which the page
+% reads where the session sees it; a word that is no file was meant as a
+% dialect.
+library_location(Where, Location) :-
+    (   var(Where) -> throw(error(instantiation_error, import_library/1))
+    ;   location_atom(Where, Atom) -> true
+    ;   throw(error(type_error(text, Where), import_library/1))
+    ),
+    (   ( sub_atom(Atom, 0, _, _, 'https://') ; sub_atom(Atom, 0, _, _, 'http://') ) ->
+        Location = Atom
+    ;   absolute_file_name(Atom, Location),
+        exists_file(Location) -> true
+    ;   \+ sub_atom(Atom, _, _, _, '/'), \+ sub_atom(Atom, _, _, _, '.') ->
+        throw(error(domain_error(library_dialect, Atom), import_library/1))
+    ;   throw(error(existence_error(source_sink, Atom), import_library/1))
+    ).
+
+location_atom(Text, Atom) :- atom(Text), !, Atom = Text.
+location_atom(Text, Atom) :- is_list(Text), catch(atom_chars(Atom, Text), _, fail), !.
+location_atom(Text, Atom) :- is_list(Text), catch(atom_codes(Atom, Text), _, fail).
+
 % ----- versions -----
 
 version :-
@@ -412,6 +469,14 @@ doc(pwd/0, 'jupyter:pwd', [
     'Prints the working directory of the session.']).
 doc(cd/1, 'jupyter:cd(+Directory)', [
     'Changes the working directory of the session.']).
+doc(import_library/1, 'jupyter:import_library(+Spec)', [
+    'Brings in a collection of libraries: then use_module(library(Name))',
+    'loads the libraries in it. Spec is scryer, swi or trealla, for the',
+    'library of that system; Dialect:Location; or Location, the URL of a',
+    'GitHub directory, of a Prolog file or of a .zip or .tar.gz archive, or',
+    'such a file of the session. A collection that is here already is left',
+    'as it is. The browser keeps the collections, for every notebook and',
+    'for WebShumway.']).
 doc(trace/1, 'jupyter:trace(+Goal)', [
     'Prints the calls, exits, retries and failures of Goal as it runs.',
     'Goal runs once, and the query goes on whether it succeeded or failed.']).

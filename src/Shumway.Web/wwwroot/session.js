@@ -33,6 +33,12 @@ let sessionAskForInput = null;
 /** Who is told that a notebook session wants a line: (kernelId) => void. */
 export const onSessionAskForInput = (handler) => { sessionAskForInput = handler; };
 
+let sessionImportLibrary = null;
+
+/** Who imports a collection for a notebook session's cell:
+ *  (kernelId, request) => void, answering through SessionSupplyImport. */
+export const onSessionImportLibrary = (handler) => { sessionImportLibrary = handler; };
+
 /**
  * Starts the runtime, with no engine in it, and resolves to its exports. A
  * notebook page stops here: its engines are its kernels' sessions (ADR-068).
@@ -67,6 +73,10 @@ export async function startRuntime({ entry = './_framework/dotnet.js', threads =
       writeNote: ui.writeNote ?? ui.writeError ?? nothing,
       askForInput: ui.askForInput ?? nothing,
       sessionAskForInput: (kernelId) => sessionAskForInput?.(kernelId),
+      // A page with no one to import must still answer: the session waits.
+      sessionImportLibrary: (kernelId, request) => (sessionImportLibrary
+        ? sessionImportLibrary(kernelId, request)
+        : engine?.SessionSupplyImport(kernelId, JSON.stringify({ error: 'this page imports no libraries' }))),
       debugStopped: (json) => ui.debugStopped?.(JSON.parse(json)),
     },
   });
