@@ -152,7 +152,7 @@ from the solution.
     `jupyterlite/build.mjs`, which also puts the runtime's JavaScript and
     the isolation script in the site;
   - example notebooks;
-  - deployed under `/lite`.
+  - deployed under `/jupyter`.
 - **Working directory:** each session starts in its notebook's directory,
   through ADR-071, which must be implemented by then.
 
@@ -201,7 +201,7 @@ Configurable callback in `jupyter_widgets`, `jupyter_forms` and
 |---|---|---|
 | O1 | Prolog variant: accept a cell containing only clauses directly, as hhu-stups' kernel does, as an implicit `%%user+` **[ext]**? Hercutalk enters code through magics only | **Decided (2026-11-16): no.** A fact cannot be told from a query, so a mixed cell would load its rules and run its facts. Code enters through magics, and a term that can only be a clause is an error that points to `%%user` |
 | O2 | `residual_goals` final shape | **Decided (2026-11-16):** a list of goals as text, as the top level shows them (protocol, §4). Proposed to Hercutalk; if it does not take it, the Logtalk variant shows no constraints |
-| O3 | Where imported libraries live in the lite site (`/drive/lib` or the bundle) | decide in Phase 3 from WebShumway's import code |
+| O3 | Where imported libraries live in the notebook site (`/drive/lib` or the bundle) | decide in Phase 3 from WebShumway's import code |
 
 ## Coordination with Paulo Moura (Hercutalk, Logtalk)
 

@@ -39,7 +39,7 @@ enter whatever the layout.
 installed from a Python package.
 
 **One Pages site per repository.** Pages deploys one artifact per
-repository, so the demo and `/lite` are always published together, by one
+repository, so the demo and `/jupyter` are always published together, by one
 workflow.
 
 ## Decision

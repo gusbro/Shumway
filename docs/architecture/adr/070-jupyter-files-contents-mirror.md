@@ -31,9 +31,9 @@ cell is not.
   cell created or changed in MEMFS under `/drive`, so files written by
   Prolog (`print_and_save_table`, `tell/1`, ...) appear in the file browser.
 - **Generalise WebShumway's mirror module to a pluggable target**, OPFS for
-  the demo and the Contents API for the lite site. It stays with the rest
+  the demo and the Contents API for the notebook site. It stays with the rest
   of the runtime's JavaScript, which the two sites share (ADR-073).
-- **No OPFS in the lite site.** Two sources of truth would need
+- **No OPFS in the notebook site.** Two sources of truth would need
   reconciliation, which the one-direction-at-a-time rule exists to avoid.
 - **The engine is unchanged.** It sees a file system, as it does in the demo.
 - **Each session starts in its notebook's directory** under `/drive`. That
@@ -85,8 +85,8 @@ headless Chromium, Firefox and WebKit, with a JupyterLab page of JupyterLite
   to the drive's size, as long as `last_modified` is reliable. If it proves
   unreliable, fall back to content hashes for small files.
 - Library imports (Scryer and others through the library path) need a home
-  in the lite site, for example `/drive/lib` or the bundle. That is decided in
-  the implementation, using WebShumway's import code.
+  in the notebook site, for example `/drive/lib` or the bundle. That is
+  decided in the implementation, using WebShumway's import code.
 
 ## Alternatives considered
 

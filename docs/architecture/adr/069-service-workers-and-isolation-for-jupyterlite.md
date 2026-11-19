@@ -4,8 +4,8 @@
 
 Accepted (2026-11-16). Records D12 and D13. Verification V1 of the plan has
 results (Context), and they changed D13: WebShumway sends one value to every
-engine, and the choice by engine is the lite site's alone. The WebShumway side
-of D12 and D13 is implemented (ADR-042, amended).
+engine, and the choice by engine is the notebook site's alone. The WebShumway
+side of D12 and D13 is implemented (ADR-042, amended).
 
 Amended the same day, when the notebook site's part was built: D12 had the
 notebook site register a worker of its own, and that worker does not reach
@@ -134,7 +134,7 @@ WebKit. A thread's script sent with `require-corp` runs in a page sent with
 
 - The "unregister everything" behaviour disappears, because the manager that
   performs it is disabled.
-- The lite site loses JupyterLite's offline cache (disabled by default
+- The notebook site loses JupyterLite's offline cache (disabled by default
   anyway) and contents sync for worker kernels (none here).
 - If a future kernel needs to run in a worker, this decision has to be
   revisited.
@@ -160,8 +160,8 @@ WebKit. A thread's script sent with `require-corp` runs in a page sent with
 - **A copy of `_framework` in the notebook site**, so that a worker of its
   own reaches the threads. A second 62 MB download for a reader of both
   sites, which ADR-073 rules out. Rejected.
-- **`require-corp` in the lite site too.** One behaviour in every browser and
-  no detection, at the cost of those images everywhere. Rejected while the
+- **`require-corp` in the notebook site too.** One behaviour in every browser
+  and no detection, at the cost of those images everywhere. Rejected while the
   detection stays this small.
 
 ## Related
