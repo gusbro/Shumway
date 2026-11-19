@@ -1,0 +1,46 @@
+### call
+show_term(f(a, g(1, b))).
+### call
+%%tree
+point(1, [x])
+### call
+%%user
+edge(a, b).
+edge(b, c).
+edge(c, a).
+trans(s0, go, s1).
+trans(s1, stop, s0).
+styled(a, [label/x, color/red, style/dotted], b).
+styled(b, [label/y], c).
+node(a, [label/'Start', shape/box]).
+node(b, [label/'End']).
+### call
+jupyter:print_transition_graph(edge/2, 1, 2, 0).
+### reference
+jupyter::print_transition_graph(edge/2, 1, 2, 0).
+### call
+jupyter:print_transition_graph(trans/3, 1, 3, 2).
+### reference
+jupyter::print_transition_graph(trans/3, 1, 3, 2).
+### call
+jupyter:print_transition_graph(trans/3, 1, 3).
+### reference
+jupyter::print_transition_graph(trans/3, 1, 3).
+### call
+jupyter:print_transition_graph(styled/3, 1, 3, 2).
+### reference
+jupyter::print_transition_graph(styled/3, 1, 3, 2).
+### call
+jupyter:print_transition_graph(edge, 1, 2, 0).
+### reference
+jupyter::print_transition_graph(edge, 1, 2, 0).
+### call
+show_graph(node/2, edge/2).
+### call
+jupyter:print_transition_graph(edge/2, 1, 3, 0).
+### reference
+jupyter::print_transition_graph(edge/2, 1, 3, 0).
+### call
+jupyter:print_transition_graph(1, 1, 2, 0).
+### reference
+jupyter::print_transition_graph(1, 1, 2, 0).

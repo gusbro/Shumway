@@ -48,6 +48,9 @@ function table(names: unknown[], rows: unknown[][]): IOutput {
 
 const isJson = (mime: string) => /[/+]json$/.test(mime);
 
+/** The registered MIME type of DOT text. */
+export const GRAPHVIZ = 'text/vnd.graphviz';
+
 /** What `jupyter:display/2` asked to show. */
 function displayed(item: { mime?: unknown; data?: unknown }, texts: ITexts): IOutput {
   const mime = String(item.mime ?? 'text/plain');
@@ -67,6 +70,11 @@ function additional(entry: any, texts: ITexts, rendered: IRendered): void {
     if (shown) rendered.outputs.push(table(shown.VariableNames ?? [], shown.ValuesLists ?? []));
   }
   for (const item of entry.display_data ?? []) rendered.outputs.push(displayed(item, texts));
+  // A graph is its DOT here; the kernel draws it (graph.ts) before it shows.
+  for (const key of ['print_transition_graph', 'print_sld_tree']) {
+    const dot = entry[key];
+    if (typeof dot === 'string') rendered.outputs.push({ 'text/plain': dot, [GRAPHVIZ]: dot });
+  }
   if (Array.isArray(entry.predicate_atoms)) rendered.predicates = entry.predicate_atoms.map(String);
 }
 

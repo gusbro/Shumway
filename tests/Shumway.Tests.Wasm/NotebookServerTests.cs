@@ -400,6 +400,43 @@ public sealed class NotebookServerTests : IDisposable
         Assert.Contains(expected, answer["error"]!.ToJsonString());
     }
 
+    [Fact]
+    public void AProgramsOwnShowTerm_IsCalledInsteadOfTheHelper()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+        Answer(server, Call(1, "%%user\nshow_term(X) :- write(mine(X))."));
+
+        JsonNode entry = Answer(server, Call(2, "show_term(a)."))["result"]!["1"]!;
+
+        Assert.Equal("mine(a)", (string)entry["output"]!);
+        Assert.Null(entry["print_transition_graph"]);
+    }
+
+    [Fact]
+    public void TreeMagic_DrawsEachTermOfTheCell()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+
+        JsonObject answer = Answer(server, Call(1, "%%tree\nf(a).\ng(b)"))["result"]!.AsObject();
+
+        Assert.Equal(2, answer.Count);
+        Assert.Contains("\"f(a)\" -> \"a\"", (string)answer["1"]!["print_transition_graph"]!);
+        Assert.Contains("\"g(b)\" -> \"b\"", (string)answer["2"]!["print_transition_graph"]!);
+    }
+
+    // The reference writes a name as it is; one with a double quote would not
+    // read as DOT.
+    [Fact]
+    public void AGraphsNames_AreEscapedForDot()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+
+        JsonNode entry = First(server, "show_term(f('say \"hi\"')).");
+
+        string dot = (string)entry["print_transition_graph"]!;
+        Assert.Contains("\"say \\\"hi\\\"\" [shape=\"egg\", label=\"say \\\"hi\\\"\"]", dot);
+    }
+
     private static string Output(NotebookServer server, int id, string code)
         => (string)Answer(server, Call(id, code))["result"]!["1"]!["output"]!;
 
@@ -466,12 +503,13 @@ public sealed class NotebookServerTests : IDisposable
             "halt/0", "retry/0", "help/0", "magic/0", "version/0", "version/4", "versions/0", "pwd/0", "cd/1", "import_library/1",
             "print_variable_bindings/0", "print_queries/0", "print_queries/1", "print_query_time/0",
             "print_table/1", "print_table/2", "print_and_save_table/3", "trace/1", "display/2",
-            "update_completion_data/0",
+            "update_completion_data/0", "print_transition_graph/3", "print_transition_graph/4",
+            "show_graph/2", "show_term/1",
         };
         string[] magics =
         {
             "%%user", "%%user+", "%%file FILE", "%%file+ FILE", "%%load FILE", "%%save FILE", "%%table",
-            "%%csv FILE", "%%tsv FILE", "%%highlight",
+            "%%csv FILE", "%%tsv FILE", "%%highlight", "%%tree",
             "%bindings", "%queries", "%pwd", "%help", "%versions", "%flags", "%magic",
         };
 

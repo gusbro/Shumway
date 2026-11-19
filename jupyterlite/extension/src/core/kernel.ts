@@ -8,7 +8,7 @@ import type { Contents, KernelMessage, Session } from '@jupyterlab/services';
 import { BaseKernel, type IKernel } from '@jupyterlite/services';
 
 import {
-  completions, documentation, nameAt, nameBefore, render, type IOutput, type ITexts
+  completions, documentation, GRAPHVIZ, nameAt, nameBefore, render, type IOutput, type ITexts
 } from './render';
 import { DRIVE, runtime, type IRuntime } from './runtime';
 
@@ -23,6 +23,19 @@ export interface IVariant {
   implementation: string;
   languageInfo: KernelMessage.IInfoReply['language_info'];
   texts: ITexts;
+}
+
+/** An output with a graph, with the graph drawn beside its DOT. A graph
+ *  that cannot be drawn is shown as its DOT, with why. */
+async function drawn(output: IOutput, noticePrefix: string): Promise<IOutput> {
+  const dot = output[GRAPHVIZ];
+  if (typeof dot !== 'string') return output;
+  try {
+    const { drawDot } = await import('./graph');
+    return { ...output, 'image/svg+xml': drawDot(dot) };
+  } catch (reason) {
+    return { 'text/plain': `${noticePrefix}The graph could not be drawn: ${reason}\n${dot}` };
+  }
 }
 
 const request = (id: number, method: string, params?: object): string =>
@@ -217,7 +230,7 @@ export class ServerKernel extends BaseKernel implements IKernel {
     }
 
     const rendered = render(answer, texts);
-    rendered.outputs.forEach(show);
+    for (const output of rendered.outputs) show(await drawn(output, texts.noticePrefix));
     if (rendered.predicates) this._predicates = rendered.predicates;
     if (rendered.stopped) this._stopped = true;
     if (rendered.error)

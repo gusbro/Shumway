@@ -6,7 +6,9 @@
 //
 // The deployment is what `node jupyterlite/build.mjs --out <dir> --with-demo
 // <publish wwwroot>` makes. Exits with 1 when a check fails.
+import fs from 'node:fs';
 import http from 'node:http';
+import path from 'node:path';
 import zlib from 'node:zlib';
 import { webkit, chromium, firefox } from 'playwright';
 
@@ -67,6 +69,19 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(e.message.split('\n')[0].slice(0, 200)));
 const missing = new Set();
 page.on('response', (r) => { if (r.status() === 404) missing.add(new URL(r.url()).pathname); });
+// The script with the graph drawer (graph.ts and dagre), which only a graph
+// should bring: found by a string of dagre's own.
+const drawerScripts = [];
+(function find(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) find(file);
+    else if (entry.name.endsWith('.js') && fs.readFileSync(file, 'utf8').includes('network-simplex'))
+      drawerScripts.push(entry.name);
+  }
+})(path.join(process.argv[2], 'jupyter', 'extensions'));
+const fetched = new Set();
+page.on('request', (r) => fetched.add(path.posix.basename(new URL(r.url()).pathname)));
 
 let failures = 0;
 const check = (ok, what, detail) => {
@@ -510,6 +525,9 @@ try {
   for (const what of libraryReport.skipped)
     console.log(`skip [${engineName}] ${what}: this browser's storage cannot be written`);
 
+  check(drawerScripts.length === 1 && !fetched.has(drawerScripts[0]),
+    'the graph drawer is not downloaded before a notebook draws a graph', drawerScripts);
+
   // The example notebooks run from top to bottom, and show what they say.
   for (const [file, expected] of [
     ['grammars.ipynb', ['Who = world', 'Who = prolog', 'V = 9', 'Text | Value', "'(1+2)*3' | 9 "]],
@@ -517,12 +535,18 @@ try {
       'A = [_A, _B, _C, _D],\\nB = [ann, bob]',
       '[1,1] | 2 ', 'P = ([9, 5, 6, 7]+[1, 0, 8, 5]=[1, 0, 6, 5, 2])', 'Qs | ', '[2,4,6,1,3,5] | ', '[5,3,1,6,4,2] | ']],
     ['tables-and-pictures.ipynb', ['N | Square | Power', '6 | 36 | 64 ', 'two', '<svg', 'width=\\"256\\"']],
+    ['graphs.ipynb', ['<svg', 'text/vnd.graphviz', '\\"person(ann,born(1990,may),[prolog,logic])\\"',
+      'label=\\"born\\"', '\\"1+2*3-4\\" [shape=\\"rect\\", label=\\"-\\"]',
+      '\\"idle\\" -> \\"ready\\" [label=\\"coin\\", color=\\"black\\", style=\\"solid\\"]',
+      '\\"ready\\" [label=\\"Ready\\", shape=\\"box\\", style=\\"filled\\", fillcolor=\\"lightyellow\\"]',
+      'stroke-dasharray']],
   ]) {
     const ran = await runNotebook(file);
     const flat = JSON.stringify(ran.cells);
     const absent = expected.filter((text) => text instanceof RegExp ? !text.test(flat) : !flat.includes(text));
     check(!flat.includes('ERROR') && absent.length === 0, `the example ${file} runs`, { absent, cells: ran.cells });
   }
+  check(fetched.has(drawerScripts[0]), 'and the first graph downloads it', [...fetched].filter((f) => f.endsWith('.js')));
 } catch (e) {
   failures++;
   console.log(`[${engineName}] did not get there: ${e.message.split('\n')[0]}`);
