@@ -94,13 +94,24 @@ public sealed partial class PrologEngine
     private void UseLibrary(string name)
     {
         if (!_loadedEngineLibraries.Add(name)) return;
+        LoadBundleLinkingLive(() =>
+        {
+            LoadBundle(LibraryBundles.Get(name));
+            SeedMetaTemplatesFromSource(LibraryBundles.SourceOf(name));
+            MarkModuleNonDebuggable(name);   // ADR-035 — a library, not the user's code
+        });
+    }
+
+    /// <summary>Runs <paramref name="load"/>, which loads bundles. Loaded by a
+    /// running goal, what they define is linked into that goal's code now, as
+    /// a mid-query consult of a source links what it defines: the rest of the
+    /// query calls it. A notebook's server is one query, so without this a
+    /// library a cell imported from a bundle was never callable.</summary>
+    internal void LoadBundleLinkingLive(Action load)
+    {
         var before = _liveConsultEngine is null
             ? null : new HashSet<int>(_precompiledStaticPredicates.Keys);
-        LoadBundle(LibraryBundles.Get(name));
-        SeedMetaTemplatesFromSource(LibraryBundles.SourceOf(name));
-        MarkModuleNonDebuggable(name);   // ADR-035 — a library, not the user's code
-        // Loaded by a running goal: link it into that goal's code now, as a
-        // mid-query consult links what it defines.
+        load();
         if (_liveConsultEngine is { } live && before is not null)
         {
             EnsureLiveDynamicTrampolines(live);
@@ -1213,6 +1224,26 @@ public sealed partial class PrologEngine
     /// Invalidates the rewrite caches when it adds anything.</summary>
     internal void ImportAllExportsIntoUser(string sourceModule)
         => ImportExportsIntoUser(sourceModule, only: null);
+
+    /// <summary>A bundle consulted directly imports into <c>user</c>, as a
+    /// module file consulted directly does: the exports of each of its
+    /// export-qualified modules that no other module of the bundle imports.
+    /// What its modules import of each other stays theirs, as a source's
+    /// use_module dependencies do. A use_module of the bundle imports what
+    /// it asks for instead.</summary>
+    internal void ImportLoadedBundleIntoUser()
+    {
+        if (_useModuleLoadDepth != 0) return;
+        IReadOnlyList<string> loaded = Bundles.LastLoadedModules;
+        var imported = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string module in loaded)
+            if (_modules.TryGetValue(module, out var manifest))
+                foreach (string source in manifest.Imports.Values) imported.Add(source);
+        foreach (string module in loaded)
+            if (module != DefaultModuleName && module != Prelude.ModuleName && !imported.Contains(module)
+                && _modules.TryGetValue(module, out var manifest) && manifest.IsExportQualified)
+                ImportAllExportsIntoUser(module);
+    }
 
     /// <summary>As <see cref="ImportAllExportsIntoUser"/>, for the functors in
     /// <paramref name="only"/> (the goal-form <c>use_module/2</c>), or the whole
