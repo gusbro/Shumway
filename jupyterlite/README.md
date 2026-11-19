@@ -73,7 +73,8 @@ It opens a notebook saved by another Prolog kernel, uses a collection of
 libraries stored while the notebook is open, imports others with
 `jupyter:import_library/1` (from the notebook's files, and from a second
 local server that does or does not allow CORS), and runs each example
-notebook from top to bottom.
+notebook from top to bottom: `graphs.ipynb` draws graphs, and the drawer's
+script is fetched only then.
 `limit.mjs` serves the site set to hold one kernel and checks that a second
 is refused with a message that says how to free a place.
 
@@ -103,6 +104,16 @@ or `.tar.gz` archive, or such a file of the notebook's. The collection is
 named after it, and keeps where it came from: importing it again from there
 does nothing, so a notebook's first cell can do it, and the same name from
 elsewhere is refused.
+
+## Graphs
+
+`show_term/1`, `%%tree`, `jupyter:print_transition_graph/3,4` and
+`show_graph/2` answer with a graph in DOT, the text the reference's server
+writes. The kernel draws it (`extension/src/core/graph.ts`): it reads the
+part of DOT the servers write, lays it out with dagre and writes SVG, black
+on white as Graphviz draws. The output keeps the DOT beside the SVG
+(`text/vnd.graphviz`), so another drawer can take over from it (ADR-072).
+The drawer is a script of its own, fetched the first time a notebook draws.
 
 ## Where it is published
 

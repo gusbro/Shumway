@@ -1,0 +1,11 @@
+{"jsonrpc":"2.0","id":1,"method":"call","params":{"code":"show_term(f(a, g(1, b)))."}}
+{"jsonrpc":"2.0","id":2,"method":"call","params":{"code":"%%tree\npoint(1, [x])"}}
+{"jsonrpc":"2.0","id":3,"method":"call","params":{"code":"%%user\nedge(a, b).\nedge(b, c).\nedge(c, a).\ntrans(s0, go, s1).\ntrans(s1, stop, s0).\nstyled(a, [label/x, color/red, style/dotted], b).\nstyled(b, [label/y], c).\nnode(a, [label/'Start', shape/box]).\nnode(b, [label/'End'])."}}
+{"jsonrpc":"2.0","id":4,"method":"call","params":{"code":"jupyter:print_transition_graph(edge/2, 1, 2, 0)."}}
+{"jsonrpc":"2.0","id":5,"method":"call","params":{"code":"jupyter:print_transition_graph(trans/3, 1, 3, 2)."}}
+{"jsonrpc":"2.0","id":6,"method":"call","params":{"code":"jupyter:print_transition_graph(trans/3, 1, 3)."}}
+{"jsonrpc":"2.0","id":7,"method":"call","params":{"code":"jupyter:print_transition_graph(styled/3, 1, 3, 2)."}}
+{"jsonrpc":"2.0","id":8,"method":"call","params":{"code":"jupyter:print_transition_graph(edge, 1, 2, 0)."}}
+{"jsonrpc":"2.0","id":9,"method":"call","params":{"code":"show_graph(node/2, edge/2)."}}
+{"jsonrpc":"2.0","id":10,"method":"call","params":{"code":"jupyter:print_transition_graph(edge/2, 1, 3, 0)."}}
+{"jsonrpc":"2.0","id":11,"method":"call","params":{"code":"jupyter:print_transition_graph(1, 1, 2, 0)."}}

@@ -10,6 +10,8 @@
 :- module(jupyter, [print_table/1, print_table/2, print_and_save_table/3,
                     print_variable_bindings/0, print_queries/0, print_queries/1,
                     print_query_time/0, pwd/0, cd/1, import_library/1,
+                    print_transition_graph/3, print_transition_graph/4,
+                    show_graph/2, show_term/1,
                     help/0, magic/0, version/0, version/4, versions/0,
                     '$jupyter_table'/2, '$jupyter_saved_table'/4, '$jupyter_docs'/1]).
 
@@ -395,6 +397,203 @@ location_atom(Text, Atom) :- atom(Text), !, Atom = Text.
 location_atom(Text, Atom) :- is_list(Text), catch(atom_chars(Atom, Text), _, fail), !.
 location_atom(Text, Atom) :- is_list(Text), catch(atom_codes(Atom, Text), _, fail).
 
+% ----- graphs -----
+
+% A graph is DOT text under the answer's print_transition_graph key, written
+% as the reference's server writes it; the kernel draws it (ADR-072, D15).
+
+print_transition_graph(Spec, From, To) :-
+    transition_graph(true, Spec, From, To, 0, print_transition_graph/3).
+
+print_transition_graph(Spec, From, To, Label) :-
+    transition_graph(true, Spec, From, To, Label, print_transition_graph/4).
+
+% show_graph(+NodeSpec, +EdgeSpec): the edges between the nodes NodeSpec
+% gives, whose second argument may hold their DOT attributes. An edge
+% predicate of arity 2 has no labels; of a greater arity, the second
+% argument labels the edge from the first to the last.
+show_graph(NodeSpec, EdgeSpec) :-
+    graph_spec(EdgeSpec, _, _, Arity, show_graph/2),
+    (   Arity =< 2 -> Label = 0 ; Label = 2 ),
+    transition_graph(NodeSpec, EdgeSpec, 1, Arity, Label, show_graph/2).
+
+% show_term(+Term): Term as a tree of its subterms.
+show_term(Term) :-
+    show_graph(jupyter:term_node(_, _, Term), jupyter:term_edge/3).
+
+transition_graph(NodeSpec, EdgeSpec, From, To, Label, Context) :-
+    graph_spec(EdgeSpec, Module, Edge, Arity, Context),
+    graph_indices(Arity, From, To, Label, Context),
+    Edge =.. [_|Args],
+    (   NodeSpec == true ->
+        Nodes = [], Call = Module:Edge
+    ;   graph_spec(NodeSpec, NodeModule, Node, _, Context),
+        findall(node(Name, Attributes),
+                ( Node =.. [_, Name|Rest], NodeModule:Node, node_attributes(Rest, Attributes) ),
+                Found),
+        sort(Found, Nodes),
+        nth1(From, Args, F),
+        nth1(To, Args, T),
+        Call = ( member(node(F, _), Nodes), Module:Edge, member(node(T, _), Nodes) )
+    ),
+    findall(Args, Call, Edges),
+    with_output_to(string(Dot), write_graph(Nodes, Edges, From, To, Label)),
+    '$jupyter_extra'(print_transition_graph, str(Dot)).
+
+% graph_spec(+Spec, -Module, -Goal, -Arity, +Context): a predicate of user
+% (or of Module, as Module:Spec) as Name/Arity, as a name it defines, or as
+% a goal whose arguments are passed on.
+graph_spec(Spec, _, _, _, Context) :-
+    var(Spec), !,
+    throw(error(instantiation_error, Context)).
+graph_spec(Module:Spec, Module, Goal, Arity, Context) :-
+    atom(Module), !,
+    graph_spec_in(Module, Spec, Goal, Arity, Context).
+graph_spec(Spec, Module, Goal, Arity, Context) :-
+    graph_spec_in(user, Spec, Goal, Arity, Context),
+    Module = user.
+
+graph_spec_in(_, Name/Arity, Goal, Arity, _) :-
+    atom(Name), integer(Arity), Arity > 0, !,
+    functor(Goal, Name, Arity).
+graph_spec_in(Module, Name, Goal, Arity, _) :-
+    atom(Name), current_predicate(Module:Name/Arity), Arity > 0, !,
+    functor(Goal, Name, Arity).
+graph_spec_in(_, Goal, Goal, Arity, _) :-
+    compound(Goal), Goal \= _/_, !,
+    functor(Goal, _, Arity).
+graph_spec_in(_, Spec, _, _, Context) :-
+    throw(error(type_error(predicate_indicator, Spec), Context)).
+
+% The indices of the arguments for an edge's ends, at most Arity, and of its
+% label: 0 for none, or an atom that labels every edge.
+graph_indices(Arity, From, To, Label, Context) :-
+    graph_index(Arity, From, Context),
+    graph_index(Arity, To, Context),
+    (   atom(Label) -> true
+    ;   integer(Label), Label >= 0, Label =< Arity -> true
+    ;   throw(error(domain_error(argument_index(0, Arity), Label), Context))
+    ).
+
+graph_index(Arity, Index, Context) :-
+    (   integer(Index), Index >= 1, Index =< Arity -> true
+    ;   throw(error(domain_error(argument_index(1, Arity), Index), Context))
+    ).
+
+% The DOT attributes of a node, from Name=Value, Name/Value or Name-Value
+% pairs in its second argument.
+node_attributes([List|_], Attributes) :-
+    findall(Name-Value, ( attribute_pair(Key, Value, List), node_attribute(Key, Name) ), Attributes),
+    !.
+node_attributes(_, []).
+
+node_attribute(label, label).
+node_attribute(color, color).
+node_attribute(colour, color).
+node_attribute(fillcolor, fillcolor).
+node_attribute(shape, shape).
+node_attribute(style, style).
+
+attribute_pair(Key, Value, List) :-
+    is_list(List),
+    member(Pair, List),
+    pair(Pair, Key, Value).
+
+pair(Key=Value, Key, Value).
+pair(Key/Value, Key, Value).
+pair(Key-Value, Key, Value).
+
+write_graph(Nodes, Edges, From, To, Label) :-
+    write('digraph {\n'),
+    forall(member(node(Name, Attributes), Nodes), write_node(Name, Attributes)),
+    forall(member(Args, Edges), write_edge(Args, From, To, Label)),
+    write('}').
+
+write_node(_, []) :- !.
+write_node(Name, Attributes) :-
+    write_quoted(Name), write(' ['),
+    write_attributes(Attributes),
+    write(']\n').
+
+write_attributes([Name-Value]) :- !,
+    format("~w=", [Name]), write_quoted(Value).
+write_attributes([Name-Value|Rest]) :-
+    format("~w=", [Name]), write_quoted(Value), write(', '),
+    write_attributes(Rest).
+
+write_edge(Args, From, To, Label) :-
+    nth1(From, Args, F),
+    nth1(To, Args, T),
+    write('    '), write_quoted(F), write(' -> '), write_quoted(T),
+    (   edge_label(Label, Args, Text) ->
+        write(' [label='), write_quoted(Text),
+        (   edge_style(Label, Args, Color, Style) ->
+            write(', color='), write_quoted(Color), write(', style='), write_quoted(Style)
+        ;   true
+        ),
+        write(']')
+    ;   true
+    ),
+    nl.
+
+edge_label(0, _, _) :- !, fail.
+edge_label(Label, _, Label) :- atom(Label), !.
+edge_label(Index, Args, Text) :-
+    nth1(Index, Args, Value),
+    (   attribute_pair(label, Text0, Value) -> Text = Text0 ; Text = Value ).
+
+% An edge whose label comes from an argument has a colour and a style: the
+% argument's when it is a list that names them.
+edge_style(Index, Args, Color, Style) :-
+    integer(Index),
+    nth1(Index, Args, Value),
+    (   ( attribute_pair(colour, C, Value) ; attribute_pair(color, C, Value) ) -> Color = C
+    ;   Color = black
+    ),
+    (   attribute_pair(style, S, Value), line_style(S) -> Style = S
+    ;   Style = solid
+    ).
+
+line_style(bold).
+line_style(dashed).
+line_style(dotted).
+line_style(invis).
+line_style(solid).
+
+% A name or a label in DOT's double quotes. The reference writes the text as
+% it is; a double quote or a backslash in it is escaped here, or the graph
+% would not read.
+write_quoted(Term) :-
+    with_output_to(string(Text), write(Term)),
+    string_chars(Text, Chars),
+    write('"'), forall(member(C, Chars), dot_char(C)), write('"').
+
+dot_char('"') :- !, write('\\"').
+dot_char('\\') :- !, write('\\\\').
+dot_char(C) :- put_char(C).
+
+% The tree of a term, for show_term/1: its subterms are the nodes, an edge
+% goes from a term to each of its arguments.
+term_edge(Term, Position, Sub) :-
+    nonvar(Term),
+    Term =.. [_|Args],
+    nth1(Position, Args, Sub).
+
+term_subterm(Term, Term).
+term_subterm(Term, Sub) :-
+    term_edge(Term, _, Arg),
+    term_subterm(Arg, Sub).
+
+term_node(Sub, [shape/Shape, label/Label], Term) :-
+    term_subterm(Term, Sub),
+    (   var(Sub) -> Shape = ellipse, Label = Sub
+    ;   functor(Sub, Label, _),
+        (   atom(Sub) -> Shape = egg
+        ;   number(Sub) -> Shape = oval
+        ;   Shape = rect
+        )
+    ).
+
 % ----- versions -----
 
 version :-
@@ -469,6 +668,26 @@ doc(pwd/0, 'jupyter:pwd', [
     'Prints the working directory of the session.']).
 doc(cd/1, 'jupyter:cd(+Directory)', [
     'Changes the working directory of the session.']).
+doc(print_transition_graph/4,
+    'jupyter:print_transition_graph(+PredSpec, +FromIndex, +ToIndex, +LabelIndex)', [
+    'Draws a graph with an edge for each solution of the predicate PredSpec,',
+    'Name/Arity or Module:Name/Arity: from its argument FromIndex to its',
+    'argument ToIndex, labelled by its argument LabelIndex, or not when',
+    'LabelIndex is 0. A label argument that is a list such as',
+    '[label/L, color/C, style/S] gives the edge those.']).
+doc(print_transition_graph/3,
+    'jupyter:print_transition_graph(+PredSpec, +FromIndex, +ToIndex)', [
+    'As print_transition_graph/4, with no labels.']).
+doc(show_graph/2, 'jupyter:show_graph(+NodeSpec, +EdgeSpec) or show_graph(+NodeSpec, +EdgeSpec)', [
+    'Draws the edges of EdgeSpec between the nodes of NodeSpec, two predicates',
+    'given as for print_transition_graph/4. A node is the first argument of',
+    'NodeSpec; its second may list its DOT attributes, such as',
+    '[label/L, shape/box, color/C]. The edges go from the first argument of',
+    'EdgeSpec to its last, labelled by its second when it has more than two.']).
+doc(show_term/1, 'jupyter:show_term(+Term) or show_term(+Term)', [
+    'Draws Term as a tree: a node for each subterm, and an edge from a term',
+    'to each of its arguments, labelled by the argument''s position.',
+    '%%tree draws the term of the cell.']).
 doc(import_library/1, 'jupyter:import_library(+Spec)', [
     'Brings in a collection of libraries: then use_module(library(Name))',
     'loads the libraries in it. Spec is scryer, swi or trealla, for the',
@@ -537,6 +756,8 @@ magic_line('        As %%table, and writes the table to FILE with tabs between t
 magic_line('').
 magic_line('    %%highlight').
 magic_line('        Shows the cell as code, without running it').
+magic_line('    %%tree').
+magic_line('        Draws each term of the cell as a tree, as show_term/1').
 magic_line('').
 magic_line('Line magic, as the whole cell:').
 magic_line('').

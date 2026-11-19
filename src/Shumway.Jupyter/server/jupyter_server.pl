@@ -206,6 +206,7 @@ magic('file+', [C|Cs], Text, file(File, append, load, Text)) :- atom_chars(File,
 magic(load, [C|Cs], Text, file(File, write, load, Text)) :- atom_chars(File, [C|Cs]).
 magic(save, [C|Cs], Text, file(File, write, save, Text)) :- atom_chars(File, [C|Cs]).
 magic(highlight, [], _, highlight).
+magic(tree, [], Text, tree(Text)).
 magic(table, [], Text, table(Text, print_table)).
 magic(csv, [C|Cs], Text, table(Text, save(csv, File))) :- atom_chars(File, [C|Cs]).
 magic(tsv, [C|Cs], Text, table(Text, save(tsv, File))) :- atom_chars(File, [C|Cs]).
@@ -236,10 +237,22 @@ magic_content(file(File, Mode, Action, Text), _, Content) :-
     (   Action == load -> Content = queries([query(jupyter_server:load(File), [])])
     ;   Content = nothing
     ).
+% Each term of the cell is drawn as a tree. A term ends with a full stop,
+% which the last may leave out.
+magic_content(tree(Text), _, queries(Trees)) :-
+    reverse(Text, Backwards),
+    ending(Backwards, Last),
+    (   Last = ['.'|_] -> Terms = Text ; append(Text, ['.'], Terms) ),
+    cell_queries(Terms, Queries),
+    trees(Queries, Trees).
 % Each query of the cell is shown as the table of its solutions.
 magic_content(table(Text, How), _, queries(Tables)) :-
     cell_queries(Text, Queries),
     tables(Queries, How, Tables).
+
+trees([], []).
+trees([query(Term, Names)|Queries], [query(jupyter:show_term(Term), Names)|Trees]) :-
+    trees(Queries, Trees).
 
 tables([], _, []).
 tables([query(Goal, Names)|Queries], How, [query(Table, Names)|Tables]) :-
@@ -330,9 +343,17 @@ helpers(Goal, Names, Called) :-
         helpers(Inner, Names, CalledInner),
         Called = (\+ CalledInner)
     ;   helper(Goal, Names, Named) -> Called = Named
+    ;   graph_alias(Goal, Graph) -> Called = Graph
     ;   Goal = jupyter:Helper, nonvar(Helper), helper(Helper, Names, Named) -> Called = Named
     ;   Called = Goal
     ).
+
+% show_term/1 and show_graph/2 of a query are the helpers', unless the
+% program defines them.
+graph_alias(show_term(Term), jupyter:show_term(Term)) :-
+    \+ current_predicate(user:show_term/1).
+graph_alias(show_graph(Nodes, Edges), jupyter:show_graph(Nodes, Edges)) :-
+    \+ current_predicate(user:show_graph/2).
 
 control((Left, Right), ',', Left, Right).
 control((Left ; Right), ';', Left, Right).
