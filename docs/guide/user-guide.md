@@ -366,9 +366,16 @@ the range leaves its side of the domain open:
 ```prolog
 ?- X #= 576460752303423487 + 1.
 % error: representation_error(max_clpfd_integer)
+%   at clpfd_dom_below/3
+%   at clpfd_narrow_bounds/3
+%   at clpfd_post/2
+%   at #=/2
 
 ?- X in 1..1000000000, Y in 1..1000000000000, Z #= X * Y.
-Z in 1..sup, ...
+X in 1..1000000000,
+X*Y#=Z,
+Y in 1..1000000000000,
+Z in 1..sup.
 ```
 
 A domain is an integer, `L..H`, or a union of domains (`X in 1..3 \/ 7..9`).
@@ -379,7 +386,9 @@ read a variable's domain:
 
 ```prolog
 ?- X in 0..20, X mod 7 #= 2, fd_dom(X, D).
-D = 2..16, ...
+X in 2..16,
+X mod 7#=2,
+D = 2..16.
 ```
 
 `@L` denotes the length of the list `L` and can appear in a constraint
@@ -389,14 +398,20 @@ a lower bound, the list gets that many elements, and when the length is fixed
 the list is closed:
 
 ```prolog
-?- @L #= N, L = [a|_].
-L = [a|_A], N in 1..sup, @[a|_A] #= N.
+?- @L #= N, L = [foo|_].
+L = [foo | _A],
+N in 1..sup,
+@ [foo | _A]#=N.
 
 ?- @L #> N, N #> 5.
-L = [_A,_B,_C,_D,_E,_F,_G|_H], ...
+L = [_A, _B, _C, _D, _E, _F, _G | _H],
+N in 6..sup,
+N#<_I,
+_I in 7..sup,
+@ [_A, _B, _C, _D, _E, _F, _G | _H]#=_I.
 
 ?- @L #= 3.
-L = [_A,_B,_C].
+L = [_A, _B, _C].
 ```
 
 `@A #= @B` constrains two lists to have the same length. `label/1` and
@@ -412,7 +427,7 @@ element may be cyclic, so `L = [L]` has length 1.
 ?- @L #< 3, label([@L]).
 L = [] ;
 L = [_A] ;
-L = [_A,_B].
+L = [_A, _B].
 ```
 
 `@L` has its meaning only inside the constraints of `clpfd` (`#=`, `#\=`,
@@ -426,7 +441,10 @@ value, or that two lists differ in length, use the disequality of `clpfd`:
 false.
 
 ?- @A #\= @B, A = [1,2], B = [_|T].
-A = [1,2], B = [_A|T], @[_A|T] #= _B, _B in 1\/3..sup.
+A = [1, 2],
+B = [_A | T],
+@ [_A | T]#=_B,
+_B in 1\/3..sup.
 ```
 
 Besides `all_different/1`, `all_distinct/1`, `sum/3` and `scalar_product/4`,
@@ -440,7 +458,9 @@ a stretch keeps the others off it:
 ```prolog
 ?- S in 0..10, cumulative([task(2,3,_,1,_), task(S,2,_,1,_)]).
 S in 0\/5..10,
-...
+cumulative([task(2, 3, 5, 1, _A), task(S, 2, _B, 1, _C)], [limit(1)]),
+S+2#=_B,
+_B in 2..12.
 ```
 
 `labeling/2` takes `min(Expr)` and `max(Expr)`, and then gives the solutions
@@ -448,9 +468,14 @@ best first:
 
 ```prolog
 ?- [X,Y] ins 1..3, X #\= Y, labeling([min(X+Y)], [X,Y]).
-X = 1, Y = 2 ;
-X = 2, Y = 1 ;
-X = 1, Y = 3 ;
+X = 1,
+Y = 2 ;
+X = 2,
+Y = 1 ;
+X = 1,
+Y = 3 ;
+X = 3,
+Y = 1 ;
 ...
 ```
 
@@ -471,8 +496,10 @@ constraint: `true` with the unification, `false` with `dif/2`.
 
 ```prolog
 ?- if_(X = a, R = yes, R = no).
-X = a, R = yes ;
-dif(X, a), R = no.
+X = a,
+R = yes ;
+dif(X, a),
+R = no.
 ```
 
 `(=)/3` and `dif/3` are the basic conditions, `(',')/3` and `(;)/3`
@@ -595,8 +622,8 @@ At the REPL you load a library the same way, as a goal:
 
 ```
 ?- use_module(library(lists_ext)).
-?- take(2, [a,b,c,d], L).
-L = [a, b].
+?- take(2, [ann,bob,cid,dan], L).
+L = [ann, bob].
 ```
 
 As a goal, `use_module/2` imports into `user` only the predicates it lists,
@@ -1329,7 +1356,9 @@ never the value**: every float sorts before every integer. The value only
 breaks ties within one type.
 
 ```prolog
-?- compare(Order, 1.1, 1).      % Order = (<): float first, though 1.1 > 1
+?- compare(Order, 1.1, 1).      % the float first, though 1.1 > 1
+Order = <.
+
 ?- msort([3, 1.5, 2, 0.5, 1], L).
 L = [0.5, 1.5, 1, 2, 3].
 ```
@@ -1355,7 +1384,7 @@ containing that same variable:
 ?- set_prolog_flag(occurs_check, true), -X = X.
 false.
 ?- set_prolog_flag(occurs_check, error), X = f(X).
-caught: error(representation_error(term), ...)
+% error: representation_error(term)
 ```
 
 The setting covers every unification: explicit `=/2`, clause-head matching,

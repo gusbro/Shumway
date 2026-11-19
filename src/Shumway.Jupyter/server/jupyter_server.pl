@@ -20,6 +20,8 @@
 %   '$jupyter_open_text'(+Chars, -Stream): an input stream over a text;
 %   '$jupyter_error_text'(+Ball, -Chars): the line a top level shows for
 %     an error;
+%   '$jupyter_answer_text'(+Term, +Names, +Priority, -Chars): Term as a top
+%     level writes it in an answer, its variables named by Names;
 %   '$jupyter_strict_syntax'(+New, -Old): whether a clause that does not
 %     parse ends the load of its file.
 
@@ -301,14 +303,15 @@ run(query(Goal, Names), Alive, Spent0, Spent, Cell0, Cell, Next) :-
     ;   Goal == trace ->
         Spent = Spent0, Next = continue,
         failed(Cell0, -4712, 'Exception', jupyter(tracer_in_cell), Cell)
-    ;   catch(with_previous(Goal, Names, Resolved), Error, true),
+    ;   % As it was written: before $Var gives Var its value, and before
+        % the query binds its variables.
+        copy_term(Goal-Names, Written),
+        catch(with_previous(Goal, Names, Resolved), Error, true),
         (   nonvar(Error) ->
             Spent = Spent0, Next = continue,
             failed(Cell0, -4712, 'Exception', Error, Cell)
         ;   helpers(Resolved, Names, Called),
-            % As it was written, before it runs and binds its variables.
-            with_output_to(string(Text), write_term(Goal, [quoted(true), variable_names(Names)])),
-            solve(Called, Names, Text, Alive, Spent0, Spent, Cell0, Cell, Next)
+            solve(Called, Names, Written, Alive, Spent0, Spent, Cell0, Cell, Next)
         )
     ).
 
@@ -381,7 +384,7 @@ retry(Alive, Spent0, Spent, Cell0, Cell, Next) :-
 % solution the server goes on inside this clause, so the query's choice
 % points stay; a retry fails back into them.
 % A tracer the query left on would trace the server from here on.
-solve(Goal, Names, Text, Alive, Spent0, Spent, Cell0, Cell, Next) :-
+solve(Goal, Names, Written, Alive, Spent0, Spent, Cell0, Cell, Next) :-
     output(_),
     '$jupyter_extras'(_),
     nb_setval('$jupyter_cell', none),
@@ -389,7 +392,7 @@ solve(Goal, Names, Text, Alive, Spent0, Spent, Cell0, Cell, Next) :-
     (   catch(solution(Goal, Exit), Error, true),
         '$jupyter_tracing'(false),
         resumed(Cell0, Cell1, First),
-        ran(First, Error, Cell1, Text, Started),
+        ran(First, Error, Cell1, Written, Started),
         solved(Error, Exit, Names, Alive, Spent0, Spent, Cell1, Cell, Next)
     ->  true
     ;   '$jupyter_tracing'(false),
@@ -410,12 +413,13 @@ resumed(Cell0, Cell, First) :-
         nb_setval('$jupyter_cell', none)
     ).
 
-% A query joins the session's history when it has its first solution.
-ran(First, Error, cell(Id, _, _), Text, Started) :-
+% A query joins the session's history, as it was written, when it has its
+% first solution.
+ran(First, Error, cell(Id, _, _), Written, Started) :-
     (   First == true, var(Error) ->
         statistics(cputime, Now),
         Seconds is Now - Started,
-        '$jupyter_ran'(Id, Text, Seconds)
+        '$jupyter_ran'(Id, Written, Seconds)
     ;   true
     ).
 
@@ -437,8 +441,10 @@ solved(Error, Exit, Names, Alive, Spent0, Spent, Cell0, Cell, Next) :-
         Spent = Spent0, Next = continue,
         failed(Cell0, -4712, 'Exception', Error, Cell)
     ;   output(Output),
-        bindings(Names, Bindings),
-        residual_goals(Names, Residual),
+        answer_terms(Names, Shown, Goals),
+        answer_names(Shown, Goals, AnswerNames),
+        bindings(Shown, AnswerNames, Bindings),
+        residual_goals(Goals, AnswerNames, Residual),
         % What the helpers of module jupyter left for this answer.
         '$jupyter_extras'(Extras),
         append(Residual, Extras, More),
@@ -464,8 +470,8 @@ answered(cell(Id, Queries, Results), Result, cell(Id, Queries, [Result|Results])
 
 % A variable of the query is shown with its value. One left unbound is shown
 % only when it is the same variable as an earlier one, as Name = Earlier.
-bindings(Names, Bindings) :-
-    bindings(Names, Names, [], Bindings).
+bindings(Shown, Names, Bindings) :-
+    bindings(Shown, Names, [], Bindings).
 
 bindings([], _, _, []).
 bindings([Name=Value|More], Names, Seen, Bindings) :-
@@ -474,7 +480,7 @@ bindings([Name=Value|More], Names, Seen, Bindings) :-
         (   named(Seen, Value, Earlier) -> Bindings = [Name-str(Earlier)|Rest]
         ;   Bindings = Rest
         )
-    ;   with_output_to(string(Text), write_term(Value, [quoted(true), variable_names(Names)])),
+    ;   '$jupyter_answer_text'(Value, Names, 699, Text),
         Bindings = [Name-str(Text)|Rest]
     ),
     bindings(More, Names, [Name=Value|Seen], Rest).
@@ -487,35 +493,96 @@ named([Name=Variable|Earlier], Value, Found) :-
     ;   Variable == Value -> Found = Name
     ).
 
-% The constraints left on the variables of the query, as the goals that
-% would put them back, each written with the query's names: a key of the
-% answer, or nothing when there are none.
-residual_goals(Names, Residual) :-
+% The values of the query's variables, and the goals that would put back
+% the constraints left on them. With constraints the values are copies, which
+% carry none, and the goals name the copies.
+answer_terms(Names, Shown, Goals) :-
     values_of(Names, Values),
     term_attvars(Values, Constrained),
-    (   Constrained == [] -> Residual = []
+    (   Constrained == [] -> Shown = Names, Goals = []
     ;   copy_term(Values, Copies, Goals),
-        (   Goals == [] -> Residual = []
-        ;   copy_names(Names, Copies, CopyNames),
-            goal_texts(Goals, CopyNames, Texts),
-            Residual = [residual_goals-Texts]
-        )
+        named_copies(Names, Copies, Shown)
     ).
 
 values_of([], []).
 values_of([_=Value|Names], [Value|Values]) :- values_of(Names, Values).
 
-% The names of the query, for the copies that are still variables.
-copy_names([], [], []).
-copy_names([Name=_|Names], [Copy|Copies], CopyNames) :-
-    (   var(Copy) -> CopyNames = [Name=Copy|Rest]
-    ;   CopyNames = Rest
+named_copies([], [], []).
+named_copies([Name=_|Names], [Copy|Copies], [Name=Copy|Shown]) :-
+    named_copies(Names, Copies, Shown).
+
+% The names an answer is written with: the query's own, for its variables
+% that are still free, and _A, _B, ..., _Z, _A1, ... for the other variables
+% it shows, in the order it shows them, past the names the query uses. The
+% top level names them so.
+answer_names(Shown, Goals, AnswerNames) :-
+    free_names(Shown, Own),
+    shown_values(Shown, Values),
+    term_variables(Values-Goals, Variables),
+    fresh_names(Variables, Shown, Own, 0, Fresh),
+    append(Own, Fresh, AnswerNames).
+
+free_names([], []).
+free_names([Name=Value|Shown], Own) :-
+    (   var(Value) -> Own = [Name=Value|Rest]
+    ;   Own = Rest
     ),
-    copy_names(Names, Copies, Rest).
+    free_names(Shown, Rest).
+
+% The values the bindings show, in their order.
+shown_values([], []).
+shown_values([Name=Value|Shown], Values) :-
+    (   ( hidden(Name) ; var(Value) ) -> Values = Rest
+    ;   Values = [Value|Rest]
+    ),
+    shown_values(Shown, Rest).
+
+fresh_names([], _, _, _, []).
+fresh_names([Variable|Variables], Shown, Own, I0, Fresh) :-
+    (   named_variable(Own, Variable) -> I = I0, Fresh = Rest
+    ;   unused_name(Shown, I0, Name, I),
+        Fresh = [Name=Variable|Rest]
+    ),
+    fresh_names(Variables, Shown, Own, I, Rest).
+
+named_variable([_=Named|Own], Variable) :-
+    (   Named == Variable -> true
+    ;   named_variable(Own, Variable)
+    ).
+
+% The name of position I0 and after in _A, ..., _Z, _A1, ..., _Z1, _A2, ...
+% that the query does not use, and the position after it.
+unused_name(Shown, I0, Name, I) :-
+    Code is 0'A + I0 mod 26,
+    char_code(Letter, Code),
+    atom_concat('_', Letter, Stem),
+    (   I0 < 26 -> Candidate = Stem
+    ;   Round is I0 // 26,
+        number_codes(Round, Digits),
+        atom_codes(Suffix, Digits),
+        atom_concat(Stem, Suffix, Candidate)
+    ),
+    I1 is I0 + 1,
+    (   name_taken(Shown, Candidate) -> unused_name(Shown, I1, Name, I)
+    ;   Name = Candidate, I = I1
+    ).
+
+name_taken([Taken=_|Shown], Name) :-
+    (   Taken == Name -> true
+    ;   name_taken(Shown, Name)
+    ).
+
+% The constraints left on the variables of the query: a key of the answer,
+% or nothing when there are none.
+residual_goals(Goals, Names, Residual) :-
+    (   Goals == [] -> Residual = []
+    ;   goal_texts(Goals, Names, Texts),
+        Residual = [residual_goals-Texts]
+    ).
 
 goal_texts([], _, []).
 goal_texts([Goal|Goals], Names, [str(Text)|Texts]) :-
-    with_output_to(string(Text), write_term(Goal, [quoted(true), variable_names(Names)])),
+    '$jupyter_answer_text'(Goal, Names, 999, Text),
     goal_texts(Goals, Names, Texts).
 
 remember([]).

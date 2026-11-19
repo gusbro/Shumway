@@ -49,17 +49,18 @@ value_key(Name, Key) :-
 
 % ----- queries -----
 
-% '$jupyter_ran'(+Id, +Text, +Seconds): a query of the request Id, with the
-% text it was written as, had a solution after Seconds.
-'$jupyter_ran'(Id, Text, Seconds) :-
+% '$jupyter_ran'(+Id, +Query, +Seconds): a query of the request Id had a
+% solution after Seconds. Query is Goal-Names, the query as it was written
+% and the names of its variables.
+'$jupyter_ran'(Id, Query, Seconds) :-
     global('$jupyter_ran', Count, 0),
     Number is Count + 1,
     query_key(Number, Key),
-    nb_setval(Key, query(Id, Text, Seconds)),
+    nb_setval(Key, query(Id, Query, Seconds)),
     nb_setval('$jupyter_ran', Number).
 
-% '$jupyter_queries'(-Queries): query(Id, Text, Seconds) for each, first to
-% last.
+% '$jupyter_queries'(-Queries): query(Id, Goal-Names, Seconds) for each,
+% first to last.
 '$jupyter_queries'(Queries) :-
     global('$jupyter_ran', Count, 0),
     queries(1, Count, Queries).

@@ -208,19 +208,52 @@ of_requests([query(Id, Text, Seconds)|Queries], Ids, Wanted) :-
     ),
     of_requests(Queries, Ids, Rest).
 
-% One query to a line, as a program that runs them all.
-print_texts([]).
-print_texts([query(_, Text, _)]) :-
-    !,
-    format("~s.~n", [Text]).
-print_texts([query(_, Text, _)|Queries]) :-
-    format("~s,~n", [Text]),
-    print_texts(Queries).
+% One query to a line, as a program that runs them all: a $Var whose Var an
+% earlier query of the lines names is written as Var, the variable that
+% query bound. Otherwise $Var stays.
+print_texts(Queries) :-
+    print_texts(Queries, []).
+
+print_texts([], _).
+print_texts([query(_, Goal-Names, _)|Queries], Earlier) :-
+    as_program(Goal, Names, Earlier, Written),
+    write_term(Written, [quoted(true), variable_names(Names)]),
+    (   Queries == [] -> format(".~n", []) ; format(",~n", []) ),
+    names_of(Names, Earlier, Later),
+    print_texts(Queries, Later).
+
+as_program(Term, Names, Earlier, Written) :-
+    (   var(Term) -> Written = Term
+    ;   Term = $(Variable), var(Variable),
+        name_of(Names, Variable, Name), memberchk(Name, Earlier) ->
+        Written = Variable
+    ;   compound(Term) ->
+        Term =.. [Functor|Arguments],
+        as_program_all(Arguments, Names, Earlier, WrittenArguments),
+        Written =.. [Functor|WrittenArguments]
+    ;   Written = Term
+    ).
+
+as_program_all([], _, _, []).
+as_program_all([Term|Terms], Names, Earlier, [Written|Writtens]) :-
+    as_program(Term, Names, Earlier, Written),
+    as_program_all(Terms, Names, Earlier, Writtens).
+
+name_of([Name=Named|Names], Variable, Found) :-
+    (   Named == Variable -> Found = Name
+    ;   name_of(Names, Variable, Found)
+    ).
+
+names_of([], Earlier, Earlier).
+names_of([Name=_|Names], Earlier, Later) :-
+    names_of(Names, [Name|Earlier], Later).
 
 print_query_time :-
     '$jupyter_queries'(Queries),
-    (   last_of(Queries, query(_, Text, Seconds)) ->
-        format("Query:   ~s~nRuntime: ~w s~n", [Text, Seconds])
+    (   last_of(Queries, query(_, Goal-Names, Seconds)) ->
+        format("Query:   ", []),
+        write_term(Goal, [quoted(true), variable_names(Names)]),
+        format("~nRuntime: ~w s~n", [Seconds])
     ;   format("No query has run yet.~n", [])
     ).
 

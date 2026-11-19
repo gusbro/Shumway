@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using Shumway.Embedding;
 using Shumway.Jupyter;
 
 namespace Shumway.Tests.Wasm;
@@ -168,7 +169,8 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
     /// <list type="bullet">
     /// <item>the text of an error message, which is each system's own, and
     /// the name of its key, which is the variant's (ADR-067 D5);</item>
-    /// <item>the number in the name of a variable that has no name;</item>
+    /// <item>the name of a variable that has no name: a number in the
+    /// reference's, _A, _B, ... in ours, as the top level writes it;</item>
     /// <item>the version of the engine the recording was made with;</item>
     /// <item>the residual goals of a query, a key only our server sends: the
     /// reference says nothing of a constrained variable.</item>
@@ -183,6 +185,14 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
                 {
                     if (key is "prolog_message" or "logtalk_message") result["message_text"] = "";
                     else if (key == "residual_goals") continue;
+                    else if (key == "bindings" && value is JsonObject bindings)
+                    {
+                        var terms = new JsonObject();
+                        foreach (var (name, text) in bindings)
+                            terms[name] = text is JsonValue written && written.TryGetValue(out string? s)
+                                ? AsTerm(s) : text?.DeepClone();
+                        result[key] = terms;
+                    }
                     else if (version && key == "result" && value is JsonValue) result[key] = "version";
                     else result[key] = Comparable(value, version);
                 }
@@ -196,6 +206,28 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
         }
     }
 
-    [GeneratedRegex(@"\b_G?\d+\b")]
+    [GeneratedRegex(@"\b_(?:G?\d+|[A-Z]\d*)\b")]
     private static partial Regex UnnamedVariable();
+
+    private static readonly Lazy<PrologEngine> Reader = new(() =>
+    {
+        var engine = new PrologEngine();
+        engine.UseClpfd();
+        return engine;
+    });
+
+    /// <summary>A binding's value as the term it writes: the reference writes
+    /// it as its writeq does, and ours as the top level does (<c>[1,2]</c> and
+    /// <c>[1, 2]</c>, <c>[a]</c> and <c>"a"</c>), which are one answer. Read
+    /// back and written canonically, its variables numbered in order; a text
+    /// that does not read is compared as it is.</summary>
+    private static string AsTerm(string text)
+    {
+        string quoted = "'" + text.Replace("\\", "\\\\").Replace("'", "\\'").Replace("\n", "\\n") + "'";
+        var answer = Reader.Value.Query(
+            $"catch((term_to_atom(T, {quoted}), numbervars(T, 0, _), with_output_to(atom(A), write_canonical(T))), _, fail).");
+        return answer.Success && answer.Bindings["A"] is Shumway.Compiler.Ast.AtomTerm canonical
+            ? canonical.Name
+            : UnnamedVariable().Replace(text, "_");
+    }
 }
