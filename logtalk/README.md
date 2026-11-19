@@ -1,7 +1,10 @@
 # Logtalk support for Shumway
 
-The glue files that make Shumway a [Logtalk](https://logtalk.org/) backend
-Prolog compiler, mirroring the layout of a Logtalk installation:
+Logtalk 3.103.0 and later support Shumway as they come: use their
+`shumwaylgt` script ([`../docs/guide/logtalk.md`](../docs/guide/logtalk.md)).
+These are the glue files for the releases before, which make Shumway a
+[Logtalk](https://logtalk.org/) backend Prolog compiler, mirroring the
+layout of a Logtalk installation:
 
 - `adapters/shumway.pl` — the backend adapter (what Logtalk's core consults to
   learn the host Prolog's capabilities). Written for Shumway against the
