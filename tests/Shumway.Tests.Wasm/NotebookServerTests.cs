@@ -208,6 +208,21 @@ public sealed class NotebookServerTests : IDisposable
         Assert.False(File.Exists(Path.Combine(_notebooks.DirectoryOf("b"), "facts.pl")));
     }
 
+    [Fact]
+    public void AQueryThatReadsAPreviousValue_IsRememberedAsItWasWritten()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+
+        First(server, "X = 3.");
+        JsonNode sum = First(server, "Y is $X + 1.");
+        JsonNode queries = First(server, "jupyter:print_queries.");
+
+        Assert.Equal("4", (string)sum["bindings"]!["Y"]!);
+        string printed = (string)queries["output"]!;
+        Assert.Contains("$X", printed);
+        Assert.DoesNotContain("$3", printed);
+    }
+
     /// <summary>A call as a kernel sends it from the notebook
     /// <paramref name="notebook"/>.</summary>
     private static string CallFrom(string notebook, string code)

@@ -301,13 +301,14 @@ run(query(Goal, Names), Alive, Spent0, Spent, Cell0, Cell, Next) :-
     ;   Goal == trace ->
         Spent = Spent0, Next = continue,
         failed(Cell0, -4712, 'Exception', jupyter(tracer_in_cell), Cell)
-    ;   catch(with_previous(Goal, Names, Resolved), Error, true),
+    ;   % As it was written: before $Var gives Var its value, and before
+        % the query binds its variables.
+        with_output_to(string(Text), write_term(Goal, [quoted(true), variable_names(Names)])),
+        catch(with_previous(Goal, Names, Resolved), Error, true),
         (   nonvar(Error) ->
             Spent = Spent0, Next = continue,
             failed(Cell0, -4712, 'Exception', Error, Cell)
         ;   helpers(Resolved, Names, Called),
-            % As it was written, before it runs and binds its variables.
-            with_output_to(string(Text), write_term(Goal, [quoted(true), variable_names(Names)])),
             solve(Called, Names, Text, Alive, Spent0, Spent, Cell0, Cell, Next)
         )
     ).
