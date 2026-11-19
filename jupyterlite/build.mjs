@@ -75,7 +75,7 @@ run(python, ['-m', 'jupyter', 'lite', 'build',
 // --- the runtime's JavaScript, from where the demo has it ----------------
 const scripts = path.join(notebooks, 'shumway');
 fs.mkdirSync(scripts, { recursive: true });
-for (const file of ['isolate.js', 'session.js', 'mirror.js'])
+for (const file of ['isolate.js', 'session.js', 'mirror.js', 'libraries.js'])
   fs.copyFileSync(path.join(runtimeScripts, file), path.join(scripts, file));
 
 // --- isolation, before anything else in every page -----------------------

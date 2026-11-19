@@ -207,7 +207,7 @@ internal static partial class WebShumwayApp
         S.StartEngine();
         // Libraries are global: every engine, including one started by switching
         // workspace, knows them.
-        RegisterLibraries();
+        RegisterLibraries(S.Engine);
     }
 
     /// <summary>Loads the editor's buffer. Returns null on success, or the error

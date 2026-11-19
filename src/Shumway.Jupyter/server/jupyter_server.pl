@@ -98,8 +98,10 @@ known(enable_logging).
 
 % method(+Method, +Id, +Params, -Cell)
 % A cell is read whole before any of it runs: a syntax error anywhere is the
-% answer to the request.
+% answer to the request. The page's library collections are put on the search
+% path first, those another tab imported since the last cell included.
 method(call, Id, Params, Cell) :-
+    '$jupyter_refresh_libraries',
     (   Params = obj(Pairs), memberchk(code-str(Code), Pairs) ->
         user_file(Pairs, UserFile),
         catch(cell_content(Code, UserFile, Content), Error, true),

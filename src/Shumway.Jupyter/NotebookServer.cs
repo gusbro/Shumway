@@ -45,6 +45,10 @@ public sealed class NotebookServer
     /// when it ended by itself.</summary>
     public string? Failure { get; private set; }
 
+    /// <summary>The page's library collections, or null for a server with no
+    /// page behind it, which imports none.</summary>
+    internal INotebookLibraries? Libraries { get; private init; }
+
     internal static NotebookServer? Of(PrologEngine engine)
         => Servers.TryGetValue(engine, out NotebookServer? server) ? server : null;
 
@@ -63,11 +67,13 @@ public sealed class NotebookServer
 
     /// <summary>Starts the server on a session whose engine was prepared
     /// with <see cref="Install"/>. What the session writes from now on goes
-    /// to the responses, not to the page.</summary>
-    public static NotebookServer Start(HostSession session)
+    /// to the responses, not to the page. <paramref name="libraries"/> are
+    /// the page's collections, put on the engine's search path before each
+    /// cell.</summary>
+    public static NotebookServer Start(HostSession session, INotebookLibraries? libraries = null)
     {
         ArgumentNullException.ThrowIfNull(session);
-        var server = new NotebookServer();
+        var server = new NotebookServer { Libraries = libraries };
         server.Ended = session.OnEngine(() => server.Run(session));
         return server;
     }

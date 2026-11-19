@@ -463,7 +463,7 @@ public sealed class NotebookServerTests : IDisposable
         NotebookServer server = _notebooks.Open("a").Server;
         string[] helpers =
         {
-            "halt/0", "retry/0", "help/0", "magic/0", "version/0", "version/4", "versions/0", "pwd/0", "cd/1",
+            "halt/0", "retry/0", "help/0", "magic/0", "version/0", "version/4", "versions/0", "pwd/0", "cd/1", "import_library/1",
             "print_variable_bindings/0", "print_queries/0", "print_queries/1", "print_query_time/0",
             "print_table/1", "print_table/2", "print_and_save_table/3", "trace/1", "display/2",
             "update_completion_data/0",

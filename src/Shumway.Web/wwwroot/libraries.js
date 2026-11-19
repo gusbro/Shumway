@@ -8,6 +8,8 @@
 // Libraries are GLOBAL. They are not part of any workspace, they survive
 // switching between them, and they do not travel in a workspace's zip or share
 // link — they are not the user's program, they are what the program builds on.
+// The notebook site, a directory of this one, shares them (ADR-070, O3): it
+// keeps them in the same storage, through this module.
 
 let engine = null;
 
@@ -77,7 +79,7 @@ export async function pickFolder() {
 
 /** Only Prolog sources: a library folder in a checkout also holds tests, READMEs
  *  and whatever else, and none of it is what use_module resolves. */
-const isSource = (path) => /\.(pl|pro|prolog)$/i.test(path);
+export const isSource = (path) => /\.(pl|pro|prolog)$/i.test(path);
 
 // --- importing from a URL -------------------------------------------------
 // The point is not having to clone a whole Prolog system to get one library.
@@ -164,6 +166,62 @@ export async function fetchGitHubTree(where, report = () => {}) {
   return files;
 }
 
+const ARCHIVE = /\.(zip|tar\.gz|tgz|tar)$/i;
+
+/** A collection's name from the file it came in: `lib-1.0.tar.gz` is `lib-1.0`. */
+const stem = (file) => file.replace(/\.(tar\.gz|tgz|zip|tar|pl|pro|prolog)$/i, '') || file;
+
+/**
+ * The name a URL's collection takes, known before anything is fetched: the
+ * suggested one's, the last directory of a GitHub address (or the repository),
+ * or the file's name without its extension.
+ */
+export function collectionName(url) {
+  const known = SUGGESTED.find((s) => s.url === url);
+  if (known) return known.name;
+  const where = parseGitHubTree(url);
+  if (where) return where.path.split('/').pop() || where.repo;
+  return stem(decodeURIComponent(new URL(url).pathname.split('/').pop() ?? ''));
+}
+
+/**
+ * Fetches what a URL holds, as a collection's files: a GitHub directory, one
+ * Prolog file, or a .zip or .tar.gz archive of them. Any site but GitHub has
+ * no way to list a directory, so from those it is a file.
+ *
+ * @returns {Promise<{files: {path: string, text: string}[], from: string}>}
+ */
+export async function fetchCollection(url, report = () => {}) {
+  const where = parseGitHubTree(url);
+  if (where) return { files: await fetchGitHubTree(where, report), from: `${where.owner}/${where.repo}` };
+
+  const address = new URL(url);
+  const file = decodeURIComponent(address.pathname.split('/').pop() ?? '');
+  if (!ARCHIVE.test(file) && !isSource(file)) {
+    throw new Error('that is neither a GitHub directory (https://github.com/owner/repo/tree/branch/path),'
+      + ' a Prolog file, nor a .zip or .tar.gz archive');
+  }
+  let response;
+  try { response = await fetch(url); }
+  catch {
+    // A refused CORS read and a host that is not there fail alike.
+    throw new Error(`${address.host} did not answer, or does not let a page of another site`
+      + ' read its files (CORS)');
+  }
+  if (!response.ok) throw new Error(`${address.host} answered ${response.status} for ${file}`);
+  const files = isSource(file)
+    ? [{ path: file, text: await response.text() }]
+    : await unpack(new Uint8Array(await response.arrayBuffer()));
+  return { files, from: address.host };
+}
+
+/** The Prolog sources of an archive's bytes: `[{path, text}]`. */
+export async function unpack(bytes) {
+  const answer = JSON.parse(await engine.LibraryUnpack(bytes));
+  if (!Array.isArray(answer)) throw new Error(answer.error);
+  return answer;
+}
+
 async function collect(dir, prefix, into) {
   for await (const [name, handle] of dir.entries()) {
     const path = prefix + name;
@@ -222,10 +280,14 @@ export async function entries(name) {
  * @param report called with each phase, so the wait has something to show
  * @returns {Promise<string|null>} the error text, or null
  */
-export async function importFolder(name, dial, picked, report = () => {}) {
+export async function importFolder(name, dial, picked, report = () => {}, source = '') {
   report('writing files');
   const err = await create(name, dial);
   if (err) return err;
+  if (source) {
+    const failed = await engine.LibrarySetSource(name, source);
+    if (failed) return failed;
+  }
   for (const file of picked) {
     const failed = await write(name, file.path, file.text);
     if (failed) return failed;
@@ -289,6 +351,8 @@ export async function persist(name) {
   try {
     const libDir = await storedCollection(name);
     await writeInto(libDir, '.dialect', await dialect(name));
+    const source = await engine.LibrarySource(name);
+    if (source) await writeInto(libDir, '.source', source);
     for (const entry of await entries(name)) await storeBuilt(libDir, name, entry.name);
     for (const file of await files(name))
       await writeInto(libDir, 'src/' + file, (await read(name, file)) ?? '');
@@ -348,29 +412,102 @@ export async function restoreSources() {
     const dir = await root();
     for await (const [name, handle] of dir.entries()) {
       if (handle.kind !== 'directory') continue;
-      // Bundles an earlier version stored as base64. Not converted: a library
-      // whose bundle is gone compiles again when it is used.
-      try { await handle.removeEntry('built', { recursive: true }); } catch { /* none */ }
-      const collected = [];
-      await readInto(handle, '', collected, 'bundles/');
-      const tagged = collected.find((f) => f.path === '.dialect');
-      await create(name, tagged ? tagged.text.trim() : '');
-
-      for (const file of collected) {
-        if (!file.path.startsWith('diag/')) continue;
-        await engine.LibraryPutDiagnostic(name, file.path.slice(5), file.text);
-      }
-
-      for (const file of collected) {
-        if (file.path === '.dialect' || file.path.startsWith('diag/')) continue;
-        // Stored under src/; the library's own file names are relative to it.
-        const relative = file.path.startsWith('src/') ? file.path.slice(4) : file.path;
-        await write(name, relative, file.text);
-      }
+      await restoreCollection(name, handle);
       restoredNames.push(name);
     }
   } catch { /* no storage, or it refused: the session just has no libraries */ }
   return restoredNames;
+}
+
+async function restoreCollection(name, handle) {
+  // Bundles an earlier version stored as base64. Not converted: a library
+  // whose bundle is gone compiles again when it is used.
+  try { await handle.removeEntry('built', { recursive: true }); } catch { /* none */ }
+  const collected = [];
+  await readInto(handle, '', collected, 'bundles/');
+  const tagged = collected.find((f) => f.path === '.dialect');
+  await create(name, tagged ? tagged.text.trim() : '');
+  const source = collected.find((f) => f.path === '.source');
+  if (source) await engine.LibrarySetSource(name, source.text);
+
+  for (const file of collected) {
+    if (!file.path.startsWith('diag/')) continue;
+    await engine.LibraryPutDiagnostic(name, file.path.slice(5), file.text);
+  }
+
+  for (const file of collected) {
+    if (file.path === '.dialect' || file.path === '.source' || file.path.startsWith('diag/')) continue;
+    // Stored under src/; the library's own file names are relative to it.
+    const relative = file.path.startsWith('src/') ? file.path.slice(4) : file.path;
+    await write(name, relative, file.text);
+  }
+}
+
+/**
+ * Brings back the stored collections this page does not have: those another
+ * tab imported since this one started. Resolves, with their names, once their
+ * bundles are back too.
+ */
+export async function syncFromStorage() {
+  if (!persistent()) return [];
+  await restored();
+  const have = new Set(await names());
+  const added = [];
+  try {
+    for await (const [name, handle] of (await root()).entries()) {
+      if (handle.kind !== 'directory' || have.has(name)) continue;
+      await restoreCollection(name, handle);
+      added.push(name);
+    }
+  } catch { /* no storage: nothing to bring */ }
+  if (added.length > 0) await restoreBundles(added);
+  return added;
+}
+
+/** Stores the bundles the engine compiled on demand since the last call, so
+ *  another page, or the next visit, does not compile them again. */
+export async function keepCompiledOnDemand() {
+  for (const { name, library } of await takeCompiledOnDemand()) await persistLibrary(name, library);
+}
+
+/**
+ * Imports a collection for a notebook cell (jupyter:import_library/1). The
+ * location is a URL, a file the engine sees, or empty for the library the
+ * page suggests for the dialect. A collection here already under the same
+ * name is left as it is when it came from the same place, or when where it
+ * came from was not kept; from anywhere else it is refused.
+ *
+ * @returns {Promise<string>} what to tell the notebook
+ */
+export async function importFor({ dialect: dial, location }) {
+  const suggested = location === ''
+    ? SUGGESTED.find((s) => s.dialect === dial)
+    : SUGGESTED.find((s) => s.url === location);
+  const source = location === '' ? suggested.url : location;
+  const remote = /^https?:\/\//i.test(source);
+  const tag = dial || suggested?.dialect || '';
+  const name = remote ? collectionName(source) : stem(source.split('/').pop());
+
+  await syncFromStorage();
+  if ((await names()).includes(name)) {
+    const was = await engine.LibrarySource(name);
+    if (was && was !== source) throw new Error(`a collection named ${name} is here already, from ${was}`);
+    return `% ${name} is here already${was ? `, from ${was}` : ''}.`;
+  }
+
+  let files, from;
+  if (remote) ({ files, from } = await fetchCollection(source));
+  else {
+    const file = source.split('/').pop();
+    const bytes = fromBase64(await engine.LibraryReadLocal(source));
+    files = isSource(file) ? [{ path: file, text: new TextDecoder().decode(bytes) }] : await unpack(bytes);
+    from = file;
+  }
+  const failed = await importFolder(name, tag, files, () => {}, source);
+  if (failed) throw new Error(failed);
+  const count = (await entries(name)).length;
+  return `% ${name}: ${count} librar${count === 1 ? 'y' : 'ies'} from ${from}`
+    + `${tag ? `, dialect ${tag}` : ''}. Each compiles the first time it is used.`;
 }
 
 /** Puts the stored bundles of `names` back, which is what library(X) resolves

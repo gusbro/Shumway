@@ -120,12 +120,21 @@ over.
 Two ways in:
 
 - **Import folder…**: a folder from your computer.
-- **Import from URL…**: a GitHub directory address, the one you get by
-  navigating there and copying the bar. Scryer's, SWI's and Trealla's are
-  offered, so borrowing a library does not mean installing a Prolog system.
+- **Import from URL…**: one of these.
+  - A GitHub directory address, the one you get by navigating there and
+    copying the bar. Scryer's, SWI's and Trealla's are offered, so borrowing
+    a library does not mean installing a Prolog system.
+  - The address of one Prolog file, or of a `.zip` or `.tar.gz` archive of a
+    collection, on any site. Only GitHub lets a page list a directory, so
+    from anywhere else it is a file. The site must let pages of other sites
+    read its files (CORS); a site that does not is named in the error. A
+    directory that holds the whole archive, as a release's does, is not part
+    of the libraries' names.
 
 What you import is a **collection**, not a library. Scryer's `lib/` is one
-folder and about sixty libraries: every `x.pl` in it is `library(x)`.
+folder and about sixty libraries: every `x.pl` in it is `library(x)`. A
+collection imported from a URL keeps the URL, which the Jupyter notebooks use
+to tell the same collection from another of the same name.
 
 A collection carries a **dialect** (`scryer`, `swi`, `trealla`, or none). A library
 resolved from a collection tagged `scryer` loads under Scryer's name resolution
@@ -133,7 +142,10 @@ and `double_quotes`, which is what lets both systems' versions of the same
 library sit in one engine: see [ADR-040](../architecture/adr/040-multi-dialect-shims.md).
 
 Libraries are **global**: shared by every workspace, unaffected by switching,
-and not part of a workspace's zip or share link.
+and not part of a workspace's zip or share link. The
+[Jupyter notebooks](../../jupyterlite/README.md#libraries) published beside
+the demo share them too: a collection imported here is there for the next
+cell of a notebook, and one a notebook imports is here after a reload.
 
 ### Compiling
 

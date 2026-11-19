@@ -173,7 +173,7 @@ export class ServerKernel extends BaseKernel implements IKernel {
       return failed('no session', text);
     }
 
-    const { mirror } = this._runtime;
+    const { mirror, libraries } = this._runtime;
     const mirrored = async (copy: () => Promise<unknown>) => {
       try {
         await copy();
@@ -181,9 +181,16 @@ export class ServerKernel extends BaseKernel implements IKernel {
         show({ 'text/plain': `${texts.noticePrefix}The files could not be brought up to date: ${reason}` });
       }
     };
+    // A collection the page could not bring is one the cell does not find,
+    // and the cell says so.
+    const quietly = async (step: () => Promise<unknown>) => {
+      try { await step(); } catch { /* see above */ }
+    };
 
-    // What changed in the file browser and the editor is there for the cell.
+    // What changed in the file browser and the editor is there for the cell,
+    // and so is a collection imported in another tab.
     await mirrored(() => mirror.pull());
+    await quietly(() => libraries.sync());
     const notebook = await this._notebook();
     this._running = true;
     this._interrupted = false;
@@ -196,6 +203,7 @@ export class ServerKernel extends BaseKernel implements IKernel {
     }
     // And what the cell wrote is there for the file browser.
     await mirrored(() => mirror.push());
+    await quietly(() => libraries.keep());
     this._predicatesStale = true;
 
     if (answer === null) {

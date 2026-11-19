@@ -24,6 +24,102 @@ internal static partial class WebShumwayApp
     [JSImport("ui.sessionAskForInput", "main.js")]
     internal static partial void SessionAskForInput(string kernelId);
 
+    /// <summary>Asks the page to import a collection for the kernel's running
+    /// cell: a JSON object with its dialect and location. The page answers
+    /// through <see cref="SessionSupplyImport"/>.</summary>
+    [JSImport("ui.sessionImportLibrary", "main.js")]
+    internal static partial void SessionImportLibrary(string kernelId, string request);
+
+    // The imports a session is waiting for, one per kernel at most: a cell's
+    // query runs on one thread.
+    private static readonly Dictionary<string, ImportWait> ImportWaits = new();
+
+    private sealed class ImportWait
+    {
+        private readonly object _gate = new();
+        private string? _answer;
+
+        public void Answer(string answer)
+        {
+            lock (_gate) { _answer ??= answer; Monitor.PulseAll(_gate); }
+        }
+
+        public string Take()
+        {
+            lock (_gate)
+            {
+                // CA1416: blocking is unsupported on the browser's main thread;
+                // this is a session's thread, which a cell's query holds anyway.
+#pragma warning disable CA1416
+                while (_answer is null) Monitor.Wait(_gate);
+#pragma warning restore CA1416
+                return _answer;
+            }
+        }
+    }
+
+    /// <summary>The page's collections for one kernel's session (ADR-070, O3).</summary>
+    private sealed class PageLibraries(string kernelId) : INotebookLibraries
+    {
+        public void Refresh(Shumway.Embedding.PrologEngine engine)
+        {
+            // A collection that cannot be registered is one a cell cannot
+            // load; that is no reason to refuse the cell.
+            try { RegisterLibraries(engine); } catch (IOException) { }
+        }
+
+        public string Import(Shumway.Embedding.PrologEngine engine, string dialect, string location)
+        {
+            var wait = new ImportWait();
+            lock (ImportWaits) ImportWaits[kernelId] = wait;
+            string request = JsonObject(("dialect", dialect), ("location", location));
+            // JavaScript is thread-affine: the page is asked on its thread.
+            _jsThread!.Post(static state =>
+            {
+                var (id, line) = ((string, string))state!;
+                SessionImportLibrary(id, line);
+            }, (kernelId, request));
+            string answer;
+            try { answer = wait.Take(); }
+            finally { lock (ImportWaits) ImportWaits.Remove(kernelId); }
+
+            using var json = System.Text.Json.JsonDocument.Parse(answer);
+            if (json.RootElement.TryGetProperty("error", out var error))
+                throw new InvalidOperationException(error.GetString());
+            RegisterLibraries(engine);
+            return json.RootElement.TryGetProperty("note", out var note) ? note.GetString() ?? "" : "";
+        }
+    }
+
+    private static string JsonObject(params (string Key, string Value)[] pairs)
+    {
+        using var buffer = new MemoryStream();
+        using (var json = new System.Text.Json.Utf8JsonWriter(buffer))
+        {
+            json.WriteStartObject();
+            foreach ((string key, string value) in pairs) json.WriteString(key, value);
+            json.WriteEndObject();
+        }
+        return System.Text.Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
+    /// <summary>The page's answer to <see cref="SessionImportLibrary"/>: a JSON
+    /// object with <c>note</c>, what to tell the notebook, or <c>error</c>.</summary>
+    [JSExport]
+    internal static Task SessionSupplyImport(string kernelId, string answer)
+    {
+        ReleaseImport(kernelId, answer);
+        return Task.CompletedTask;
+    }
+
+    // An interrupted or disposed session is not left waiting for the page.
+    private static void ReleaseImport(string kernelId, string answer)
+    {
+        ImportWait? wait;
+        lock (ImportWaits) wait = ImportWaits.GetValueOrDefault(kernelId);
+        wait?.Answer(answer);
+    }
+
     private sealed class NotebookPage(string kernelId) : ISessionPage
     {
         // What the session writes is the server's to capture: it goes in the
@@ -80,9 +176,10 @@ internal static partial class WebShumwayApp
                     session.SetDirectory(directory);
                 }
                 session.StartEngine();
+                RegisterLibraries(session.Engine);
                 return true;
             }).ConfigureAwait(false);
-            NotebookServer server = NotebookServer.Start(session);
+            NotebookServer server = NotebookServer.Start(session, new PageLibraries(kernelId));
             lock (NotebookServers)
             {
                 NotebookServers[kernelId] = server;
@@ -117,7 +214,10 @@ internal static partial class WebShumwayApp
     /// session.</summary>
     [JSExport]
     internal static Task<bool> SessionCancel(string kernelId)
-        => Task.FromResult(_notebooks?.Find(kernelId)?.Cancel() ?? false);
+    {
+        ReleaseImport(kernelId, JsonObject(("error", "the import was interrupted")));
+        return Task.FromResult(_notebooks?.Find(kernelId)?.Cancel() ?? false);
+    }
 
     /// <summary>Hands a line to a session's <c>read/1</c>.</summary>
     [JSExport]
@@ -147,6 +247,7 @@ internal static partial class WebShumwayApp
             NotebookTiers.Remove(kernelId);
         }
         server?.Close();
+        ReleaseImport(kernelId, JsonObject(("error", "the session ended")));
         if (_notebooks is { } host) await host.Close(kernelId).ConfigureAwait(false);
     }
 

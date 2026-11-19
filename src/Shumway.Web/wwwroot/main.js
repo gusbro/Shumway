@@ -832,7 +832,7 @@ document.getElementById('libraries').addEventListener('click', async () => {
 
 /** Names a set of fetched sources, writes them in, and starts building. Shared
  *  by both ways in — where the files came from stops mattering here. */
-async function adoptCollection(files, { name: suggestedName, dialect = '', from }) {
+async function adoptCollection(files, { name: suggestedName, dialect = '', from, source = '' }) {
   document.getElementById('import-detail').textContent =
     `${files.length} source file(s) from “${from}”.`;
   document.getElementById('import-name').value = suggestedName;
@@ -849,7 +849,7 @@ async function adoptCollection(files, { name: suggestedName, dialect = '', from 
   let phase = 'importing';
   const err = await withBusy(
     () => `${phase} ${name}`,
-    () => libraries.importFolder(name, dial, files, (p) => { phase = p; }));
+    () => libraries.importFolder(name, dial, files, (p) => { phase = p; }, source));
 
   if (err) { emit(`% ${name}: ${err}\n`, 'error'); return; }
   const provided = await libraries.entries(name);
@@ -896,35 +896,36 @@ document.getElementById('import-url').addEventListener('click', async () => {
   if (answer !== 'ok') return;
 
   const url = urlInput.value.trim();
-  const where = libraries.parseGitHubTree(url);
-  if (!where) {
-    emit('% that is not a GitHub directory address'
-       + ' (https://github.com/owner/repo/tree/branch/path)\n', 'error');
+  let address;
+  try { address = new URL(url); } catch {
+    emit('% that is not a URL\n', 'error');
     return;
   }
-
+  // A GitHub directory, or a Prolog file or an archive anywhere.
+  const where = libraries.parseGitHubTree(url);
   const known = libraries.SUGGESTED.find((s) => s.url === url);
-  emit(`% fetching ${where.owner}/${where.repo}`
-     + (where.path ? `/${where.path}` : '') + `…\n`, 'note');
+  emit(`% fetching ${where ? `${where.owner}/${where.repo}${where.path ? `/${where.path}` : ''}` : url}…\n`,
+    'note');
 
   let fetched = 0, expected = 0;
-  let files;
+  let got;
   try {
-    files = await withBusy(
-      () => expected === 0
-        ? `asking GitHub what is in ${where.repo}`
-        : `fetching ${where.repo}: ${fetched} of ${expected} files`,
-      () => libraries.fetchGitHubTree(where, (done, total) => { fetched = done; expected = total; }));
+    got = await withBusy(
+      () => !where ? `fetching from ${address.host}`
+        : expected === 0 ? `asking GitHub what is in ${where.repo}`
+          : `fetching ${where.repo}: ${fetched} of ${expected} files`,
+      () => libraries.fetchCollection(url, (done, total) => { fetched = done; expected = total; }));
   } catch (ex) {
     emit(`% ${ex.message ?? ex}\n`, 'error');
     return;
   }
-  emit(`% fetched ${files.length} file(s)\n`, 'note');
+  emit(`% fetched ${got.files.length} file(s)\n`, 'note');
 
-  await adoptCollection(files, {
-    name: known?.name ?? (where.path.split('/').pop() || where.repo),
+  await adoptCollection(got.files, {
+    name: libraries.collectionName(url),
     dialect: known?.dialect ?? '',
-    from: `${where.owner}/${where.repo}`,
+    from: got.from,
+    source: url,
   });
 });
 
