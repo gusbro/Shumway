@@ -148,6 +148,60 @@ try {
       check(inspected.found && /Shows a table/.test(inspected.data?.['text/plain'] ?? ''),
         'a helper is documented where it is written', inspected);
 
+      // The rest of the feature table's cells (docs/design/jupyterlite-features.yaml).
+      const fileText = async (path) => (await contents.get(path, { content: true }).catch(() => ({ content: null }))).content;
+      const shown = (answer) => answer.texts.join('\n');
+      await run(kernel, 'X = 3.');
+      r = await run(kernel, 'Y is $X + 1.');
+      check(/^Y = 4,/.test(r.texts[0] ?? ''), '$X is the value X had in an earlier query', r);
+      r = await run(kernel, 'p(X) :- q(X).');
+      check(r.reply.status === 'error' && /%%user/.test(shown(r)), 'a clause in a query cell is an error that points to %%user', r);
+      r = await run(kernel, 'jupyter:trace(member(X, [a])).');
+      check(r.reply.status === 'ok' && /Call/.test(shown(r)) && /member/.test(shown(r)), 'jupyter:trace/1 shows the ports of its goal', r);
+      r = await run(kernel, 'jupyter:help.');
+      check(/print_table/.test(shown(r)), 'jupyter:help/0 lists the helpers', r);
+      r = await run(kernel, 'jupyter:magic.');
+      check(/%%user/.test(shown(r)) && /%%file/.test(shown(r)), 'jupyter:magic/0 lists the magics', r);
+      r = await run(kernel, 'jupyter:versions.');
+      const versioned = await run(kernel, 'jupyter:version(Ma, Mi, Pa, _).');
+      check(/Shumway Prolog \d+\.\d+\.\d+/.test(shown(r)) && /Ma = \d+/.test(shown(versioned)),
+        'jupyter:versions/0 and jupyter:version/4 say the version', [r, versioned]);
+      r = await run(kernel, 'jupyter:pwd.');
+      check(/Working directory: '?\/drive/.test(shown(r)), "jupyter:pwd/0 says the session's directory", r);
+      r = await run(kernel, 'jupyter:print_queries.');
+      check(/^X=3,$/m.test(shown(r)) && /^jupyter:help,$/m.test(shown(r)), 'jupyter:print_queries/0 shows the queries that ran', r);
+      r = await run(kernel, 'jupyter:print_query_time.');
+      check(/Runtime: [\d.e-]+ s/.test(shown(r)), 'jupyter:print_query_time/0 shows how long the last query took', r);
+      r = await run(kernel, 'jupyter:print_variable_bindings.');
+      check(/\$Y = 4/.test(shown(r)), 'jupyter:print_variable_bindings/0 shows the values $Var reads', r);
+      await run(kernel, "jupyter:print_and_save_table(member(N-S, [1-1, 2-4]), csv, 'squares.csv').");
+      let saved = await fileText('squares.csv');
+      check(saved === 'N,S\n1,1\n2,4\n', 'jupyter:print_and_save_table/3 writes the table to a file', saved);
+
+      await run(kernel, '%%file colours.pl\ncolour2(blue).');
+      await run(kernel, '%%file+ colours.pl\ncolour2(green).');
+      r = await run(kernel, 'findall(C, colour2(C), L).');
+      const loaded = await run(kernel, '%%load colours.pl\ncolour2(grey).');
+      const reloaded = await run(kernel, 'findall(C, colour2(C), L).');
+      await run(kernel, '%%save notes.txt\nnot loaded (');
+      saved = await fileText('notes.txt');
+      check(r.texts[0] === 'L = [blue,green]' && loaded.reply.status === 'ok' && reloaded.texts[0] === 'L = [grey]'
+          && saved === 'not loaded (\n',
+        '%%file, %%file+ and %%load write and load a file; %%save only writes it', [r, reloaded, saved]);
+      r = await run(kernel, '%%highlight\nfoo(X) :- bar(X).');
+      check(r.reply.status === 'ok' && r.outputs.length === 0, '%%highlight runs nothing', r);
+      r = await run(kernel, '%%table\nmember(X-Y, [a-1, b-2]).');
+      await run(kernel, '%%csv letters.csv\nmember(X, [a, b]).');
+      saved = await fileText('letters.csv');
+      check(r.outputs[0]?.['text/markdown'] === 'X | Y | \n:- | :- | \na | 1 | \nb | 2 | ' && saved === 'X\na\nb\n',
+        '%%table shows a table, and %%csv writes it too', [r, saved]);
+      for (const [magic, what] of [['%bindings', /\$Y = 4/], ['%queries', /X=3/], ['%flags', /double_quotes/],
+        ['%help', /print_table/], ['%magic', /%%user/], ['%pwd', /\/drive/], ['%versions', /Shumway Prolog/]]) {
+        r = await run(kernel, magic);
+        const all = shown(r) + JSON.stringify(r.outputs);
+        check(r.reply.status === 'ok' && what.test(all), `the line magic ${magic}`, r);
+      }
+
       // Files, both ways.
       await contents.save('facts.pl', { type: 'file', format: 'text', content: 'colour(red).\n' });
       r = await run(kernel, 'consult(facts), colour(C).');
@@ -193,6 +247,9 @@ try {
         'two notebooks have a session each, each in its directory', [r, elsewhere]);
       const subFiles = (await contents.get('sub', { content: true })).content.map((c) => c.name).sort();
       check(subFiles.includes('second.user.pl'), 'and the files of each are in its directory', subFiles);
+      r = await run(other, "jupyter:cd('..'), jupyter:pwd.");
+      check(/Working directory: '?\/drive\/?'?$/m.test(r.texts[0] ?? '') && !/sub/.test(r.texts[0] ?? ''),
+        "jupyter:cd/1 changes the session's directory", r);
 
       // A third notebook beside the first: each keeps its own %%user file,
       // and %%user+ loads only what its own cells wrote.
@@ -237,6 +294,21 @@ try {
       own = await text('user.pl');
       check(own === 'from_console(2).\n', 'a file rewritten within a second is copied as the second cell left it', own);
 
+      // A notebook saved by hhu-stups' Prolog kernel opens with this one,
+      // without a dialog that asks for a kernel (ADR-066).
+      await contents.save('other-kernel.ipynb', { type: 'notebook', format: 'json', content: {
+        cells: [], nbformat: 4, nbformat_minor: 5,
+        metadata: { kernelspec: { name: 'prolog_kernel', display_name: 'Prolog', language: 'prolog' },
+          language_info: { name: 'Prolog', file_extension: '.pl', mimetype: 'text/x-prolog', codemirror_mode: 'prolog' } } } });
+      const foreign = await app.commands.execute('docmanager:open', { path: 'other-kernel.ipynb' });
+      await foreign.context.ready;
+      await Promise.race([foreign.sessionContext.ready, new Promise((resolve) => setTimeout(resolve, 20000))]);
+      const dialog = document.querySelector('.jp-Dialog');
+      r = foreign.sessionContext.session?.kernel ? await run(foreign.sessionContext.session.kernel, 'X = here.') : null;
+      check(foreign.sessionContext.session?.kernel?.name === 'shumway_prolog' && !dialog && r?.texts[0] === 'X = here',
+        "a notebook of hhu-stups' kernel opens with this one, and nothing asks which",
+        [foreign.sessionContext.session?.kernel?.name, dialog?.textContent?.slice(0, 200), r?.texts]);
+
       await kernel.restart();
       r = await run(kernelOf(panel), 'X = restarted.');
       check(r.texts[0] === 'X = restarted', 'a restarted kernel answers', r);
@@ -262,6 +334,20 @@ try {
     return lines;
   });
   for (const line of report) check(line.ok, line.what, line.detail);
+
+  // The example notebooks run from top to bottom, and show what they say.
+  for (const [file, expected] of [
+    ['grammars.ipynb', ['Who = world', 'Who = prolog', 'V = 9', 'Text | Value', "'(1+2)*3' | 9 "]],
+    ['constraints.ipynb', ['X in 4..5', 'X = 8', 'X = 9', 'L = [_A,_B,_C]', 'L = []', 'L = [_A]',
+      'A = [_A,_B,_C,_D],\\nB = [p,q]',
+      '[1,1] | 2 ', 'P = [9,5,6,7]+[1,0,8,5]=[1,0,6,5,2]', 'Qs | ', '[2,4,6,1,3,5] | ', '[5,3,1,6,4,2] | ']],
+    ['tables-and-pictures.ipynb', ['N | Square | Power', '6 | 36 | 64 ', 'two', '<svg', 'width=\\"256\\"']],
+  ]) {
+    const ran = await runNotebook(file);
+    const flat = JSON.stringify(ran.cells);
+    const absent = expected.filter((text) => text instanceof RegExp ? !text.test(flat) : !flat.includes(text));
+    check(!flat.includes('ERROR') && absent.length === 0, `the example ${file} runs`, { absent, cells: ran.cells });
+  }
 } catch (e) {
   failures++;
   console.log(`[${engineName}] did not get there: ${e.message.split('\n')[0]}`);

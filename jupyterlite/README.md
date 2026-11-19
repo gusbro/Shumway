@@ -66,7 +66,11 @@ node kernel.mjs <dir> chromium      # or firefox, or webkit
 
 `kernel.mjs` opens a notebook in a JupyterLab page of the deployment and
 runs cells through the kernel: answers, errors, tables, `jupyter:display/2`,
-`read/1`, an interrupted query, files both ways, two notebooks at once.
+`read/1`, an interrupted query, files both ways, two notebooks at once, and
+the cells of the feature table
+([`jupyterlite-features.yaml`](../docs/design/jupyterlite-features.yaml)).
+It opens a notebook saved by another Prolog kernel, and runs each example
+notebook from top to bottom.
 `limit.mjs` serves the site set to hold one kernel and checks that a second
 is refused with a message that says how to free a place.
 
@@ -78,3 +82,10 @@ is refused with a message that says how to free a place.
 |---|---|---|
 | `shumwayRuntimeUrl` | where the demo is, from the site's root | `../` |
 | `shumwaySessionLimit` | how many kernels a page may hold | the app's, 10 |
+
+`site/overrides.json` holds the JupyterLab settings the site starts with.
+It turns on `autoStartDefaultKernel`, so that a notebook saved by another
+Prolog kernel opens with this one and nothing asks which. JupyterLab
+matches a kernel by name, then by language, and it compares the
+notebook's `language_info.name`, `Prolog`, with the kernel's language,
+`prolog`.
