@@ -79,6 +79,15 @@ CI runs both in Chromium, Firefox and WebKit
 that changes `jupyterlite/` or the engine: the answers a notebook shows come
 from the engine.
 
+## Where it is published
+
+The demo's workflow (`.github/workflows/webshumway.yml`) builds this site
+without `--with-demo` and publishes it in the demo's `lite/`:
+[gusbro.github.io/Shumway/lite/](https://gusbro.github.io/Shumway/lite/).
+The build is cached by the contents of this directory and of the three
+runtime scripts it copies, so a push that changes only the engine
+republishes the demo with the cached site.
+
 ## Configuration
 
 `site/jupyter-lite.json` takes two options of this site's own:
