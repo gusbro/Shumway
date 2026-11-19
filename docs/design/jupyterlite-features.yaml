@@ -2,6 +2,10 @@
 # Source of truth: the markdown table is generated from this file, never edited by hand.
 # Every row needs a `test`: an acceptance cell run in CI (Playwright) against the built site.
 # A row may be `supported` only if its test passes.
+# Until the acceptance workflow is in CI (plan, Phase 3), the cells run in
+# jupyterlite/tests/kernel.mjs, against a built site in Chromium, Firefox and WebKit.
+# A protocol method's test is the notebook server's corpus (tests/jupyter/corpus), which
+# sends the request itself; `A  →  B` is a cell A followed by a cell B.
 #
 # Schema
 #   reference:  the Hercutalk version that column `hercutalk_desktop` describes
@@ -22,69 +26,76 @@ reference: { hercutalk: "0.47.0", commit: "865d6fd" }
 groups:
   - name: Protocol methods
     rows:
-      - { id: m-call,  feature: "call",  hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 2 }
-      - { id: m-backend, feature: "backend", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 2 }
-      - { id: m-enable-logging, feature: "enable_logging", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 2 }
-      - { id: m-version, feature: "version", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 2 }
-      - { id: m-predicate-docs, feature: "jupyter_predicate_docs", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 2 }
-      - { id: m-protocol, feature: "protocol [ext]", hercutalk_desktop: not_yet_supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 2 }
+      - { id: m-call,  feature: "call",  hercutalk_desktop: supported, shumway_prolog_web: supported, test: corpus, phase: 2 }
+      - { id: m-backend, feature: "backend", hercutalk_desktop: supported, shumway_prolog_web: supported, test: corpus, phase: 2 }
+      - { id: m-enable-logging, feature: "enable_logging", hercutalk_desktop: supported, shumway_prolog_web: supported, note: "answers false: no log file is kept", test: corpus, phase: 2 }
+      - { id: m-version, feature: "version", hercutalk_desktop: supported, shumway_prolog_web: supported, test: corpus, phase: 2 }
+      - { id: m-predicate-docs, feature: "jupyter_predicate_docs", hercutalk_desktop: supported, shumway_prolog_web: supported, test: corpus, phase: 2 }
+      - { id: m-protocol, feature: "protocol [ext]", hercutalk_desktop: not_yet_supported, shumway_prolog_web: supported, test: corpus, phase: 2 }
 
   - name: Cell semantics
     rows:
-      - { id: s-query, feature: "query with bindings", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: "X = 1.", phase: 3 }
-      - { id: s-multi-term, feature: "several terms in one cell", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }
-      - { id: s-retry, feature: "retry / jupyter:retry", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: "member(X,[a,b]).  →  retry.", phase: 3 }
-      - { id: s-dollar-var, feature: "$Var reuses a previous binding", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: "X = 3.  →  Y is $X + 1.", phase: 3 }
-      - { id: s-halt, feature: "halt / jupyter:halt", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }
-      - { id: s-errors, feature: "error reporting", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: "foo(.", phase: 3 }
-      - { id: s-clause-cells, feature: "cell with only clauses (O1) [ext]", hercutalk_desktop: not_applicable, shumway_prolog_web: not_yet_supported, note: "open decision O1", test: todo, phase: 2 }
-      - { id: s-residual, feature: "residual goals in bindings [ext]", hercutalk_desktop: partial, shumway_prolog_web: not_yet_supported, note: "Hercutalk shows clpfd domains as `X in Dom`", test: "X #> 3.", phase: 3 }
-      - { id: s-trace, feature: "trace/0,1,2, leash/1", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }
+      - { id: s-query, feature: "query with bindings", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "X = 1, Y = f(X).", phase: 3 }
+      - { id: s-multi-term, feature: "several terms in one cell", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "write(hello), nl, X = 1.\nwrite(second).", phase: 3 }
+      - { id: s-retry, feature: "retry / jupyter:retry", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "member(X, [a, b]).  →  retry.", phase: 3 }
+      - { id: s-dollar-var, feature: "$Var reuses a previous binding", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "X = 3.  →  Y is $X + 1.", phase: 3 }
+      - { id: s-halt, feature: "halt / jupyter:halt", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "halt.  →  X = after.", phase: 3 }
+      - { id: s-errors, feature: "error reporting", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "X is foo + 1.  →  X = .", phase: 3 }
+      - { id: s-clause-cells, feature: "cell with only clauses (O1) [ext]", hercutalk_desktop: not_applicable, shumway_prolog_web: wont_support, note: "decided (O1): a clause in a query cell is an error that points to %%user", test: "p(X) :- q(X).", phase: 2 }
+      - { id: s-residual, feature: "residual goals in bindings [ext]", hercutalk_desktop: partial, shumway_prolog_web: supported, note: "Hercutalk shows clpfd domains as `X in Dom`", test: "X in 1..5, X #> 2.", phase: 3 }
+      - { id: s-trace, feature: "trace/0,1,2, leash/1", hercutalk_desktop: supported, shumway_prolog_web: partial, note: "jupyter:trace/1 only", test: "jupyter:trace(member(X, [a])).", phase: 3 }
 
   - name: Helpers (module jupyter)
     rows:
-      - { id: h-help, feature: "help/0", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: "jupyter:help.", phase: 3 }
-      - { id: h-version, feature: "version/0, version/4, versions/0", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }
-      - { id: h-magic, feature: "magic/0", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }
-      - { id: h-pwd-cd, feature: "pwd/0, cd/1", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, note: "depends on the per-session working directory (ADR-070/071)", test: todo, phase: 3 }
-      - { id: h-print-queries, feature: "print_queries/0,1", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }
-      - { id: h-print-query-time, feature: "print_query_time/0", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }
-      - { id: h-print-bindings, feature: "print_variable_bindings/0", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }
-      - { id: h-print-table, feature: "print_table/1,2", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: "jupyter:print_table((member(M,[1,2,3]), S is M*M)).", phase: 3 }
-      - { id: h-print-save-table, feature: "print_and_save_table/3", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }
+      - { id: h-help, feature: "help/0", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:help.", phase: 3 }
+      - { id: h-version, feature: "version/0, version/4, versions/0", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:versions.  →  jupyter:version(Ma, Mi, Pa, _).", phase: 3 }
+      - { id: h-magic, feature: "magic/0", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:magic.", phase: 3 }
+      - { id: h-pwd-cd, feature: "pwd/0, cd/1", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:pwd.  →  jupyter:cd('..'), jupyter:pwd.", phase: 3 }
+      - { id: h-print-queries, feature: "print_queries/0,1", hercutalk_desktop: supported, shumway_prolog_web: supported, note: "print_queries/1 is checked by the server's tests", test: "jupyter:print_queries.", phase: 3 }
+      - { id: h-print-query-time, feature: "print_query_time/0", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:print_query_time.", phase: 3 }
+      - { id: h-print-bindings, feature: "print_variable_bindings/0", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:print_variable_bindings.", phase: 3 }
+      - { id: h-print-table, feature: "print_table/1,2", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:print_table(member(X, [a, b])).", phase: 3 }
+      - { id: h-print-save-table, feature: "print_and_save_table/3", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:print_and_save_table(member(N-S, [1-1, 2-4]), csv, 'squares.csv').", phase: 3 }
       - { id: h-show-term, feature: "show_term/1", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 4 }
       - { id: h-transition-graph, feature: "print_transition_graph/4", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 4 }
       - { id: h-sld-tree, feature: "print_sld_tree/1", hercutalk_desktop: partial, shumway_prolog_web: not_yet_supported, note: "not exported in 0.47.0 (commented out of the public list); the client still renders the key", test: todo, phase: 4 }
       - { id: h-show-data, feature: "show_data/1", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, note: "Vega-Lite on the web (ADR-072)", test: todo, phase: 5 }
-      - { id: h-display, feature: "display/2 [ext]", hercutalk_desktop: not_yet_supported, shumway_prolog_web: not_yet_supported, test: "jupyter:display('text/markdown', '**hi**').", phase: 3 }
+      - { id: h-display, feature: "display/2 [ext]", hercutalk_desktop: not_yet_supported, shumway_prolog_web: supported, test: "jupyter:display('text/html', '<b>hi</b>').", phase: 3 }
       - { id: h-set-backend, feature: "set_prolog_backend/1", hercutalk_desktop: supported, shumway_prolog_web: not_applicable, test: todo, phase: 3 }
 
   - name: Cell magics
     rows:
-      - { id: c-user, feature: "%%user, %%user+", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, note: "NAME.user.pl for NAME.ipynb (user.pl in a console) + consult in the Prolog variant; Hercutalk writes one user.lgt per directory", test: todo, phase: 3 }
-      - { id: c-file, feature: "%%file, %%file+, %%save, %%load", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }
-      - { id: c-highlight, feature: "%%highlight", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }
-      - { id: c-table, feature: "%%table, %%csv, %%tsv", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }
+      - { id: c-user, feature: "%%user, %%user+", hercutalk_desktop: supported, shumway_prolog_web: supported, note: "NAME.user.pl for NAME.ipynb (user.pl in a console) + consult in the Prolog variant; Hercutalk writes one user.lgt per directory", test: "%%user\nonly_third(1).  →  %%user+\nonly_third(2).", phase: 3 }
+      - { id: c-file, feature: "%%file, %%file+, %%save, %%load", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%%file colours.pl\ncolour2(blue).  →  %%file+ colours.pl\ncolour2(green).  →  %%load colours.pl\ncolour2(grey).  →  %%save notes.txt\nnot loaded (", phase: 3 }
+      - { id: c-highlight, feature: "%%highlight", hercutalk_desktop: supported, shumway_prolog_web: supported, note: "runs nothing", test: "%%highlight\nfoo(X) :- bar(X).", phase: 3 }
+      - { id: c-table, feature: "%%table, %%csv, %%tsv", hercutalk_desktop: supported, shumway_prolog_web: supported, note: "%%tsv is checked by the server's tests", test: "%%table\nmember(X-Y, [a-1, b-2]).  →  %%csv letters.csv\nmember(X, [a, b]).", phase: 3 }
       - { id: c-tree, feature: "%%tree", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 4 }
       - { id: c-data, feature: "%%data", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 5 }
 
   - name: Line magics
     rows:
-      - { id: l-all, feature: "%bindings, %queries, %flags, %help, %magic, %pwd, %versions", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, note: "split into one row each once implemented", test: todo, phase: 3 }
+      - { id: l-bindings, feature: "%bindings", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%bindings", phase: 3 }
+      - { id: l-queries, feature: "%queries", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%queries", phase: 3 }
+      - { id: l-flags, feature: "%flags", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%flags", phase: 3 }
+      - { id: l-help, feature: "%help", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%help", phase: 3 }
+      - { id: l-magic, feature: "%magic", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%magic", phase: 3 }
+      - { id: l-pwd, feature: "%pwd", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%pwd", phase: 3 }
+      - { id: l-versions, feature: "%versions", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "%versions", phase: 3 }
 
   - name: Kernel operations
     rows:
-      - { id: k-interrupt, feature: "interrupt", hercutalk_desktop: partial, shumway_prolog_web: not_yet_supported, note: "restarts the server; state is lost (both)", test: todo, phase: 3 }
-      - { id: k-restart, feature: "restart", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }
-      - { id: k-stdin, feature: "read/1 from a cell (input_request)", hercutalk_desktop: not_yet_supported, shumway_prolog_web: not_yet_supported, note: "desktop column unverified: requests and user input share stdin there", test: "read(X).", phase: 3 }
-      - { id: k-complete, feature: "completion", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }
-      - { id: k-inspect, feature: "inspection", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }
-      - { id: k-multi, feature: "several notebooks open at once", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, note: "session limit (ADR-068)", test: todo, phase: 3 }
+      - { id: k-interrupt, feature: "interrupt", hercutalk_desktop: partial, shumway_prolog_web: partial, note: "restarts the server; state is lost (both)", test: "repeat, fail.  →  interrupt", phase: 3 }
+      - { id: k-restart, feature: "restart", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "restart  →  X = restarted.", phase: 3 }
+      - { id: k-stdin, feature: "read/1 from a cell (input_request)", hercutalk_desktop: not_yet_supported, shumway_prolog_web: supported, note: "desktop column unverified: requests and user input share stdin there", test: "read(X).", phase: 3 }
+      - { id: k-complete, feature: "completion", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "X = 1, grandp, completed after %%user defines grandparent/2", phase: 3 }
+      - { id: k-inspect, feature: "inspection", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:print_table(, inspected", phase: 3 }
+      - { id: k-multi, feature: "several notebooks open at once", hercutalk_desktop: supported, shumway_prolog_web: supported, note: "session limit (ADR-068)", test: "%%user\nonly_here(1).  in one notebook, only_here(X).  in another", phase: 3 }
+      - { id: k-foreign-notebook, feature: "a notebook of another Prolog kernel opens without asking for a kernel", hercutalk_desktop: not_applicable, shumway_prolog_web: supported, note: "site setting autoStartDefaultKernel (ADR-066)", test: "open a notebook whose kernelspec is prolog_kernel  →  X = here.", phase: 3 }
 
   - name: Files
     rows:
-      - { id: f-consult, feature: "consult a file from the drive", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }
-      - { id: f-write, feature: "files written by Prolog appear in the browser", hercutalk_desktop: supported, shumway_prolog_web: not_yet_supported, test: todo, phase: 3 }
+      - { id: f-consult, feature: "consult a file from the drive", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "consult(facts), colour(C).", phase: 3 }
+      - { id: f-write, feature: "files written by Prolog appear in the browser", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "open('out.txt', write, S), write(S, hello), close(S).", phase: 3 }
 
   - name: Plots (show_data)
     rows:
