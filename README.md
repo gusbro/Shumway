@@ -87,8 +87,8 @@ in the browser, with example notebooks to start from.
   [SWI-Prolog](docs/guide/swi-library-support.md),
   [Scryer Prolog](docs/guide/scryer-library-support.md) and
   [Trealla Prolog](docs/guide/trealla-library-support.md) libraries
-  load under per-subtree dialects, [Logtalk](docs/guide/logtalk.md) (3.101.0) runs as a
-  first-class backend.
+  load under per-subtree dialects, and [Logtalk](docs/guide/logtalk.md) runs on it
+  as a first-class backend, supported by Logtalk itself since 3.103.0.
 - **Runs in a browser**: the same engine on WebAssembly as a static site with
   no backend ([WebShumway](docs/guide/webshumway.md)).
 - **Source-level debugging** in [Visual Studio and VS Code](docs/guide/debugger.md),

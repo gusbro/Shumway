@@ -1975,10 +1975,12 @@ for the deployment matrix, the app.config a Framework host wants, and the
 
 ## Logtalk
 
-Shumway is a working backend for [Logtalk](https://logtalk.org/); the glue
-(a backend adapter and a launcher) ships in the repository under `logtalk/`,
-and the standard Logtalk library test suites and benchmarks run on it
-(Tier-1 IL promotion included). See [`logtalk.md`](logtalk.md).
+Shumway is a working backend for [Logtalk](https://logtalk.org/). Logtalk
+3.103.0 and later support it as they come (its `shumwaylgt` script); for an
+earlier release, the glue (a backend adapter and a launcher) ships in this
+repository under `logtalk/`. The standard Logtalk library test suites and
+benchmarks run on it (Tier-1 IL promotion included). See
+[`logtalk.md`](logtalk.md).
 
 ## Debugging
 

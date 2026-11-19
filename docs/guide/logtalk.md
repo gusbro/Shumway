@@ -1,40 +1,38 @@
 # Using Logtalk with Shumway
 
 Shumway runs [Logtalk](https://logtalk.org/) (the OO logic-programming layer
-that compiles to plain Prolog) as a backend compiler. The glue lives in this
-repository under [`logtalk/`](../../logtalk/): a backend **adapter**
-(`adapters/shumway.pl`) and a one-file **launcher**
-(`integration/logtalk_shumway.pl`). The Logtalk tree itself is never patched:
-everything Shumway needs travels in the adapter we ship. Verified against
-**Logtalk 3.101.0** (the released tag) on Windows; nothing in the glue is
-OS-specific.
+that compiles to plain Prolog) as a backend compiler. **Logtalk 3.103.0 and
+later support Shumway 0.9.3 and later** as they come: the distribution has
+the backend adapter (`adapters/shumway.pl`), the `shumwaylgt` integration
+script, the embedding scripts, and the `shumway` and `shumwaync` backends of
+the `logtalk_tester` scripts. Checked with the 3.103.0 release on Windows.
+
+For an earlier release, this repository keeps glue of its own under
+[`logtalk/`](../../logtalk/): see [Earlier Logtalk
+releases](#earlier-logtalk-releases).
 
 ## Setup
 
-1. Install Logtalk (or unpack a source distribution: any directory works).
-2. Copy the two glue files into the matching directories of that installation:
-
-   ```
-   copy logtalk\adapters\shumway.pl      <LOGTALK>\adapters\
-   copy logtalk\integration\logtalk_shumway.pl  <LOGTALK>\integration\
-   ```
-
-3. Point the standard Logtalk environment variables at it:
-
-   ```
-   set LOGTALKHOME=<LOGTALK>
-   set LOGTALKUSER=<LOGTALK>
-   ```
+1. Install Logtalk 3.103.0 or later. Its installers set the `LOGTALKHOME`
+   and `LOGTALKUSER` environment variables; with a source distribution, set
+   them to the directory it was unpacked in.
+2. Put the `shumway` executable on the `PATH`. A build collects it in
+   `dist/Release/` (see the [user guide](user-guide.md)).
 
 ## Running
 
 From any directory (typically your project's):
 
 ```
-shumway <LOGTALK>/adapters/shumway.pl <LOGTALK>/paths/paths.pl <LOGTALK>/core/core.pl
+shumwaylgt
 ```
 
-or equivalently via the launcher: `shumway <LOGTALK>/integration/logtalk_shumway.pl`.
+That is `shumwaylgt.sh` on a POSIX system and `shumwaylgt.ps1` on Windows,
+in `<LOGTALKHOME>/integration/`. It loads the adapter, the Logtalk compiler
+and runtime, the table of library paths and any `settings.lgt`, and passes
+its options to `shumway`: `-q` for a quiet start, `-g Goal` for a goal to
+run once Logtalk is up. The same without the script:
+`shumway <LOGTALKHOME>/integration/logtalk_shumway.pl`.
 At the prompt, Logtalk is up:
 
 ```prolog
@@ -50,11 +48,27 @@ intermediate files, or in your `.lgt` sources' consulted forms.
 
 ## A standalone executable
 
-Logtalk's embedding scripts for Shumway (`scripts/embedding/shumway/` in the
-Logtalk tree) write the Logtalk compiler and runtime to `logtalk.pl` and an
-application to `application.pl`. The two files share one namespace, as they
-do when both are consulted into `user`. The linker reads each file without a
-`:- module` directive as a module of its own, so include both from one file:
+Logtalk's embedding scripts for Shumway, `shumway_logtalk_pl.sh` and
+`shumway_logtalk_pl.ps1` in `scripts/embedding/shumway/`, write the Logtalk
+compiler and runtime to `logtalk.pl` and, given an application's loader
+(`-l`), the application to `application.pl`. Then they link the files and
+save a self-contained executable, named by `-n` (`logtalk` by default): the
+application, with its startup goal (`-g`), or a Logtalk top level when there
+is no application. `-h` lists the options. For example:
+
+```
+shumway_logtalk_pl.sh -c -d ~/collect -s none
+```
+
+leaves a Logtalk top level in `~/collect/logtalk`. It starts without
+compiling Logtalk's core files, and takes the same arguments as `shumway`,
+such as `-g` goals and `-q` for a quiet start.
+
+### Linking by hand
+
+The two files share one namespace, as they do when both are consulted into
+`user`. The linker reads each file without a `:- module` directive as a
+module of its own, so include both from one file:
 
 ```prolog
 % wumpus.pl
@@ -76,47 +90,70 @@ application's startup goal. The `loader.pl` the scripts write when asked is
 not needed: it consults the two files when the program starts, which the
 link has already done.
 
-## A Logtalk top level
-
-When the embedding scripts run without an application, they link only the
-compiler and the runtime into `logtalk.shum`. Loading that bundle gives a
-Logtalk top level that starts without compiling Logtalk's core files:
+The Logtalk top level the scripts save is the bundle `logtalk.shum`, the
+compiler and the runtime, saved with `shumway --save-toplevel`. Loading the
+bundle gives the same top level:
 
 ```
 shumway logtalk.shum
 ```
 
-The same bundle can be saved as an executable to use in place of the
-integration script:
+See [A saved top level](user-guide.md#a-saved-top-level).
 
-```
-shumway --save-toplevel shumwaylgt-fast logtalk.shum
-```
+## Running test suites
 
-The executable takes the same arguments as `shumway`, including the `-g`
-goals the test scripts pass and `-q` for a quiet start. See
-[A saved top level](user-guide.md#a-saved-top-level).
+Logtalk's `logtalk_tester` scripts take Shumway as a backend:
+
+- `logtalk_tester -p shumway` runs each test suite with `shumwaylgt`;
+- `logtalk_tester -p shumwaync` runs it with an executable that includes
+  Logtalk, `shumwaylgtnc` on the `PATH`, which starts faster because it does
+  not compile Logtalk's core files first:
+
+  ```
+  shumway_logtalk_pl.sh -c -d ~/collect -s none && mv ~/collect/logtalk ~/bin/shumwaylgtnc
+  ```
 
 ## The dialect
 
-Logtalk selects backend-specific code by `prolog_dialect`, and it does not
-know Shumway (yet: that is Paulo Moura's call, not ours). The adapter
-announces **`swi`**, chosen by running the full library test sweep under four
-candidate dialects and keeping the one that closed at zero failures; the
-whole comparison is documented in the adapter's header. Override it with the
-`SHUMWAY_LOGTALK_DIALECT` environment variable. Everything else (
-`prolog_version`, error messages, `current_prolog_flag`) keeps reporting
-Shumway; only that one selector borrows SWI's name.
+Logtalk selects backend-specific code by the `prolog_dialect` flag. The
+adapter of Logtalk 3.103.0 announces **`shumway`**, and Logtalk's libraries
+and tests have code for it (`os` and `process` among the libraries, the
+encoding testers among the tests).
+
+The adapter in this repository's `logtalk/`, for earlier releases, which do
+not know Shumway, announces **`swi`**: it was chosen by running the full
+library test sweep under four candidate dialects and keeping the one that
+closed at zero failures, and the adapter's header documents the comparison.
+The `SHUMWAY_LOGTALK_DIALECT` environment variable overrides it. Everything
+else (`prolog_version`, error messages, `current_prolog_flag`) reports
+Shumway either way.
+
+## Earlier Logtalk releases
+
+A release before 3.103.0 has no adapter for Shumway. This repository's
+[`logtalk/`](../../logtalk/) has one, with a one-file launcher, verified
+against Logtalk 3.101.0:
+
+1. Copy the two files into the matching directories of the installation:
+
+   ```
+   copy logtalk\adapters\shumway.pl             <LOGTALK>\adapters\
+   copy logtalk\integration\logtalk_shumway.pl  <LOGTALK>\integration\
+   ```
+
+2. Point `LOGTALKHOME` and `LOGTALKUSER` at it.
+3. Run `shumway <LOGTALK>/integration/logtalk_shumway.pl`.
 
 ## Status
 
 - **Test suites**: the full 242-tester sweep of Logtalk 3.101.0's library
-  collection, on a pristine tree, closes at **100% of the structurally
-  supported set: 214 suites all fully green, 11,634 tests, 0 failures**
-  (measured 2026-09; the compute-heavy ML suites may need a run without
-  machine contention). `java` needs a JVM, and is excluded as structurally N/A,
-  documented rather than hidden. The `process` and `sockets` libraries need a
-  branch for Shumway on Logtalk's side. Details and reproduction in
+  collection, on a pristine tree with this repository's adapter, closes at
+  **100% of the structurally supported set: 214 suites all fully green,
+  11,634 tests, 0 failures** (measured 2026-09; the compute-heavy ML suites
+  may need a run without machine contention). `java` needs a JVM, and is
+  excluded as structurally N/A, documented rather than hidden. The
+  `sockets` library needs a branch for Shumway on Logtalk's side; 3.103.0
+  has one for `process`. Details and reproduction in
   [`logtalk-library-support.md`](logtalk-library-support.md).
 - **Benchmarks** (`examples/benchmarks`): Shumway Tier-0 matches or beats
   GProlog-interpreted on every shape; Tier-1 wins 4–7× across the board.
@@ -140,8 +177,8 @@ Shumway; only that one selector borrows SWI's name.
   reporting (measured 2026-11 against Logtalk's development tree;
   baseline before the 2026-08 campaign: 2,096 / 933). `control/if_3` is
   the one tester skipped whole: it runs only where `if/3` is a built-in.
-  The `unicode/` testers pass in full. Logtalk's development tree lists
-  `shumway` among the systems of the `unicode/encodings` and
+  The `unicode/` testers pass in full. Logtalk 3.103.0 lists `shumway`
+  among the systems of the `unicode/encodings` and
   `tests/logtalk/directives/encoding_1` testers; in 3.101.0 it has to be
   added to their `tester.lgt`.
 
@@ -197,9 +234,10 @@ Shumway; only that one selector borrows SWI's name.
 
 ## Notes
 
-- The adapter is Shumway's own code (MIT, like the rest of the repository),
-  written against Logtalk's backend-adapter interface. Upstreaming it to the
-  Logtalk distribution is a possible future step.
+- Logtalk distributes its adapter for Shumway since 3.103.0, under its own
+  licence (Apache-2.0). The adapter in this repository's `logtalk/` is
+  Shumway's (MIT, like the rest of the repository), written against
+  Logtalk's backend-adapter interface, for the releases before.
 - Logtalk compiles each entity to an intermediate `.pl` in its scratch
   directory and the adapter loads it with `reconsult/1`: loading an entity
   again replaces its code, and takes back only the entries that file gave
