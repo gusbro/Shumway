@@ -1,5 +1,5 @@
 // The kernel in a real JupyterLab page of a built deployment: the demo at the
-// root and the notebook site under lite/, served with no isolation headers,
+// root and the notebook site under jupyter/, served with no isolation headers,
 // as GitHub Pages serves them.
 //
 //   node kernel.mjs <deployment dir> [chromium|firefox|webkit]
@@ -48,7 +48,7 @@ const runNotebook = (file) => page.evaluate(async (path) => {
 }, file);
 
 try {
-  await page.goto(base + 'lite/lab/index.html');
+  await page.goto(base + 'jupyter/lab/index.html');
   await page.waitForFunction(() => window.crossOriginIsolated === true
       && !!window.jupyterapp?.serviceManager?.contents
       && !!document.querySelector('#jp-main-dock-panel, .jp-LabShell'),

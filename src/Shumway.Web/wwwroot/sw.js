@@ -74,7 +74,7 @@ const cached = (request) =>
 
 /** The directory this worker is served from: the root of its site. */
 const ROOT = new URL('./', self.location.href).pathname;
-const NOTEBOOKS = ROOT + 'lite/';
+const NOTEBOOKS = ROOT + 'jupyter/';
 const WEBKIT = /AppleWebKit\//.test(navigator.userAgent)
   && !/Chrom(e|ium)\//.test(navigator.userAgent);
 const coep = (url) =>

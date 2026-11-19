@@ -34,13 +34,13 @@ python -m pip install -r jupyterlite/requirements.txt
 # The demo, whose runtime the notebooks run on.
 dotnet publish src/Shumway.Web -c Release
 
-# The demo at the root and the notebook site under lite/, as they are served.
+# The demo at the root and the notebook site under jupyter/, as they are served.
 node jupyterlite/build.mjs --out <dir> \
   --with-demo src/Shumway.Web/bin/Release/net10.0/publish/wwwroot
 ```
 
 Without `--with-demo` the output is the notebook site alone, to be put in a
-directory `lite/` of a demo's publish. The site does not work without the
+directory `jupyter/` of a demo's publish. The site does not work without the
 demo beside it: its runtime and its service worker are the demo's.
 
 `PYTHON` names the Python to use when it is not `python`.
@@ -52,7 +52,7 @@ service worker isolates them, and the first visit reloads once for that.
 
 ```bash
 npx http-server <dir> -p 8080
-# then open http://localhost:8080/lite/lab/index.html
+# then open http://localhost:8080/jupyter/lab/index.html
 ```
 
 ## Checking it
@@ -82,8 +82,8 @@ from the engine.
 ## Where it is published
 
 The demo's workflow (`.github/workflows/webshumway.yml`) builds this site
-without `--with-demo` and publishes it in the demo's `lite/`:
-[gusbro.github.io/Shumway/lite/](https://gusbro.github.io/Shumway/lite/).
+without `--with-demo` and publishes it in the demo's `jupyter/`:
+[gusbro.github.io/Shumway/jupyter/](https://gusbro.github.io/Shumway/jupyter/).
 The build is cached by the contents of this directory and of the three
 runtime scripts it copies, so a push that changes only the engine
 republishes the demo with the cached site.

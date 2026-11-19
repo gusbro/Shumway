@@ -392,8 +392,8 @@ If the worker never takes control, the page says so and does not start the
 engine. Reloading almost always fixes it.
 
 `.github/workflows/webshumway.yml` builds and deploys on every push to `main`,
-with the notebook site under `lite/`
-([gusbro.github.io/Shumway/lite/](https://gusbro.github.io/Shumway/lite/);
+with the notebook site under `jupyter/`
+([gusbro.github.io/Shumway/jupyter/](https://gusbro.github.io/Shumway/jupyter/);
 see [`jupyterlite/README.md`](../../jupyterlite/README.md)). It needs **Settings → Pages → Source: GitHub Actions** in the repository, and
 publishes a `.nojekyll` because Pages otherwise skips `_framework`, where the
 whole runtime lives.
