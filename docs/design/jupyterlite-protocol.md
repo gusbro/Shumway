@@ -232,6 +232,10 @@ cell output, never dropped silently. The mapping lives with the code
   as long as it needs, since the trivial call answers while it runs. Seen
   in WebKit, where .NET's threads now and then stop taking calls from the
   page; a minimal .NET app with no Shumway in it does the same.
+- **A runtime that does not start:** downloading and booting it has
+  `shumwayRuntimeStartTimeout` seconds (180); after that, every cell of the
+  page says to reload it. The steps of the start that ask the runtime
+  something are watched as above.
 
 ## 8. Input
 
