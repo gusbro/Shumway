@@ -71,9 +71,16 @@ export class ServerKernel extends BaseKernel implements IKernel {
   }
 
   /** Stops the query that is running. The server is that query, so the
-   *  session ends with it; the next cell starts another (ADR-067 D5). */
+   *  session ends with it; the next cell starts another (ADR-067 D5). A
+   *  cell interrupted before its query left runs nothing. */
   async interrupt(): Promise<void> {
-    if (!this._runtime || !this._running) return;
+    if (!this._runtime) return;
+    if (!this._running) {
+      // JupyterLite hands a cell to the kernel a little after it is sent: an
+      // interrupt can come first, and is for that cell all the same.
+      this._interruptedAt = Date.now();
+      return;
+    }
     this._interrupted = true;
     try {
       await this._runtime.watched(this._runtime.api.SessionCancel(this.id));
@@ -167,6 +174,7 @@ export class ServerKernel extends BaseKernel implements IKernel {
   async executeRequest(
     content: KernelMessage.IExecuteRequestMsg['content']
   ): Promise<KernelMessage.IExecuteReplyMsg['content']> {
+    this._sentAt = Date.parse(this.parentHeader?.date ?? '') || Date.now();
     await this._started;
     const { texts } = this._variant;
     const show = (output: IOutput) => this.displayData({ data: output as any, metadata: {} });
@@ -199,7 +207,7 @@ export class ServerKernel extends BaseKernel implements IKernel {
     } catch (reason) {
       if (!(reason instanceof RuntimeStopped)) throw reason;
       const text = texts.errorPrefix + reason.message;
-      show({ 'text/plain': '[31;1m' + text });
+      show({ 'text/plain': '\x1b[31;1m' + text });
       return failed('runtime stopped', text);
     }
   }
@@ -236,6 +244,12 @@ export class ServerKernel extends BaseKernel implements IKernel {
     await mirrored(() => mirror.pull());
     await quietly(() => libraries.sync());
     const notebook = await this._notebook();
+    if (this._interruptedAt >= this._sentAt) {
+      const text = texts.noticePrefix
+        + 'Interrupted before the query started: nothing ran, and the session keeps what it had loaded.';
+      show({ 'text/plain': text });
+      return failed('interrupted', text);
+    }
     this._running = true;
     this._interrupted = false;
     let answer: any;
@@ -328,6 +342,11 @@ export class ServerKernel extends BaseKernel implements IKernel {
   private _stopped = false;
   private _running = false;
   private _interrupted = false;
+  /** When the cell being answered was sent, and when an interrupt came that
+   *  found no query running: one after the other stops the cell before its
+   *  query leaves. */
+  private _sentAt = 0;
+  private _interruptedAt = -1;
   private _version = '';
   private _tier = '';
   private _predicates: string[] = [];

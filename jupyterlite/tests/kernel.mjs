@@ -312,6 +312,15 @@ try {
       check(/Halted/.test(r.texts[0] ?? '') && afterHalt.texts[0] === 'X = after',
         'halt ends the session and the next cell starts another', [r, afterHalt]);
 
+      // Interrupted before its query reached the runtime: the cell runs
+      // nothing, and ends.
+      const early = run(kernel, 'repeat, fail.');
+      await kernel.interrupt();
+      r = await within(early, 15000, 'the cell interrupted before its query left');
+      const next = await run(kernel, 'X = next.');
+      check(r.reply.status !== 'ok' && next.texts[0] === 'X = next',
+        'a cell interrupted before its query starts ends, and the next cell runs', [r, next]);
+
       // A second notebook, in a directory of its own, beside the first.
       const folder = await contents.newUntitled({ type: 'directory' });
       await contents.rename(folder.path, 'sub');
