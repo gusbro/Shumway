@@ -14,6 +14,9 @@ on:
       cells:
         description: Notebook cells to run in Safari
         default: '5000'
+      keys:
+        description: Keystrokes of the demo to make in Safari
+        default: '20000'
   pull_request:
     branches: [main]
     paths:
@@ -73,7 +76,7 @@ jobs:
           node tests/webkit-probe/probe.mjs probe-site/wwwroot ${{ matrix.target }} ping ${{ inputs.calls || '30000' }}
 
   # The notebook site of this branch, in Safari: cells run one after
-  # another, and the probe says how many came back.
+  # another, and the probe says how many came back; then the demo's calls.
   cells:
     runs-on: macos-latest
     timeout-minutes: 120
@@ -116,3 +119,12 @@ jobs:
           safaridriver -p 4444 &
           sleep 3
           node tests/webkit-probe/probe.mjs site macos cells ${{ inputs.cells || '5000' }}
+
+      # The demo's page on the same site: a highlight a keystroke, and a
+      # query every 50.
+      - name: Probe the demo
+        if: success() || failure()
+        run: |
+          pgrep safaridriver || (safaridriver -p 4444 &)
+          sleep 3
+          node tests/webkit-probe/probe.mjs site macos demo ${{ inputs.keys || '20000' }}

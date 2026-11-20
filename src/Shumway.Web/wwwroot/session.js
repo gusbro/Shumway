@@ -28,6 +28,86 @@ export const wasmMemoryBytes = () => wasmModule?.HEAPU8?.byteLength ?? 0;
 /** How many threads the runtime was asked to make at boot. */
 export const threadPoolSize = () => poolSize;
 
+// --- waking the runtime's threads -----------------------------------------
+//
+// A thread of the runtime that has nothing to do waits for a message with
+// Atomics.waitAsync on the first word of its pthread struct, and marks
+// waiting_async, 128 bytes in (dotnet.native.js: `pthread_ptr + 128`); a
+// thread that posts it work notifies that word. In WebKit, Safari included, a
+// thread now and then loses that wait: it says it waits, nothing is there to
+// notify, and the call it was to answer never comes back. The runtime's own
+// fallback, for a thread it cannot notify, is the message `checkMailbox`.
+
+const WAKE_AFTER_MS = 2000;
+const wakes = { times: 0, told: 0 };
+
+/** Wakes the runtime's threads that wait for a message: a notify on the word
+ *  each waits on, which does nothing to a thread that is not waiting there;
+ *  and `checkMailbox` to a thread that says it waits with no wait left to
+ *  notify. Not the message to every thread: each one it reaches waits once
+ *  more, for good. Answers how many were told by message. */
+export function wakeThreads() {
+  const threads = wasmModule?.PThread?.runningWorkers;
+  const memory = wasmModule?.wasmMemory;
+  if (!threads || !memory) return 0;
+  const heap = new Int32Array(memory.buffer);
+  let told = 0;
+  for (const thread of threads) {
+    const self = thread.pthread_ptr;
+    if (!self) continue;
+    if (Atomics.notify(heap, self >> 2) === 0 && Atomics.load(heap, (self + 128) >> 2) === 1) {
+      thread.postMessage({ cmd: 'checkMailbox' });
+      told++;
+    }
+  }
+  wakes.times++;
+  wakes.told += told;
+  if (told > 0) console.info(`[shumway] a call was out for long: told ${told} of the runtime's threads to look at their messages`);
+  return told;
+}
+
+/** How many times the threads were woken, and how many were told by message. */
+export const threadWakes = () => ({ ...wakes });
+
+// The calls into the runtime still out, each with when it next wakes the
+// threads: after WAKE_AFTER_MS, then after twice as long each time, so that a
+// long query is woken a few times, not every second.
+const out = new Set();
+let ticking = 0;
+
+function tick() {
+  const now = performance.now();
+  let due = false;
+  for (const call of out) {
+    if (now < call.at) continue;
+    due = true;
+    call.wait *= 2;
+    call.at = now + call.wait;
+  }
+  if (due) wakeThreads();
+  if (out.size === 0) { clearInterval(ticking); ticking = 0; }
+}
+
+/** The runtime's exports, each call watched: one still out after a while
+ *  wakes the threads. */
+function watchedCalls(exports) {
+  const watched = {};
+  for (const [name, value] of Object.entries(exports)) {
+    if (typeof value !== 'function') { watched[name] = value; continue; }
+    watched[name] = (...args) => {
+      const answer = value.apply(exports, args);
+      if (!(answer instanceof Promise)) return answer;
+      const call = { wait: WAKE_AFTER_MS, at: performance.now() + WAKE_AFTER_MS };
+      out.add(call);
+      if (!ticking) ticking = setInterval(tick, 500);
+      const done = () => { out.delete(call); };
+      answer.then(done, done);
+      return answer;
+    };
+  }
+  return watched;
+}
+
 let sessionAskForInput = null;
 
 /** Who is told that a notebook session wants a line: (kernelId) => void. */
@@ -80,7 +160,7 @@ export async function startRuntime({ entry = './_framework/dotnet.js', threads =
       debugStopped: (json) => ui.debugStopped?.(JSON.parse(json)),
     },
   });
-  engine = (await getAssemblyExports(getConfig().mainAssemblyName)).Shumway.Web.WebShumwayApp;
+  engine = watchedCalls((await getAssemblyExports(getConfig().mainAssemblyName)).Shumway.Web.WebShumwayApp);
   await runMain();
   return engine;
 }
