@@ -1,0 +1,14 @@
+### call
+%%user
+app([], L, L).
+app([H|T], L, [H|R]) :- app(T, L, R).
+### call
+trace(app, call).
+### call
+leash(none).
+### call
+leash(all).
+### call
+notrace.
+### call
+app([1], [2], L).

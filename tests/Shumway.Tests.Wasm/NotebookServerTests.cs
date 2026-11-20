@@ -688,6 +688,39 @@ public sealed class NotebookServerTests : IDisposable
             Message(alone));
     }
 
+    [Theory]
+    [InlineData(@"trace(app, call).", "trace/2 is not available in a notebook. To trace a goal, call jupyter:trace(Goal).")]
+    [InlineData(@"trace(app).", "trace/1 is not available in a notebook. To trace a goal, call jupyter:trace(Goal).")]
+    [InlineData(@"leash(none).", "leash/1 does not apply in a notebook: the tracer prints every port and never stops at one. To trace a goal, call jupyter:trace(Goal).")]
+    public void ATracerCell_IsAnErrorThatPointsToJupyterTrace(string code, string message)
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+
+        JsonNode entry = First(server, code);
+
+        Assert.Equal(-4712, (int)entry["error"]!["code"]!);
+        Assert.Equal(message, Message(entry));
+    }
+
+    [Fact]
+    public void Notrace_IsAnAnswer_AsInTheReference()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+
+        Assert.Equal("success", (string)First(server, "notrace.")["status"]!);
+    }
+
+    [Fact]
+    public void AProgramsOwnTraceAndLeash_RunAsWritten()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+        First(server, "%%user\ntrace(X) :- X = mine.\ntrace(X, Y) :- X = Y.\nleash(X) :- X = kept.");
+
+        Assert.Equal("{\"X\":\"mine\"}", First(server, "trace(X).")["bindings"]!.ToJsonString());
+        Assert.Equal("{\"X\":\"b\"}", First(server, "trace(X, b).")["bindings"]!.ToJsonString());
+        Assert.Equal("{\"X\":\"kept\"}", First(server, "leash(X).")["bindings"]!.ToJsonString());
+    }
+
     [Fact]
     public void TheNamesToCompleteWith_AreTheHelpersTheEnginesAndTheSessions()
     {

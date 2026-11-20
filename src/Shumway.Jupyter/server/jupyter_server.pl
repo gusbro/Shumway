@@ -327,9 +327,9 @@ run(query(Goal, Names), Alive, Spent0, Spent, Cell0, Cell, Next) :-
     ;   clause_term(Goal) ->
         Spent = Spent0, Next = continue,
         failed(Cell0, -4712, 'Exception', jupyter(clause_in_cell), Cell)
-    ;   Goal == trace ->
+    ;   tracer_cell(Goal) ->
         Spent = Spent0, Next = continue,
-        failed(Cell0, -4712, 'Exception', jupyter(tracer_in_cell), Cell)
+        failed(Cell0, -4712, 'Exception', jupyter(tracer_in_cell(Goal)), Cell)
     ;   % As it was written: before $Var gives Var its value, and before
         % the query binds its variables.
         copy_term(Goal-Names, Written),
@@ -695,6 +695,32 @@ occurs([Variable|Variables], Wanted) :-
     ;   occurs(Variables, Wanted)
     ).
 
+% tracer_cell(+Goal): a cell that is only trace, trace/1,2 or leash/1. The
+% tracer prints every port and never stops at one, since a notebook cannot
+% answer at a breakpoint: a cell traces a goal with jupyter:trace/1. A
+% program's own trace/1, trace/2 or leash/1 runs as it is written.
+tracer_cell(Goal) :-
+    (   Goal == trace -> true
+    ;   callable(Goal),
+        functor(Goal, Name, Arity),
+        tracer_predicate(Name, Arity),
+        \+ current_predicate(user:Name/Arity)
+    ).
+
+tracer_predicate(trace, 1).
+tracer_predicate(trace, 2).
+tracer_predicate(leash, 1).
+
+tracer_text(trace, Text) :- !,
+    atom_chars('The tracer does not stay on after a query. To trace a goal, call jupyter:trace(Goal).', Text).
+tracer_text(Goal, Text) :-
+    functor(Goal, leash, 1), !,
+    atom_chars('leash/1 does not apply in a notebook: the tracer prints every port and never stops at one. To trace a goal, call jupyter:trace(Goal).', Text).
+tracer_text(Goal, Text) :-
+    functor(Goal, Name, Arity),
+    with_output_to(string(Text),
+        format("~w/~w is not available in a notebook. To trace a goal, call jupyter:trace(Goal).", [Name, Arity])).
+
 % ----- responses -----
 
 % send_results(+Id, +Results): the answers of a cell, latest first.
@@ -732,7 +758,7 @@ error_text(Ball, Text) :-
         with_output_to(string(Text), format("$~w has no value from an earlier query", [Name]))
     ;   Ball == jupyter(clause_in_cell) ->
         atom_chars('A clause is not a query. To define predicates, start the cell with %%user.', Text)
-    ;   Ball == jupyter(tracer_in_cell) ->
-        atom_chars('The tracer does not stay on after a query. To trace a goal, call jupyter:trace(Goal).', Text)
+    ;   Ball = jupyter(tracer_in_cell(Goal)) ->
+        tracer_text(Goal, Text)
     ;   '$jupyter_error_text'(Ball, Text)
     ).
