@@ -4,18 +4,21 @@
 //
 //   node probe.mjs <dir> <macos|ios> ping [calls] [driver url]
 //   node probe.mjs <dir> <macos|ios> cells [cells] [driver url]
+//   node probe.mjs <dir> <macos|ios> demo [keystrokes] [driver url]
 //
 // `ping` serves the published ThreadedPing app from <dir> and calls its
 // empty export; `cells` serves a built notebook site from <dir> (what
 // `node jupyterlite/build.mjs --out <dir> --with-demo ...` makes) and runs
-// cells in a notebook, each a call or more into the runtime. Exits with 1
+// cells in a notebook, each a call or more into the runtime; `demo` serves
+// the same site and makes the calls the demo's page makes, a highlight for
+// every keystroke and a query every 50. Exits with 1
 // when a call or a cell did not come back, or the page did not start.
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 
 const [dir, target = 'macos', mode = 'ping', countText = '', driver = 'http://localhost:4444'] = process.argv.slice(2);
-const count = Number(countText || (mode === 'cells' ? 5000 : 30000));
+const count = Number(countText || ({ cells: 5000, demo: 20000 }[mode] ?? 30000));
 const root = path.resolve(dir);
 
 // Threads need cross-origin isolation, which these headers give.
@@ -106,11 +109,58 @@ const modes = {
         }
         done({ made: count, ms: performance.now() - t0 });
       })();`
+  },
+  // The calls a session of the demo makes: the editor's highlighting, one a
+  // keystroke as the program grows, and every 50 a query with the calls the
+  // page makes after an answer.
+  demo: {
+    page: base + 'index.html',
+    ready: `const q = document.querySelector('#query');
+      return window.crossOriginIsolated === true && !!q && !q.disabled
+        && !/loading the engine/.test(document.querySelector('#out')?.textContent ?? 'loading the engine');`,
+    round: 1000,
+    script: `
+      const [count, done] = arguments;
+      (async () => {
+        const session = await import(new URL('./session.js', location.href).href);
+        for (const until = performance.now() + 120000; !session.exports() && performance.now() < until;)
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        const engine = session.exports();
+        if (!engine) { done({ made: 0, ms: 0, stopped: 'the engine was not there in 120 s' }); return; }
+        const program = 'app([], L, L).\\napp([X|Xs], L, [X|R]) :- app(Xs, L, R).\\n% a comment\\nrev(L, R) :- rev(L, [], R).\\n';
+        window.probeKeys ??= 0;
+        const t0 = performance.now();
+        let highlightMs = 0;
+        const timed = async (what, call) => {
+          const late = new Promise((_, no) => setTimeout(() => no(new Error(what + ' did not come back in 30 s')), 30000));
+          return Promise.race([call(), late]);
+        };
+        for (let i = 1; i <= count; i++) {
+          const n = ++window.probeKeys;
+          const src = program.repeat(Math.ceil(n / program.length) + 1).slice(0, n % 4000 + 1);
+          try {
+            const h0 = performance.now();
+            await timed('the highlight of keystroke ' + n, () => engine.Highlight(src));
+            highlightMs += performance.now() - h0;
+            if (n % 50 === 0) {
+              const err = await timed('QueryStart after keystroke ' + n, () => engine.QueryStart('X = ' + n + '.'));
+              if (err) throw new Error('QueryStart said ' + err);
+              await timed('QueryNext after keystroke ' + n, () => engine.QueryNext(80));
+              await timed('LibraryTakeCompiledOnDemand after keystroke ' + n, () => engine.LibraryTakeCompiledOnDemand());
+              await timed('JitCompileAllTick after keystroke ' + n, () => engine.JitCompileAllTick());
+            }
+          } catch (e) {
+            done({ made: i - 1, ms: performance.now() - t0, stopped: String(e.message) });
+            return;
+          }
+        }
+        done({ made: count, ms: performance.now() - t0, highlight: highlightMs / count });
+      })();`
   }
 };
 const chosen = modes[mode];
 if (!chosen) throw new Error(`no mode ${mode}: ping or cells`);
-const unit = mode === 'cells' ? 'cells' : 'calls';
+const unit = { cells: 'cells', demo: 'keystrokes' }[mode] ?? 'calls';
 
 const capabilities = target === 'ios'
   ? { browserName: 'safari', platformName: 'iOS', 'safari:useSimulator': true }
@@ -138,7 +188,8 @@ try {
     const result = await webdriver('POST', `${at}/execute/async`, { script: chosen.script, args: [Math.min(chosen.round, count - made)] });
     made += result.made;
     const each = result.made > 0 ? (result.ms / result.made).toFixed(2) : '-';
-    console.log(`[${target} ${mode}] ${made} ${unit}, ${each} ms each in the last round`);
+    const highlight = result.highlight === undefined ? '' : `, a highlight ${result.highlight.toFixed(2)} ms`;
+    console.log(`[${target} ${mode}] ${made} ${unit}, ${each} ms each in the last round${highlight}`);
     if (result.stopped) {
       console.log(`[${target} ${mode}] STOPPED after ${made} ${unit}: ${result.stopped}`);
       code = 1;
