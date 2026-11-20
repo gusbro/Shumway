@@ -126,7 +126,12 @@ and `@dagrejs/graphlib`, MIT), not with Graphviz compiled to WASM.
 - The output keeps the DOT, as `text/vnd.graphviz` and `text/plain`, beside
   the SVG: another drawer can take over from it later.
 - In a tree, such as a term's, the children of a node are drawn in the order
-  of its edges, so a term's arguments read left to right.
+  of its edges, so a term's arguments read left to right, and the subtrees
+  of two nodes side by side, so no edge crosses another. The kernel gives
+  dagre that order, layer by layer.
+- An edge from a node to itself is drawn by the kernel as a loop out of the
+  node's right side and back, with its label beside it, as Graphviz draws
+  one; dagre only keeps the room for it.
 
 **Why not Graphviz.** Graphviz is licensed under the Eclipse Public License
 1.0, which is not among the licences this repository allows (MIT, MS-PL,
