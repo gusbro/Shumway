@@ -1,9 +1,11 @@
-// A runtime that takes long, and one that stops answering: a cell waits for
-// a long query while the runtime answers a trivial call, and once it does
-// not, the cell says to reload the page, and so does every cell after it.
+// A runtime that takes long, one that stops answering, and one that does
+// not start: a cell waits for a long query while the runtime answers a
+// trivial call; once it does not, or when the runtime did not start in
+// time, the cell says to reload the page, and so does every cell after it.
 // The site's options shorten the waits: shumwayRuntimePatience, and a
-// shumwayRuntimeTimeout of 0, which no call answers in. As text: JupyterLab
-// reads an option of 0 as one that is not there.
+// shumwayRuntimeTimeout or shumwayRuntimeStartTimeout of 0, which nothing
+// ends in. As text: JupyterLab reads an option of 0 as one that is not
+// there.
 //
 //   node stall.mjs <deployment dir> [chromium|firefox|webkit]
 import { webkit, chromium, firefox } from 'playwright';
@@ -88,6 +90,12 @@ try {
   check(said(first), 'a runtime that does not answer: the cell says to reload the page', first);
   check(said(again) && said(other) && other.seconds < 5,
     'and so does every cell after it, in every notebook of the page, at once', [again, other]);
+
+  // A runtime that does not start in time.
+  const [unstarted] = await cells({ shumwayRuntimeStartTimeout: '0' }, [['X = 1.']]);
+  const told = unstarted.texts.join(' ');
+  check(unstarted.status === 'error' && /did not start in time/.test(told) && /Reload the page/.test(told),
+    'a runtime that does not start in time: the cell says to reload the page', unstarted);
 } catch (e) {
   failures++;
   console.log(`[${engineName}] did not get there: ${String(e?.message).split('\n')[0]}`);

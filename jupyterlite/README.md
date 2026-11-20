@@ -79,7 +79,8 @@ option a plot does not draw is named below it.
 `limit.mjs` serves the site set to hold one kernel and checks that a second
 is refused with a message that says how to free a place. `stall.mjs` serves
 it with short waits: a long query ends while the runtime answers, and with
-a timeout of 0, which no call answers in, the cells say to reload the page.
+a timeout of 0, which nothing ends in, the cells say to reload the page,
+for a runtime that stops answering and for one that does not start.
 
 A step of `kernel.mjs` that does not end in time (a cell has 90 s) ends the
 run, which says what the page did last and whether the page, its contents,
@@ -156,12 +157,13 @@ republishes the demo with the cached site.
 | `shumwaySessionLimit` | how many kernels a page may hold | the app's, 10 |
 | `shumwayRuntimePatience` | seconds a step waits for the runtime before asking it a trivial call | 10 |
 | `shumwayRuntimeTimeout` | seconds that call has to answer, or the runtime is taken for stopped | 30 |
+| `shumwayRuntimeStartTimeout` | seconds the runtime has to download and boot | 180 |
 
-A runtime that stops answering is one only a reload starts again: the
-cell that was waiting, and every cell after it in the page, says so. It
-has been seen in WebKit, where .NET's threads now and then stop taking
-calls from the page; a cell's query may take as long as it needs, since
-the trivial call answers while it runs.
+A runtime that stops answering, or does not start in time, is one only a
+reload starts again: the cell that was waiting, and every cell after it in
+the page, says so. It has been seen in WebKit, where .NET's threads now and
+then stop taking calls from the page; a cell's query may take as long as
+it needs, since the trivial call answers while it runs.
 
 `site/overrides.json` holds the JupyterLab settings the site starts with.
 It turns on `autoStartDefaultKernel`, so that a notebook saved by another
