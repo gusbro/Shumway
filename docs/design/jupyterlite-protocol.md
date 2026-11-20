@@ -221,6 +221,10 @@ cell output, never dropped silently. The mapping lives with the code
   JupyterLite 0.8.7 does not tell a kernel that it was interrupted: its
   `interrupt` drops the cells that wait and leaves the running one alone.
   The extension wraps that call so that the kernel hears of it.
+  JupyterLite hands a cell to the kernel a little after it is sent, so an
+  interrupt can come before the cell's query leaves: the kernel keeps when
+  it came, and a cell sent before it runs nothing, keeps the session as it
+  was, and says it was interrupted.
 - **Restart:** `SessionDispose`, then `SessionCreate`.
 - **`halt`** (§3): same as restart, triggered by the server.
 - **A runtime that stops answering:** a step that waits for the runtime
