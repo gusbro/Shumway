@@ -13,6 +13,8 @@
 //   remove(path)
 //   unchanged()?         -> true when nothing changed since the last list,
 //                           for a side that is told and whose list is slow
+// A push can be given the list of the side it copies from, taken by the
+// caller with something else; list(given) decides whether it serves.
 // `modified` is compared for equality only, so a side gives whatever tells
 // one version from the next; a side that gives none has every file copied
 // every time. The content is whatever the two sides of one mirror agree on.
@@ -29,11 +31,11 @@ export function createMirror(memory, store, { oneAtATime = false } = {}) {
   // What each side said of a file when it was last copied, either way.
   const seen = new Map();
 
-  async function copy(from, to, fromKey, toKey) {
+  async function copy(from, to, fromKey, toKey, given) {
     if (from.unchanged?.()) return { copied: 0, removed: 0 };
     const present = new Set();
     let copied = 0;
-    for (const { path, modified } of await from.list()) {
+    for (const { path, modified } of await from.list(given)) {
       present.add(path);
       const known = seen.get(path);
       if (known && modified !== undefined && known[fromKey] === modified) continue;
@@ -67,7 +69,7 @@ export function createMirror(memory, store, { oneAtATime = false } = {}) {
     /** Store to memory: what changed in the store, and what was deleted there. */
     pull: () => run(() => copy(store, memory, 'store', 'memory')),
     /** Memory to store: what changed in memory, and what was deleted there. */
-    push: () => run(() => copy(memory, store, 'memory', 'store')),
+    push: (given) => run(() => copy(memory, store, 'memory', 'store', given)),
   };
 }
 
@@ -100,11 +102,22 @@ function textOf(base64) {
  */
 export function memoryFiles(api, root) {
   const full = (path) => root + '/' + path;
+  // Lists, writes and removals made here. A listing taken elsewhere serves
+  // only when none was made since the call that took it began: an older
+  // listing can lack a file a pull or another push put in `seen`, and the
+  // push would delete it from the store.
+  let touched = 0;
   return {
-    list: async () => JSON.parse(await api.FilesList(root)),
+    since: () => touched,
+    /** given: { since, files }, files as FilesList lists them. */
+    list: async (given) => {
+      const fresh = given !== undefined && given.since === touched;
+      touched++;
+      return fresh ? given.files : JSON.parse(await api.FilesList(root));
+    },
     read: (path) => api.FileRead(full(path)),
-    write: (path, base64) => api.FileWrite(full(path), base64),
-    remove: (path) => api.FileRemove(full(path)),
+    write: (path, base64) => { touched++; return api.FileWrite(full(path), base64); },
+    remove: (path) => { touched++; return api.FileRemove(full(path)); },
   };
 }
 

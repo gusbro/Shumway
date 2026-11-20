@@ -252,16 +252,22 @@ export class ServerKernel extends BaseKernel implements IKernel {
     }
     this._running = true;
     this._interrupted = false;
-    let answer: any;
+    // One call for the request, the engine's files and what it compiled:
+    // every call into the runtime is one more for WebKit's threads to stop
+    // taking.
+    let call: { answer: string; files: unknown; compiled: string };
+    const since = mirror.since();
     try {
-      answer = await this._ask(request(this.executionCount, 'call',
-        notebook ? { code: content.code, notebook } : { code: content.code }));
+      const line = request(this.executionCount, 'call',
+        notebook ? { code: content.code, notebook } : { code: content.code });
+      call = JSON.parse(await watched(this._runtime!.api.SessionCall(this.id, line, DRIVE)));
     } finally {
       this._running = false;
     }
+    const answer = call.answer === '' ? null : JSON.parse(call.answer);
     // And what the cell wrote is there for the file browser.
-    await mirrored(() => mirror.push());
-    await quietly(() => libraries.keep());
+    await mirrored(() => mirror.push({ since, files: call.files }));
+    await quietly(() => libraries.keep(call.compiled));
     this._predicatesStale = true;
 
     if (answer === null) {

@@ -22,7 +22,11 @@ export const dialect = (name) => engine.LibraryDialect(name);
 export const create = (name, dial) => engine.LibraryCreate(name, dial ?? '');
 // After the stored bundles are back: one restored later would bring the
 // library back.
-export const remove = async (name) => { await restored(); return engine.LibraryRemove(name); };
+export const remove = async (name) => {
+  await restored();
+  inEngine.delete(name);
+  return engine.LibraryRemove(name);
+};
 export const files = async (name) => lines(await engine.LibraryFiles(name));
 export const read = (name, file) => engine.LibraryRead(name, file);
 export const write = (name, file, content) => engine.LibraryWrite(name, file, content);
@@ -451,12 +455,23 @@ async function restoreCollection(name, handle) {
 export async function syncFromStorage() {
   if (!persistent()) return [];
   await restored();
+  const stored = [];
+  try {
+    for await (const [name, handle] of (await root()).entries())
+      if (handle.kind === 'directory') stored.push([name, handle]);
+  } catch { return []; /* no storage: nothing to bring */ }
+  // The engine is asked for its names only when the storage holds one this
+  // page has not seen there: a notebook syncs before every cell, and every
+  // call into the runtime is one more for WebKit's threads to stop taking.
+  if (stored.every(([name]) => inEngine.has(name))) return [];
   const have = new Set(await names());
+  for (const name of have) inEngine.add(name);
   const added = [];
   try {
-    for await (const [name, handle] of (await root()).entries()) {
-      if (handle.kind !== 'directory' || have.has(name)) continue;
+    for (const [name, handle] of stored) {
+      if (have.has(name)) continue;
       await restoreCollection(name, handle);
+      inEngine.add(name);
       added.push(name);
     }
   } catch { /* no storage: nothing to bring */ }
@@ -464,10 +479,19 @@ export async function syncFromStorage() {
   return added;
 }
 
+// The collections of the storage that the engine has: what syncFromStorage
+// does not ask the engine about again.
+const inEngine = new Set();
+
 /** Stores the bundles the engine compiled on demand since the last call, so
  *  another page, or the next visit, does not compile them again. */
-export async function keepCompiledOnDemand() {
-  for (const { name, library } of await takeCompiledOnDemand()) await persistLibrary(name, library);
+export async function keepCompiledOnDemand(taken = null) {
+  const compiled = taken === null ? await takeCompiledOnDemand()
+    : lines(taken).map((line) => {
+      const [name, library] = line.split('\t');
+      return { name, library };
+    });
+  for (const { name, library } of compiled) await persistLibrary(name, library);
 }
 
 /**

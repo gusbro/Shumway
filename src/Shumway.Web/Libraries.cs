@@ -334,11 +334,14 @@ internal static partial class WebShumwayApp
     /// library compiled because it needed them, since the last call: one per
     /// line, the collection, a tab and the library.</summary>
     [JSExport]
-    internal static Task<string> LibraryTakeCompiledOnDemand()
+    internal static Task<string> LibraryTakeCompiledOnDemand() => Answered(TakeCompiledOnDemand());
+
+    /// <summary>What <see cref="LibraryTakeCompiledOnDemand"/> answers.</summary>
+    private static string TakeCompiledOnDemand()
     {
         var taken = new List<string>();
         while (_compiledOnDemand.TryDequeue(out string? entry)) taken.Add(entry);
-        return Task.FromResult(string.Join('\n', taken));
+        return string.Join('\n', taken);
     }
 
     /// <summary>The engine's <see cref="PrologEngine.LibrarySourceResolver"/>:
