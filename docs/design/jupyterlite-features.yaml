@@ -86,7 +86,8 @@ groups:
 
   - name: Kernel operations
     rows:
-      - { id: k-interrupt, feature: "interrupt", hercutalk_desktop: partial, shumway_prolog_web: partial, note: "restarts the server; state is lost (both)", test: "repeat, fail.  →  interrupt", phase: 3 }
+      - { id: k-interrupt, feature: "interrupt", hercutalk_desktop: partial, shumway_prolog_web: partial, note: "restarts the server; state is lost (both). On the web, an interrupt before the cell's query starts runs nothing and keeps the session", test: "repeat, fail.  →  interrupt", phase: 3 }
+      - { id: k-runtime-stopped, feature: "a runtime that stops answering, or does not start in time, is told: the cell says to reload the page", hercutalk_desktop: not_applicable, shumway_prolog_web: supported, note: "seen in WebKit (protocol §7)", test: "jupyterlite/tests/stall.mjs, with short waits", phase: 3 }
       - { id: k-restart, feature: "restart", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "restart  →  X = restarted.", phase: 3 }
       - { id: k-stdin, feature: "read/1 from a cell (input_request)", hercutalk_desktop: not_yet_supported, shumway_prolog_web: supported, note: "desktop column unverified: requests and user input share stdin there", test: "read(X).", phase: 3 }
       - { id: k-complete, feature: "completion", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "X = 1, grandp, completed after %%user defines grandparent/2", phase: 3 }

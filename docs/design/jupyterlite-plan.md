@@ -1,7 +1,9 @@
 # Jupyter notebooks on WebShumway: plan
 
 Status: Phase 0 done; Phase 1 done (2026-11-15); Phase 2 done (2026-11-16);
-Phase 3 started, with the server running in a page. The architecture is in
+Phase 3 done (2026-11-19), published at https://gusbro.github.io/Shumway/jupyter/;
+Phase 4 done (2026-11-19); Phase 5 done (2026-11-19); Phase 6 waits for
+Hercutalk. The architecture is in
 [`jupyterlite-architecture.md`](jupyterlite-architecture.md); the decisions
 are in ADR-066 to ADR-073.
 
@@ -151,15 +153,22 @@ from the solution.
     `shumway_prolog` as the default kernel: **done**, by
     `jupyterlite/build.mjs`, which also puts the runtime's JavaScript and
     the isolation script in the site;
-  - example notebooks;
-  - deployed under `/jupyter`.
+  - example notebooks: **done** (PR #265), with graphs and plots since
+    (PRs #271, #273);
+  - deployed under `/jupyter`: **done** (PR #267), linked from the demo
+    (PR #268).
+- **Library collections:** the demo's, shared with the notebooks, and
+  `jupyter:import_library/1`: **done** (PR #270, O3).
+- **A runtime that stops answering, or does not start in time:** the cell
+  says to reload the page, and so does every cell after it (PR #274,
+  protocol §7). Seen in WebKit, where .NET's threads now and then stop
+  taking calls from the page.
 - **Working directory:** each session starts in its notebook's directory,
   through ADR-071, which must be implemented by then.
 
 **Acceptance:**
 - **Acceptance notebook (ADR-073 D17).** It runs green in CI with Playwright
-  against the built site, on Chromium and Firefox. WebKit joins once V1 and
-  F2 are resolved.
+  against the built site, on Chromium, Firefox and WebKit (PR #266).
 - **Files.** A `.pl` edited in the JupyterLite editor is seen by `consult/1`
   in the next cell, and a file written by Prolog appears in the file browser.
 - **Two notebooks** in different directories run correctly side by side.
@@ -182,6 +191,9 @@ goals run when a variable is bound, not where they are written.
 **Acceptance:** the rows in the feature table pass, and notebooks that draw
 no graphs do not download the drawer.
 
+**State: done (2026-11-19, PR #271).** Since then a loop is drawn beside its
+node, as Graphviz draws one, and a tree's edges do not cross (PR #273).
+
 ## Phase 5: Plots with Vega-Lite
 
 - `show_data` sends the reference's description; the kernel builds the
@@ -192,6 +204,9 @@ no graphs do not download the drawer.
 - A static SVG fallback for GitHub is optional.
 
 **Acceptance:** one feature-table row per plot type, each with a test.
+
+**State: done (2026-11-19, PR #273).** `plots.ipynb` draws one plot of each
+type. The static SVG fallback for GitHub is not done.
 
 ## Phase 6: Widgets (depends on Hercutalk)
 
@@ -222,8 +237,9 @@ To raise early, because several items change his code or depend on it:
    (ADR-067).
 3. The outdated "clause definitions" comment in `jupyter_term_handling` (or
    the code that is missing, if the comment is the intent).
-4. Vega-Lite generated in the server for `show_data` (ADR-072), useful on
-   the desktop too.
+4. Vega-Lite for `show_data`, built by the kernel from the description his
+   server already sends (ADR-072, second amendment): on the desktop it would
+   let Hercutalk drop matplotlib, with no change to his server.
 5. A configurable callback for widgets (ADR-072).
 6. The `jupyter:display/2` and `residual_goals` extensions.
 7. The feature table schema (ADR-073).
