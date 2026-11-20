@@ -437,6 +437,44 @@ public sealed class NotebookServerTests : IDisposable
         Assert.Contains("\"say \\\"hi\\\"\" [shape=\"egg\", label=\"say \\\"hi\\\"\"]", dot);
     }
 
+    // The reference's server stops on these; what ours answers is its own.
+    [Theory]
+    [InlineData(@"show_data(Data = [type-bar, x-_]).", "domain_error(show_data, [type-bar")]
+    [InlineData(@"show_data(Data = bar).", "domain_error(show_data, bar)")]
+    public void DataThatIsNoPlot_IsAnError(string code, string error)
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+
+        JsonNode entry = First(server, code);
+
+        Assert.Contains(error, Message(entry));
+        Assert.Contains("show_data/1", Message(entry));
+    }
+
+    [Fact]
+    public void AProgramsOwnShowData_IsCalledInsteadOfTheHelper()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+        Answer(server, Call(1, "%%user\nshow_data(G) :- write(mine), nl, call(G)."));
+
+        JsonNode entry = Answer(server, Call(2, "show_data(Data = [type-bar])."))["result"]!["1"]!;
+
+        Assert.Equal("mine", (string)entry["output"]!);
+        Assert.Null(entry["show_data"]);
+    }
+
+    [Fact]
+    public void DataMagic_TakesTheCellAsOneGoal()
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+
+        JsonObject answer = Answer(server, Call(1,
+            "%%data\nfindall(X, between(1, 3, X), Xs),\n_Data = [type-plot, x-Xs, y-Xs]"))["result"]!.AsObject();
+
+        Assert.Single(answer);
+        Assert.Equal("""{"type":"plot","x":[1,2,3],"y":[1,2,3]}""", answer["1"]!["show_data"]!.ToJsonString());
+    }
+
     private static string Output(NotebookServer server, int id, string code)
         => (string)Answer(server, Call(id, code))["result"]!["1"]!["output"]!;
 
@@ -504,12 +542,12 @@ public sealed class NotebookServerTests : IDisposable
             "print_variable_bindings/0", "print_queries/0", "print_queries/1", "print_query_time/0",
             "print_table/1", "print_table/2", "print_and_save_table/3", "trace/1", "display/2",
             "update_completion_data/0", "print_transition_graph/3", "print_transition_graph/4",
-            "show_graph/2", "show_term/1",
+            "show_graph/2", "show_term/1", "show_data/1",
         };
         string[] magics =
         {
             "%%user", "%%user+", "%%file FILE", "%%file+ FILE", "%%load FILE", "%%save FILE", "%%table",
-            "%%csv FILE", "%%tsv FILE", "%%highlight", "%%tree",
+            "%%csv FILE", "%%tsv FILE", "%%highlight", "%%tree", "%%data",
             "%bindings", "%queries", "%pwd", "%help", "%versions", "%flags", "%magic",
         };
 

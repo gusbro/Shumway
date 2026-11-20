@@ -109,6 +109,13 @@ const runNotebook = (file) => page.evaluate(async (path) => {
   };
 }, file);
 
+/** Shuts down a notebook's kernel and closes it, so later ones fit under the page's limit. */
+const closeNotebook = (file) => page.evaluate(async (path) => {
+  const widget = [...window.jupyterapp.shell.widgets('main')].find((w) => w.context?.path === path);
+  await widget?.sessionContext.shutdown();
+  widget?.dispose();
+}, file);
+
 try {
   await page.goto(base + 'jupyter/lab/index.html');
   await page.waitForFunction(() => window.crossOriginIsolated === true
@@ -540,13 +547,38 @@ try {
       '\\"idle\\" -> \\"ready\\" [label=\\"coin\\", color=\\"black\\", style=\\"solid\\"]',
       '\\"ready\\" [label=\\"Ready\\", shape=\\"box\\", style=\\"filled\\", fillcolor=\\"lightyellow\\"]',
       'stroke-dasharray']],
+    ['plots.ipynb', ['application/vnd.vegalite.v5+json', 'Fruit sold', 'Histogram', 'Squares', 'Languages',
+      '"type":"boxplot"', '"type":"arc"', '"interpolate":"step-after"']],
   ]) {
     const ran = await runNotebook(file);
     const flat = JSON.stringify(ran.cells);
     const absent = expected.filter((text) => text instanceof RegExp ? !text.test(flat) : !flat.includes(text));
     check(!flat.includes('ERROR') && absent.length === 0, `the example ${file} runs`, { absent, cells: ran.cells });
+    if (file !== 'plots.ipynb') await closeNotebook(file);
   }
   check(fetched.has(drawerScripts[0]), 'and the first graph downloads it', [...fetched].filter((f) => f.endsWith('.js')));
+
+  // Each plot of the example is drawn, and an option a plot does not draw
+  // is named below it.
+  const plots = await page.evaluate(async () => {
+    const app = window.jupyterapp;
+    const widget = [...app.shell.widgets('main')].find((w) => w.context?.path === 'plots.ipynb');
+    const drawn = () => widget.node.querySelectorAll('.vega-embed .marks').length;
+    for (let i = 0; i < 60 && drawn() < 14; i++) await new Promise((r) => setTimeout(r, 500));
+    const notes = [...widget.node.querySelectorAll('.jp-OutputArea-output')]
+      .map((o) => o.textContent).filter((t) => /Not drawn here|could not be drawn/.test(t));
+    const outputs = [];
+    const future = widget.sessionContext.session.kernel.requestExecute(
+      { code: "show_data(Data = [type-bar, x-[a, b], height-[1, 2], hatch-x])." });
+    future.onIOPub = (msg) => { if (msg.header.msg_type === 'display_data') outputs.push(msg.content.data); };
+    await future.done;
+    return { drawn: drawn(), notes, outputs };
+  });
+  check(plots.drawn === 14 && plots.notes.length === 0, 'each plot of plots.ipynb is drawn, with every option it gives',
+    { drawn: plots.drawn, notes: plots.notes });
+  check(plots.outputs.some((o) => 'application/vnd.vegalite.v5+json' in o)
+      && plots.outputs.some((o) => /Not drawn here: hatch\./.test(o['text/plain'] ?? '')),
+    'an option a plot does not draw is named below it', plots.outputs);
 } catch (e) {
   failures++;
   console.log(`[${engineName}] did not get there: ${e.message.split('\n')[0]}`);

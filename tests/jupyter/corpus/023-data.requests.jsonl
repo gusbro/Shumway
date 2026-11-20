@@ -1,0 +1,7 @@
+{"jsonrpc":"2.0","id":1,"method":"call","params":{"code":"%%data\nData = [type-bar, title-'Bar Graph', x-[10, 20, 30], height-[13, 45, 23], color-dodgerblue]"}}
+{"jsonrpc":"2.0","id":2,"method":"call","params":{"code":"jupyter:show_data(_Data = [type-pie, x-[35, 20], labels-['Apple', 'Banana']])."}}
+{"jsonrpc":"2.0","id":3,"method":"call","params":{"code":"show_data(Data = [type-plot, x-[1, 2, 3], y-[1, 4, 9], xlabel-[label-'X', color-brown], grid-true])."}}
+{"jsonrpc":"2.0","id":4,"method":"call","params":{"code":"%%data\nXs = [1, 2, 3],\nData = [type-scatter, x-Xs, y-[3, 1, 2], title-[label-'Points', fontsize-18]]."}}
+{"jsonrpc":"2.0","id":5,"method":"call","params":{"code":"%%data\nData = [type-stackplot, x-[1, 2], y-[[1, 2], [3, 4]], labels-[a, b], legend-[loc-'upper left']]"}}
+{"jsonrpc":"2.0","id":6,"method":"call","params":{"code":"%%data\nData = [type-hist, x-[1.5, 2.5, 2.5, 3], bins-3, color-skyblue, edgecolor-black]"}}
+{"jsonrpc":"2.0","id":7,"method":"call","params":{"code":"show_data(Other = [type-bar])."}}
