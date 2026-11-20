@@ -217,8 +217,11 @@ Configurable callback in `jupyter_widgets`, `jupyter_forms` and
 
 - **ADR-071**, working directory per engine: accepted and implemented
   (PR #241), a prerequisite of Phase 3.
-- **Future ADR:** a cancellation that Prolog can catch, so that an interrupt
-  keeps the session's state.
+- **An interrupt restarts the session, as the reference's does (decided
+  2026-11-20).** One that kept the session would keep, too, whatever the
+  query had done before it stopped: an `assert` made and the `retract` it
+  was going to undo it with never run, with no way for the user to see it.
+  A restart leaves no such state.
 
 ## Open decisions
 

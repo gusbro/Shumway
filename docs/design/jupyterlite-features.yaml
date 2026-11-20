@@ -43,7 +43,8 @@ groups:
       - { id: s-errors, feature: "error reporting", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "X is foo + 1.  →  X = .", phase: 3 }
       - { id: s-clause-cells, feature: "cell with only clauses (O1) [ext]", hercutalk_desktop: not_applicable, shumway_prolog_web: wont_support, note: "decided (O1): a clause in a query cell is an error that points to %%user", test: "p(X) :- q(X).", phase: 2 }
       - { id: s-residual, feature: "residual goals in bindings [ext]", hercutalk_desktop: partial, shumway_prolog_web: supported, note: "Hercutalk shows clpfd domains as `X in Dom`", test: "X in 1..5, X #> 2.", phase: 3 }
-      - { id: s-trace, feature: "trace/0,1,2, leash/1", hercutalk_desktop: supported, shumway_prolog_web: partial, note: "jupyter:trace/1 only", test: "jupyter:trace(member(X, [a])).", phase: 3 }
+      - { id: s-trace, feature: "jupyter:trace/1: the ports of a goal", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "jupyter:trace(member(X, [a])).", phase: 3 }
+      - { id: s-tracer-cells, feature: "trace/0,1,2 and leash/1 in a cell", hercutalk_desktop: wont_support, shumway_prolog_web: wont_support, note: "a notebook cannot answer at a breakpoint: the reference refuses trace/0, and has no trace/1,2 or leash/1. Ours answers each with an error that points to jupyter:trace/1, and a program's own trace/1,2 or leash/1 runs as written", test: "leash(none).", phase: 3 }
 
   - name: Helpers (module jupyter)
     rows:
@@ -86,7 +87,7 @@ groups:
 
   - name: Kernel operations
     rows:
-      - { id: k-interrupt, feature: "interrupt", hercutalk_desktop: partial, shumway_prolog_web: partial, note: "restarts the server; state is lost (both). On the web, an interrupt before the cell's query starts runs nothing and keeps the session", test: "repeat, fail.  →  interrupt", phase: 3 }
+      - { id: k-interrupt, feature: "interrupt", hercutalk_desktop: partial, shumway_prolog_web: partial, note: "restarts the server; state is lost (both), by design: nothing a stopped query had done is left behind. On the web, an interrupt before the cell's query starts runs nothing and keeps the session", test: "repeat, fail.  →  interrupt", phase: 3 }
       - { id: k-runtime-stopped, feature: "a runtime that stops answering, or does not start in time, is told: the cell says to reload the page", hercutalk_desktop: not_applicable, shumway_prolog_web: supported, note: "seen in WebKit (protocol §7)", test: "jupyterlite/tests/stall.mjs, with short waits", phase: 3 }
       - { id: k-restart, feature: "restart", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "restart  →  X = restarted.", phase: 3 }
       - { id: k-stdin, feature: "read/1 from a cell (input_request)", hercutalk_desktop: not_yet_supported, shumway_prolog_web: supported, note: "desktop column unverified: requests and user input share stdin there", test: "read(X).", phase: 3 }
