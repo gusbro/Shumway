@@ -1,23 +1,30 @@
-// Calls into a threaded .NET app from a browser driven over WebDriver, and
-// says whether every call came back. It speaks the W3C WebDriver protocol
-// over HTTP, which is all safaridriver needs: no package to install.
+// Calls into a threaded .NET runtime from a browser driven over WebDriver,
+// and says whether every call came back. It speaks the W3C WebDriver
+// protocol over HTTP, which is all safaridriver needs: no package to install.
 //
-//   node probe.mjs <published wwwroot> <macos|ios> [calls] [driver url]
+//   node probe.mjs <dir> <macos|ios> ping [calls] [driver url]
+//   node probe.mjs <dir> <macos|ios> cells [cells] [driver url]
 //
-// Exits with 1 when a call did not come back in 30 s, or the page did not
-// start.
+// `ping` serves the published ThreadedPing app from <dir> and calls its
+// empty export; `cells` serves a built notebook site from <dir> (what
+// `node jupyterlite/build.mjs --out <dir> --with-demo ...` makes) and runs
+// cells in a notebook, each a call or more into the runtime. Exits with 1
+// when a call or a cell did not come back, or the page did not start.
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 
-const [dir, target = 'macos', callsText = '30000', driver = 'http://localhost:4444'] = process.argv.slice(2);
-const calls = Number(callsText);
+const [dir, target = 'macos', mode = 'ping', countText = '', driver = 'http://localhost:4444'] = process.argv.slice(2);
+const count = Number(countText || (mode === 'cells' ? 5000 : 30000));
 const root = path.resolve(dir);
-const ROUND = 1000;
 
 // Threads need cross-origin isolation, which these headers give.
-const types = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
-  '.wasm': 'application/wasm', '.json': 'application/json', '.dat': 'application/octet-stream' };
+const types = {
+  '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
+  '.wasm': 'application/wasm', '.json': 'application/json', '.ipynb': 'application/json',
+  '.dat': 'application/octet-stream', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
+  '.woff': 'font/woff', '.woff2': 'font/woff2', '.pl': 'text/plain', '.webmanifest': 'application/manifest+json'
+};
 const server = http.createServer((request, response) => {
   let name = decodeURIComponent(new URL(request.url, 'http://x').pathname);
   if (name.endsWith('/')) name += 'index.html';
@@ -36,7 +43,7 @@ const server = http.createServer((request, response) => {
   fs.createReadStream(file).pipe(response);
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-const page = `http://localhost:${server.address().port}/`;
+const base = `http://localhost:${server.address().port}/`;
 
 async function webdriver(method, url, body) {
   const response = await fetch(driver + url, {
@@ -47,6 +54,64 @@ async function webdriver(method, url, body) {
   return answer.value;
 }
 
+// Each mode: the page, when it is ready, the size of a round, and a round:
+// work done one step after another, which a step that does not come back
+// ends.
+const modes = {
+  ping: {
+    page: base,
+    ready: 'return window.ready === true;',
+    round: 1000,
+    script: `
+      const [count, done] = arguments;
+      (async () => {
+        const t0 = performance.now();
+        for (let i = 1; i <= count; i++) {
+          const late = new Promise((_, no) => setTimeout(() => no(new Error('call ' + i + ' of the round did not come back in 30 s')), 30000));
+          try { await Promise.race([window.ping(), late]); }
+          catch (e) { done({ made: i - 1, ms: performance.now() - t0, stopped: String(e.message) }); return; }
+        }
+        done({ made: count, ms: performance.now() - t0 });
+      })();`
+  },
+  cells: {
+    page: base + 'jupyter/lab/index.html',
+    ready: `return window.crossOriginIsolated === true && !!window.jupyterapp?.serviceManager?.contents
+      && !!document.querySelector('.jp-LabShell');`,
+    round: 250,
+    script: `
+      const [count, done] = arguments;
+      (async () => {
+        const app = window.jupyterapp;
+        if (!window.probeKernel) {
+          await app.serviceManager.contents.save('probe.ipynb', { type: 'notebook', format: 'json', content: {
+            cells: [], nbformat: 4, nbformat_minor: 5,
+            metadata: { kernelspec: { name: 'shumway_prolog', display_name: 'Prolog (Shumway)', language: 'prolog' } } } });
+          const panel = await app.commands.execute('docmanager:open', { path: 'probe.ipynb' });
+          await panel.sessionContext.ready;
+          window.probeKernel = panel.sessionContext.session.kernel;
+          window.probeCells = 0;
+          await window.probeKernel.requestExecute({ code: 'true.' }).done;
+        }
+        const t0 = performance.now();
+        for (let i = 1; i <= count; i++) {
+          const n = ++window.probeCells;
+          let text = '';
+          const future = window.probeKernel.requestExecute({ code: 'X = ' + n + '.' });
+          future.onIOPub = (msg) => { if (msg.header.msg_type === 'display_data') text = String(msg.content.data['text/plain']); };
+          const late = new Promise((ok) => setTimeout(() => ok('late'), 60000));
+          const stop = (why) => done({ made: i - 1, ms: performance.now() - t0, stopped: why });
+          if ((await Promise.race([future.done, late])) === 'late') return stop('cell ' + n + ' did not come back in 60 s');
+          if (/stopped answering|did not start/.test(text)) return stop('cell ' + n + ': ' + text.replace(/\\x1b\\[[0-9;]*m/g, ''));
+        }
+        done({ made: count, ms: performance.now() - t0 });
+      })();`
+  }
+};
+const chosen = modes[mode];
+if (!chosen) throw new Error(`no mode ${mode}: ping or cells`);
+const unit = mode === 'cells' ? 'cells' : 'calls';
+
 const capabilities = target === 'ios'
   ? { browserName: 'safari', platformName: 'iOS', 'safari:useSimulator': true }
   : { browserName: 'safari' };
@@ -55,47 +120,35 @@ let code = 0;
 try {
   session = (await webdriver('POST', '/session', { capabilities: { alwaysMatch: capabilities } })).sessionId;
   const at = `/session/${session}`;
-  await webdriver('POST', `${at}/timeouts`, { script: 600000, pageLoad: 300000 });
-  await webdriver('POST', `${at}/url`, { url: page });
+  await webdriver('POST', `${at}/timeouts`, { script: 900000, pageLoad: 300000 });
+  await webdriver('POST', `${at}/url`, { url: chosen.page });
   const started = Date.now();
-  while (!(await webdriver('POST', `${at}/execute/sync`, { script: 'return window.ready === true;', args: [] }))) {
-    if (Date.now() - started > 180000) throw new Error('the page did not start in 180 s');
+  while (!(await webdriver('POST', `${at}/execute/sync`, { script: chosen.ready, args: [] }))) {
+    if (Date.now() - started > 300000) throw new Error('the page did not start in 300 s');
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   const about = await webdriver('POST', `${at}/execute/sync`, {
     script: 'return { browser: navigator.userAgent, isolated: crossOriginIsolated, waitAsync: typeof Atomics.waitAsync };',
     args: []
   });
-  console.log(`[${target}] ${JSON.stringify(about)}, started in ${((Date.now() - started) / 1000).toFixed(1)} s`);
+  console.log(`[${target} ${mode}] ${JSON.stringify(about)}, started in ${((Date.now() - started) / 1000).toFixed(1)} s`);
 
-  // A round of calls, one after the other; a call that does not come back
-  // in 30 s ends it.
-  const round = `
-    const [count, done] = arguments;
-    (async () => {
-      const t0 = performance.now();
-      for (let i = 1; i <= count; i++) {
-        const late = new Promise((_, no) => setTimeout(() => no(new Error('call ' + i + ' of the round did not come back in 30 s')), 30000));
-        try { await Promise.race([window.ping(), late]); }
-        catch (e) { done({ made: i - 1, ms: performance.now() - t0, stopped: String(e.message) }); return; }
-      }
-      done({ made: count, ms: performance.now() - t0 });
-    })();`;
   let made = 0;
-  while (made < calls) {
-    const result = await webdriver('POST', `${at}/execute/async`, { script: round, args: [Math.min(ROUND, calls - made)] });
+  while (made < count) {
+    const result = await webdriver('POST', `${at}/execute/async`, { script: chosen.script, args: [Math.min(chosen.round, count - made)] });
     made += result.made;
     const each = result.made > 0 ? (result.ms / result.made).toFixed(2) : '-';
-    console.log(`[${target}] ${made} calls, ${each} ms each in the last round`);
+    console.log(`[${target} ${mode}] ${made} ${unit}, ${each} ms each in the last round`);
     if (result.stopped) {
-      console.log(`[${target}] STOPPED after ${made} calls: ${result.stopped}`);
+      console.log(`[${target} ${mode}] STOPPED after ${made} ${unit}: ${result.stopped}`);
       code = 1;
       break;
     }
   }
-  if (code === 0) console.log(`[${target}] every one of ${made} calls came back`);
+  if (code === 0) console.log(`[${target} ${mode}] every one of ${made} ${unit} came back`);
 } catch (e) {
-  console.log(`[${target}] did not get there: ${e.message}`);
+  // fetch says only "fetch failed"; what failed is its cause.
+  console.log(`[${target} ${mode}] did not get there: ${e.message}${e.cause ? ` (${e.cause.code ?? ''} ${e.cause.message ?? e.cause})` : ''}`);
   code = 1;
 } finally {
   if (session) await webdriver('DELETE', `/session/${session}`).catch(() => {});
