@@ -1,0 +1,69 @@
+# Whether Safari keeps taking calls into .NET's threads: the probe of
+# tests/webkit-probe, in Safari on macOS and in Safari on an iOS simulator.
+# Run by hand, or by a pull request that changes the probe.
+
+name: Safari probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      calls:
+        description: Calls into .NET in each browser
+        default: '30000'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tests/webkit-probe/**'
+      - '.github/workflows/safari.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    # The iOS simulator's Safari is the less certain of the two to drive: a
+    # failure there is reported, and does not fail the run.
+    continue-on-error: ${{ matrix.target == 'ios' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [macos, ios]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install the WebAssembly workload
+        run: dotnet workload install wasm-tools
+
+      - name: Publish the probe app
+        run: dotnet publish tests/webkit-probe/ThreadedPing -c Release -o probe-site
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Let WebDriver drive Safari
+        run: sudo safaridriver --enable
+
+      - name: Boot an iOS simulator
+        if: matrix.target == 'ios'
+        run: |
+          xcrun simctl list devices available
+          device=$(xcrun simctl list devices available -j | node -e "
+            const all = JSON.parse(require('fs').readFileSync(0, 'utf8')).devices;
+            const phone = Object.values(all).flat().find((d) => /^iPhone/.test(d.name));
+            if (!phone) process.exit(1);
+            console.log(phone.udid);")
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
+
+      - name: Probe
+        run: |
+          safaridriver -p 4444 &
+          sleep 3
+          node tests/webkit-probe/probe.mjs probe-site/wwwroot ${{ matrix.target }} ${{ inputs.calls || '30000' }}

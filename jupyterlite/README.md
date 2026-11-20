@@ -163,7 +163,8 @@ A runtime that stops answering, or does not start in time, is one only a
 reload starts again: the cell that was waiting, and every cell after it in
 the page, says so. It has been seen in WebKit, where .NET's threads now and
 then stop taking calls from the page; a cell's query may take as long as
-it needs, since the trivial call answers while it runs.
+it needs, since the trivial call answers while it runs. Whether Safari does
+it too, on a Mac or an iOS simulator, is what `tests/webkit-probe` checks.
 
 `site/overrides.json` holds the JupyterLab settings the site starts with.
 It turns on `autoStartDefaultKernel`, so that a notebook saved by another
