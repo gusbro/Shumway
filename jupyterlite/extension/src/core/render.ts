@@ -2,6 +2,8 @@
 // (docs/design/jupyterlite-protocol.md, sections 3 and 4). No Jupyter and no
 // browser in here: a response goes in, the outputs to show come out.
 
+import { plotOf, VEGA_LITE } from './data';
+
 /** The texts that are the variant's own. */
 export interface ITexts {
   /** A query that succeeded and bound nothing. */
@@ -48,6 +50,13 @@ function table(names: unknown[], rows: unknown[][]): IOutput {
 
 const isJson = (mime: string) => /[/+]json$/.test(mime);
 
+/** What a plot is, as text: what a reader without Vega-Lite sees. */
+function plotSummary(data: { type?: unknown; title?: unknown }): string {
+  const title = typeof data.title === 'string' ? data.title
+    : data.title && typeof data.title === 'object' ? String((data.title as { label?: unknown }).label ?? '') : '';
+  return `${String(data.type ?? 'a')} plot${title ? `: ${title}` : ''}`;
+}
+
 /** The registered MIME type of DOT text. */
 export const GRAPHVIZ = 'text/vnd.graphviz';
 
@@ -70,6 +79,19 @@ function additional(entry: any, texts: ITexts, rendered: IRendered): void {
     if (shown) rendered.outputs.push(table(shown.VariableNames ?? [], shown.ValuesLists ?? []));
   }
   for (const item of entry.display_data ?? []) rendered.outputs.push(displayed(item, texts));
+  // A plot of show_data/1: its Vega-Lite specification, which JupyterLab
+  // draws, and the options it did not draw, named.
+  if (entry.show_data !== null && typeof entry.show_data === 'object') {
+    try {
+      const { spec, ignored } = plotOf(entry.show_data);
+      rendered.outputs.push({ [VEGA_LITE]: spec, 'text/plain': plotSummary(entry.show_data) });
+      if (ignored.length > 0)
+        rendered.outputs.push(plain(`${texts.noticePrefix}Not drawn here: ${ignored.join(', ')}.`));
+    } catch (reason) {
+      rendered.outputs.push(plain(`${texts.errorPrefix}The plot could not be drawn: ${
+        reason instanceof Error ? reason.message : reason}`, RED_BOLD));
+    }
+  }
   // A graph is its DOT here; the kernel draws it (graph.ts) before it shows.
   for (const key of ['print_transition_graph', 'print_sld_tree']) {
     const dot = entry[key];

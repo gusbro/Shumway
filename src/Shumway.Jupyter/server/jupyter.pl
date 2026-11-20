@@ -11,7 +11,7 @@
                     print_variable_bindings/0, print_queries/0, print_queries/1,
                     print_query_time/0, pwd/0, cd/1, import_library/1,
                     print_transition_graph/3, print_transition_graph/4,
-                    show_graph/2, show_term/1,
+                    show_graph/2, show_term/1, '$jupyter_data'/2,
                     help/0, magic/0, version/0, version/4, versions/0,
                     '$jupyter_table'/2, '$jupyter_saved_table'/4, '$jupyter_docs'/1]).
 
@@ -594,6 +594,42 @@ term_node(Sub, [shape/Shape, label/Label], Term) :-
         )
     ).
 
+% ----- plots -----
+
+% '$jupyter_data'(:Goal, ?Data): the first solution of Goal binds Data, a
+% list of Key-Value pairs: the keys of a matplotlib call. The answer carries
+% them as the reference's server does, under show_data; the kernel draws them
+% (ADR-072, D15).
+'$jupyter_data'(Goal, Data) :-
+    once(Goal),
+    (   ground(Data), data_object(Data, Json) -> '$jupyter_extra'(show_data, Json)
+    ;   throw(error(domain_error(show_data, Data), show_data/1))
+    ).
+
+data_object(Pairs, obj(Members)) :-
+    is_list(Pairs),
+    data_members(Pairs, Members).
+
+data_members([], []).
+data_members([Key-Value|Pairs], [Key-Json|Members]) :-
+    atom(Key),
+    (   Value = [_-_|_] -> data_object(Value, Json)
+    ;   data_value(Value, Json)
+    ),
+    data_members(Pairs, Members).
+
+data_value(Value, Value) :- number(Value), !.
+data_value([], []) :- !.
+data_value(Value, str(Value)) :- atom(Value), !.
+data_value(Values, Json) :-
+    is_list(Values),
+    data_values(Values, Json).
+
+data_values([], []).
+data_values([Value|Values], [Json|Jsons]) :-
+    (   Value = [_-_|_] -> data_object(Value, Json) ; data_value(Value, Json) ),
+    data_values(Values, Jsons).
+
 % ----- versions -----
 
 version :-
@@ -688,6 +724,13 @@ doc(show_term/1, 'jupyter:show_term(+Term) or show_term(+Term)', [
     'Draws Term as a tree: a node for each subterm, and an edge from a term',
     'to each of its arguments, labelled by the argument''s position.',
     '%%tree draws the term of the cell.']).
+doc(show_data/1, 'jupyter:show_data(+Goal) or show_data(+Goal)', [
+    'Draws a plot. Goal binds Data (or _Data) to a list of Key-Value pairs:',
+    'type, the kind of plot (plot, scatter, step, stem, ecdf, bar, barh, hist,',
+    'pie, stackplot, errorbar, boxplot, eventplot, loglog, semilogx or',
+    'semilogy), and the keys of matplotlib''s function of that name, such as',
+    'x, y, height, labels, color or title. %%data draws the goal of the cell.',
+    'An option that is not drawn is named below the plot.']).
 doc(import_library/1, 'jupyter:import_library(+Spec)', [
     'Brings in a collection of libraries: then use_module(library(Name))',
     'loads the libraries in it. Spec is scryer, swi or trealla, for the',
@@ -758,6 +801,8 @@ magic_line('    %%highlight').
 magic_line('        Shows the cell as code, without running it').
 magic_line('    %%tree').
 magic_line('        Draws each term of the cell as a tree, as show_term/1').
+magic_line('    %%data').
+magic_line('        Draws the plot the goal of the cell gives, as show_data/1').
 magic_line('').
 magic_line('Line magic, as the whole cell:').
 magic_line('').

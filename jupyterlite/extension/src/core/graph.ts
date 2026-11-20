@@ -278,11 +278,10 @@ function visitOrder(graph: IDotGraph): IDotNode[] {
   return ordered;
 }
 
-/** In a forest, such as the tree of a term, each node's children left to
- *  right in the order of its edges: dagre would otherwise break the tie of
- *  two siblings either way. Nothing for any other graph, where such
- *  constraints could contradict each other. */
-function siblingOrder(graph: IDotGraph): { left: string; right: string }[] {
+/** In a forest, such as the tree of a term, each node's place in a walk from
+ *  the roots that takes each node's edges in their order. Undefined for any
+ *  other graph. */
+function treeWalk(graph: IDotGraph): Map<string, number> | undefined {
   const parents = new Map<string, Set<string>>();
   const children = new Map<string, string[]>();
   for (const edge of graph.edges) {
@@ -291,18 +290,67 @@ function siblingOrder(graph: IDotGraph): { left: string; right: string }[] {
     if (!known.includes(edge.to)) children.set(edge.from, [...known, edge.to]);
   }
   for (const [node, from] of parents) {
-    if (from.size > 1 || from.has(node)) return [];
+    if (from.size > 1 || from.has(node)) return undefined;
     // A node that is its own ancestor is on a cycle.
     const seen = new Set([node]);
     for (let up = [...from][0]; up !== undefined; up = [...(parents.get(up) ?? [])][0]) {
-      if (seen.has(up)) return [];
+      if (seen.has(up)) return undefined;
       seen.add(up);
     }
   }
-  const constraints: { left: string; right: string }[] = [];
-  for (const list of children.values())
-    for (let i = 0; i + 1 < list.length; i++) constraints.push({ left: list[i], right: list[i + 1] });
-  return constraints;
+  const walk = new Map<string, number>();
+  const stack = graph.nodes.filter(node => !parents.has(node.id)).map(node => node.id).reverse();
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    walk.set(id, walk.size);
+    stack.push(...[...(children.get(id) ?? [])].reverse());
+  }
+  return walk;
+}
+
+/** dagre's order of each layer, from a forest's walk: siblings keep the
+ *  order of their edges, and the children of one node stay left of those of
+ *  the next, so no edge crosses another. dagre's own ordering, even with
+ *  left-right constraints, crosses the edges of two subtrees. The node
+ *  dagre adds on an edge goes where the edge's child goes. */
+function orderLayers(layered: Graph, walk: Map<string, number>): void {
+  const layers = new Map<number, { v: string; key: number }[]>();
+  for (const v of layered.nodes()) {
+    const node = layered.node(v) as { rank?: number; edgeObj?: { w: string } };
+    if (node.rank === undefined) continue;
+    const key = walk.get(v) ?? (node.edgeObj ? walk.get(node.edgeObj.w) : undefined) ?? walk.size;
+    layers.set(node.rank, [...(layers.get(node.rank) ?? []), { v, key }]);
+  }
+  for (const layer of layers.values())
+    layer.sort((a, b) => a.key - b.key)
+      .forEach((entry, i) => { (layered.node(entry.v) as { order?: number }).order = i; });
+}
+
+const LOOP_REACH = 24;
+const LOOP_BULGE = 10;
+
+/** Where the right side of a node's shape is, dy above or below its centre. */
+function rightSide(shape: Shape, x: number, w: number, h: number, dy: number): number {
+  const across = Math.min(1, Math.abs(dy) / (h / 2));
+  switch (shape) {
+    case 'box': case 'plain': return x + w / 2;
+    case 'diamond': return x + (w / 2) * (1 - across);
+    case 'point': return x + Math.sqrt(Math.max(0, 16 - dy * dy));
+    default: return x + (w / 2) * Math.sqrt(1 - across * across);
+  }
+}
+
+/** An edge from a node to itself, drawn as Graphviz draws one: a loop out of
+ *  the node's right side and back into it, reach past that side. */
+function loop(shape: Shape, x: number, y: number, w: number, h: number, reach: number, bulge: number): string {
+  const dy = shape === 'point' ? 2 : h / 4;
+  const side = rightSide(shape, x, w, h, dy);
+  const out = (shape === 'point' ? x + 4 : x + w / 2) + reach;
+  // A cubic whose two inner control points share an x goes 3/4 of the way to it.
+  const c = side + (out - side) / 0.75;
+  return `M${side.toFixed(1)},${(y - dy).toFixed(1)}`
+    + `C${c.toFixed(1)},${(y - dy - bulge).toFixed(1)} ${c.toFixed(1)},${(y + dy + bulge).toFixed(1)}`
+    + ` ${side.toFixed(1)},${(y + dy).toFixed(1)}`;
 }
 
 /** The SVG of a DOT graph: black on white, as Graphviz draws, so that it
@@ -318,14 +366,35 @@ export function drawDot(dot: string): string {
     const shape = shapeOf(node.attributes.get('shape'));
     g.setNode(node.id, nodeSize(shape, shape === 'point' ? { width: 0, height: 0 } : textSize(labelOf(node))));
   }
+  // An edge from a node to itself is drawn below, not by dagre, which only
+  // keeps the room for it on the node's right. A node's second loop goes
+  // around the label of its first, and so on.
+  const loops = new Map<number, { reach: number; bulge: number }>();
+  const room = new Map<number, number>();
+  const reached = new Map<string, { reach: number; count: number; first: number }>();
+  graph.edges.forEach((edge, i) => {
+    if (edge.from !== edge.to) return;
+    const label = edge.attributes.get('label');
+    const beside = label ? 4 + textSize(labelText(label)).width : 0;
+    const at = reached.get(edge.from) ?? { reach: LOOP_REACH, count: 0, first: i };
+    loops.set(i, { reach: at.reach, bulge: LOOP_BULGE + 8 * at.count });
+    room.set(at.first, at.reach + beside);
+    reached.set(edge.from, { reach: at.reach + beside + 10, count: at.count + 1, first: at.first });
+  });
   graph.edges.forEach((edge, i) => {
     const label = edge.attributes.get('label');
     const size = label ? textSize(labelText(label)) : { width: 0, height: 0 };
+    if (loops.has(i)) {
+      g.setEdge(edge.from, edge.to, { width: room.get(i) ?? 0, height: size.height, labelpos: 'c' }, String(i));
+      return;
+    }
     // Beside the edge, as Graphviz puts it, not across it.
     g.setEdge(edge.from, edge.to,
       { width: size.width, height: size.height, labelpos: 'r', labeloffset: 4 }, String(i));
   });
-  layout(g, { constraints: siblingOrder(graph) });
+  const walk = treeWalk(graph);
+  layout(g, walk ? { customOrder: layered => orderLayers(layered, walk) } : {});
+  const byId = new Map(graph.nodes.map(node => [node.id, node]));
 
   const { width = 0, height = 0 } = g.graph();
   // One arrowhead for each colour of an edge.
@@ -340,11 +409,27 @@ export function drawDot(dot: string): string {
     const color = edge.attributes.get('color') ?? 'black';
     if (!arrows.has(color)) arrows.set(color, `${prefix}-arrow-${arrows.size + 1}`);
     const arrow = graph.directed ? ` marker-end="url(#${arrows.get(color)})"` : '';
-    parts.push(`<path d="${curve(laid.points ?? [])}" fill="none" stroke="${escapeXml(color)}"`
-      + `${style.has('bold') ? ' stroke-width="2"' : ''}${stroke(style)}${arrow}/>`);
     const label = edge.attributes.get('label');
-    if (label && laid.x !== undefined && laid.y !== undefined)
-      parts.push(text(labelText(label), laid.x, laid.y, edge.attributes.get('fontcolor') ?? 'black'));
+    const fontColor = edge.attributes.get('fontcolor') ?? 'black';
+    const looped = loops.get(i);
+    let path: string;
+    let written = '';
+    if (looped) {
+      const node = g.node(edge.from);
+      const shape = shapeOf(byId.get(edge.from)?.attributes.get('shape'));
+      path = loop(shape, node.x, node.y, node.width, node.height, looped.reach, looped.bulge);
+      if (label) {
+        const content = labelText(label);
+        const right = (shape === 'point' ? node.x + 4 : node.x + node.width / 2) + looped.reach + 4;
+        written = text(content, right + textSize(content).width / 2, node.y, fontColor);
+      }
+    } else {
+      path = curve(laid.points ?? []);
+      if (label && laid.x !== undefined && laid.y !== undefined)
+        written = text(labelText(label), laid.x, laid.y, fontColor);
+    }
+    parts.push(`<path d="${path}" fill="none" stroke="${escapeXml(color)}"`
+      + `${style.has('bold') ? ' stroke-width="2"' : ''}${stroke(style)}${arrow}/>`, written);
   });
 
   for (const node of graph.nodes) {

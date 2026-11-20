@@ -74,7 +74,8 @@ libraries stored while the notebook is open, imports others with
 `jupyter:import_library/1` (from the notebook's files, and from a second
 local server that does or does not allow CORS), and runs each example
 notebook from top to bottom: `graphs.ipynb` draws graphs, and the drawer's
-script is fetched only then.
+script is fetched only then; `plots.ipynb` draws each kind of plot, and an
+option a plot does not draw is named below it.
 `limit.mjs` serves the site set to hold one kernel and checks that a second
 is refused with a message that says how to free a place.
 
@@ -111,9 +112,22 @@ elsewhere is refused.
 `show_graph/2` answer with a graph in DOT, the text the reference's server
 writes. The kernel draws it (`extension/src/core/graph.ts`): it reads the
 part of DOT the servers write, lays it out with dagre and writes SVG, black
-on white as Graphviz draws. The output keeps the DOT beside the SVG
+on white as Graphviz draws. A tree keeps the order of each node's edges,
+with no edge across another, and an edge from a node to itself is a loop
+beside the node. The output keeps the DOT beside the SVG
 (`text/vnd.graphviz`), so another drawer can take over from it (ADR-072).
 The drawer is a script of its own, fetched the first time a notebook draws.
+
+## Plots
+
+`show_data/1` and `%%data` answer with the `Key-Value` pairs of `Data`
+(or `_Data`) as a JSON object, as the reference's server does: `type` names
+a matplotlib function and the other keys are its options. The kernel turns
+them into a Vega-Lite specification (`extension/src/core/data.ts`), and
+JupyterLab's own renderer draws it (ADR-072, second amendment). It draws
+plot, scatter, step, stem, ecdf, bar, barh, hist, pie, stackplot,
+errorbar, boxplot, eventplot, loglog, semilogx and semilogy; an option it
+does not draw is named below the plot. `plots.ipynb` has one of each.
 
 ## Where it is published
 

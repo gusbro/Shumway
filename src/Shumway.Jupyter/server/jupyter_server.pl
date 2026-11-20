@@ -207,6 +207,7 @@ magic(load, [C|Cs], Text, file(File, write, load, Text)) :- atom_chars(File, [C|
 magic(save, [C|Cs], Text, file(File, write, save, Text)) :- atom_chars(File, [C|Cs]).
 magic(highlight, [], _, highlight).
 magic(tree, [], Text, tree(Text)).
+magic(data, [], Text, data(Text)).
 magic(table, [], Text, table(Text, print_table)).
 magic(csv, [C|Cs], Text, table(Text, save(csv, File))) :- atom_chars(File, [C|Cs]).
 magic(tsv, [C|Cs], Text, table(Text, save(tsv, File))) :- atom_chars(File, [C|Cs]).
@@ -245,6 +246,17 @@ magic_content(tree(Text), _, queries(Trees)) :-
     (   Last = ['.'|_] -> Terms = Text ; append(Text, ['.'], Terms) ),
     cell_queries(Terms, Queries),
     trees(Queries, Trees).
+% The cell is one goal, whatever its lines, with a full stop the last line
+% may leave out: the plot of show_data/1.
+magic_content(data(Text), _, Content) :-
+    reverse(Text, Backwards),
+    ending(Backwards, Last),
+    (   Last = ['.'|Rest] -> reverse(Rest, Goal) ; reverse(Last, Goal) ),
+    append(Goal, [')', ')', '.'], Closed),
+    atom_chars('jupyter:show_data((', Open),
+    append(Open, Closed, Query),
+    cell_queries(Query, Queries),
+    Content = queries(Queries).
 % Each query of the cell is shown as the table of its solutions.
 magic_content(table(Text, How), _, queries(Tables)) :-
     cell_queries(Text, Queries),
@@ -342,6 +354,7 @@ helpers(Goal, Names, Called) :-
     ;   Goal = (\+ Inner) ->
         helpers(Inner, Names, CalledInner),
         Called = (\+ CalledInner)
+    ;   own_predicate(Goal) -> Called = Goal
     ;   helper(Goal, Names, Named) -> Called = Named
     ;   graph_alias(Goal, Graph) -> Called = Graph
     ;   Goal = jupyter:Helper, nonvar(Helper), helper(Helper, Names, Named) -> Called = Named
@@ -367,6 +380,18 @@ helper(print_and_save_table(Goal, Format, File), Names,
        jupyter:'$jupyter_saved_table'(user:Goal, Named, Format, File)) :-
     term_variables(Goal, Variables),
     names_of(Names, Variables, Named).
+% The data is the variable named Data, or _Data; with neither, the query
+% fails, as the reference's does.
+helper(show_data(Goal), Names, Called) :-
+    (   memberchk('Data'=Data, Names) -> Called = jupyter:'$jupyter_data'(user:Goal, Data)
+    ;   memberchk('_Data'=Data, Names) -> Called = jupyter:'$jupyter_data'(user:Goal, Data)
+    ;   Called = fail
+    ).
+
+% A helper's name the program defines itself is the program's, as in the
+% reference.
+own_predicate(show_data(_)) :-
+    current_predicate(user:show_data/1).
 
 % The names of the query that belong to Variables, in the query's order.
 names_of([], _, []).
