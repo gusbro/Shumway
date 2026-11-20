@@ -535,6 +535,15 @@ try {
   check(drawerScripts.length === 1 && !fetched.has(drawerScripts[0]),
     'the graph drawer is not downloaded before a notebook draws a graph', drawerScripts);
 
+  // Where a drawn graph writes a node's text, and the edges it draws.
+  const placeOf = (svg, text) => {
+    const m = new RegExp(`<tspan x="([\\d.]+)" y="([\\d.]+)">${text}</tspan>`).exec(svg);
+    return m ? { x: +m[1], y: +m[2] } : { x: NaN, y: NaN };
+  };
+  const pathsOf = (svg) => [...svg.matchAll(/<path d="M([\d.]+),([\d.]+)C[^"]* ([\d.]+),([\d.]+)"/g)]
+    .map((m) => ({ x1: +m[1], y1: +m[2], x2: +m[3], y2: +m[4] }));
+  const drawingsOf = (cells) => cells.flat().map((o) => o?.['image/svg+xml']).filter((svg) => typeof svg === 'string');
+
   // The example notebooks run from top to bottom, and show what they say.
   for (const [file, expected] of [
     ['grammars.ipynb', ['Who = world', 'Who = prolog', 'V = 9', 'Text | Value', "'(1+2)*3' | 9 "]],
@@ -554,6 +563,23 @@ try {
     const flat = JSON.stringify(ran.cells);
     const absent = expected.filter((text) => text instanceof RegExp ? !text.test(flat) : !flat.includes(text));
     check(!flat.includes('ERROR') && absent.length === 0, `the example ${file} runs`, { absent, cells: ran.cells });
+    if (file === 'graphs.ipynb') {
+      const svgs = drawingsOf(ran.cells);
+      // A tree draws no edge across another: the children of the list are
+      // right of those of born(1990, may), the second element's too.
+      const tree = svgs.find((svg) => svg.includes('>prolog<')) ?? '';
+      const [may, prolog, logic] = ['may', 'prolog', 'logic'].map((text) => placeOf(tree, text).x);
+      check(may < prolog && may < logic, 'a term is drawn as a tree whose edges do not cross', { may, prolog, logic });
+      // An edge from a state to itself is a loop out of the right side of
+      // its node and back into it, as Graphviz draws one.
+      const states = svgs.find((svg) => svg.includes('>idle<') && svg.includes('<ellipse')) ?? '';
+      const idle = placeOf(states, 'idle');
+      const node = [...states.matchAll(/<ellipse cx="([\d.]+)" cy="([\d.]+)" rx="([\d.]+)" ry="([\d.]+)"/g)]
+        .map((m) => m.slice(1).map(Number)).find(([cx, cy]) => Math.abs(cx - idle.x) < 0.1 && Math.abs(cy - idle.y) < 0.1);
+      const loops = node ? pathsOf(states).filter((p) => Math.abs(p.x1 - p.x2) < 0.1
+        && p.x1 > node[0] && p.x1 <= node[0] + node[2] && p.y1 < node[1] && p.y2 > node[1] && p.y2 - p.y1 < 2 * node[3]) : [];
+      check(loops.length === 1, 'an edge from a state to itself is a loop beside its node', { node, paths: pathsOf(states) });
+    }
     if (file !== 'plots.ipynb') await closeNotebook(file);
   }
   check(fetched.has(drawerScripts[0]), 'and the first graph downloads it', [...fetched].filter((f) => f.endsWith('.js')));

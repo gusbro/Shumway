@@ -112,7 +112,9 @@ elsewhere is refused.
 `show_graph/2` answer with a graph in DOT, the text the reference's server
 writes. The kernel draws it (`extension/src/core/graph.ts`): it reads the
 part of DOT the servers write, lays it out with dagre and writes SVG, black
-on white as Graphviz draws. The output keeps the DOT beside the SVG
+on white as Graphviz draws. A tree keeps the order of each node's edges,
+with no edge across another, and an edge from a node to itself is a loop
+beside the node. The output keeps the DOT beside the SVG
 (`text/vnd.graphviz`), so another drawer can take over from it (ADR-072).
 The drawer is a script of its own, fetched the first time a notebook draws.
 
