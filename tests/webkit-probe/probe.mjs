@@ -107,7 +107,8 @@ const modes = {
           if ((await Promise.race([future.done, late])) === 'late') return stop('cell ' + n + ' did not come back in 60 s');
           if (/stopped answering|did not start/.test(text)) return stop('cell ' + n + ': ' + text.replace(/\\x1b\\[[0-9;]*m/g, ''));
         }
-        done({ made: count, ms: performance.now() - t0 });
+        const session = await import(new URL('../shumway/session.js', location.href).href);
+        done({ made: count, ms: performance.now() - t0, wakes: session.threadWakes?.() });
       })();`
   },
   // The calls a session of the demo makes: the editor's highlighting, one a
@@ -154,7 +155,7 @@ const modes = {
             return;
           }
         }
-        done({ made: count, ms: performance.now() - t0, highlight: highlightMs / count });
+        done({ made: count, ms: performance.now() - t0, highlight: highlightMs / count, wakes: session.threadWakes?.() });
       })();`
   }
 };
@@ -188,7 +189,8 @@ try {
     const result = await webdriver('POST', `${at}/execute/async`, { script: chosen.script, args: [Math.min(chosen.round, count - made)] });
     made += result.made;
     const each = result.made > 0 ? (result.ms / result.made).toFixed(2) : '-';
-    const highlight = result.highlight === undefined ? '' : `, a highlight ${result.highlight.toFixed(2)} ms`;
+    const highlight = (result.highlight === undefined ? '' : `, a highlight ${result.highlight.toFixed(2)} ms`)
+      + (result.wakes ? `; the threads woken ${result.wakes.times} times so far, ${result.wakes.told} told by message` : '');
     console.log(`[${target} ${mode}] ${made} ${unit}, ${each} ms each in the last round${highlight}`);
     if (result.stopped) {
       console.log(`[${target} ${mode}] STOPPED after ${made} ${unit}: ${result.stopped}`);
