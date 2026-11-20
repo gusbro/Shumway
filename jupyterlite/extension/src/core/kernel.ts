@@ -10,7 +10,7 @@ import { BaseKernel, type IKernel } from '@jupyterlite/services';
 import {
   completions, documentation, GRAPHVIZ, nameAt, nameBefore, render, type IOutput, type ITexts
 } from './render';
-import { DRIVE, runtime, type IRuntime } from './runtime';
+import { DRIVE, runtime, RuntimeStopped, type IRuntime } from './runtime';
 
 /** What makes a kernel the Prolog one or the Logtalk one. */
 export interface IVariant {
@@ -75,7 +75,9 @@ export class ServerKernel extends BaseKernel implements IKernel {
   async interrupt(): Promise<void> {
     if (!this._runtime || !this._running) return;
     this._interrupted = true;
-    await this._runtime.api.SessionCancel(this.id);
+    try {
+      await this._runtime.watched(this._runtime.api.SessionCancel(this.id));
+    } catch { /* the running cell says the runtime stopped */ }
   }
 
   // --- the session -------------------------------------------------------
@@ -91,10 +93,10 @@ export class ServerKernel extends BaseKernel implements IKernel {
 
   /** Opens the session and asks the server what the kernel needs from it. */
   private async _open(): Promise<void> {
-    const { api, onInput } = this._runtime!;
+    const { api, onInput, watched } = this._runtime!;
     this._refusal = null;
     this._stopped = false;
-    const refused = await api.SessionCreate(this.id, this._variant.bundle, this._directory);
+    const refused = await watched(api.SessionCreate(this.id, this._variant.bundle, this._directory));
     if (refused) {
       // The limit is met sooner than it looks: a kernel outlives its
       // notebook's tab.
@@ -113,14 +115,15 @@ export class ServerKernel extends BaseKernel implements IKernel {
       return;
     }
     this._version = String((await this._ask(request(0, 'version')))?.result ?? '');
-    this._tier = await api.SessionTier(this.id);
+    this._tier = await watched(api.SessionTier(this.id));
     await this._refreshPredicates();
     this._docs = (await this._ask(request(0, 'jupyter_predicate_docs')))?.result ?? {};
   }
 
   /** One request and its response; null when the server has stopped. */
   private async _ask(line: string): Promise<any> {
-    const answer = await this._runtime!.api.SessionRequest(this.id, line);
+    const runtime = this._runtime!;
+    const answer = await runtime.watched(runtime.api.SessionRequest(this.id, line));
     return answer === '' ? null : JSON.parse(answer);
   }
 
@@ -171,10 +174,15 @@ export class ServerKernel extends BaseKernel implements IKernel {
       status: 'error', execution_count: this.executionCount, ename, evalue: '', traceback: [text]
     });
 
+    if (this._runtime?.stopped) {
+      const text = texts.errorPrefix + this._runtime.stopped;
+      show({ 'text/plain': '\x1b[31;1m' + text });
+      return failed('runtime stopped', text);
+    }
     if (this._stopped && this._runtime) {
       // After halt, an interrupt or an exception the server did not handle.
       try {
-        await this._runtime.api.SessionDispose(this.id);
+        await this._runtime.watched(this._runtime.api.SessionDispose(this.id));
         await this._open();
       } catch (reason) {
         this._refusal = reason instanceof Error ? reason.message : String(reason);
@@ -186,18 +194,41 @@ export class ServerKernel extends BaseKernel implements IKernel {
       return failed('no session', text);
     }
 
-    const { mirror, libraries } = this._runtime;
+    try {
+      return await this._cell(content, show, failed);
+    } catch (reason) {
+      if (!(reason instanceof RuntimeStopped)) throw reason;
+      const text = texts.errorPrefix + reason.message;
+      show({ 'text/plain': '[31;1m' + text });
+      return failed('runtime stopped', text);
+    }
+  }
+
+  /** A cell, from the files it reads to the outputs it shows. Throws
+   *  RuntimeStopped when the runtime stops answering. */
+  private async _cell(
+    content: KernelMessage.IExecuteRequestMsg['content'],
+    show: (output: IOutput) => void,
+    failed: (ename: string, text: string) => KernelMessage.IExecuteReplyMsg['content']
+  ): Promise<KernelMessage.IExecuteReplyMsg['content']> {
+    const { texts } = this._variant;
+    const { mirror, libraries, watched } = this._runtime!;
     const mirrored = async (copy: () => Promise<unknown>) => {
       try {
-        await copy();
+        await watched(copy());
       } catch (reason) {
+        if (reason instanceof RuntimeStopped) throw reason;
         show({ 'text/plain': `${texts.noticePrefix}The files could not be brought up to date: ${reason}` });
       }
     };
     // A collection the page could not bring is one the cell does not find,
     // and the cell says so.
     const quietly = async (step: () => Promise<unknown>) => {
-      try { await step(); } catch { /* see above */ }
+      try {
+        await watched(step());
+      } catch (reason) {
+        if (reason instanceof RuntimeStopped) throw reason;
+      }
     };
 
     // What changed in the file browser and the editor is there for the cell,

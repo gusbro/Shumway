@@ -42,7 +42,23 @@ export interface IRuntime {
   libraries: ILibraries;
   /** Who is told that a session wants a line; null takes the session off. */
   onInput(kernelId: string, handler: (() => void) | null): void;
+  /** What a step that waits for the runtime resolves with, or a
+   *  RuntimeStopped once the runtime stops answering. A step may take long:
+   *  a query does. What tells a stopped runtime is a trivial call that does
+   *  not come back either. */
+  watched<T>(step: Promise<T>): Promise<T>;
+  /** Why the runtime is taken for stopped, or null while it answers. */
+  readonly stopped: string | null;
 }
+
+/** The runtime stopped answering: every kernel of the page is done with it. */
+export class RuntimeStopped extends Error {}
+
+/** What a cell says once the runtime has stopped answering. Seen in WebKit:
+ *  .NET's threads there now and then stop taking calls from the page. */
+export const STOPPED = "The page's runtime stopped answering, and only reloading the page starts "
+  + 'it again. Save the notebook first: its files stay, and the sessions start again with nothing '
+  + 'loaded.';
 
 /** Where the engine sees the contents. */
 export const DRIVE = '/drive';
@@ -99,6 +115,34 @@ async function start(contents: Contents.IManager): Promise<IRuntime> {
     await api.SessionSupplyImport(kernelId, JSON.stringify(answer));
   });
 
+  // After `patience` seconds of a step, the runtime is asked a trivial call
+  // (SessionLimit(0) changes nothing), again every `patience` seconds; one
+  // that does not answer in `timeout` seconds means it stopped. A timeout
+  // of 0 is one no call answers in.
+  const seconds = (option: string, otherwise: number) => {
+    const value = parseFloat(PageConfig.getOption(option));
+    return Number.isFinite(value) && value >= 0 ? value : otherwise;
+  };
+  const patience = seconds('shumwayRuntimePatience', 10);
+  const timeout = seconds('shumwayRuntimeTimeout', 30);
+  const after = (s: number) => (s > 0
+    ? new Promise<null>(resolve => setTimeout(() => resolve(null), s * 1000))
+    : Promise.resolve(null));
+  let stopped: string | null = null;
+  const watched = async <T>(step: Promise<T>): Promise<T> => {
+    const done = step.then(value => ({ value }));
+    // A step left behind when the runtime stopped may still fail.
+    done.catch(() => {});
+    for (;;) {
+      if (stopped) throw new RuntimeStopped(stopped);
+      const ended = await Promise.race([done, after(patience)]);
+      if (ended) return ended.value;
+      if (stopped) throw new RuntimeStopped(stopped);
+      const answered = await Promise.race([api.SessionLimit(0).then(() => true), after(timeout)]);
+      if (!answered) stopped = STOPPED;
+    }
+  };
+
   return {
     api,
     mirror: files.createMirror(files.memoryFiles(api, DRIVE), files.contentsStore(contents), {
@@ -111,6 +155,10 @@ async function start(contents: Contents.IManager): Promise<IRuntime> {
     onInput(kernelId, handler) {
       if (handler) waiting.set(kernelId, handler);
       else waiting.delete(kernelId);
+    },
+    watched,
+    get stopped() {
+      return stopped;
     }
   };
 }

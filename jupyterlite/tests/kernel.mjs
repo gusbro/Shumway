@@ -13,6 +13,7 @@ import zlib from 'node:zlib';
 import { webkit, chromium, firefox } from 'playwright';
 
 import { serve } from './serve.mjs';
+import { guarded, hung, Hung, MINUTE, watch } from './watch.mjs';
 
 const engineName = process.argv[3] ?? 'chromium';
 const server = await serve(process.argv[2]);
@@ -82,6 +83,7 @@ const drawerScripts = [];
 })(path.join(process.argv[2], 'jupyter', 'extensions'));
 const fetched = new Set();
 page.on('request', (r) => fetched.add(path.posix.basename(new URL(r.url()).pathname)));
+const { diagnose } = watch(page, engineName);
 
 let failures = 0;
 const check = (ok, what, detail) => {
@@ -90,12 +92,16 @@ const check = (ok, what, detail) => {
 };
 
 /** Opens a notebook, runs its cells, and answers each cell's outputs as text. */
-const runNotebook = (file) => page.evaluate(async (path) => {
+const runNotebook = (file) => guarded(page.evaluate(async (path) => {
+  const within = (promise, ms, what) => Promise.race([promise,
+    new Promise((_, no) => setTimeout(() => no(new Error(`${what} did not end in ${ms / 1000} s`)), ms))]);
   const app = window.jupyterapp;
-  const panel = await app.commands.execute('docmanager:open', { path });
-  await panel.context.ready;
-  await panel.sessionContext.ready;
-  await app.commands.execute('notebook:run-all-cells');
+  console.log(`[kernel.mjs] open ${path}`);
+  const panel = await within(app.commands.execute('docmanager:open', { path }), 60000, `opening ${path}`);
+  await within(panel.context.ready, 60000, `the document ${path}`);
+  await within(panel.sessionContext.ready, 180000, `the kernel of ${path}`);
+  console.log(`[kernel.mjs] run the cells of ${path}`);
+  await within(app.commands.execute('notebook:run-all-cells'), 300000, `the cells of ${path}`);
   const strip = (text) => String(text).replace(/\x1b\[[0-9;]*m/g, '');
   const kernel = panel.sessionContext.session?.kernel;
   return {
@@ -107,14 +113,14 @@ const runNotebook = (file) => page.evaluate(async (path) => {
         : Object.fromEntries(Object.entries(o.data ?? {}).map(([mime, d]) =>
             [mime, typeof d === 'string' || Array.isArray(d) ? strip([].concat(d).join('')) : d])))),
   };
-}, file);
+}, file), 8 * MINUTE, `the notebook ${file}`);
 
 /** Shuts down a notebook's kernel and closes it, so later ones fit under the page's limit. */
-const closeNotebook = (file) => page.evaluate(async (path) => {
+const closeNotebook = (file) => guarded(page.evaluate(async (path) => {
   const widget = [...window.jupyterapp.shell.widgets('main')].find((w) => w.context?.path === path);
   await widget?.sessionContext.shutdown();
   widget?.dispose();
-}, file);
+}, file), MINUTE, `closing ${file}`);
 
 try {
   await page.goto(base + 'jupyter/lab/index.html');
@@ -139,7 +145,7 @@ try {
     'it says what it is: Prolog, on Shumway, with its version and tier', first.info);
 
   // Everything else straight to the kernel of that notebook, a cell at a time.
-  const report = await page.evaluate(async () => {
+  const report = await guarded(page.evaluate(async () => {
     const app = window.jupyterapp;
     const contents = app.serviceManager.contents;
     const lines = [];
@@ -161,12 +167,20 @@ try {
         if (msg.header.msg_type === 'input_request')
           future.sendInputReply({ status: 'ok', value: answerInput ?? '' }, msg.header);
       };
-      const reply = await future.done;
+      const cell = JSON.stringify(code).slice(0, 100);
+      console.log(`[kernel.mjs] cell ${cell}`);
+      const reply = await within(future.done, 90000, `the cell ${cell}`);
       return { reply: reply.content, outputs,
         texts: outputs.map((o) => strip(o['text/plain'] ?? o.stream ?? '')) };
     }
     const within = (promise, ms, what) => Promise.race([promise,
-      new Promise((_, no) => setTimeout(() => no(new Error(what + ' did not end in ' + ms + ' ms')), ms))]);
+      new Promise((_, no) => setTimeout(() => no(new Error(`${what} did not end in ${ms / 1000} s`)), ms))]);
+    /** A notebook's kernel, once it has one. */
+    const opened = async (widget, what) => {
+      await within(widget.sessionContext.ready, 180000, `the kernel of ${what}`);
+      return widget;
+    };
+    let stuck = null;
 
     try {
       const kernel = kernelOf(panel);
@@ -306,7 +320,7 @@ try {
         metadata: { kernelspec: { name: 'shumway_prolog', display_name: 'Prolog (Shumway)', language: 'prolog' } } } });
       const second = await app.commands.execute('docmanager:open', { path: 'sub/second.ipynb' });
       await second.context.ready;
-      await second.sessionContext.ready;
+      await opened(second, 'sub/second.ipynb');
       const other = kernelOf(second);
       await run(other, '%%user\nonly_here(1).');
       r = await run(other, 'only_here(X), working_directory(D, D).');
@@ -328,7 +342,7 @@ try {
         metadata: { kernelspec: { name: 'shumway_prolog', display_name: 'Prolog (Shumway)', language: 'prolog' } } } });
       const third = await app.commands.execute('docmanager:open', { path: 'third.ipynb' });
       await third.context.ready;
-      await third.sessionContext.ready;
+      await opened(third, 'third.ipynb');
       const thirdKernel = kernelOf(third);
       await run(thirdKernel, '%%user\nonly_third(1).');
       await run(thirdKernel, '%%user+\nonly_third(2).');
@@ -354,7 +368,7 @@ try {
 
       // A console has no notebook: its file is user.pl.
       const shell = await app.commands.execute('console:create', { kernelPreference: { name: 'shumway_prolog' } });
-      await shell.sessionContext.ready;
+      await opened(shell, 'the console');
       await run(shell.sessionContext.session.kernel, '%%user\nfrom_console(1).');
       own = await text('user.pl');
       check(own === 'from_console(1).\n', 'a console writes user.pl', own);
@@ -398,16 +412,18 @@ try {
       check(await settled(() => comment(file.content.editor)) === '%',
         'and so is a .pl file, which JupyterLab takes for Perl', [file.content.model.mimeType]);
     } catch (ex) {
-      check(false, 'the checks ran to their end', String(ex?.stack ?? ex));
+      if (/did not end in/.test(String(ex?.message))) stuck = ex.message;
+      else check(false, 'the checks ran to their end', String(ex?.stack ?? ex));
     }
-    return lines;
-  });
-  for (const line of report) check(line.ok, line.what, line.detail);
+    return { lines, stuck };
+  }), 15 * MINUTE, 'the kernel checks');
+  for (const line of report.lines) check(line.ok, line.what, line.detail);
+  if (report.stuck) throw new Hung(report.stuck);
 
   // Library collections (ADR-070, O3): the ones the browser keeps for the
   // demo, and jupyter:import_library/1. A notebook of its own.
   const archive = tarGz([['o3drive/o3_tar.pl', ':- module(o3_tar, [tar_ok/1]).\ntar_ok(yes).\n']]).toString('base64');
-  const libraryReport = await page.evaluate(async ({ remote, archive }) => {
+  const libraryReport = await guarded(page.evaluate(async ({ remote, archive }) => {
     const app = window.jupyterapp;
     const contents = app.serviceManager.contents;
     const lines = [];
@@ -421,9 +437,14 @@ try {
           outputs.push(msg.content.data);
         else if (msg.header.msg_type === 'stream') outputs.push({ stream: msg.content.text });
       };
-      const reply = await future.done;
+      const cell = JSON.stringify(code).slice(0, 100);
+      console.log(`[kernel.mjs] cell ${cell}`);
+      const reply = await within(future.done, 90000, `the cell ${cell}`);
       return { reply: reply.content, texts: outputs.map((o) => strip(o['text/plain'] ?? o.stream ?? '')) };
     }
+    const within = (promise, ms, what) => Promise.race([promise,
+      new Promise((_, no) => setTimeout(() => no(new Error(`${what} did not end in ${ms / 1000} s`)), ms))]);
+    let stuck = null;
     const shown = (r) => r.texts.join('\n');
     // What the browser keeps, as the demo keeps it.
     const stored = async (path) => {
@@ -461,7 +482,7 @@ try {
         metadata: { kernelspec: { name: 'shumway_prolog', display_name: 'Prolog', language: 'prolog' } } } });
       const panel = await app.commands.execute('docmanager:open', { path: 'libraries.ipynb' });
       await panel.context.ready;
-      await panel.sessionContext.ready;
+      await within(panel.sessionContext.ready, 180000, 'the kernel of libraries.ipynb');
       const kernel = panel.sessionContext.session.kernel;
       let r = await run(kernel, 'X = ready.');
       check(r.texts[0] === 'X = ready', 'the libraries notebook has a kernel', r);
@@ -524,11 +545,13 @@ try {
           'import_library(scryer) is the library the page suggests, and one here is not fetched again', r);
       } else skipped.push('import_library(scryer) is the library the page suggests, and one here is not fetched again');
     } catch (ex) {
-      check(false, 'the library checks ran to their end', `${ex?.name}: ${ex?.message} ${ex?.stack ?? ''}`);
+      if (/did not end in/.test(String(ex?.message))) stuck = ex.message;
+      else check(false, 'the library checks ran to their end', `${ex?.name}: ${ex?.message} ${ex?.stack ?? ''}`);
     }
-    return { lines, skipped };
-  }, { remote: remoteUrl, archive });
+    return { lines, skipped, stuck };
+  }, { remote: remoteUrl, archive }), 10 * MINUTE, 'the library checks');
   for (const line of libraryReport.lines) check(line.ok, line.what, line.detail);
+  if (libraryReport.stuck) throw new Hung(libraryReport.stuck);
   for (const what of libraryReport.skipped)
     console.log(`skip [${engineName}] ${what}: this browser's storage cannot be written`);
 
@@ -586,7 +609,7 @@ try {
 
   // Each plot of the example is drawn, and an option a plot does not draw
   // is named below it.
-  const plots = await page.evaluate(async () => {
+  const plots = await guarded(page.evaluate(async () => {
     const app = window.jupyterapp;
     const widget = [...app.shell.widgets('main')].find((w) => w.context?.path === 'plots.ipynb');
     const drawn = () => widget.node.querySelectorAll('.vega-embed .marks').length;
@@ -599,7 +622,7 @@ try {
     future.onIOPub = (msg) => { if (msg.header.msg_type === 'display_data') outputs.push(msg.content.data); };
     await future.done;
     return { drawn: drawn(), notes, outputs };
-  });
+  }), 3 * MINUTE, 'the plots');
   check(plots.drawn === 14 && plots.notes.length === 0, 'each plot of plots.ipynb is drawn, with every option it gives',
     { drawn: plots.drawn, notes: plots.notes });
   check(plots.outputs.some((o) => 'application/vnd.vegalite.v5+json' in o)
@@ -608,11 +631,12 @@ try {
 } catch (e) {
   failures++;
   console.log(`[${engineName}] did not get there: ${e.message.split('\n')[0]}`);
+  if (hung(e)) await diagnose();
 }
 if (errors.length) console.log('page errors:', errors.slice(0, 6));
 if (missing.size) console.log('not found:', [...missing].slice(0, 8));
 console.log(`[${engineName}] ${failures} failed`);
-await browser.close();
+await guarded(browser.close(), MINUTE, 'closing the browser').catch((e) => console.log(e.message));
 server.close();
 remote.close();
 process.exit(failures ? 1 : 0);

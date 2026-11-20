@@ -77,9 +77,17 @@ notebook from top to bottom: `graphs.ipynb` draws graphs, and the drawer's
 script is fetched only then; `plots.ipynb` draws each kind of plot, and an
 option a plot does not draw is named below it.
 `limit.mjs` serves the site set to hold one kernel and checks that a second
-is refused with a message that says how to free a place.
+is refused with a message that says how to free a place. `stall.mjs` serves
+it with short waits: a long query ends while the runtime answers, and with
+a timeout of 0, which no call answers in, the cells say to reload the page.
 
-CI runs both in Chromium, Firefox and WebKit
+A step of `kernel.mjs` that does not end in time (a cell has 90 s) ends the
+run, which says what the page did last and whether the page, its contents,
+its storage and a new kernel still answer. With `NOTEBOOK_CHECK_OUTPUT` set
+to a directory, a screenshot and the page's console go there too; CI keeps
+them when the job fails.
+
+CI runs the three in Chromium, Firefox and WebKit
 (`.github/workflows/notebooks.yml`) on a pull request or a push to `main`
 that changes `jupyterlite/` or the engine: the answers a notebook shows come
 from the engine.
@@ -140,12 +148,20 @@ republishes the demo with the cached site.
 
 ## Configuration
 
-`site/jupyter-lite.json` takes two options of this site's own:
+`site/jupyter-lite.json` takes these options of this site's own:
 
 | Option | Meaning | Default |
 |---|---|---|
 | `shumwayRuntimeUrl` | where the demo is, from the site's root | `../` |
 | `shumwaySessionLimit` | how many kernels a page may hold | the app's, 10 |
+| `shumwayRuntimePatience` | seconds a step waits for the runtime before asking it a trivial call | 10 |
+| `shumwayRuntimeTimeout` | seconds that call has to answer, or the runtime is taken for stopped | 30 |
+
+A runtime that stops answering is one only a reload starts again: the
+cell that was waiting, and every cell after it in the page, says so. It
+has been seen in WebKit, where .NET's threads now and then stop taking
+calls from the page; a cell's query may take as long as it needs, since
+the trivial call answers while it runs.
 
 `site/overrides.json` holds the JupyterLab settings the site starts with.
 It turns on `autoStartDefaultKernel`, so that a notebook saved by another
