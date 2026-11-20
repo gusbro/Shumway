@@ -1,0 +1,6 @@
+{"jsonrpc":"2.0","id":1,"method":"call","params":{"code":"%%user\napp([], L, L).\napp([H|T], L, [H|R]) :- app(T, L, R)."}}
+{"jsonrpc":"2.0","id":2,"method":"call","params":{"code":"trace(app, call)."}}
+{"jsonrpc":"2.0","id":3,"method":"call","params":{"code":"leash(none)."}}
+{"jsonrpc":"2.0","id":4,"method":"call","params":{"code":"leash(all)."}}
+{"jsonrpc":"2.0","id":5,"method":"call","params":{"code":"notrace."}}
+{"jsonrpc":"2.0","id":6,"method":"call","params":{"code":"app([1], [2], L)."}}

@@ -88,8 +88,11 @@ its storage and a new kernel still answer. With `NOTEBOOK_CHECK_OUTPUT` set
 to a directory, a screenshot and the page's console go there too; CI keeps
 them when the job fails.
 
-CI runs the three in Chromium, Firefox and WebKit
-(`.github/workflows/notebooks.yml`) on a pull request or a push to `main`
+CI runs `kernel.mjs` and `limit.mjs` in Chromium, Firefox and WebKit, and
+`stall.mjs` in Chromium and Firefox: in WebKit its three pages, each
+starting the runtime, meet the runtime's own stops too often to say
+anything of the kernel (`.github/workflows/notebooks.yml`). It runs them on
+a pull request or a push to `main`
 that changes `jupyterlite/` or the engine: the answers a notebook shows come
 from the engine.
 
