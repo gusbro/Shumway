@@ -241,6 +241,9 @@ try {
       check(r.reply.status === 'error' && /%%user/.test(shown(r)), 'a clause in a query cell is an error that points to %%user', r);
       r = await run(kernel, 'jupyter:trace(member(X, [a])).');
       check(r.reply.status === 'ok' && /Call/.test(shown(r)) && /member/.test(shown(r)), 'jupyter:trace/1 shows the ports of its goal', r);
+      r = await run(kernel, 'leash(none).');
+      check(r.reply.status === 'error' && /jupyter:trace\(Goal\)/.test(shown(r)),
+        'trace/0,1,2 and leash/1 in a cell are errors that point to jupyter:trace/1', r);
       r = await run(kernel, 'jupyter:help.');
       check(/print_table/.test(shown(r)), 'jupyter:help/0 lists the helpers', r);
       r = await run(kernel, 'jupyter:magic.');
