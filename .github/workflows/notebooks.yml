@@ -110,10 +110,32 @@ jobs:
       - name: Install ${{ matrix.browser }}
         run: npx playwright install --with-deps ${{ matrix.browser }}
 
+      # A step that hangs ends kernel.mjs in minutes, with a diagnosis: what
+      # the page said last, and a screenshot, kept below.
       - name: kernel.mjs
+        timeout-minutes: 20
+        env:
+          NOTEBOOK_CHECK_OUTPUT: ${{ runner.temp }}/notebook-check
         run: node kernel.mjs ../../site ${{ matrix.browser }}
 
       # Runs after a failed kernel.mjs too: the two check different things.
       - name: limit.mjs
         if: success() || failure()
+        timeout-minutes: 10
         run: node limit.mjs ../../site ${{ matrix.browser }}
+
+      - name: stall.mjs
+        if: success() || failure()
+        timeout-minutes: 10
+        env:
+          NOTEBOOK_CHECK_OUTPUT: ${{ runner.temp }}/notebook-check
+        run: node stall.mjs ../../site ${{ matrix.browser }}
+
+      - name: Keep the diagnosis of a hang
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: notebook-check-${{ matrix.browser }}
+          path: ${{ runner.temp }}/notebook-check
+          if-no-files-found: ignore
+          retention-days: 7

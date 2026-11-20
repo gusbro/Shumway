@@ -42,10 +42,41 @@ export interface IRuntime {
   libraries: ILibraries;
   /** Who is told that a session wants a line; null takes the session off. */
   onInput(kernelId: string, handler: (() => void) | null): void;
+  /** What a step that waits for the runtime resolves with, or a
+   *  RuntimeStopped once the runtime stops answering. A step may take long:
+   *  a query does. What tells a stopped runtime is a trivial call that does
+   *  not come back either. */
+  watched<T>(step: Promise<T>): Promise<T>;
+  /** Why the runtime is taken for stopped, or null while it answers. */
+  readonly stopped: string | null;
 }
+
+/** The runtime stopped answering: every kernel of the page is done with it. */
+export class RuntimeStopped extends Error {}
+
+/** What a cell says once the runtime has stopped answering. Seen in WebKit:
+ *  .NET's threads there now and then stop taking calls from the page. */
+export const STOPPED = "The page's runtime stopped answering, and only reloading the page starts "
+  + 'it again. Save the notebook first: its files stay, and the sessions start again with nothing '
+  + 'loaded.';
+
+/** What a cell says when the runtime did not start in time. */
+export const NOT_STARTED = "The page's runtime did not start in time. Reload the page to try again: "
+  + "a notebook's files stay.";
 
 /** Where the engine sees the contents. */
 export const DRIVE = '/drive';
+
+/** A number of seconds the site's options name, or `otherwise`. */
+function seconds(option: string, otherwise: number): number {
+  const value = parseFloat(PageConfig.getOption(option));
+  return Number.isFinite(value) && value >= 0 ? value : otherwise;
+}
+
+/** Null after `s` seconds; at once for 0, which nothing ends in. */
+const after = (s: number) => (s > 0
+  ? new Promise<null>(resolve => setTimeout(() => resolve(null), s * 1000))
+  : Promise.resolve(null));
 
 let started: Promise<IRuntime> | null = null;
 
@@ -66,21 +97,50 @@ async function start(contents: Contents.IManager): Promise<IRuntime> {
   const scripts = new URL('shumway/', site);
   const demo = new URL(PageConfig.getOption('shumwayRuntimeUrl') || '../', site);
 
-  // Not for the bundler to follow: these are files of the site, not of the
-  // extension, and they import the runtime by an address read at run time.
-  const session = await import(/* webpackIgnore: true */ new URL('session.js', scripts).href);
-  const files = await import(/* webpackIgnore: true */ new URL('mirror.js', scripts).href);
-  const libraries = await import(/* webpackIgnore: true */ new URL('libraries.js', scripts).href);
+  // Downloading and booting the runtime has shumwayRuntimeStartTimeout
+  // seconds: nothing can be asked before it answers.
+  const boot = (async () => {
+    // Not for the bundler to follow: these are files of the site, not of the
+    // extension, and they import the runtime by an address read at run time.
+    const session = await import(/* webpackIgnore: true */ new URL('session.js', scripts).href);
+    const files = await import(/* webpackIgnore: true */ new URL('mirror.js', scripts).href);
+    const libraries = await import(/* webpackIgnore: true */ new URL('libraries.js', scripts).href);
+    // Asked for again each time: the name of the runtime's entry changes with
+    // every publish of the demo.
+    const manifest = await (await fetch(new URL('runtime.json', demo), { cache: 'no-cache' })).json();
+    const api: ISessionApi = await session.startRuntime({ entry: new URL(manifest.entry, demo).href });
+    return { session, files, libraries, api };
+  })();
+  boot.catch(() => {});
+  const booted = await Promise.race([boot, after(seconds('shumwayRuntimeStartTimeout', 180))]);
+  if (!booted) throw new Error(NOT_STARTED);
+  const { session, files, libraries, api } = booted;
 
-  // Asked for again each time: the name of the runtime's entry changes with
-  // every publish of the demo.
-  const manifest = await (await fetch(new URL('runtime.json', demo), { cache: 'no-cache' })).json();
-  const api: ISessionApi = await session.startRuntime({ entry: new URL(manifest.entry, demo).href });
+  // From here on, every step that waits for the runtime is watched: after
+  // `patience` seconds the runtime is asked a trivial call (SessionLimit(0)
+  // changes nothing), again every `patience` seconds; one that does not
+  // answer in `timeout` seconds means it stopped.
+  const patience = seconds('shumwayRuntimePatience', 10);
+  const timeout = seconds('shumwayRuntimeTimeout', 30);
+  let stopped: string | null = null;
+  const watched = async <T>(step: Promise<T>): Promise<T> => {
+    const done = step.then(value => ({ value }));
+    // A step left behind when the runtime stopped may still fail.
+    done.catch(() => {});
+    for (;;) {
+      if (stopped) throw new RuntimeStopped(stopped);
+      const ended = await Promise.race([done, after(patience)]);
+      if (ended) return ended.value;
+      if (stopped) throw new RuntimeStopped(stopped);
+      const answered = await Promise.race([api.SessionLimit(0).then(() => true), after(timeout)]);
+      if (!answered) stopped = STOPPED;
+    }
+  };
 
   // How many kernels the page may hold (ADR-068 D7); the app's own number
   // unless the site names one.
   const limit = parseInt(PageConfig.getOption('shumwaySessionLimit'), 10);
-  if (limit > 0) await api.SessionLimit(limit);
+  if (limit > 0) await watched(api.SessionLimit(limit));
 
   const waiting = new Map<string, () => void>();
   session.onSessionAskForInput((kernelId: string) => waiting.get(kernelId)?.());
@@ -88,7 +148,7 @@ async function start(contents: Contents.IManager): Promise<IRuntime> {
   // What the demo imported is here too. The bundles come back while the
   // first kernel starts; its first cell waits for them.
   libraries.init(api);
-  libraries.restoreBundles(await libraries.restoreSources());
+  libraries.restoreBundles(await watched(libraries.restoreSources()));
   session.onSessionImportLibrary(async (kernelId: string, request: string) => {
     let answer: object;
     try {
@@ -111,6 +171,10 @@ async function start(contents: Contents.IManager): Promise<IRuntime> {
     onInput(kernelId, handler) {
       if (handler) waiting.set(kernelId, handler);
       else waiting.delete(kernelId);
+    },
+    watched,
+    get stopped() {
+      return stopped;
     }
   };
 }

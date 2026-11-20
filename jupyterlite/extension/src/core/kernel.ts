@@ -10,7 +10,7 @@ import { BaseKernel, type IKernel } from '@jupyterlite/services';
 import {
   completions, documentation, GRAPHVIZ, nameAt, nameBefore, render, type IOutput, type ITexts
 } from './render';
-import { DRIVE, runtime, type IRuntime } from './runtime';
+import { DRIVE, runtime, RuntimeStopped, type IRuntime } from './runtime';
 
 /** What makes a kernel the Prolog one or the Logtalk one. */
 export interface IVariant {
@@ -71,11 +71,20 @@ export class ServerKernel extends BaseKernel implements IKernel {
   }
 
   /** Stops the query that is running. The server is that query, so the
-   *  session ends with it; the next cell starts another (ADR-067 D5). */
+   *  session ends with it; the next cell starts another (ADR-067 D5). A
+   *  cell interrupted before its query left runs nothing. */
   async interrupt(): Promise<void> {
-    if (!this._runtime || !this._running) return;
+    if (!this._runtime) return;
+    if (!this._running) {
+      // JupyterLite hands a cell to the kernel a little after it is sent: an
+      // interrupt can come first, and is for that cell all the same.
+      this._interruptedAt = Date.now();
+      return;
+    }
     this._interrupted = true;
-    await this._runtime.api.SessionCancel(this.id);
+    try {
+      await this._runtime.watched(this._runtime.api.SessionCancel(this.id));
+    } catch { /* the running cell says the runtime stopped */ }
   }
 
   // --- the session -------------------------------------------------------
@@ -91,10 +100,10 @@ export class ServerKernel extends BaseKernel implements IKernel {
 
   /** Opens the session and asks the server what the kernel needs from it. */
   private async _open(): Promise<void> {
-    const { api, onInput } = this._runtime!;
+    const { api, onInput, watched } = this._runtime!;
     this._refusal = null;
     this._stopped = false;
-    const refused = await api.SessionCreate(this.id, this._variant.bundle, this._directory);
+    const refused = await watched(api.SessionCreate(this.id, this._variant.bundle, this._directory));
     if (refused) {
       // The limit is met sooner than it looks: a kernel outlives its
       // notebook's tab.
@@ -113,14 +122,15 @@ export class ServerKernel extends BaseKernel implements IKernel {
       return;
     }
     this._version = String((await this._ask(request(0, 'version')))?.result ?? '');
-    this._tier = await api.SessionTier(this.id);
+    this._tier = await watched(api.SessionTier(this.id));
     await this._refreshPredicates();
     this._docs = (await this._ask(request(0, 'jupyter_predicate_docs')))?.result ?? {};
   }
 
   /** One request and its response; null when the server has stopped. */
   private async _ask(line: string): Promise<any> {
-    const answer = await this._runtime!.api.SessionRequest(this.id, line);
+    const runtime = this._runtime!;
+    const answer = await runtime.watched(runtime.api.SessionRequest(this.id, line));
     return answer === '' ? null : JSON.parse(answer);
   }
 
@@ -164,6 +174,7 @@ export class ServerKernel extends BaseKernel implements IKernel {
   async executeRequest(
     content: KernelMessage.IExecuteRequestMsg['content']
   ): Promise<KernelMessage.IExecuteReplyMsg['content']> {
+    this._sentAt = Date.parse(this.parentHeader?.date ?? '') || Date.now();
     await this._started;
     const { texts } = this._variant;
     const show = (output: IOutput) => this.displayData({ data: output as any, metadata: {} });
@@ -171,10 +182,15 @@ export class ServerKernel extends BaseKernel implements IKernel {
       status: 'error', execution_count: this.executionCount, ename, evalue: '', traceback: [text]
     });
 
+    if (this._runtime?.stopped) {
+      const text = texts.errorPrefix + this._runtime.stopped;
+      show({ 'text/plain': '\x1b[31;1m' + text });
+      return failed('runtime stopped', text);
+    }
     if (this._stopped && this._runtime) {
       // After halt, an interrupt or an exception the server did not handle.
       try {
-        await this._runtime.api.SessionDispose(this.id);
+        await this._runtime.watched(this._runtime.api.SessionDispose(this.id));
         await this._open();
       } catch (reason) {
         this._refusal = reason instanceof Error ? reason.message : String(reason);
@@ -186,18 +202,41 @@ export class ServerKernel extends BaseKernel implements IKernel {
       return failed('no session', text);
     }
 
-    const { mirror, libraries } = this._runtime;
+    try {
+      return await this._cell(content, show, failed);
+    } catch (reason) {
+      if (!(reason instanceof RuntimeStopped)) throw reason;
+      const text = texts.errorPrefix + reason.message;
+      show({ 'text/plain': '\x1b[31;1m' + text });
+      return failed('runtime stopped', text);
+    }
+  }
+
+  /** A cell, from the files it reads to the outputs it shows. Throws
+   *  RuntimeStopped when the runtime stops answering. */
+  private async _cell(
+    content: KernelMessage.IExecuteRequestMsg['content'],
+    show: (output: IOutput) => void,
+    failed: (ename: string, text: string) => KernelMessage.IExecuteReplyMsg['content']
+  ): Promise<KernelMessage.IExecuteReplyMsg['content']> {
+    const { texts } = this._variant;
+    const { mirror, libraries, watched } = this._runtime!;
     const mirrored = async (copy: () => Promise<unknown>) => {
       try {
-        await copy();
+        await watched(copy());
       } catch (reason) {
+        if (reason instanceof RuntimeStopped) throw reason;
         show({ 'text/plain': `${texts.noticePrefix}The files could not be brought up to date: ${reason}` });
       }
     };
     // A collection the page could not bring is one the cell does not find,
     // and the cell says so.
     const quietly = async (step: () => Promise<unknown>) => {
-      try { await step(); } catch { /* see above */ }
+      try {
+        await watched(step());
+      } catch (reason) {
+        if (reason instanceof RuntimeStopped) throw reason;
+      }
     };
 
     // What changed in the file browser and the editor is there for the cell,
@@ -205,6 +244,12 @@ export class ServerKernel extends BaseKernel implements IKernel {
     await mirrored(() => mirror.pull());
     await quietly(() => libraries.sync());
     const notebook = await this._notebook();
+    if (this._interruptedAt >= this._sentAt) {
+      const text = texts.noticePrefix
+        + 'Interrupted before the query started: nothing ran, and the session keeps what it had loaded.';
+      show({ 'text/plain': text });
+      return failed('interrupted', text);
+    }
     this._running = true;
     this._interrupted = false;
     let answer: any;
@@ -297,6 +342,11 @@ export class ServerKernel extends BaseKernel implements IKernel {
   private _stopped = false;
   private _running = false;
   private _interrupted = false;
+  /** When the cell being answered was sent, and when an interrupt came that
+   *  found no query running: one after the other stops the cell before its
+   *  query leaves. */
+  private _sentAt = 0;
+  private _interruptedAt = -1;
   private _version = '';
   private _tier = '';
   private _predicates: string[] = [];
