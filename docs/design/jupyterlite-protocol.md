@@ -223,6 +223,15 @@ cell output, never dropped silently. The mapping lives with the code
   The extension wraps that call so that the kernel hears of it.
 - **Restart:** `SessionDispose`, then `SessionCreate`.
 - **`halt`** (§3): same as restart, triggered by the server.
+- **A runtime that stops answering:** a step that waits for the runtime
+  longer than `shumwayRuntimePatience` seconds (10) asks it a trivial call,
+  `SessionLimit(0)`. One that does not answer in `shumwayRuntimeTimeout`
+  seconds (30) takes the runtime for stopped: the cell, and every cell
+  after it in the page, says to save the notebook and reload the page,
+  which is the only thing that starts the runtime again. A query may take
+  as long as it needs, since the trivial call answers while it runs. Seen
+  in WebKit, where .NET's threads now and then stop taking calls from the
+  page; a minimal .NET app with no Shumway in it does the same.
 
 ## 8. Input
 
