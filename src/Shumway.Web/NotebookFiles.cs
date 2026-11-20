@@ -52,7 +52,10 @@ internal static partial class WebShumwayApp
     /// root with <c>/</c>, and what tells this version of the file from
     /// another. Empty when there is no such directory.</summary>
     [JSExport]
-    internal static Task<string> FilesList(string root)
+    internal static Task<string> FilesList(string root) => Answered(FilesJson(root));
+
+    /// <summary>What <see cref="FilesList"/> answers.</summary>
+    private static string FilesJson(string root)
     {
         using var buffer = new MemoryStream();
         using (var json = new Utf8JsonWriter(buffer))
@@ -72,14 +75,14 @@ internal static partial class WebShumwayApp
             }
             json.WriteEndArray();
         }
-        return Task.FromResult(System.Text.Encoding.UTF8.GetString(buffer.ToArray()));
+        return System.Text.Encoding.UTF8.GetString(buffer.ToArray());
     }
 
     /// <summary>A file's bytes as base64, or null when there is no such
     /// file.</summary>
     [JSExport]
     internal static Task<string?> FileRead(string path)
-        => Task.FromResult(File.Exists(path) ? Convert.ToBase64String(File.ReadAllBytes(path)) : null);
+        => Answered(File.Exists(path) ? Convert.ToBase64String(File.ReadAllBytes(path)) : null);
 
     /// <summary>Writes a file from base64, making the directories above it,
     /// and answers what <see cref="FilesList"/> will say of it.</summary>
@@ -89,15 +92,15 @@ internal static partial class WebShumwayApp
         if (Path.GetDirectoryName(path) is { Length: > 0 } directory)
             Directory.CreateDirectory(directory);
         File.WriteAllBytes(path, Convert.FromBase64String(base64));
-        return Task.FromResult(VersionOf(Path.GetFullPath(path)));
+        return Answered(VersionOf(Path.GetFullPath(path)));
     }
 
     /// <summary>Removes a file. False when there was none.</summary>
     [JSExport]
     internal static Task<bool> FileRemove(string path)
     {
-        if (!File.Exists(path)) return Task.FromResult(false);
+        if (!File.Exists(path)) return Answered(false);
         File.Delete(path);
-        return Task.FromResult(true);
+        return Answered(true);
     }
 }

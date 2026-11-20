@@ -109,8 +109,20 @@ internal static partial class WebShumwayApp
     internal static Task SessionSupplyImport(string kernelId, string answer)
     {
         ReleaseImport(kernelId, answer);
-        return Task.CompletedTask;
+        return Answered();
     }
+
+    // In WebKit, .NET's threads stop taking the page's calls after some
+    // thousands of them, and sooner when an export hands back a Task that is
+    // already complete. The exports a notebook calls give their result a
+    // turn later, and a cell makes one call (SessionCall).
+    private static async Task<T> Answered<T>(T value)
+    {
+        await Task.Yield();
+        return value;
+    }
+
+    private static async Task Answered() => await Task.Yield();
 
     // An interrupted or disposed session is not left waiting for the page.
     private static void ReleaseImport(string kernelId, string answer)
@@ -135,8 +147,13 @@ internal static partial class WebShumwayApp
     internal static Task<int> SessionLimit(int limit)
     {
         if (_notebooks is null && limit > 0) _notebookLimit = limit;
-        return Task.FromResult(_notebooks?.MaxSessions ?? _notebookLimit);
+        return Answered(_notebooks?.MaxSessions ?? _notebookLimit);
     }
+
+    /// <summary>Answers, a turn later: what the kernel asks while a step waits
+    /// for the runtime, to know that the runtime still takes calls.</summary>
+    [JSExport]
+    internal static Task<bool> SessionAlive() => Answered(true);
 
     /// <summary>Starts a kernel's session: an engine with the server
     /// <paramref name="bundle"/> names, in <paramref name="directory"/>.
@@ -205,8 +222,36 @@ internal static partial class WebShumwayApp
     [JSExport]
     internal static async Task<string> SessionRequest(string kernelId, string jsonLine)
     {
+        await Task.Yield();
         if (ServerOf(kernelId) is not { } server) return "";
         return await server.Request(jsonLine).ConfigureAwait(false) ?? "";
+    }
+
+    /// <summary>A cell's request and what the page copies after it, in one
+    /// call. Answers a JSON object: <c>answer</c>, as
+    /// <see cref="SessionRequest"/> answers; <c>files</c>, what
+    /// <see cref="FilesList"/> answers for <paramref name="filesRoot"/>; and
+    /// <c>compiled</c>, what <see cref="LibraryTakeCompiledOnDemand"/>
+    /// answers.</summary>
+    [JSExport]
+    internal static async Task<string> SessionCall(string kernelId, string jsonLine, string filesRoot)
+    {
+        await Task.Yield();
+        string answer = ServerOf(kernelId) is { } server
+            // Back on this thread, where FilesList runs when it is called.
+            ? await server.Request(jsonLine).ConfigureAwait(true) ?? ""
+            : "";
+        using var buffer = new MemoryStream();
+        using (var json = new System.Text.Json.Utf8JsonWriter(buffer))
+        {
+            json.WriteStartObject();
+            json.WriteString("answer", answer);
+            json.WritePropertyName("files");
+            json.WriteRawValue(FilesJson(filesRoot));
+            json.WriteString("compiled", TakeCompiledOnDemand());
+            json.WriteEndObject();
+        }
+        return System.Text.Encoding.UTF8.GetString(buffer.ToArray());
     }
 
     /// <summary>Interrupts what a kernel's session is running. The server is
@@ -216,7 +261,7 @@ internal static partial class WebShumwayApp
     internal static Task<bool> SessionCancel(string kernelId)
     {
         ReleaseImport(kernelId, JsonObject(("error", "the import was interrupted")));
-        return Task.FromResult(_notebooks?.Find(kernelId)?.Cancel() ?? false);
+        return Answered(_notebooks?.Find(kernelId)?.Cancel() ?? false);
     }
 
     /// <summary>Hands a line to a session's <c>read/1</c>.</summary>
@@ -224,7 +269,7 @@ internal static partial class WebShumwayApp
     internal static Task SessionSupplyInput(string kernelId, string line)
     {
         _notebooks?.Find(kernelId)?.Input.Supply(line);
-        return Task.CompletedTask;
+        return Answered();
     }
 
     /// <summary>Ends a session's input: <c>read/1</c> answers
@@ -233,7 +278,7 @@ internal static partial class WebShumwayApp
     internal static Task SessionSupplyEndOfFile(string kernelId)
     {
         _notebooks?.Find(kernelId)?.Input.SupplyEndOfFile();
-        return Task.CompletedTask;
+        return Answered();
     }
 
     /// <summary>Ends a kernel's session and frees its place.</summary>
@@ -261,18 +306,18 @@ internal static partial class WebShumwayApp
         lock (NotebookServers) tier = NotebookTiers.GetValueOrDefault(kernelId);
         // Read from here, not on the session's thread: the server's loop
         // holds that thread for as long as the session lives (ADR-067 D5).
-        return Task.FromResult(tier is null || _notebooks?.Find(kernelId) is not { } session
+        return Answered(tier is null || _notebooks?.Find(kernelId) is not { } session
             ? "" : TierOf(session.TopLevel?.Engine, tier));
     }
 
     /// <summary>What the last session's start was spent on: booting its
     /// engine, and loading the server into it.</summary>
     [JSExport]
-    internal static Task<string> SessionStartCost() => Task.FromResult(_lastSessionStart);
+    internal static Task<string> SessionStartCost() => Answered(_lastSessionStart);
 
     /// <summary>The managed heap after a full collection, for the page's
     /// measurements of what a session costs.</summary>
     [JSExport]
     internal static Task<double> ManagedHeapBytes()
-        => Task.FromResult((double)GC.GetTotalMemory(forceFullCollection: true));
+        => Answered((double)GC.GetTotalMemory(forceFullCollection: true));
 }

@@ -62,6 +62,11 @@ jobs:
           cache: npm
           cache-dependency-path: jupyterlite/extension/package-lock.json
 
+      # No browser and no site: the notebook mirror's push, with and without
+      # the listing a cell's call took.
+      - name: mirror.mjs
+        run: node jupyterlite/tests/mirror.mjs
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
