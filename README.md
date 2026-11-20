@@ -51,7 +51,8 @@ when 10 is not installed. The test gate currently runs on Windows.
 ## Try it online: [gusbro.github.io/Shumway](https://gusbro.github.io/Shumway/)
 
 The same engine runs [Jupyter notebooks](https://gusbro.github.io/Shumway/jupyter/)
-in the browser, with example notebooks to start from.
+in the browser, with example notebooks to start from
+([guide](docs/guide/jupyter.md)).
 
 ## Highlights
 
