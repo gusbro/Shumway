@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+
+  <!-- The smallest threaded .NET app: a page that calls into it, again and
+       again, shows whether a browser keeps taking calls into .NET's threads.
+       Nothing of Shumway is in it. Not part of the solution; the Safari
+       probe workflow publishes it (tests/webkit-probe/README.md). -->
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <WasmEnableThreads>true</WasmEnableThreads>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,188 @@
+# Whether Safari keeps taking calls into .NET's threads: the probe of
+# tests/webkit-probe, in Safari on macOS (and on an iOS simulator), on the
+# minimal threaded app and on the notebook site this branch builds.
+# Run by hand, or by a pull request that changes the probe.
+
+name: Safari probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      calls:
+        description: Calls into the minimal app in each browser
+        default: '30000'
+      cells:
+        description: Notebook cells to run in Safari
+        default: '5000'
+      keys:
+        description: Keystrokes of the demo to make in Safari
+        default: '20000'
+      rounds:
+        description: Times stall.mjs and kernel.mjs run in WebKit on Linux
+        default: '10'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tests/webkit-probe/**'
+      - '.github/workflows/safari.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    # The iOS simulator's Safari is the less certain of the two to drive: a
+    # failure there is reported, and does not fail the run.
+    continue-on-error: ${{ matrix.target == 'ios' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [macos, ios]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install the WebAssembly workload
+        run: dotnet workload install wasm-tools
+
+      - name: Publish the probe app
+        run: dotnet publish tests/webkit-probe/ThreadedPing -c Release -o probe-site
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Let WebDriver drive Safari
+        run: sudo safaridriver --enable
+
+      - name: Boot an iOS simulator
+        if: matrix.target == 'ios'
+        run: |
+          xcrun simctl list devices available
+          device=$(xcrun simctl list devices available -j | node -e "
+            const all = JSON.parse(require('fs').readFileSync(0, 'utf8')).devices;
+            const phone = Object.values(all).flat().find((d) => /^iPhone/.test(d.name));
+            if (!phone) process.exit(1);
+            console.log(phone.udid);")
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
+
+      - name: Probe
+        run: |
+          safaridriver -p 4444 &
+          sleep 3
+          node tests/webkit-probe/probe.mjs probe-site/wwwroot ${{ matrix.target }} ping ${{ inputs.calls || '30000' }}
+
+  # The notebook site of this branch, in Safari: cells run one after
+  # another, and the probe says how many came back; then the demo's calls.
+  cells:
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install the WebAssembly workload
+        run: dotnet workload install wasm-tools
+
+      - name: Publish the demo
+        run: dotnet publish src/Shumway.Web -c Release -o publish
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: jupyterlite/extension/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: jupyterlite/requirements.txt
+
+      - name: Install the site's builder
+        run: python -m pip install -r jupyterlite/requirements.txt
+
+      - name: Build the notebook site
+        run: node jupyterlite/build.mjs --out site --with-demo publish/wwwroot
+
+      - name: Let WebDriver drive Safari
+        run: sudo safaridriver --enable
+
+      - name: Probe
+        run: |
+          safaridriver -p 4444 &
+          sleep 3
+          node tests/webkit-probe/probe.mjs site macos cells ${{ inputs.cells || '5000' }}
+
+      # The demo's page on the same site: a highlight a keystroke, and a
+      # query every 50.
+      - name: Probe the demo
+        if: success() || failure()
+        run: |
+          pgrep safaridriver || (safaridriver -p 4444 &)
+          sleep 3
+          node tests/webkit-probe/probe.mjs site macos demo ${{ inputs.keys || '20000' }}
+
+  # The WebKit of the notebook workflow, on Linux: stall.mjs and kernel.mjs
+  # over and over on the notebook site of this branch, to see how often a
+  # run fails there.
+  webkit-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install the WebAssembly workload
+        run: dotnet workload install wasm-tools
+
+      - name: Publish the demo
+        run: dotnet publish src/Shumway.Web -c Release -o publish
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the site's builder
+        run: python -m pip install -r jupyterlite/requirements.txt
+
+      - name: Build the notebook site
+        run: node jupyterlite/build.mjs --out site --with-demo publish/wwwroot
+
+      - name: Install WebKit
+        working-directory: jupyterlite/tests
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps webkit
+
+      - name: stall.mjs and kernel.mjs, round after round
+        working-directory: jupyterlite/tests
+        run: |
+          rounds=${{ inputs.rounds || '10' }}
+          stall_failed=0; kernel_failed=0
+          for k in $(seq 1 $rounds); do
+            if timeout 600 node stall.mjs ../../site webkit > stall-$k.txt 2>&1; then r=ok; else r=FAILED; stall_failed=$((stall_failed + 1)); fi
+            echo "[webkit-linux] stall.mjs round $k: $r"; grep -E '^FAIL|did not get' stall-$k.txt | cut -c1-200 || true
+          done
+          for k in $(seq 1 3); do
+            if timeout 1500 node kernel.mjs ../../site webkit > kernel-$k.txt 2>&1; then r=ok; else r=FAILED; kernel_failed=$((kernel_failed + 1)); fi
+            echo "[webkit-linux] kernel.mjs round $k: $r, $(grep -c '^ok' kernel-$k.txt) ok, $(grep -c '^FAIL' kernel-$k.txt) failed"; grep -E '^FAIL' kernel-$k.txt | head -3 | cut -c1-200 || true
+          done
+          echo "[webkit-linux] stall.mjs failed $stall_failed of $rounds; kernel.mjs failed $kernel_failed of 3"
+          test $stall_failed -eq 0 -a $kernel_failed -eq 0
