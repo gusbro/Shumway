@@ -76,8 +76,7 @@ async function cells(options, notebooks) {
 
 try {
   // A query longer than the patience: the runtime is asked, answers, and
-  // the cell is left to end. A few asks, not hundreds: in WebKit enough
-  // calls into the runtime make it stop answering for real.
+  // the cell is left to end.
   const [slow] = await cells({ shumwayRuntimePatience: '1' }, [['sleep(3), X = slept.']]);
   check(slow.status === 'ok' && slow.texts[0] === 'X = slept',
     'a query that takes long ends, while the runtime answers', slow);
