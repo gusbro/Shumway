@@ -173,7 +173,9 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
     /// reference's, _A, _B, ... in ours, as the top level writes it;</item>
     /// <item>the version of the engine the recording was made with;</item>
     /// <item>the residual goals of a query, a key only our server sends: the
-    /// reference says nothing of a constrained variable.</item>
+    /// reference says nothing of a constrained variable;</item>
+    /// <item>the queries alive, in a solution and in a result, which only
+    /// our server says (ADR-074).</item>
     /// </list></summary>
     private static JsonNode? Comparable(JsonNode? node, bool version)
     {
@@ -184,7 +186,7 @@ public sealed partial class NotebookServerCorpusTests : IDisposable
                 foreach (var (key, value) in pairs)
                 {
                     if (key is "prolog_message" or "logtalk_message") result["message_text"] = "";
-                    else if (key == "residual_goals") continue;
+                    else if (key is "residual_goals" or "alive") continue;
                     else if (key == "bindings" && value is JsonObject bindings)
                     {
                         var terms = new JsonObject();

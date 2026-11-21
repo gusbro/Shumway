@@ -5,11 +5,17 @@
 % left stays alive under a loop of its own, which reads the requests that
 % follow: `retry` fails that loop, and the query gives its next solution.
 % The queries alive at any time are a stack, and `retry` reaches the latest.
+% Each has a number, which the answer of a solution that left choice points
+% carries; `more` asks the latest for several solutions, and `stop` ends a
+% query by cutting its choice points (ADR-074).
 %
 % The cell being answered travels through the loop as an argument:
 % cell(Id, Queries, Results), with the queries still to run and the answers
 % so far, latest first; none between requests. A retry is the one moment it
 % must survive backtracking, and it goes through a global variable then.
+% The answer to `more` travels as a cell with no queries, whose Id is
+% more(Request, Query, Count), and the one to `stop` as one whose Id is
+% stopped(Request).
 % Nothing here is a dynamic predicate: the loop is one query for as long as
 % the session lives.
 %
@@ -36,13 +42,18 @@ jupyter_serve :-
     '$jupyter_attach',
     % Cells are read with the operators of user: $Var needs one there.
     user:op(1, fx, $),
-    level(0, 0, none, _).
+    nb_setval('$jupyter_queries', 0),
+    nb_setval('$jupyter_stopped', []),
+    level([], 0, none, _).
 
 % level(+Alive, +Spent, +Cell, -Exit)
-% One loop of the server. Alive counts the queries alive under it. Spent
-% counts the queries that ran in this loop and left no choice point: no loop
-% was started for them, and a retry finds each one exhausted.
-% Fails when a retry is for the query this loop runs under.
+% One loop of the server. Alive is the queries alive under it, the latest
+% first: the loop runs under its first one. Spent counts the queries that
+% ran in this loop and left no choice point: no loop was started for them,
+% and a retry finds each one exhausted.
+% Fails when a retry is for the query this loop runs under. Exit is
+% ended(Request) when that query was stopped: by Request, or by an earlier
+% one when Request is none.
 level(Alive, Spent0, Cell0, Exit) :-
     step(Cell0, Alive, Spent0, Spent, Cell, Next),
     (   Next == continue -> level(Alive, Spent, Cell, Exit)
@@ -54,11 +65,20 @@ level(Alive, Spent0, Cell0, Exit) :-
 step(Cell0, Alive, Spent0, Spent, Cell, Next) :-
     (   Cell0 == none ->
         Spent = Spent0,
-        read_request(Request),
-        answer(Request, Cell, Next)
+        (   Alive = [Latest|_], stopped(Latest) ->
+            % Stopped while a later query was alive: it ends now.
+            Cell = none, Next = ended(none)
+        ;   read_request(Request),
+            answer(Request, Alive, Cell, Next)
+        )
+    ;   Cell0 = cell(more(_, Query, Count), [], Results),
+        Alive = [Query|_], length(Results, Given), Given < Count ->
+        % The query is still alive and owes solutions: on to its next.
+        Spent = Spent0, Cell = Cell0, Next = retry,
+        nb_setval('$jupyter_cell', Cell0)
     ;   Cell0 = cell(Id, [], Results) ->
         Spent = Spent0, Cell = none, Next = continue,
-        send_results(Id, Results)
+        send_cell(Id, Results, Alive)
     ;   Cell0 = cell(Id, [Query|Queries], Results),
         run(Query, Alive, Spent0, Spent, cell(Id, Queries, Results), Cell, Next)
     ).
@@ -70,26 +90,109 @@ read_request(Request) :-
           error(syntax_error(json), _),
           Request = malformed).
 
-% answer(+Request, -Cell, -Next)
-answer(Request, Cell, Next) :-
+% answer(+Request, +Alive, -Cell, -Next)
+answer(Request, Alive, Cell, Next) :-
     (   Request == end_of_file -> Cell = none, Next = stop
     ;   Request == malformed ->
         Cell = none, Next = continue,
         send_error(null, -32700, 'Invalid JSON was received by the server.', [])
     ;   Request = obj(Pairs), memberchk(method-str(Chars), Pairs) ->
-        Next = continue,
         atom_chars(Method, Chars),
         (   memberchk(id-Id, Pairs) -> true ; Id = null ),
         (   memberchk(params-Params, Pairs) -> true ; Params = null ),
-        (   known(Method) -> method(Method, Id, Params, Cell)
-        ;   Cell = none,
+        (   Method == more -> Next = continue, more(Id, Params, Alive, Cell)
+        ;   Method == stop -> stop_query(Id, Params, Alive, Cell, Next)
+        ;   known(Method) -> Next = continue, method(Method, Id, Params, Cell)
+        ;   Cell = none, Next = continue,
             send_error(Id, -32601, 'The method does not exist / is not available.', Chars)
         )
     ;   Cell = none, Next = continue,
         send_error(null, -32600, 'The JSON sent is not a valid Request object.', [])
     ).
 
+% ----- more solutions, and the end of a query (ADR-074) -----
+
+% more(+Id, +Params, +Alive, -Cell)
+% Up to Count more solutions of the latest query alive. The cell it leaves
+% makes the loop fail into the query (step/6) until it has them.
+more(Id, Params, Alive, Cell) :-
+    (   Params = obj(Pairs), memberchk(query-Query, Pairs), integer(Query),
+        memberchk(count-Count, Pairs), integer(Count), Count >= 1 ->
+        (   Alive = [Query|_] -> Cell = cell(more(Id, Query, Count), [], [])
+        ;   Cell = none,
+            (   memberchk(Query, Alive), \+ stopped(Query) ->
+                send_error(Id, -4714, 'Not the latest active call', [])
+            ;   send_error(Id, -4713, 'No active call', [])
+            )
+        )
+    ;   Cell = none,
+        send_error(Id, -32602, 'Invalid method parameter(s).', [])
+    ).
+
+% stop_query(+Id, +Params, +Alive, -Cell, -Next)
+% Ends a query. The latest ends at once: its loop returns, and the query's
+% choice points go with the -> that called it (solve/9), which then answers.
+% Another is marked, and ends when it becomes the latest. One that is not
+% alive is not an error: it is as the request wants it.
+stop_query(Id, Params, Alive, none, Next) :-
+    (   Params = obj(Pairs), memberchk(query-Query, Pairs), integer(Query) ->
+        (   Alive = [Query|_] -> Next = ended(Id)
+        ;   Next = continue,
+            (   memberchk(Query, Alive), \+ stopped(Query) ->
+                nb_getval('$jupyter_stopped', Stopped),
+                nb_setval('$jupyter_stopped', [Query|Stopped])
+            ;   true
+            ),
+            alive_queries(Alive, Queries),
+            send_result(Id, obj([alive-Queries]))
+        )
+    ;   Next = continue,
+        send_error(Id, -32602, 'Invalid method parameter(s).', [])
+    ).
+
+stopped(Query) :-
+    nb_getval('$jupyter_stopped', Stopped),
+    memberchk(Query, Stopped).
+
+% The queries a kernel can still ask, oldest first.
+alive_queries(Alive, Queries) :-
+    alive_queries(Alive, [], Queries).
+
+alive_queries([], Queries, Queries).
+alive_queries([Query|Alive], Later, Queries) :-
+    (   stopped(Query) -> alive_queries(Alive, Later, Queries)
+    ;   alive_queries(Alive, [Query|Later], Queries)
+    ).
+
+new_query(Query) :-
+    nb_getval('$jupyter_queries', Count),
+    Query is Count + 1,
+    nb_setval('$jupyter_queries', Query).
+
+% The loop of Query returned Left. A query that was stopped is forgotten,
+% and the request that stopped it is answered by the loop under it.
+left(Left, Query, Cell, Next) :-
+    (   Left = ended(Request) ->
+        Next = continue,
+        nb_getval('$jupyter_stopped', Stopped),
+        without(Stopped, Query, Others),
+        nb_setval('$jupyter_stopped', Others),
+        (   Request == none -> Cell = none
+        ;   Cell = cell(stopped(Request), [], [])
+        )
+    ;   Cell = none, Next = Left
+    ).
+
+without([], _, []).
+without([Query|Queries], Gone, Others) :-
+    (   Query == Gone -> Others = Queries
+    ;   Others = [Query|More],
+        without(Queries, Gone, More)
+    ).
+
 known(call).
+known(more).
+known(stop).
 known(backend).
 known(version).
 known(protocol).
@@ -323,7 +426,7 @@ run(query(Goal, Names), Alive, Spent0, Spent, Cell0, Cell, Next) :-
     ;   halt_goal(Goal) ->
         Spent = Spent0, Cell = none, Next = stop,
         answered(Cell0, obj([status-str(halt)]), cell(Id, _, Results)),
-        send_results(Id, Results)
+        send_cell(Id, Results, [])
     ;   clause_term(Goal) ->
         Spent = Spent0, Next = continue,
         failed(Cell0, -4712, 'Exception', jupyter(clause_in_cell), Cell)
@@ -419,7 +522,7 @@ retry(Alive, Spent0, Spent, Cell0, Cell, Next) :-
         Spent is Spent0 - 1, Next = continue,
         error_object(-4711, 'Failure', [], [], Error),
         answered(Cell0, obj([status-str(error), error-Error]), Cell)
-    ;   Alive =:= 0 ->
+    ;   Alive == [] ->
         Spent = Spent0, Next = continue,
         error_object(-4713, 'No active call', [], [], Error),
         answered(Cell0, obj([status-str(error), error-Error]), Cell)
@@ -436,12 +539,13 @@ solve(Goal, Names, Written, Alive, Spent0, Spent, Cell0, Cell, Next) :-
     output(_),
     '$jupyter_extras'(_),
     nb_setval('$jupyter_cell', none),
+    new_query(Query),
     statistics(cputime, Started),
     (   catch(solution(Goal, Exit), Error, true),
         '$jupyter_tracing'(false),
         resumed(Cell0, Cell1, First),
         ran(First, Error, Cell1, Written, Started),
-        solved(Error, Exit, Names, Alive, Spent0, Spent, Cell1, Cell, Next)
+        solved(Error, Exit, Names, Query, Alive, Spent0, Spent, Cell1, Cell, Next)
     ->  true
     ;   '$jupyter_tracing'(false),
         resumed(Cell0, Cell1, _),
@@ -484,7 +588,7 @@ solution(Goal, Exit) :-
     user:Goal,
     '$jupyter_tracing'(false).
 
-solved(Error, Exit, Names, Alive, Spent0, Spent, Cell0, Cell, Next) :-
+solved(Error, Exit, Names, Query, Alive, Spent0, Spent, Cell0, Cell, Next) :-
     (   nonvar(Error) ->
         Spent = Spent0, Next = continue,
         failed(Cell0, -4712, 'Exception', Error, Cell)
@@ -495,14 +599,18 @@ solved(Error, Exit, Names, Alive, Spent0, Spent, Cell0, Cell, Next) :-
         residual_goals(Goals, AnswerNames, Residual),
         % What the helpers of module jupyter left for this answer.
         '$jupyter_extras'(Extras),
-        append(Residual, Extras, More),
+        % A solution that left choice points says which query can be asked
+        % for the next.
+        (   Exit == last -> Left = [] ; Left = [alive-Query] ),
+        append(Extras, Left, Last),
+        append(Residual, Last, More),
         answered(Cell0, obj([status-str(success), type-str(query),
                              bindings-obj(Bindings), output-str(Output)|More]), Cell1),
         remember(Names),
         (   Exit == last -> Spent is Spent0 + 1, Cell = Cell1, Next = continue
-        ;   Spent = Spent0, Cell = none,
-            Deeper is Alive + 1,
-            level(Deeper, 0, Cell1, Next)
+        ;   Spent = Spent0,
+            level([Query|Alive], 0, Cell1, Exited),
+            left(Exited, Query, Cell, Next)
         )
     ).
 
@@ -723,12 +831,21 @@ tracer_text(Goal, Text) :-
 
 % ----- responses -----
 
-% send_results(+Id, +Results): the answers of a cell, latest first.
-send_results(Id, Results) :-
+% send_cell(+Id, +Results, +Alive): the answers of a cell, latest first, and
+% the queries alive, which is all the answer to `stop` has.
+send_cell(Id, Results, Alive) :-
+    alive_queries(Alive, Queries),
+    (   Id = stopped(Request) -> send_result(Request, obj([alive-Queries]))
+    ;   Id = more(Request, _, _) -> send_results(Request, Results, Queries)
+    ;   send_results(Id, Results, Queries)
+    ).
+
+send_results(Id, Results, Queries) :-
     (   Results == [] -> send_result(Id, str([]))
     ;   reverse(Results, InOrder),
         keyed(InOrder, 1, Pairs),
-        send_result(Id, obj(Pairs))
+        append(Pairs, [alive-Queries], Result),
+        send_result(Id, obj(Result))
     ).
 
 keyed([], _, []).

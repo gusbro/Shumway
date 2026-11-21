@@ -139,7 +139,7 @@ try {
 
   const first = await runNotebook('first-steps.ipynb');
   check(first.kernel === 'shumway_prolog', 'the notebook starts it without asking', first.kernel);
-  check(first.cells[1]?.[0]?.['text/plain'] === 'Who = tom', 'a %%user cell and a query on it', first.cells);
+  check(first.cells[1]?.[0]?.['text/plain'] === 'Who = tom ;', 'a %%user cell and a query on it', first.cells);
   check(first.info?.implementation === 'shumway' && first.info?.language_info?.name === 'Prolog'
       && /^\d+\.\d+\.\d+/.test(first.info?.language_info?.version ?? '') && /WebAssembly/.test(first.info?.banner ?? ''),
     'it says what it is: Prolog, on Shumway, with its version and tier', first.info);
@@ -185,18 +185,20 @@ try {
     try {
       const kernel = kernelOf(panel);
       let r = await run(kernel, 'X = 1, Y = f(X).');
-      check(r.reply.status === 'ok' && r.texts[0] === 'X = 1,\nY = f(1)', 'bindings, one to a line', r);
+      check(r.reply.status === 'ok' && r.texts[0] === 'X = 1,\nY = f(1).', 'bindings, one to a line', r);
 
       r = await run(kernel, 'member(X, [a, b]).');
       const again = await run(kernel, 'retry.');
-      check(r.texts[0] === 'X = a' && again.texts[0] === 'X = b', 'retry gives the next solution', [r, again]);
+      // As a top level writes them: ` ;` after a solution that left choice
+      // points, and a full stop after the last.
+      check(r.texts[0] === 'X = a ;' && again.texts[0] === 'X = b.', 'retry gives the next solution', [r, again]);
 
       r = await run(kernel, 'write(hello), nl, X = 1.\nwrite(second).');
-      check(JSON.stringify(r.texts) === '["hello","X = 1","second","true"]',
+      check(JSON.stringify(r.texts) === '["hello","X = 1.","second","true."]',
         'a cell with two queries: output, then the answer, of each', r.texts);
 
       r = await run(kernel, 'fail.');
-      check(r.reply.status === 'error' && r.reply.ename === 'failure' && r.texts[0] === 'false',
+      check(r.reply.status === 'error' && r.reply.ename === 'failure' && r.texts[0] === 'false.',
         'a failure is said and the cell is an error', r);
 
       r = await run(kernel, 'X is foo + 1.');
@@ -208,7 +210,7 @@ try {
         'a cell that does not parse is an error, with its message', r);
 
       r = await run(kernel, 'jupyter:print_table(member(X, [a, b])).');
-      check(r.outputs[0]?.['text/markdown'] === 'X | \n:- | \na | \nb | ' && r.texts[1] === 'true',
+      check(r.outputs[0]?.['text/markdown'] === 'X | \n:- | \na | \nb | ' && r.texts[1] === 'true.',
         'a table is markdown, and text beside it', r);
 
       r = await run(kernel, "jupyter:display('text/html', '<b>hi</b>'), "
@@ -219,10 +221,10 @@ try {
 
       await run(kernel, 'use_module(library(clpfd)).');
       r = await run(kernel, 'X in 1..5, X #> 2.');
-      check(r.texts[0] === 'X in 3..5', 'residual goals are shown where bindings would be', r);
+      check(r.texts[0] === 'X in 3..5.', 'residual goals are shown where bindings would be', r);
 
       r = await run(kernel, 'read(X).', 'foo(bar).');
-      check(r.reply.status === 'ok' && r.texts[0] === 'X = foo(bar)', 'read/1 asks the notebook for a line', r);
+      check(r.reply.status === 'ok' && r.texts[0] === 'X = foo(bar).', 'read/1 asks the notebook for a line', r);
 
       const completed = (await kernel.requestComplete({ code: 'X = 1, grandp', cursor_pos: 13 })).content;
       check(completed.matches?.[0] === 'grandparent(A,B)' && completed.cursor_start === 7,
@@ -271,7 +273,7 @@ try {
       const reloaded = await run(kernel, 'findall(C, colour2(C), L).');
       await run(kernel, '%%save notes.txt\nnot loaded (');
       saved = await fileText('notes.txt');
-      check(r.texts[0] === 'L = [blue, green]' && loaded.reply.status === 'ok' && reloaded.texts[0] === 'L = [grey]'
+      check(r.texts[0] === 'L = [blue, green].' && loaded.reply.status === 'ok' && reloaded.texts[0] === 'L = [grey].'
           && saved === 'not loaded (\n',
         '%%file, %%file+ and %%load write and load a file; %%save only writes it', [r, reloaded, saved]);
       r = await run(kernel, '%%highlight\nfoo(X) :- bar(X).');
@@ -291,7 +293,7 @@ try {
       // Files, both ways.
       await contents.save('facts.pl', { type: 'file', format: 'text', content: 'colour(red).\n' });
       r = await run(kernel, 'consult(facts), colour(C).');
-      check(r.texts.at(-1) === 'C = red', 'a file saved in the editor is there for consult/1', r);
+      check(r.texts.at(-1) === 'C = red.', 'a file saved in the editor is there for consult/1', r);
       await run(kernel, "open('out.txt', write, S), write(S, hello), close(S).");
       const out = await contents.get('out.txt', { content: true }).catch((e) => ({ error: String(e) }));
       const listed = (await contents.get('', { content: true })).content.map((c) => c.name).sort();
@@ -307,12 +309,12 @@ try {
         'an endless query is interrupted, and the notebook says the session ended', r);
       r = await run(kernel, 'grandparent(X, ann).');
       const fresh = await run(kernel, 'X = again.');
-      check(r.reply.status === 'error' && fresh.texts[0] === 'X = again',
+      check(r.reply.status === 'error' && fresh.texts[0] === 'X = again.',
         'the next cell has a new session, with nothing loaded', [r, fresh]);
 
       r = await run(kernel, 'halt.');
       const afterHalt = await run(kernel, 'X = after.');
-      check(/Halted/.test(r.texts[0] ?? '') && afterHalt.texts[0] === 'X = after',
+      check(/Halted/.test(r.texts[0] ?? '') && afterHalt.texts[0] === 'X = after.',
         'halt ends the session and the next cell starts another', [r, afterHalt]);
 
       // Interrupted before its query reached the runtime: the cell runs
@@ -321,7 +323,7 @@ try {
       await kernel.interrupt();
       r = await within(early, 15000, 'the cell interrupted before its query left');
       const next = await run(kernel, 'X = next.');
-      check(r.reply.status !== 'ok' && next.texts[0] === 'X = next',
+      check(r.reply.status !== 'ok' && next.texts[0] === 'X = next.',
         'a cell interrupted before its query starts ends, and the next cell runs', [r, next]);
 
       // A second notebook, in a directory of its own, beside the first.
@@ -375,7 +377,7 @@ try {
       r = await run(thirdKernel, 'findall(X, only_third(X), L).');
       own = await text('renamed.user.pl');
       check(own === 'only_third(1).\nonly_third(2).\nonly_third(3).\n' && (await text('third.user.pl')) === null
-          && r.texts[0] === 'L = [1, 2, 3]',
+          && r.texts[0] === 'L = [1, 2, 3].',
         'a renamed notebook takes its %%user file along', [own, r.texts]);
 
       // A console has no notebook: its file is user.pl.
@@ -400,13 +402,13 @@ try {
       await Promise.race([foreign.sessionContext.ready, new Promise((resolve) => setTimeout(resolve, 20000))]);
       const dialog = document.querySelector('.jp-Dialog');
       r = foreign.sessionContext.session?.kernel ? await run(foreign.sessionContext.session.kernel, 'X = here.') : null;
-      check(foreign.sessionContext.session?.kernel?.name === 'shumway_prolog' && !dialog && r?.texts[0] === 'X = here',
+      check(foreign.sessionContext.session?.kernel?.name === 'shumway_prolog' && !dialog && r?.texts[0] === 'X = here.',
         "a notebook of hhu-stups' kernel opens with this one, and nothing asks which",
         [foreign.sessionContext.session?.kernel?.name, dialog?.textContent?.slice(0, 200), r?.texts]);
 
       await kernel.restart();
       r = await run(kernelOf(panel), 'X = restarted.');
-      check(r.texts[0] === 'X = restarted', 'a restarted kernel answers', r);
+      check(r.texts[0] === 'X = restarted.', 'a restarted kernel answers', r);
 
       // The editor knows the language: a comment is what `%` starts. The
       // language is loaded when an editor first asks for it.
@@ -497,13 +499,13 @@ try {
       await within(panel.sessionContext.ready, 180000, 'the kernel of libraries.ipynb');
       const kernel = panel.sessionContext.session.kernel;
       let r = await run(kernel, 'X = ready.');
-      check(r.texts[0] === 'X = ready', 'the libraries notebook has a kernel', r);
+      check(r.texts[0] === 'X = ready.', 'the libraries notebook has a kernel', r);
 
       // The demo imports a collection while this notebook is open.
       if (writable) {
         await store('o3stored/src/o3_stored.pl', ':- module(o3_stored, [stored/1]).\nstored(yes).\n');
         r = await run(kernel, 'use_module(library(o3_stored)), stored(X).');
-        check(r.texts.includes('X = yes'), 'a collection the demo stored while the notebook is open is there for the next cell', r);
+        check(r.texts.includes('X = yes.'), 'a collection the demo stored while the notebook is open is there for the next cell', r);
         check(!!(await stored('o3stored/bundles/o3_stored')),
           'and what the cell compiled to use it is kept for the demo and the next visit', r);
       } else skipped.push('a collection the demo stored is there for the next cell, and what it compiled is kept');
@@ -514,7 +516,7 @@ try {
       check(r.reply.status === 'ok' && /o3drive: 1 library from o3drive\.tar\.gz, dialect swi/.test(shown(r)),
         'import_library brings in an archive of the notebook', r);
       r = await run(kernel, 'use_module(library(o3_tar)), tar_ok(X).');
-      check(r.texts.includes('X = yes'), 'and its libraries load', r);
+      check(r.texts.includes('X = yes.'), 'and its libraries load', r);
       if (writable) {
         check((await stored('o3drive/.dialect'))?.trim() === 'swi' && !!(await stored('o3drive/src/o3_tar.pl'))
             && /o3drive\.tar\.gz$/.test((await stored('o3drive/.source')) ?? ''),
@@ -527,12 +529,12 @@ try {
       check(r.reply.status === 'ok' && /o3one: 1 library from localhost/.test(shown(r)),
         'import_library brings in a Prolog file from a URL', r);
       r = await run(kernel, 'use_module(library(o3one)), one(X).');
-      check(r.texts.includes('X = 1'), 'and it loads', r);
+      check(r.texts.includes('X = 1.'), 'and it loads', r);
       r = await run(kernel, `jupyter:import_library(scryer:'${remote}cors/o3url.tar.gz').`);
       check(r.reply.status === 'ok' && /o3url: 1 library from localhost.*dialect scryer/.test(shown(r)),
         'and an archive from a URL, with a dialect', r);
       r = await run(kernel, 'use_module(library(o3_url)), url_ok(X).');
-      check(r.texts.includes('X = yes'), 'whose libraries load', r);
+      check(r.texts.includes('X = yes.'), 'whose libraries load', r);
 
       // Again from the same place: nothing to fetch.
       r = await run(kernel, `jupyter:import_library('${remote}cors/o3one.pl').`);

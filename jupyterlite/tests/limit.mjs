@@ -66,11 +66,11 @@ try {
     return { answered, refused, after };
   }), 10 * MINUTE, 'the limit checks');
 
-  check(report.answered.texts[0] === 'X = 1', 'the first kernel has its session', report.answered);
+  check(report.answered.texts[0] === 'X = 1.', 'the first kernel has its session', report.answered);
   check(report.refused.status === 'error' && /limit/.test(report.refused.texts[0] ?? '')
       && /Running Terminals and Kernels/.test(report.refused.texts[0] ?? ''),
     'the second is refused, and its cell says how to free a place', report.refused);
-  check(report.after.texts[0] === 'X = 3', 'with the first shut down, the second restarts into a session', report.after);
+  check(report.after.texts[0] === 'X = 3.', 'with the first shut down, the second restarts into a session', report.after);
 } catch (e) {
   failures++;
   console.log(`[${engineName}] did not get there: ${e.message.split('\n')[0]}`);

@@ -123,6 +123,19 @@ named after it, and keeps where it came from: importing it again from there
 does nothing, so a notebook's first cell can do it, and the same name from
 elsewhere is refused.
 
+## Answers
+
+An answer ends as a top level's does: with ` ;` when its query left choice
+points and can give another solution, and with a full stop when it cannot.
+A query that fails answers `false.`
+
+The server says which is which (ADR-074): a solution that left choice
+points carries the number of its query, `alive`, and every result lists the
+queries alive, oldest first. Its methods `more` and `stop` ask the latest
+query for several solutions and end a query by cutting its choice points;
+nothing in the page calls them yet. A cell that is `retry.` gives the next
+solution of the latest query, as in the reference.
+
 ## Graphs
 
 `show_term/1`, `%%tree`, `jupyter:print_transition_graph/3,4` and
