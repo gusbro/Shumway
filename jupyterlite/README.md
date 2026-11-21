@@ -80,7 +80,14 @@ option a plot does not draw is named below it.
 is refused with a message that says how to free a place. `stall.mjs` serves
 it with short waits: a long query ends while the runtime answers, and with
 a timeout of 0, which nothing ends in, the cells say to reload the page,
-for a runtime that stops answering and for one that does not start.
+for a runtime that stops answering and for one that does not start. It
+checks the same notice in the demo's page, whose `stops` hook shortens the
+waits.
+`fresh.mjs` serves the site as a host that lets a browser keep a file for
+ten minutes, and checks that a file whose name stays the same across
+publishes is asked of the server each time all the same, and that one named
+by its contents is asked once: a browser that was there before takes a site
+published again, all of it.
 `answers.mjs` presses the buttons under an answer (Answers, below): Next,
 5, All and Stop, an All over a query with solutions without end that Stop
 ends, a cell run again, the key, and a restart.
@@ -99,7 +106,7 @@ to a directory, a screenshot and the page's console go there too; CI keeps
 them when the job fails.
 
 CI runs `mirror.mjs` and `threads.mjs` once, and `kernel.mjs`, `limit.mjs`,
-`stall.mjs` and `answers.mjs` in Chromium, Firefox and WebKit
+`stall.mjs`, `answers.mjs` and `fresh.mjs` in Chromium, Firefox and WebKit
 (`.github/workflows/notebooks.yml`). It runs them on a pull request or a
 push to `main` that changes `jupyterlite/` or the engine: the answers a
 notebook shows come from the engine.
@@ -164,7 +171,11 @@ notebook. What the buttons do:
   page share which queries are alive (`extension/src/core/queries.ts`), and
   an answer names the session that gave it.
 
-`;` in command mode asks the next solution of the active cell's answer.
+A button leaves the cell below the answer's as the active one, a new cell
+when there was none, and gives the keys back to the notebook: what running
+a cell does. `;` in command mode asks the next solution of the latest query
+alive, whichever cell is the active one, since after a run or a button it
+is the one below.
 
 ## Graphs
 

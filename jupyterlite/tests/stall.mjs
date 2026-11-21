@@ -6,6 +6,8 @@
 // shumwayRuntimeTimeout or shumwayRuntimeStartTimeout of 0, which nothing
 // ends in. As text: JupyterLab reads an option of 0 as one that is not
 // there.
+// The demo's page says the same of a runtime that stops answering, with the
+// waits shortened by its `stops` hook.
 //
 //   node stall.mjs <deployment dir> [chromium|firefox|webkit]
 import { webkit, chromium, firefox } from 'playwright';
@@ -74,6 +76,50 @@ async function cells(options, notebooks) {
   }
 }
 
+/** Opens the demo with these waits (seconds a call is out before the runtime
+ *  is asked, seconds it has to answer). With a query, runs it once the
+ *  engine is there and waits for its answer; with none, waits for the page
+ *  to say the runtime stopped, which with a wait of 0 it does while it
+ *  boots. Answers what the page shows. */
+async function demo(waits, query = null) {
+  const server = await serve(process.argv[2]);
+  const page = await (await browser.newContext()).newPage();
+  const { diagnose } = watch(page, engineName);
+  try {
+    await page.goto(`${server.url}index.html#stops=${waits}`);
+    console.log(`[stall.mjs] the demo, waits ${waits}: ${query ?? 'no query'}`);
+    if (query !== null) {
+      await page.waitForFunction(async () => {
+        const session = await import(new URL('./session.js', location.href).href);
+        const box = document.querySelector('#query');
+        return window.crossOriginIsolated === true && !!session.exports() && !!box && !box.disabled;
+      }, null, { timeout: 180000, polling: 500 });
+      await page.waitForTimeout(1000);
+      await page.fill('#query', query);
+      await page.press('#query', 'Enter');
+    }
+    const wanted = query !== null ? 'X = slept' : 'stopped answering';
+    await guarded(page.waitForFunction(
+      (wanted) => document.querySelector('#out').textContent.includes(wanted),
+      wanted, { timeout: 180000, polling: 200 }), 4 * MINUTE, `the demo to say "${wanted}"`);
+    await page.waitForTimeout(500);
+    return await page.evaluate(() => {
+      const out = document.querySelector('#out').textContent;
+      return {
+        answered: out.includes('X = slept'),
+        toldInOutput: /runtime stopped answering/.test(out) && /reloading the page/.test(out),
+        marked: document.body.classList.contains('runtime-stopped')
+      };
+    });
+  } catch (e) {
+    if (hung(e)) await diagnose();
+    throw e;
+  } finally {
+    await guarded(page.context().close(), MINUTE, 'closing the page').catch(() => {});
+    server.close();
+  }
+}
+
 try {
   // A query longer than the patience: the runtime is asked, answers, and
   // the cell is left to end.
@@ -95,6 +141,15 @@ try {
   const told = unstarted.texts.join(' ');
   check(unstarted.status === 'error' && /did not start in time/.test(told) && /Reload the page/.test(told),
     'a runtime that does not start in time: the cell says to reload the page', unstarted);
+
+  // The demo: a query longer than the patience ends, with no notice; and
+  // with no call answering in time the page says to reload.
+  const answered = await demo('1,30', 'sleep(3), X = slept.');
+  check(answered.answered && !answered.toldInOutput && !answered.marked,
+    'the demo: a query that takes long ends, while the runtime answers', answered);
+  const stoppedDemo = await demo('0.2,0');
+  check(stoppedDemo.toldInOutput && stoppedDemo.marked,
+    'the demo: a runtime that does not answer is told, with what to do', stoppedDemo);
 } catch (e) {
   failures++;
   console.log(`[${engineName}] did not get there: ${String(e?.message).split('\n')[0]}`);

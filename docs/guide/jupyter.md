@@ -74,10 +74,15 @@ Under such an answer are the choices of a top level:
 
 | Button | What it does |
 |---|---|
-| **Next** | shows the next solution, under the same cell. In command mode the key `;` does the same for the active cell |
+| **Next** | shows the next solution, under the same cell. In command mode the key `;` does the same |
 | **5** | goes on to the next multiple of five solutions: four after one, five after five |
 | **All** | shows every remaining solution |
 | **Stop** | ends the query: it gives no more solutions, and its answer ends with a full stop |
+
+A button leaves the notebook where running the cell does, on the cell
+below, so the next run goes on from there. The key `;` asks the latest query
+that can give another solution, whichever cell is the active one: run a
+cell, press `;` for each solution wanted, and go on.
 
 While **5** or **All** runs, only **Stop** can be pressed, and it ends the
 query when the solutions being computed come: a query is never cut half

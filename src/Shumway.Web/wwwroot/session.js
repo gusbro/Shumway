@@ -48,6 +48,34 @@ export function wakeThreads() {
 /** How many times the threads were woken, and how many were told by message. */
 export const threadWakes = () => ({ ...wakes });
 
+// A runtime that stopped answering for good is one only a reload starts
+// again, and the page has to say so. While a call is out, the runtime is
+// asked a trivial one now and then: a query may take as long as it needs,
+// and the trivial call answers while it runs. One that does not answer in
+// time means the runtime stopped. Asked only for a page that listens: the
+// notebooks tell a runtime that stopped by themselves.
+const stops = { stopped: false, asking: false, listeners: new Set() };
+
+/** Calls `listener` once if the runtime stops answering; answers what
+ *  stops it. */
+export function onRuntimeStopped(listener) {
+  stops.listeners.add(listener);
+  return () => { stops.listeners.delete(listener); };
+}
+
+async function askWhetherAlive(exports, timeoutMs) {
+  if (stops.stopped || stops.asking || stops.listeners.size === 0) return;
+  stops.asking = true;
+  const answered = await Promise.race([
+    exports.SessionAlive().then(() => true, () => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs))
+  ]);
+  stops.asking = false;
+  if (answered || stops.stopped) return;
+  stops.stopped = true;
+  for (const listener of [...stops.listeners]) listener();
+}
+
 let sessionAskForInput = null;
 
 /** Who is told that a notebook session wants a line: (kernelId) => void. */
@@ -73,8 +101,11 @@ export const onSessionImportLibrary = (handler) => { sessionImportLibrary = hand
  * @param {object} [options.ui] what the page's own session calls: `write`,
  *        `writeError`, `writeNote`, `askForInput`, `debugStopped`. One left
  *        out does nothing: an undefined import would throw at its first call.
+ * @param {{ patienceMs?: number, timeoutMs?: number }} [options.stops] how
+ *        long a call is out before the runtime is asked whether it answers,
+ *        and how long it has to say so.
  */
-export async function startRuntime({ entry = './_framework/dotnet.js', threads = 0, ui = {} } = {}) {
+export async function startRuntime({ entry = './_framework/dotnet.js', threads = 0, ui = {}, stops: waits = {} } = {}) {
   // The runtime asserts about SharedArrayBuffer and says nothing a reader of
   // the page can act on.
   if (!globalThis.crossOriginIsolated)
@@ -105,7 +136,12 @@ export async function startRuntime({ entry = './_framework/dotnet.js', threads =
       debugStopped: (json) => ui.debugStopped?.(JSON.parse(json)),
     },
   });
-  engine = watchCalls((await watch(getAssemblyExports(getConfig().mainAssemblyName))).Shumway.Web.WebShumwayApp, watch);
+  const exports = (await watch(getAssemblyExports(getConfig().mainAssemblyName))).Shumway.Web.WebShumwayApp;
+  const patienceMs = waits.patienceMs ?? 10000;
+  const timeoutMs = waits.timeoutMs ?? 30000;
+  const watchStop = watcher(() => { void askWhetherAlive(exports, timeoutMs); },
+    { afterMs: patienceMs, everyMs: Math.min(500, Math.max(50, patienceMs / 2)), doubling: false });
+  engine = watchCalls(exports, (answer) => watchStop(watch(answer)));
   await watch(runMain());
   return engine;
 }
@@ -121,6 +157,11 @@ export async function boot(onOutput, onAskForInput, onDiagnostic, onDebugStop, o
     // A hook that opens more sessions than the page's own asks for the
     // threads it needs: &threads=<n>.
     threads: parseInt(/[#&]threads=(\d+)/.exec(location.hash)?.[1] ?? '0', 10),
+    // A hook that shortens the waits for a runtime that stops answering:
+    // &stops=<seconds a call is out>,<seconds the runtime has to answer>.
+    stops: (([, patience, timeout] = []) => (patience === undefined ? {}
+      : { patienceMs: parseFloat(patience) * 1000, timeoutMs: parseFloat(timeout) * 1000 }))(
+      /[#&]stops=([\d.]+),([\d.]+)/.exec(location.hash) ?? undefined),
     ui: {
       write: (t) => { if (typeof t === 'string' && t.startsWith('[tier]')) { try { fetch('/collect', { method: 'POST', body: t }); } catch {} } return onOutput(t); },
       writeError: onDiagnostic, writeNote: onNote ?? onDiagnostic,

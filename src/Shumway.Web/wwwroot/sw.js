@@ -194,9 +194,14 @@ self.addEventListener('fetch', (event) => {
   // Everything else keeps its name across publishes, so the network decides and
   // the cache is the fallback — which is still an offline app, just one that
   // takes the newer file when there is a network to ask.
+  // Asked of the server each time, and not of the copy the browser keeps: a
+  // host lets it keep one for minutes, in which a page would run the files of
+  // two publishes at once, the new ones under their new names and the old
+  // ones under the names that stay. The server answers "not modified" to the
+  // most of them.
   event.respondWith((async () => {
     try {
-      const fresh = await fetch(request);
+      const fresh = await fetch(request, { cache: 'no-cache' });
       if (fresh.ok) stash(request, fresh);
       return isolated(fresh, url);
     } catch {
