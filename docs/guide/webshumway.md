@@ -95,6 +95,12 @@ Files live in the browser's private storage (OPFS) and survive a reload.
 **Download** saves one file to your computer; **Export** saves the whole
 workspace as a zip.
 
+Should the engine stop answering, which has been seen in Safari, the page
+says so and that only reloading it starts the engine again. Copy what you
+changed in the editor before you reload: it may not have been saved. A
+query may take as long as it needs: the page tells an engine that stopped
+from one that is busy.
+
 **Open** brings files from your computer into the workspace. It is also how you
 pick up an edit you made to one of them elsewhere: open it again and the newer
 text comes in. If the copy here differs, you are asked which of the two to

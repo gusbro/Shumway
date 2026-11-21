@@ -41,11 +41,12 @@ export function wakeThreadsOf(module) {
 /**
  * A watch over promises: one still pending after `afterMs` calls `wake`, and
  * again after twice as long each time, so that a long query is woken a few
- * times, not every second. The pending ones are looked at every `everyMs`
- * while there is one. Answers `watch(answer)`, which watches `answer` when it
- * is a promise and answers it.
+ * times, not every second; or after as long each time, with `doubling` off.
+ * The pending ones are looked at every `everyMs` while there is one. Answers
+ * `watch(answer)`, which watches `answer` when it is a promise and answers
+ * it.
  */
-export function watcher(wake, { afterMs = 2000, everyMs = 500 } = {}) {
+export function watcher(wake, { afterMs = 2000, everyMs = 500, doubling = true } = {}) {
   const out = new Set();
   let ticking = 0;
   const tick = () => {
@@ -54,7 +55,7 @@ export function watcher(wake, { afterMs = 2000, everyMs = 500 } = {}) {
     for (const call of out) {
       if (now < call.at) continue;
       due = true;
-      call.wait *= 2;
+      if (doubling) call.wait *= 2;
       call.at = now + call.wait;
     }
     if (due) wake();

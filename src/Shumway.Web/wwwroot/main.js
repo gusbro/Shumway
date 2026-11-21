@@ -1689,6 +1689,16 @@ window.shumwayDebug = {
   toggle: () => debugUi.toggle(),
 };
 
+// A runtime that stops answering cannot be started again from here: the
+// page says so, once. In the transcript, which keeps what is written to it:
+// the status line is written over by whatever happens next.
+session.onRuntimeStopped(() => {
+  const text = "The page's runtime stopped answering, and only reloading the page starts it again. "
+    + 'Copy what you changed in the editor first: it may not be saved.';
+  emit(`\n% ${text}\n\n`, 'error');
+  document.body.classList.add('runtime-stopped');
+});
+
 emit(await session.boot(emitEngineOutput, askForInput, emitDiagnostic, onDebugStop, emitNote) + '\n\n', 'note');
 setPending(false);
 

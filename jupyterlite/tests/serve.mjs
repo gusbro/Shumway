@@ -17,15 +17,23 @@ const types = {
  * Serves `directory` on a free port of this machine.
  * @param {object} [siteOptions] options of the notebook site to serve it
  *        with, over those of its jupyter-lite.json
+ * @param {{ [path: string]: () => { body: string, headers: object } }} [routes]
+ *        paths answered by a function and not from the directory
  * @returns {Promise<{ url: string, close(): void }>} the address of its root
  */
-export async function serve(directory, siteOptions = null) {
+export async function serve(directory, siteOptions = null, routes = {}) {
   const root = path.resolve(directory);
   if (!fs.existsSync(path.join(root, 'jupyter', 'lab', 'index.html')))
     throw new Error(`${root} is not a deployment: it has no jupyter/lab/index.html`);
   const server = http.createServer((request, response) => {
     let name = decodeURIComponent(new URL(request.url, 'http://x').pathname);
     if (name.endsWith('/')) name += 'index.html';
+    if (Object.hasOwn(routes, name)) {
+      const { body, headers } = routes[name]();
+      response.writeHead(200, headers);
+      response.end(body);
+      return;
+    }
     const file = path.join(root, name);
     if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
       response.writeHead(404, { 'Content-Type': 'text/plain' });
