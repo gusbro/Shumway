@@ -343,6 +343,8 @@ Shipped subsystems this overview does not detail (each has its own doc):
 | Dynamic predicates in IL | ADR-023, ADR-034 |
 | Cut / CP-free guard commit | ADR-029..031, ADR-033 |
 | Debugger | ADR-035 (VS), ADR-036 (VS Code) |
+| WebShumway | ADR-042, ../guide/webshumway.md |
+| Notebooks in the browser (design, not built) | ADR-066 to ADR-074, design/jupyterlite-architecture.md |
 | PSTR | design/pstr-design.md |
 | Builtins | [../guide/predicates.md](../guide/predicates.md) (generated, current) |
 
