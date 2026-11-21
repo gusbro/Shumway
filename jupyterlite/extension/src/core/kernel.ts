@@ -8,7 +8,10 @@ import type { Contents, KernelMessage, Session } from '@jupyterlab/services';
 import { BaseKernel, type IKernel } from '@jupyterlite/services';
 
 import {
-  completions, documentation, GRAPHVIZ, nameAt, nameBefore, render, type IOutput, type ITexts
+  ANSWER, ASK, setQueries, type IAnswer, type IAsk, type IAsked
+} from './queries';
+import {
+  completions, documentation, GRAPHVIZ, nameAt, nameBefore, render, type IOutput, type IRendered, type ITexts
 } from './render';
 import { DRIVE, runtime, RuntimeStopped, type IRuntime } from './runtime';
 
@@ -41,6 +44,11 @@ async function drawn(output: IOutput, noticePrefix: string): Promise<IOutput> {
 const request = (id: number, method: string, params?: object): string =>
   JSON.stringify(params ? { jsonrpc: '2.0', id, method, params } : { jsonrpc: '2.0', id, method });
 
+type Reply = KernelMessage.IExecuteReplyMsg['content'];
+type Show = (output: IOutput) => void;
+
+let sessions = 0;
+
 export class ServerKernel extends BaseKernel implements IKernel {
   constructor(
     options: IKernel.IOptions, variant: IVariant, contents: Contents.IManager, sessions: Session.IManager
@@ -66,6 +74,7 @@ export class ServerKernel extends BaseKernel implements IKernel {
   dispose(): void {
     if (this.isDisposed) return;
     super.dispose();
+    setQueries(this.id, null);
     this._runtime?.onInput(this.id, null);
     void this._runtime?.api.SessionDispose(this.id);
   }
@@ -113,7 +122,16 @@ export class ServerKernel extends BaseKernel implements IKernel {
         : refused;
       return;
     }
-    onInput(this.id, () => this.inputRequest({ prompt: '', password: false }));
+    // A request that takes no input, as the page's own for more solutions,
+    // ends the input of a goal that reads.
+    onInput(this.id, () => {
+      if (this._allowInput) this.inputRequest({ prompt: '', password: false });
+      else void api.SessionSupplyEndOfFile(this.id);
+    });
+    this._session = `${this.id}/${++sessions}`;
+    this._cells.clear();
+    this._shown.clear();
+    this._took([]);
 
     const protocol = await this._ask(request(0, 'protocol'));
     if (protocol?.result?.version !== this._variant.protocol) {
@@ -181,6 +199,12 @@ export class ServerKernel extends BaseKernel implements IKernel {
     const failed = (ename: string, text: string): KernelMessage.IExecuteReplyMsg['content'] => ({
       status: 'error', execution_count: this.executionCount, ename, evalue: '', traceback: [text]
     });
+    this._allowInput = content.allow_stdin !== false;
+
+    // The page's own request, for more solutions of a query or to end it
+    // (ADR-074): not a cell, and it opens no session.
+    const asked = (content.user_expressions as { [key: string]: unknown } | undefined)?.[ASK];
+    if (typeof asked === 'string') return this._asked(asked, show);
 
     if (this._runtime?.stopped) {
       const text = texts.errorPrefix + this._runtime.stopped;
@@ -220,7 +244,46 @@ export class ServerKernel extends BaseKernel implements IKernel {
     failed: (ename: string, text: string) => KernelMessage.IExecuteReplyMsg['content']
   ): Promise<KernelMessage.IExecuteReplyMsg['content']> {
     const { texts } = this._variant;
-    const { mirror, libraries, watched } = this._runtime!;
+    const { mirror, libraries } = this._runtime!;
+    const { mirrored, quietly } = this._steps(show);
+
+    // What changed in the file browser and the editor is there for the cell,
+    // and so is a collection imported in another tab.
+    await mirrored(() => mirror.pull());
+    await quietly(() => libraries.sync());
+    const notebook = await this._notebook();
+    if (this._interruptedAt >= this._sentAt) {
+      const text = texts.noticePrefix
+        + 'Interrupted before the query started: nothing ran, and the session keeps what it had loaded.';
+      show({ 'text/plain': text });
+      return failed('interrupted', text);
+    }
+    // A cell run again ends the queries its run before left alive.
+    const cellId = this._cellId();
+    await this._endQueriesOf(cellId);
+    const answer = await this._exchange(request(this.executionCount, 'call',
+      notebook ? { code: content.code, notebook } : { code: content.code }), show);
+
+    if (answer === null) {
+      const text = this._ended();
+      show({ 'text/plain': text });
+      return failed(this._interrupted ? 'interrupted' : 'stopped', text);
+    }
+
+    const rendered = render(answer, texts);
+    await this._show(rendered, show, cellId);
+    if (rendered.predicates) this._predicates = rendered.predicates;
+    if (rendered.error)
+      return { status: 'error', execution_count: this.executionCount, evalue: '', ...rendered.error };
+    return { status: 'ok', execution_count: this.executionCount, payload: [], user_expressions: {} };
+  }
+
+  /** The steps around a request that a failure of does not end it: the
+   *  files, which say so in the cell, and the libraries. Both throw
+   *  RuntimeStopped. */
+  private _steps(show: Show) {
+    const { watched } = this._runtime!;
+    const { texts } = this._variant;
     const mirrored = async (copy: () => Promise<unknown>) => {
       try {
         await watched(copy());
@@ -238,55 +301,136 @@ export class ServerKernel extends BaseKernel implements IKernel {
         if (reason instanceof RuntimeStopped) throw reason;
       }
     };
+    return { mirrored, quietly };
+  }
 
-    // What changed in the file browser and the editor is there for the cell,
-    // and so is a collection imported in another tab.
-    await mirrored(() => mirror.pull());
-    await quietly(() => libraries.sync());
-    const notebook = await this._notebook();
-    if (this._interruptedAt >= this._sentAt) {
-      const text = texts.noticePrefix
-        + 'Interrupted before the query started: nothing ran, and the session keeps what it had loaded.';
-      show({ 'text/plain': text });
-      return failed('interrupted', text);
-    }
+  /** A request line and its response, null when the server has stopped;
+   *  what the request wrote is then there for the file browser. One call
+   *  for the request, the engine's files and what it compiled: every call
+   *  into the runtime is one more for WebKit's threads to stop taking. */
+  private async _exchange(line: string, show: Show): Promise<any> {
+    const { mirror, libraries, watched, api } = this._runtime!;
+    const { mirrored, quietly } = this._steps(show);
     this._running = true;
     this._interrupted = false;
-    // One call for the request, the engine's files and what it compiled:
-    // every call into the runtime is one more for WebKit's threads to stop
-    // taking.
     let call: { answer: string; files: unknown; compiled: string };
     const since = mirror.since();
     try {
-      const line = request(this.executionCount, 'call',
-        notebook ? { code: content.code, notebook } : { code: content.code });
-      call = JSON.parse(await watched(this._runtime!.api.SessionCall(this.id, line, DRIVE)));
+      call = JSON.parse(await watched(api.SessionCall(this.id, line, DRIVE)));
     } finally {
       this._running = false;
     }
-    const answer = call.answer === '' ? null : JSON.parse(call.answer);
-    // And what the cell wrote is there for the file browser.
     await mirrored(() => mirror.push({ since, files: call.files }));
     await quietly(() => libraries.keep(call.compiled));
     this._predicatesStale = true;
+    return call.answer === '' ? null : JSON.parse(call.answer);
+  }
 
-    if (answer === null) {
-      this._stopped = true;
-      const text = texts.noticePrefix + (this._interrupted
-        ? 'Interrupted. The session ended with the query: the next cell starts a new one, '
-          + 'and what this one had loaded has to be loaded again.'
-        : 'The server stopped. The next cell starts a new session.');
-      show({ 'text/plain': text });
-      return failed(this._interrupted ? 'interrupted' : 'stopped', text);
+  // --- the queries alive (ADR-074) -----------------------------------------
+
+  /** The cell the request being answered came from, when it says. */
+  private _cellId(): string | null {
+    const id = (this.parent?.metadata as { cellId?: unknown } | undefined)?.cellId;
+    return typeof id === 'string' ? id : null;
+  }
+
+  /** The queries alive are these: the page draws by them. */
+  private _took(alive: number[]): void {
+    this._alive = alive;
+    for (const query of [...this._shown.keys()]) if (!alive.includes(query)) this._shown.delete(query);
+    for (const [cell, queries] of [...this._cells])
+      if (!queries.some(query => alive.includes(query))) this._cells.delete(cell);
+    setQueries(this.id, { session: this._session, alive: [...alive], shown: new Map(this._shown) });
+  }
+
+  /** The session ended: no query of it is left. Answers what to say. */
+  private _ended(): string {
+    this._stopped = true;
+    this._alive = [];
+    this._shown.clear();
+    this._cells.clear();
+    setQueries(this.id, null);
+    return this._variant.texts.noticePrefix + (this._interrupted
+      ? 'Interrupted. The session ended with the query: the next cell starts a new one, '
+        + 'and what this one had loaded has to be loaded again.'
+      : 'The server stopped. The next cell starts a new session.');
+  }
+
+  /** Ends the queries the run before of a cell left alive. */
+  private async _endQueriesOf(cellId: string | null): Promise<void> {
+    const left = cellId ? this._cells.get(cellId) : undefined;
+    if (!cellId || !left) return;
+    this._cells.delete(cellId);
+    for (const query of left) {
+      if (!this._alive.includes(query)) continue;
+      const answer = await this._ask(request(0, 'stop', { query }));
+      if (Array.isArray(answer?.result?.alive)) this._took(answer.result.alive.map(Number));
     }
+  }
 
-    const rendered = render(answer, texts);
-    for (const output of rendered.outputs) show(await drawn(output, texts.noticePrefix));
-    if (rendered.predicates) this._predicates = rendered.predicates;
-    if (rendered.stopped) this._stopped = true;
-    if (rendered.error)
-      return { status: 'error', execution_count: this.executionCount, evalue: '', ...rendered.error };
-    return { status: 'ok', execution_count: this.executionCount, payload: [], user_expressions: {} };
+  /** Shows the outputs of a response, and takes note of its queries: an
+   *  answer says which of its query's solutions it is, and of which
+   *  session. */
+  private async _show(rendered: IRendered, show: Show, cellId: string | null): Promise<void> {
+    for (const output of rendered.outputs) {
+      const answer = output[ANSWER] as { query: number; text: string } | undefined;
+      if (answer) {
+        const solution = (this._shown.get(answer.query) ?? 0) + 1;
+        this._shown.set(answer.query, solution);
+        // The cell a query's first solution is under is the one whose next
+        // run ends it. Not a cell that retried it: running `retry.` again
+        // is how the next solution is asked for.
+        if (solution === 1 && cellId) this._cells.set(cellId, [...(this._cells.get(cellId) ?? []), answer.query]);
+        const named: IAnswer = { session: this._session, query: answer.query, solution, text: answer.text };
+        output[ANSWER] = named;
+      }
+      show(await drawn(output, this._variant.texts.noticePrefix));
+    }
+    if (rendered.stopped) this._ended();
+    else if (rendered.alive) this._took(rendered.alive);
+  }
+
+  /** The page asks a query for more solutions, or ends it. The solutions
+   *  are shown as a cell's are; the reply says whether the query can still
+   *  be asked. */
+  private async _asked(text: string, show: Show): Promise<Reply> {
+    const reply = (asked: IAsked): Reply => ({
+      status: 'ok', execution_count: this.executionCount, payload: [], user_expressions: { [ASK]: asked as any }
+    });
+    if (this._runtime?.stopped || this._stopped || this._refusal || !this._runtime) {
+      setQueries(this.id, null);
+      return reply({ alive: false, ended: true });
+    }
+    let ask: IAsk;
+    try {
+      ask = JSON.parse(text);
+    } catch {
+      return reply({ alive: false });
+    }
+    const query = 'more' in ask ? ask.more.query : ask.stop.query;
+    try {
+      const answer = await this._exchange('more' in ask
+        ? request(this.executionCount, 'more', ask.more)
+        : request(this.executionCount, 'stop', ask.stop), show);
+      if (answer === null) {
+        show({ 'text/plain': this._ended() });
+        return reply({ alive: false, ended: true });
+      }
+      if (answer.error) {
+        // Nothing ran: the query is not one to ask, or not the latest.
+        if (answer.error.code === -4713) this._took(this._alive.filter(alive => alive !== query));
+      } else if ('stop' in ask) {
+        this._took((answer.result?.alive ?? []).map(Number));
+      } else {
+        await this._show(render(answer, this._variant.texts), show, null);
+      }
+      return reply({ alive: this._alive.includes(query), ended: this._stopped });
+    } catch (reason) {
+      if (!(reason instanceof RuntimeStopped)) throw reason;
+      setQueries(this.id, null);
+      show({ 'text/plain': '\x1b[31;1m' + this._variant.texts.errorPrefix + reason.message });
+      return reply({ alive: false, ended: true });
+    }
   }
 
   async completeRequest(
@@ -353,6 +497,15 @@ export class ServerKernel extends BaseKernel implements IKernel {
    *  query leaves. */
   private _sentAt = 0;
   private _interruptedAt = -1;
+  /** The session's name among the kernel's, and its queries alive (oldest
+   *  first), how many solutions of each were shown, and which each cell
+   *  left alive. */
+  private _session = '';
+  private _alive: number[] = [];
+  private _shown = new Map<number, number>();
+  private _cells = new Map<string, number[]>();
+  /** Whether the request being answered takes input. */
+  private _allowInput = true;
   private _version = '';
   private _tier = '';
   private _predicates: string[] = [];

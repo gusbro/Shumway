@@ -1,10 +1,14 @@
-// The JupyterLab extension: registers the kernel with JupyterLite.
+// The JupyterLab extension: registers the kernel with JupyterLite, and draws
+// the answer of a query that can give another solution.
 
 import type { JupyterFrontEnd, JupyterFrontEndPlugin } from '@jupyterlab/application';
 import { IEditorLanguageRegistry } from '@jupyterlab/codemirror';
+import { IRenderMimeRegistry } from '@jupyterlab/rendermime';
 import { IKernelClient, IKernelSpecs, type IKernel } from '@jupyterlite/services';
 
+import { addStyles, Answer, nextSolution } from './answers';
 import { ServerKernel } from './core/kernel';
+import { ANSWER } from './core/queries';
 import { prolog } from './prolog/mode';
 import { spec, variant } from './prolog/variant';
 
@@ -65,4 +69,34 @@ const language: JupyterFrontEndPlugin<void> = {
   }
 };
 
-export default [kernel, language];
+const answers: JupyterFrontEndPlugin<void> = {
+  id: '@shumway/jupyterlite-kernel:answers',
+  description: 'More solutions of a query, asked for from its answer',
+  autoStart: true,
+  requires: [IRenderMimeRegistry],
+  activate: (app: JupyterFrontEnd, rendermime: IRenderMimeRegistry) => {
+    addStyles();
+    // Ahead of plain text, which every answer has beside it.
+    rendermime.addFactory({
+      safe: true,
+      mimeTypes: [ANSWER],
+      defaultRank: 40,
+      createRenderer: () => new Answer(app)
+    });
+    // A top level's key for the next solution, where a notebook takes
+    // commands and not text.
+    const command = 'shumway:next-solution';
+    app.commands.addCommand(command, {
+      label: 'Next Solution',
+      caption: 'The next solution of the query in the active cell',
+      execute: () => { nextSolution(app); }
+    });
+    app.commands.addKeyBinding({
+      command,
+      keys: [';'],
+      selector: '.jp-Notebook.jp-mod-commandMode:not(.jp-mod-readWrite) :focus:not(:read-write)'
+    });
+  }
+};
+
+export default [kernel, language, answers];
