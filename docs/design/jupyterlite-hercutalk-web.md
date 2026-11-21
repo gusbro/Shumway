@@ -113,6 +113,11 @@ top level's choices under an answer: Next, 5, All and Stop.
 5. **A package** (section 6). If the server ships compiled ahead, also
    the toolchain as something a build elsewhere can download:
    `shumway-compile` and `shumway-link`, which make a bundle.
+6. **A program the browser compiles without its WebAssembly module, when
+   the module is too big for the page.** A library the site compiles today
+   carries all its predicates as one WebAssembly module, built in the page.
+   For Logtalk's core and the server that module is 104 MB, and building it
+   takes more memory than the runtime has (section 9).
 
 ## 6. Packages, and who publishes what
 
@@ -178,6 +183,9 @@ it first (section 9). If the first visit's wait is acceptable, the two
 packages are released independently of each other, and neither side
 follows the other's calendar.
 
+Measured: 6 to 11 s the first time and 1 to 2 s on the next visit, with
+the change of section 5, item 6.
+
 ## 8. How each side knows it works
 
 - **The same answers.** Shumway has the harness that runs a notebook server
@@ -206,6 +214,37 @@ be measured: Shumway does them first, on its own.
 | How big the wheel is, and whether the runtime should be a package of its own | PyPI's limit on a file's size |
 | How much of Logtalk's library the site ships, and how big it is | the first `logtalk_load(library(...))` waits for it |
 | Whether the server's capture of a goal's output, through a file in the working directory, holds with several sessions in a page | each session has its own working directory; to be seen with the server as it is |
+
+**The first two rows, measured on 2026-11-21.** The program is Logtalk
+3.103.0's core and Hercutalk 0.47.1's server, as Logtalk's embedding
+script for Shumway writes them: one file of 2.46 MB and 41,112 lines,
+with the server's eight libraries and twelve objects, on Shumway's main
+at 69f2436e. Each figure comes from a notebook session or from the demo's
+page.
+
+| | Chromium | Firefox | WebKit |
+|---|---|---|---|
+| The source compiled into a bundle and kept, the first time | 6.2 s | 11.1 s | 6.2 s |
+| That bundle loaded on the next visit | 1.1 s | 1.9 s | no storage in the test browser |
+| The source consulted in a session | 3.0 to 3.5 s | 4.9 to 6.4 s | 3.6 to 3.8 s |
+| A bundle compiled ahead, of bytecode only, loaded in a session | 0.47 to 0.71 s | 0.61 to 0.82 s | 0.65 to 0.80 s |
+| A cell after any of them | about 20 ms | about 30 ms | about 90 ms |
+
+- **The first row is a compile without the WebAssembly module.** With it,
+  as the site compiles a library today, the module holds 5,247 predicates
+  in 104 MB. Building it takes the runtime past its 2 GB of memory, and
+  the runtime stops: the page has to be reloaded. On the desktop the same
+  module builds in 15 s. Hence section 5, item 6.
+- **A bundle compiled ahead** is 4.9 MB of bytecode, 0.86 MB with gzip.
+  With its WebAssembly module it is 109 MB, 8.7 MB with gzip, more than a
+  notebook's files can hold. A bundle for the browser is written
+  uncompressed: the runtime there has no Brotli codec.
+- **The source needed two things.** Clauses of a multifile predicate that
+  several libraries extend end up apart when the files are joined, which
+  Shumway refuses by default: the source sets `discontiguous_check` to
+  `warning`. And the libraries' loader files come with it, and their
+  initialization goals look for the libraries' sources each time the
+  program loads.
 
 ## 10. Who does what
 
