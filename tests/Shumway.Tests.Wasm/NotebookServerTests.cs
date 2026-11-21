@@ -419,7 +419,8 @@ public sealed class NotebookServerTests : IDisposable
 
         JsonObject answer = Answer(server, Call(1, "%%tree\nf(a).\ng(b)"))["result"]!.AsObject();
 
-        Assert.Equal(2, answer.Count);
+        // One entry for each term, and the queries alive (ADR-074).
+        Assert.Equal(["1", "2", "alive"], answer.Select(pair => pair.Key));
         Assert.Contains("\"f(a)\" -> \"a\"", (string)answer["1"]!["print_transition_graph"]!);
         Assert.Contains("\"g(b)\" -> \"b\"", (string)answer["2"]!["print_transition_graph"]!);
     }
@@ -471,7 +472,7 @@ public sealed class NotebookServerTests : IDisposable
         JsonObject answer = Answer(server, Call(1,
             "%%data\nfindall(X, between(1, 3, X), Xs),\n_Data = [type-plot, x-Xs, y-Xs]"))["result"]!.AsObject();
 
-        Assert.Single(answer);
+        Assert.Equal(["1", "alive"], answer.Select(pair => pair.Key));
         Assert.Equal("""{"type":"plot","x":[1,2,3],"y":[1,2,3]}""", answer["1"]!["show_data"]!.ToJsonString());
     }
 

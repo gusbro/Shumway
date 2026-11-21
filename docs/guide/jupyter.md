@@ -43,10 +43,10 @@ X = 1, Y = f(X).
 ```
 ```
 X = 1,
-Y = f(1)
+Y = f(1).
 ```
 
-A query that fails says `false`, and one that raises says the error; the
+A query that fails says `false.`, and one that raises says the error; the
 cell is then marked as an error. What a query writes comes before its
 answer, and a cell with two queries answers each in turn:
 
@@ -56,24 +56,26 @@ Y = 2.
 ```
 ```
 hello
-X = 1
-Y = 2
+X = 1.
+Y = 2.
 ```
 
-**More solutions.** A cell that is `retry.` asks the latest query that can
-still give one for its next solution:
+**More solutions.** An answer that ends with ` ;` is of a query that can
+give another solution, and one that ends with a full stop is its last. A
+cell that is `retry.` asks the latest query that can still give one for its
+next solution:
 
 ```prolog
 member(X, [a, b, c]).
 ```
 ```
-X = a
+X = a ;
 ```
 ```prolog
 retry.
 ```
 ```
-X = b
+X = b ;
 ```
 
 **Earlier values.** In a query, `$X` stands for the value `X` had in an
@@ -87,7 +89,7 @@ Y is $X * 2.
 ```
 ```
 Y = 6,
-X = 3
+X = 3.
 ```
 
 **Constraints** are shown where bindings would be:
@@ -99,7 +101,7 @@ use_module(library(clpfd)).
 X in 1..5, X #> 3.
 ```
 ```
-X in 4..5
+X in 4..5.
 ```
 
 **Input.** A goal that reads, such as `read(X)`, asks for a line in a box
@@ -120,7 +122,7 @@ grandparent(X, Z) :- parent(X, Y), parent(Y, Z).
 grandparent(tom, Who).
 ```
 ```
-Who = ann
+Who = ann.
 ```
 
 A clause written as a query is not run; the cell says where it belongs:
@@ -270,7 +272,7 @@ colour(blue).
 findall(C, colour(C), L).
 ```
 ```
-L = [red, blue]
+L = [red, blue].
 ```
 ```prolog
 open('out.txt', write, _S), write(_S, hello), close(_S).
@@ -342,7 +344,7 @@ jupyter:trace(append([1], [2], L)).
 ```
    Call: (1) append([1], [2], _G122751)
    Exit: (1) append([1], [2], [1, 2])
-L = [1, 2]
+L = [1, 2].
 ```
 
 A notebook cannot answer at a breakpoint, so the tracer prints every port
@@ -351,12 +353,13 @@ and never stops at one. A cell that is `trace`, `trace/1`, `trace/2` or
 
 ### If the runtime stops answering
 
-The runtime that runs the engine can stop answering, or not start. It
-happens in Safari, and in the other browsers built on WebKit: .NET's threads
-there stop taking calls from the page after some thousands of them, and a
-.NET app with nothing of Shumway in it does the same. Safari on a Mac does
-it; on an iPhone or an iPad it has not been checked. When it happens, the
-cell that was waiting says so, and so does every cell after it in the page:
+In Safari, and in the other browsers built on WebKit, a thread of the
+runtime that runs the engine now and then misses a call from the page; a
+.NET app with nothing of Shumway in it does the same. The page notices a
+call that is late and wakes the runtime's threads, so the cell answers a
+few seconds later than it would have. Should the runtime still not answer,
+or not start, the cell that was waiting says so, and so does every cell
+after it in the page:
 
 ```
 The page's runtime stopped answering, and only reloading the page starts it again. Save the notebook first: its files stay, and the sessions start again with nothing loaded.

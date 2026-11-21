@@ -100,7 +100,13 @@ function additional(entry: any, texts: ITexts, rendered: IRendered): void {
   if (Array.isArray(entry.predicate_atoms)) rendered.predicates = entry.predicate_atoms.map(String);
 }
 
-function success(entry: any, texts: ITexts, rendered: IRendered): void {
+/** How an answer ends when the server says which queries are alive
+ *  (ADR-074), as a top level's does: with ` ;` when the query can give
+ *  another solution, and with a full stop when it cannot. */
+const ending = (entry: any, marked: boolean): string =>
+  !marked ? '' : typeof entry?.alive === 'number' ? ' ;' : '.';
+
+function success(entry: any, texts: ITexts, rendered: IRendered, marked: boolean): void {
   additional(entry, texts, rendered);
   if (entry.output) rendered.outputs.push(plain(String(entry.output)));
   if (entry.type !== 'query') return;
@@ -114,13 +120,13 @@ function success(entry: any, texts: ITexts, rendered: IRendered): void {
     }
   }
   for (const goal of entry.residual_goals ?? []) lines.push(String(goal));
-  rendered.outputs.push(plain(lines.length > 0 ? lines.join(',\n') : texts.success, BOLD));
+  rendered.outputs.push(plain((lines.length > 0 ? lines.join(',\n') : texts.success) + ending(entry, marked), BOLD));
 }
 
 /** The text of an error, under the key of whichever server sent it. */
 const message = (data: any): string => String(data?.prolog_message ?? data?.logtalk_message ?? '');
 
-function failed(error: any, texts: ITexts, rendered: IRendered): void {
+function failed(error: any, texts: ITexts, rendered: IRendered, marked = false): void {
   const data = error?.data ?? {};
   additional(data, texts, rendered);
   let output = '';
@@ -134,7 +140,7 @@ function failed(error: any, texts: ITexts, rendered: IRendered): void {
   switch (error?.code) {
     case -4711:
       ename = 'failure';
-      text = message(data) || texts.failure;
+      text = message(data) || texts.failure + (marked ? '.' : '');
       break;
     case -4712:
       ename = 'exception';
@@ -162,6 +168,10 @@ export function render(response: any, texts: ITexts): IRendered {
   }
   const result = response?.result;
   if (result === null || typeof result !== 'object') return rendered;   // an empty cell
+  // A server that says which queries are alive has its answers end as a
+  // top level's do. One that does not, the Logtalk variant's, has them as
+  // they were.
+  const marked = Array.isArray(result.alive);
 
   for (let index = 1; String(index) in result; index++) {
     const entry = result[String(index)];
@@ -169,9 +179,9 @@ export function render(response: any, texts: ITexts): IRendered {
       rendered.outputs.push(plain(texts.noticePrefix + 'Halted. The next cell starts a new session.'));
       rendered.stopped = true;
     } else if (entry.status === 'error') {
-      failed(entry.error, texts, rendered);
+      failed(entry.error, texts, rendered, marked);
     } else if (entry.status === 'success') {
-      success(entry, texts, rendered);
+      success(entry, texts, rendered, marked);
     }
   }
   return rendered;
