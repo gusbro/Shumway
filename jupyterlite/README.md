@@ -81,6 +81,10 @@ is refused with a message that says how to free a place. `stall.mjs` serves
 it with short waits: a long query ends while the runtime answers, and with
 a timeout of 0, which nothing ends in, the cells say to reload the page,
 for a runtime that stops answering and for one that does not start.
+`mirror.mjs` needs neither: it checks that the push after a cell uses the
+listing of the engine's files that the cell's call took, and lists them
+again when a pull or another push touched them since, so that an older
+listing deletes nothing from the contents.
 
 A step of `kernel.mjs` that does not end in time (a cell has 90 s) ends the
 run, which says what the page did last and whether the page, its contents,
@@ -88,11 +92,11 @@ its storage and a new kernel still answer. With `NOTEBOOK_CHECK_OUTPUT` set
 to a directory, a screenshot and the page's console go there too; CI keeps
 them when the job fails.
 
-CI runs `kernel.mjs` and `limit.mjs` in Chromium, Firefox and WebKit, and
-`stall.mjs` in Chromium and Firefox: in WebKit its three pages, each
-starting the runtime, meet the runtime's own stops too often to say
-anything of the kernel (`.github/workflows/notebooks.yml`). It runs them on
-a pull request or a push to `main`
+CI runs `mirror.mjs` once, `kernel.mjs` and `limit.mjs` in Chromium,
+Firefox and WebKit, and `stall.mjs` in Chromium and Firefox: in WebKit its
+three pages, each starting the runtime, meet the runtime's own stops too
+often to say anything of the kernel (`.github/workflows/notebooks.yml`). It
+runs them on a pull request or a push to `main`
 that changes `jupyterlite/` or the engine: the answers a notebook shows come
 from the engine.
 
@@ -164,9 +168,14 @@ republishes the demo with the cached site.
 
 A runtime that stops answering, or does not start in time, is one only a
 reload starts again: the cell that was waiting, and every cell after it in
-the page, says so. It has been seen in WebKit, where .NET's threads now and
-then stop taking calls from the page; a cell's query may take as long as
-it needs, since the trivial call answers while it runs.
+the page, says so. It has been seen in WebKit and in Safari, on macOS and
+iOS, where .NET's threads stop taking calls from the page after some
+thousands of them, and sooner when an export answers with a task that is
+already complete; a threaded .NET app with an empty export, and nothing of
+Shumway in it, does it too. So a cell makes one call, and every call
+answers a turn later: in Safari on macOS, a notebook that stopped after
+about fifty cells ran five thousand without stopping. A cell's query may
+take as long as it needs, since the trivial call answers while it runs.
 
 `site/overrides.json` holds the JupyterLab settings the site starts with.
 It turns on `autoStartDefaultKernel`, so that a notebook saved by another

@@ -12,6 +12,10 @@ export interface ISessionApi {
   SessionLimit(limit: number): Promise<number>;
   SessionCreate(kernelId: string, bundle: string, directory: string): Promise<string>;
   SessionRequest(kernelId: string, line: string): Promise<string>;
+  /** A cell's request, the files under filesRoot as FilesList lists them,
+   *  and the libraries compiled on demand: {answer, files, compiled}. */
+  SessionCall(kernelId: string, line: string, filesRoot: string): Promise<string>;
+  SessionAlive(): Promise<boolean>;
   SessionCancel(kernelId: string): Promise<boolean>;
   SessionSupplyInput(kernelId: string, line: string): Promise<void>;
   SessionSupplyEndOfFile(kernelId: string): Promise<void>;
@@ -23,8 +27,18 @@ export interface ISessionApi {
 export interface IMirror {
   /** Contents to the engine's files. */
   pull(): Promise<{ copied: number; removed: number }>;
-  /** The engine's files to the contents. */
-  push(): Promise<{ copied: number; removed: number }>;
+  /** The engine's files to the contents: those `given` lists, when no copy
+   *  touched the engine's files since `given.since`. */
+  push(given?: IListing): Promise<{ copied: number; removed: number }>;
+  /** Where the engine's side is, for an IListing taken from now on. */
+  since(): number;
+}
+
+/** The engine's files, as FilesList lists them, taken with another call
+ *  begun when the mirror's since() was `since`. */
+export interface IListing {
+  since: number;
+  files: unknown;
 }
 
 /** The collections of libraries, kept in the browser's storage with the
@@ -32,8 +46,10 @@ export interface IMirror {
 export interface ILibraries {
   /** Brings in those another tab stored since the last cell. */
   sync(): Promise<unknown>;
-  /** Stores the libraries a cell compiled because it used them. */
-  keep(): Promise<unknown>;
+  /** Stores the libraries a cell compiled because it used them: those
+   *  `taken` names, one `name<TAB>library` a line, or those the engine is
+   *  asked for. */
+  keep(taken?: string): Promise<unknown>;
 }
 
 export interface IRuntime {
@@ -117,8 +133,8 @@ async function start(contents: Contents.IManager): Promise<IRuntime> {
   const { session, files, libraries, api } = booted;
 
   // From here on, every step that waits for the runtime is watched: after
-  // `patience` seconds the runtime is asked a trivial call (SessionLimit(0)
-  // changes nothing), again every `patience` seconds; one that does not
+  // `patience` seconds the runtime is asked a trivial call (SessionAlive),
+  // again every `patience` seconds; one that does not
   // answer in `timeout` seconds means it stopped.
   const patience = seconds('shumwayRuntimePatience', 10);
   const timeout = seconds('shumwayRuntimeTimeout', 30);
@@ -132,7 +148,7 @@ async function start(contents: Contents.IManager): Promise<IRuntime> {
       const ended = await Promise.race([done, after(patience)]);
       if (ended) return ended.value;
       if (stopped) throw new RuntimeStopped(stopped);
-      const answered = await Promise.race([api.SessionLimit(0).then(() => true), after(timeout)]);
+      const answered = await Promise.race([api.SessionAlive().then(() => true), after(timeout)]);
       if (!answered) stopped = STOPPED;
     }
   };
@@ -159,14 +175,16 @@ async function start(contents: Contents.IManager): Promise<IRuntime> {
     await api.SessionSupplyImport(kernelId, JSON.stringify(answer));
   });
 
+  const memory = files.memoryFiles(api, DRIVE);
   return {
     api,
-    mirror: files.createMirror(files.memoryFiles(api, DRIVE), files.contentsStore(contents), {
-      oneAtATime: true
-    }),
+    mirror: {
+      ...files.createMirror(memory, files.contentsStore(contents), { oneAtATime: true }),
+      since: () => memory.since()
+    },
     libraries: {
       sync: () => libraries.syncFromStorage(),
-      keep: () => libraries.keepCompiledOnDemand()
+      keep: (taken?: string) => libraries.keepCompiledOnDemand(taken ?? null)
     },
     onInput(kernelId, handler) {
       if (handler) waiting.set(kernelId, handler);
