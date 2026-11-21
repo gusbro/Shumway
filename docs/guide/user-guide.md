@@ -29,7 +29,8 @@ reference see [`predicates.md`](predicates.md).
 
 Related guides outside this document: [embedded native C](embedded-native-c.md)
 (`:- c` / `{…}` blocks), [the interop guide](interop.md) (every C# ↔ Prolog
-mechanism, routed), and [WebShumway](webshumway.md) (the engine in a browser).
+mechanism, routed), [WebShumway](webshumway.md) (the engine in a browser), and
+[the Jupyter notebooks](jupyter.md) (Prolog in notebooks, in a browser).
 
 ---
 

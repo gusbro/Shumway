@@ -143,7 +143,7 @@ library sit in one engine: see [ADR-040](../architecture/adr/040-multi-dialect-s
 
 Libraries are **global**: shared by every workspace, unaffected by switching,
 and not part of a workspace's zip or share link. The
-[Jupyter notebooks](../../jupyterlite/README.md#libraries) published beside
+[Jupyter notebooks](jupyter.md#libraries) published beside
 the demo share them too: a collection imported here is there for the next
 cell of a notebook, and one a notebook imports is here after a reload.
 
