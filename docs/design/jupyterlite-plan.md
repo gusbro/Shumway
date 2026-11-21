@@ -252,6 +252,10 @@ finding no button after a restart.
 
 ## Coordination with Paulo Moura (Hercutalk, Logtalk)
 
+The plan for Hercutalk web, with where each piece lives, who does what and
+how each side publishes, is `jupyterlite-hercutalk-web.md`. It comes after
+the Prolog variant is complete.
+
 To raise early, because several items change his code or depend on it:
 
 1. Protocol document and versioning, and the `protocol` method.
