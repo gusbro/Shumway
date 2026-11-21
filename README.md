@@ -91,7 +91,7 @@ in the browser, with example notebooks to start from
   load under per-subtree dialects, and [Logtalk](docs/guide/logtalk.md) runs on it
   as a first-class backend, supported by Logtalk itself since 3.103.0.
 - **Runs in a browser**: the same engine on WebAssembly as a static site with
-  no backend ([WebShumway](docs/guide/webshumway.md)).
+  no backend ([WebShumway](docs/guide/webshumway.md), [Jupyter](docs/guide/jupyter.md)).
 - **Source-level debugging** in [Visual Studio and VS Code](docs/guide/debugger.md),
   with the same capabilities in [WebShumway](docs/guide/webshumway.md)'s embedded
   debugger: breakpoints
