@@ -3,8 +3,10 @@
 // and Stop. The solutions asked for are shown together under the query's
 // cell and saved with the notebook; only the latest query alive can be
 // asked; Stop ends an All over a query with solutions without end; a cell
-// run again ends the query its run before left; `;` in command mode asks
-// the next solution; and an answer whose session ended has no buttons.
+// run again ends the query its run before left; a button leaves the
+// notebook where running the cell does, on the cell below; `;` in command
+// mode asks the next solution; and an answer whose session ended has no
+// buttons.
 //
 //   node answers.mjs <deployment dir> [chromium|firefox|webkit]
 import { webkit, chromium, firefox } from 'playwright';
@@ -53,11 +55,15 @@ const press = (index, choice) => guarded(page.evaluate(({ index, choice }) => {
   buttons[buttons.length - 1].click();
 }, { index, choice }), MINUTE, `pressing ${choice} in cell ${index}`);
 
-/** The kernel has nothing more to do, and the page has drawn what it sent. */
+/** The kernel has nothing more to do, no answer is being asked for more,
+ *  and the page has drawn what was sent. Not the kernel alone: between two
+ *  requests of an All it is idle for a moment. */
 const settled = async () => {
   await guarded(page.waitForFunction(
-    () => window.answersPanel.sessionContext.session?.kernel?.status === 'idle', null, { timeout: 90000, polling: 100 }),
-  2 * MINUTE, 'the kernel to be idle');
+    () => window.answersPanel.sessionContext.session?.kernel?.status === 'idle'
+      && !window.answersPanel.node.querySelector('.shumway-answer-choices[aria-busy="true"]'),
+    null, { timeout: 90000, polling: 100 }),
+  2 * MINUTE, 'the kernel to be idle and no answer to be asked for more');
   await page.waitForTimeout(300);
 };
 
@@ -200,12 +206,39 @@ try {
   }), 2 * MINUTE, 'saving the notebook');
   check(same(saved, ['X = 1 ;', 'X = 2 ;']), 'the solutions asked for are saved with the notebook', saved);
 
+  // A button leaves the notebook where running the cell does: the cell
+  // below is the active one and the keys are the notebook's, so `;` asks the
+  // latest query for its next solution though its cell is not the active
+  // one, and Shift+Enter runs the cell below.
+  await runCell(3); await settled();
+  await press(3, 'next'); await settled();
+  const afterButton = await page.evaluate(() => ({
+    active: window.answersPanel.content.activeCellIndex,
+    keysInNotebook: window.answersPanel.content.node.contains(document.activeElement)
+  }));
+  await page.keyboard.press(';'); await settled();
+  const afterKey = (await cells())[3];
+  await page.keyboard.press('Shift+Enter'); await settled();
+  const afterRun = await page.evaluate(() => ({
+    active: window.answersPanel.content.activeCellIndex,
+    ran: window.answersPanel.content.widgets[4].model.executionCount !== null
+  }));
+  check(afterButton.active === 4 && afterButton.keysInNotebook
+      && same(afterKey.texts, ['W = 1 ;', 'W = 2 ;', 'W = 3.']) && afterRun.ran && afterRun.active === 5,
+    'a button leaves the cell below active, as running the cell does: ; and Shift+Enter go on from there',
+    { afterButton, afterKey, afterRun });
+
   // A next solution that never comes: Stop cannot end it between two
   // solutions, the answer says so after a while, and an interrupt ends it
   // with the session.
   await runCell(5); await settled();
   await press(5, 'five');
   await page.waitForTimeout(500);
+  // The last cell: a button adds one below it, as running it does.
+  const added = await page.evaluate(() => ({
+    cells: window.answersPanel.content.widgets.length, active: window.answersPanel.content.activeCellIndex
+  }));
+  check(added.cells === 7 && added.active === 6, 'a button in the last cell adds a cell below it', added);
   await press(5, 'stop');
   const late = await guarded(page.waitForFunction(
     () => window.answersPanel.content.widgets[5].node.querySelector('.shumway-answer-late')?.textContent ?? null,

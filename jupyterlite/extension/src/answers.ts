@@ -20,15 +20,18 @@ const LATE_MS = 5000;
 /** The outputs of a cell, as much of their model as is used here. */
 interface IOutputs {
   readonly length: number;
-  get(index: number): { toJSON(): any };
+  get(index: number): { toJSON(): any; data?: { [mime: string]: unknown } };
   set(index: number, value: any): void;
   add(value: any): number;
 }
 
-/** Where an answer is: its cell's outputs and the kernel of its notebook. */
+/** Where an answer is: its cell's outputs, the kernel of its notebook, and
+ *  the notebook and the cell themselves, as much of them as is used here. */
 interface IPlace {
   outputs: IOutputs;
   kernel: Kernel.IKernelConnection;
+  notebook: any;
+  cell: any;
 }
 
 /** The notebook cell that holds `node`, found through the shell and not
@@ -41,7 +44,8 @@ function placeOf(app: JupyterFrontEnd, node: HTMLElement): IPlace | null {
     const kernel = panel?.sessionContext?.session?.kernel;
     if (!Array.isArray(cells) || !kernel) continue;
     for (const cell of cells) {
-      if (cell?.node?.contains(node) && cell.model?.outputs) return { outputs: cell.model.outputs, kernel };
+      if (cell?.node?.contains(node) && cell.model?.outputs)
+        return { outputs: cell.model.outputs, kernel, notebook: panel.content, cell };
     }
   }
   return null;
@@ -78,6 +82,25 @@ function endWithFullStop(outputs: IOutputs, answer: IAnswer): void {
     });
     return;
   }
+}
+
+/** After a button was pressed, the notebook is where running the cell
+ *  leaves it: the cell below is the active one, a new one when there was
+ *  none, and the keys are the notebook's again. The button that had them is
+ *  gone when its answer is drawn again. */
+function advance(app: JupyterFrontEnd, place: IPlace): void {
+  const { notebook, cell } = place;
+  const index: number = notebook.widgets.indexOf(cell);
+  if (index < 0) return;
+  notebook.mode = 'command';
+  if (index === notebook.widgets.length - 1) {
+    notebook.activeCellIndex = index;
+    void app.commands.execute('notebook:insert-cell-below');
+  } else {
+    notebook.activeCellIndex = index + 1;
+    notebook.deselectAll?.();
+  }
+  notebook.activate?.();
 }
 
 type Choice = 'next' | 'five' | 'all' | 'stop';
@@ -228,6 +251,9 @@ export class Answer extends Widget implements IRenderMime.IRenderer {
 
     const bar = document.createElement('div');
     bar.className = 'shumway-answer-choices';
+    // Says, to a reader of the page that is not looking at it, that the
+    // query is being asked: solutions are on their way.
+    bar.setAttribute('aria-busy', String(mine));
     for (const { choice, label, title } of BUTTONS) {
       const button = document.createElement('button');
       button.type = 'button';
@@ -236,7 +262,10 @@ export class Answer extends Widget implements IRenderMime.IRenderer {
       button.textContent = choice === 'stop' && mine && asking?.stopping ? 'Stopping…' : label;
       button.title = latest ? title : 'A later query is still open: its solutions come first';
       button.disabled = !latest || (!!asking && !(choice === 'stop' && mine && asking.several && !asking.stopping));
-      button.addEventListener('click', () => { void choose(place!, answer, choice); });
+      button.addEventListener('click', () => {
+        void choose(place!, answer, choice);
+        advance(this._app, place!);
+      });
       bar.appendChild(button);
     }
     this.node.appendChild(bar);
@@ -259,15 +288,32 @@ export class Answer extends Widget implements IRenderMime.IRenderer {
   private _stopListening: () => void;
 }
 
-/** Asks the next solution of the answer in the notebook's active cell that
- *  has its buttons. Answers whether there was one to ask. */
+/** Asks the next solution of the notebook's latest query alive, which is
+ *  the one that can be asked, whichever cell is the active one: after a cell
+ *  runs, or a button is pressed, the active cell is the one below. Answers
+ *  whether there was one to ask. */
 export function nextSolution(app: JupyterFrontEnd): boolean {
-  const cell = (app.shell.currentWidget as any)?.content?.activeCell;
-  const buttons: NodeListOf<HTMLButtonElement> | undefined =
-    cell?.node?.querySelectorAll('.shumway-answer-choice[data-choice="next"]:not([disabled])');
-  const button = buttons?.[buttons.length - 1];
-  if (!button) return false;
-  button.click();
+  const panel = app.shell.currentWidget as any;
+  const cells = panel?.content?.widgets;
+  const kernel: Kernel.IKernelConnection | undefined = panel?.sessionContext?.session?.kernel;
+  if (!Array.isArray(cells) || !kernel) return false;
+  const queries = queriesOf(kernel.id);
+  if (!queries || queries.alive.length === 0 || askingOf(kernel.id)) return false;
+  const query = queries.alive[queries.alive.length - 1];
+  // The latest solution shown of that query, in whichever cell it is: under
+  // the query's own, or under one that retried it.
+  let latest: { place: IPlace; answer: IAnswer } | null = null;
+  for (const cell of cells) {
+    const outputs: IOutputs | undefined = cell?.model?.outputs;
+    for (let index = 0; outputs && index < outputs.length; index++) {
+      const answer = outputs.get(index).data?.[ANSWER] as IAnswer | undefined;
+      if (!answer || answer.session !== queries.session || answer.query !== query) continue;
+      if (!latest || answer.solution > latest.answer.solution)
+        latest = { place: { outputs, kernel, notebook: panel.content, cell }, answer };
+    }
+  }
+  if (!latest) return false;
+  void choose(latest.place, latest.answer, 'next');
   return true;
 }
 

@@ -171,7 +171,11 @@ notebook. What the buttons do:
   page share which queries are alive (`extension/src/core/queries.ts`), and
   an answer names the session that gave it.
 
-`;` in command mode asks the next solution of the active cell's answer.
+A button leaves the cell below the answer's as the active one, a new cell
+when there was none, and gives the keys back to the notebook: what running
+a cell does. `;` in command mode asks the next solution of the latest query
+alive, whichever cell is the active one, since after a run or a button it
+is the one below.
 
 ## Graphs
 
