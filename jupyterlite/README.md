@@ -81,6 +81,9 @@ is refused with a message that says how to free a place. `stall.mjs` serves
 it with short waits: a long query ends while the runtime answers, and with
 a timeout of 0, which nothing ends in, the cells say to reload the page,
 for a runtime that stops answering and for one that does not start.
+`answers.mjs` presses the buttons under an answer (Answers, below): Next,
+5, All and Stop, an All over a query with solutions without end that Stop
+ends, a cell run again, the key, and a restart.
 `mirror.mjs` and `threads.mjs` need neither. `mirror.mjs` checks that the
 push after a cell uses the listing of the engine's files that the cell's
 call took, and lists them again when a pull or another push touched them
@@ -95,8 +98,8 @@ its storage and a new kernel still answer. With `NOTEBOOK_CHECK_OUTPUT` set
 to a directory, a screenshot and the page's console go there too; CI keeps
 them when the job fails.
 
-CI runs `mirror.mjs` and `threads.mjs` once, and `kernel.mjs`, `limit.mjs`
-and `stall.mjs` in Chromium, Firefox and WebKit
+CI runs `mirror.mjs` and `threads.mjs` once, and `kernel.mjs`, `limit.mjs`,
+`stall.mjs` and `answers.mjs` in Chromium, Firefox and WebKit
 (`.github/workflows/notebooks.yml`). It runs them on a pull request or a
 push to `main` that changes `jupyterlite/` or the engine: the answers a
 notebook shows come from the engine.
@@ -132,9 +135,36 @@ A query that fails answers `false.`
 The server says which is which (ADR-074): a solution that left choice
 points carries the number of its query, `alive`, and every result lists the
 queries alive, oldest first. Its methods `more` and `stop` ask the latest
-query for several solutions and end a query by cutting its choice points;
-nothing in the page calls them yet. A cell that is `retry.` gives the next
-solution of the latest query, as in the reference.
+query for several solutions and end a query by cutting its choice points.
+A cell that is `retry.` gives the next solution of the latest query, as in
+the reference.
+
+Under the answer of a query alive the page draws a top level's choices
+(`extension/src/answers.ts`): **Next**, **5** (on to the next multiple of
+five solutions), **All** and **Stop**. The solutions asked for are added to
+the outputs of the cell the answer is in, so they are saved with the
+notebook. What the buttons do:
+
+- The page asks through an execute request with no code and no history,
+  which names the query under `shumway.queries` in its `user_expressions`;
+  the kernel sends the server `more` or `stop`, and shows the solutions as
+  it shows a cell's.
+- **All** asks five solutions a request until the query has no more. Stop
+  is looked at between two requests, so it never cuts a solution half way:
+  the session goes on with all it had. A solution that does not come is
+  ended by an interrupt, which restarts the session.
+- Only the latest query alive can be asked, since a solution of an older
+  one is found by undoing the later ones: the buttons of an older query are
+  disabled until the later ones end.
+- A cell run again ends the query its run before left alive.
+- The buttons are under the latest solution of the query that the page
+  draws. An output area stops drawing after some tens of outputs, and Stop
+  has to stay where it can be pressed.
+- An answer of a session that ended has no buttons: the kernel and the
+  page share which queries are alive (`extension/src/core/queries.ts`), and
+  an answer names the session that gave it.
+
+`;` in command mode asks the next solution of the active cell's answer.
 
 ## Graphs
 

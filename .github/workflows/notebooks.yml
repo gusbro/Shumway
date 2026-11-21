@@ -142,6 +142,13 @@ jobs:
           NOTEBOOK_CHECK_OUTPUT: ${{ runner.temp }}/notebook-check
         run: node stall.mjs ../../site ${{ matrix.browser }}
 
+      - name: answers.mjs
+        if: success() || failure()
+        timeout-minutes: 10
+        env:
+          NOTEBOOK_CHECK_OUTPUT: ${{ runner.temp }}/notebook-check
+        run: node answers.mjs ../../site ${{ matrix.browser }}
+
       - name: Keep the diagnosis of a hang
         if: failure()
         uses: actions/upload-artifact@v4

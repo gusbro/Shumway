@@ -3,6 +3,7 @@
 // browser in here: a response goes in, the outputs to show come out.
 
 import { plotOf, VEGA_LITE } from './data';
+import { ANSWER } from './queries';
 
 /** The texts that are the variant's own. */
 export interface ITexts {
@@ -27,6 +28,9 @@ export interface IRendered {
   stopped: boolean;
   /** The names to complete with, when the answer brought them. */
   predicates: string[] | null;
+  /** The queries alive after the response, oldest first, when the server
+   *  says them (ADR-074). */
+  alive: number[] | null;
 }
 
 const BOLD = '\x1b[1m';
@@ -120,7 +124,12 @@ function success(entry: any, texts: ITexts, rendered: IRendered, marked: boolean
     }
   }
   for (const goal of entry.residual_goals ?? []) lines.push(String(goal));
-  rendered.outputs.push(plain((lines.length > 0 ? lines.join(',\n') : texts.success) + ending(entry, marked), BOLD));
+  const text = (lines.length > 0 ? lines.join(',\n') : texts.success) + ending(entry, marked);
+  // The answer of a query that can give another solution names the query:
+  // the page draws the choices of a top level under it.
+  rendered.outputs.push(marked && typeof entry.alive === 'number'
+    ? { ...plain(text, BOLD), [ANSWER]: { query: entry.alive, text } }
+    : plain(text, BOLD));
 }
 
 /** The text of an error, under the key of whichever server sent it. */
@@ -160,7 +169,7 @@ function failed(error: any, texts: ITexts, rendered: IRendered, marked = false):
 
 /** The outputs of one response to a `call`. */
 export function render(response: any, texts: ITexts): IRendered {
-  const rendered: IRendered = { outputs: [], error: null, stopped: false, predicates: null };
+  const rendered: IRendered = { outputs: [], error: null, stopped: false, predicates: null, alive: null };
   // A cell that does not parse is an error for the whole request.
   if (response?.error) {
     failed(response.error, texts, rendered);
@@ -172,6 +181,7 @@ export function render(response: any, texts: ITexts): IRendered {
   // top level's do. One that does not, the Logtalk variant's, has them as
   // they were.
   const marked = Array.isArray(result.alive);
+  if (marked) rendered.alive = result.alive.map(Number);
 
   for (let index = 1; String(index) in result; index++) {
     const entry = result[String(index)];

@@ -61,9 +61,7 @@ Y = 2.
 ```
 
 **More solutions.** An answer that ends with ` ;` is of a query that can
-give another solution, and one that ends with a full stop is its last. A
-cell that is `retry.` asks the latest query that can still give one for its
-next solution:
+give another solution, and one that ends with a full stop is its last:
 
 ```prolog
 member(X, [a, b, c]).
@@ -71,6 +69,31 @@ member(X, [a, b, c]).
 ```
 X = a ;
 ```
+
+Under such an answer are the choices of a top level:
+
+| Button | What it does |
+|---|---|
+| **Next** | shows the next solution, under the same cell. In command mode the key `;` does the same for the active cell |
+| **5** | goes on to the next multiple of five solutions: four after one, five after five |
+| **All** | shows every remaining solution |
+| **Stop** | ends the query: it gives no more solutions, and its answer ends with a full stop |
+
+While **5** or **All** runs, only **Stop** can be pressed, and it ends the
+query when the solutions being computed come: a query is never cut half
+way, so the session goes on with all it had. A solution that does not come
+is ended with **Interrupt**, which restarts the session.
+
+When several queries can give another solution, the buttons of the latest
+are the ones that can be pressed; those of an earlier one can be pressed
+again when the later ones have no more solutions or were stopped. Running a
+cell again ends the query its run before left. The solutions asked for are
+saved with the notebook, and an answer of a session that ended has no
+buttons.
+
+A cell that is `retry.` also asks the latest query for its next solution,
+and shows it under itself:
+
 ```prolog
 retry.
 ```
