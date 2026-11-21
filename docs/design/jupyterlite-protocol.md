@@ -46,6 +46,8 @@ Decisions behind this document: ADR-067 (protocol and server) and ADR-072
 | `version` | none | `"Major.Minor.Patch"` of the backend | Shumway's version |
 | `jupyter_predicate_docs` | none | object: docs of the predicates in `jupyter` | module `jupyter` here (ADR-067 D9) |
 | `protocol` **[ext]** | none | `{"version": 1, "implementation": "shumway"}` | checked by the kernel at session start (ADR-073) |
+| `more` **[ext]** | `{"query": <id>, "count": <n>}` | up to `n` more solutions of the query, as entries of §3, and the queries alive | ADR-074; not built |
+| `stop` **[ext]** | `{"query": <id>}` | the queries alive | ends the query: its choice points are cut. ADR-074; not built |
 
 An unknown method gets a `method_not_found` error.
 
@@ -176,6 +178,15 @@ and proposed to Hercutalk so that both variants show constraints alike.
   The queries that had a solution are a stack: when the latest has no more,
   `retry` answers a failure and the one before it becomes the latest. With
   no query left, the error is `no_active_call`.
+- **More solutions from the answer [ext]** (ADR-074, not built). The
+  `success` entry of a solution that left choice points carries
+  `"alive": <id>`, the query's identifier in its session, and every result
+  of `call`, `more` and `stop` lists the queries alive, oldest first. `more`
+  asks the latest for up to `count` more solutions; on another query alive
+  it is an error that says so, and on one that is not alive the error is
+  `no_active_call`. A query with no next solution answers a failure entry.
+  `stop` ends a query; one that is not the latest is ended when it becomes
+  the latest, and gives no solution in between. `retry` is unchanged.
 - **`halt`/`jupyter:halt`** answers `{"status": "halt"}` and stops the
   server. What follows it in the cell does not run.
 - **Bindings.** A variable is shown with its value written with quotes where

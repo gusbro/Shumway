@@ -213,6 +213,25 @@ type. The static SVG fallback for GitHub is not done.
 Configurable callback in `jupyter_widgets`, `jupyter_forms` and
 `jupyter_inputs`. These files are Apache-2.0 and keep that licence.
 
+## Phase 7: More solutions from the answer (ADR-074)
+
+In this order, each a pull request:
+
+1. **The answer reads as the top level's.** The server says which solutions
+   left choice points (`alive`), and the kernel ends an answer with ` ;` or
+   `.`
+2. **`more` and `stop` in the server**, with the queries alive in every
+   result, and a query ended when its cell runs again.
+3. **The buttons**: Next, 5, All and Stop under the answer of a query
+   alive, the solutions together under its cell, and Stop between
+   solutions only.
+4. **The key**: `;` in command mode for the next solution.
+
+**Acceptance:** the feature-table rows of ADR-074, each with a test: the
+server's own for `more` and `stop`, and the browser check clicking each
+button, stopping an `All` over a query with solutions without end, and
+finding no button after a restart.
+
 ## Engine track, in parallel
 
 - **ADR-071**, working directory per engine: accepted and implemented
