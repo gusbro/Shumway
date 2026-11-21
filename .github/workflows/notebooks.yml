@@ -132,12 +132,11 @@ jobs:
         timeout-minutes: 10
         run: node limit.mjs ../../site ${{ matrix.browser }}
 
-      # Not in WebKit: what it checks is the kernel's own JavaScript, the same
-      # in every browser, and each of its three pages starts the runtime,
-      # which in WebKit now and then stops answering, or never starts, for
-      # reasons of its own (jupyterlite/README.md, Configuration).
+      # In WebKit too: a thread of the runtime that loses its wait is woken
+      # (jupyterlite/README.md, Configuration), so the short waits of this
+      # check no longer take a call that was only late for a stopped runtime.
       - name: stall.mjs
-        if: (success() || failure()) && matrix.browser != 'webkit'
+        if: success() || failure()
         timeout-minutes: 10
         env:
           NOTEBOOK_CHECK_OUTPUT: ${{ runner.temp }}/notebook-check
