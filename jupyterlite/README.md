@@ -81,6 +81,13 @@ is refused with a message that says how to free a place. `stall.mjs` serves
 it with short waits: a long query ends while the runtime answers, and with
 a timeout of 0, which nothing ends in, the cells say to reload the page,
 for a runtime that stops answering and for one that does not start.
+`mirror.mjs` and `threads.mjs` need neither. `mirror.mjs` checks that the
+push after a cell uses the listing of the engine's files that the cell's
+call took, and lists them again when a pull or another push touched them
+since, so that an older listing deletes nothing from the contents.
+`threads.mjs`, on shared memory and stand-ins for the runtime's thread
+workers, checks that a call still out wakes the threads that lost their
+wait, and no other.
 
 A step of `kernel.mjs` that does not end in time (a cell has 90 s) ends the
 run, which says what the page did last and whether the page, its contents,
@@ -88,13 +95,13 @@ its storage and a new kernel still answer. With `NOTEBOOK_CHECK_OUTPUT` set
 to a directory, a screenshot and the page's console go there too; CI keeps
 them when the job fails.
 
-CI runs `kernel.mjs` and `limit.mjs` in Chromium, Firefox and WebKit, and
-`stall.mjs` in Chromium and Firefox: in WebKit its three pages, each
-starting the runtime, meet the runtime's own stops too often to say
-anything of the kernel (`.github/workflows/notebooks.yml`). It runs them on
-a pull request or a push to `main`
-that changes `jupyterlite/` or the engine: the answers a notebook shows come
-from the engine.
+CI runs `mirror.mjs` and `threads.mjs` once, `kernel.mjs` and `limit.mjs`
+in Chromium, Firefox and WebKit, and `stall.mjs` in Chromium and Firefox:
+in WebKit its three pages, each starting the runtime, meet the runtime's
+own stops too often to say anything of the kernel
+(`.github/workflows/notebooks.yml`). It runs them on a pull request or a
+push to `main` that changes `jupyterlite/` or the engine: the answers a
+notebook shows come from the engine.
 
 ## Libraries
 
@@ -164,10 +171,22 @@ republishes the demo with the cached site.
 
 A runtime that stops answering, or does not start in time, is one only a
 reload starts again: the cell that was waiting, and every cell after it in
-the page, says so. It has been seen in WebKit, where .NET's threads now and
-then stop taking calls from the page; a cell's query may take as long as
-it needs, since the trivial call answers while it runs. Whether Safari does
-it too, on a Mac or an iOS simulator, is what `tests/webkit-probe` checks.
+the page, says so. A cell's query may take as long as it needs, since the
+trivial call answers while it runs.
+
+The runtime stops answering in WebKit and in Safari, on macOS and iOS,
+because of .NET's threads: one of them now and then loses the wait on
+which it is told of a message, and the call it was to answer does not come
+back. A threaded .NET app with an empty export, and nothing of Shumway in
+it, does it too. So a call into the runtime still out after 2 s wakes its
+threads (`src/Shumway.Web/wwwroot/threads.js`), and again after 4 s, 8 s
+and so on: a thread that lost its wait is told to look at its messages,
+and the call comes back. The runtime's boot is watched the same way. In Safari on macOS, with it, every run of 5,000
+cells in a row came back (5 of 5). Without it, 4 runs of 10 did, and the
+others stopped after 52 to 1,474 cells. A cell makes one call into the
+runtime, and every call answers a turn later, which makes a thread lose
+its wait less often: about 3 times in such a run, against about 11 with
+the four calls a cell made before.
 
 `site/overrides.json` holds the JupyterLab settings the site starts with.
 It turns on `autoStartDefaultKernel`, so that a notebook saved by another
