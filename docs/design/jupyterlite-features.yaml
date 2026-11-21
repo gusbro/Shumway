@@ -38,10 +38,10 @@ groups:
       - { id: s-query, feature: "query with bindings", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "X = 1, Y = f(X).", phase: 3 }
       - { id: s-multi-term, feature: "several terms in one cell", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "write(hello), nl, X = 1.\nwrite(second).", phase: 3 }
       - { id: s-retry, feature: "retry / jupyter:retry", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "member(X, [a, b]).  →  retry.", phase: 3 }
-      - { id: s-more-mark, feature: "an answer says whether there are more: `;` or `.` [ext]", hercutalk_desktop: not_yet_supported, shumway_prolog_web: not_yet_supported, note: "ADR-074", test: todo, phase: 7 }
-      - { id: s-more-buttons, feature: "Next, 5, All and Stop under the answer of a query alive [ext]", hercutalk_desktop: not_yet_supported, shumway_prolog_web: not_yet_supported, note: "ADR-074: the top level's choices; Stop acts between solutions", test: todo, phase: 7 }
-      - { id: s-more-rerun, feature: "running a cell again ends the query it left alive [ext]", hercutalk_desktop: not_yet_supported, shumway_prolog_web: not_yet_supported, note: "ADR-074", test: todo, phase: 7 }
-      - { id: s-more-key, feature: "`;` in command mode asks the next solution [ext]", hercutalk_desktop: not_yet_supported, shumway_prolog_web: not_yet_supported, note: "ADR-074", test: todo, phase: 7 }
+      - { id: s-more-mark, feature: "an answer says whether there are more: `;` or `.` [ext]", hercutalk_desktop: not_yet_supported, shumway_prolog_web: supported, note: "ADR-074", test: "member(X, [a, b]).  →  X = a ;  →  retry.  →  X = b.", phase: 7 }
+      - { id: s-more-buttons, feature: "Next, 5, All and Stop under the answer of a query alive [ext]", hercutalk_desktop: not_yet_supported, shumway_prolog_web: supported, note: "ADR-074: the top level's choices; Stop acts between solutions", test: "answers.mjs", phase: 7 }
+      - { id: s-more-rerun, feature: "running a cell again ends the query it left alive [ext]", hercutalk_desktop: not_yet_supported, shumway_prolog_web: supported, note: "ADR-074", test: "answers.mjs", phase: 7 }
+      - { id: s-more-key, feature: "`;` in command mode asks the next solution [ext]", hercutalk_desktop: not_yet_supported, shumway_prolog_web: supported, note: "ADR-074: the latest query alive, whichever cell is active", test: "answers.mjs", phase: 7 }
       - { id: s-dollar-var, feature: "$Var reuses a previous binding", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "X = 3.  →  Y is $X + 1.", phase: 3 }
       - { id: s-halt, feature: "halt / jupyter:halt", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "halt.  →  X = after.", phase: 3 }
       - { id: s-errors, feature: "error reporting", hercutalk_desktop: supported, shumway_prolog_web: supported, test: "X is foo + 1.  →  X = .", phase: 3 }

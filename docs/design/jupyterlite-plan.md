@@ -232,6 +232,11 @@ server's own for `more` and `stop`, and the browser check clicking each
 button, stopping an `All` over a query with solutions without end, and
 finding no button after a restart.
 
+**State: done (2026-11-21).** Steps 1 and 2 are PR #281, and 3 and 4 are
+PR #282. PR #283 has what the first use asked for: a button leaves the cell
+below active, and `;` asks the latest query alive. `answers.mjs` is the
+browser check.
+
 ## Engine track, in parallel
 
 - **ADR-071**, working directory per engine: accepted and implemented

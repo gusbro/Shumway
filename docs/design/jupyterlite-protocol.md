@@ -123,6 +123,7 @@ reported for the **first** error, as in Hercutalk.
 | -4711 | failure |
 | -4712 | exception |
 | -4713 | no_active_call |
+| -4714 | not_the_latest_call **[ext]**: `more` on a query alive that is not the latest (ADR-074) |
 | -4714 | invalid_json_response |
 | -4715 | unhandled_exception |
 
@@ -178,7 +179,7 @@ and proposed to Hercutalk so that both variants show constraints alike.
   The queries that had a solution are a stack: when the latest has no more,
   `retry` answers a failure and the one before it becomes the latest. With
   no query left, the error is `no_active_call`.
-- **More solutions from the answer [ext]** (ADR-074, not built). The
+- **More solutions from the answer [ext]** (ADR-074). The
   `success` entry of a solution that left choice points carries
   `"alive": <id>`, the query's identifier in its session, and every result
   of `call`, `more` and `stop` lists the queries alive, oldest first. `more`
@@ -186,7 +187,8 @@ and proposed to Hercutalk so that both variants show constraints alike.
   it is an error that says so, and on one that is not alive the error is
   `no_active_call`. A query with no next solution answers a failure entry.
   `stop` ends a query; one that is not the latest is ended when it becomes
-  the latest, and gives no solution in between. `retry` is unchanged.
+  the latest, and gives no solution in between. To stop a query that is not
+  alive is not an error. `retry` is unchanged.
 - **`halt`/`jupyter:halt`** answers `{"status": "halt"}` and stops the
   server. What follows it in the cell does not run.
 - **Bindings.** A variable is shown with its value written with quotes where

@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (2026-11-20). Nothing is implemented. Records D18.
+Accepted (2026-11-20). Built (2026-11-21): the server and the protocol in
+PR #281, the page in PR #282, and what its first use asked for in PR #283.
+"What was built" says where the building changed the decision. Records D18.
 
 ## Context
 
@@ -96,8 +98,13 @@ and it gives no solution in between.
 interrupt, `halt`, or in a notebook opened again. Its solutions stay as
 text.
 
-**The keyboard.** A command asks the next solution of the active cell's
-answer, with `;` in command mode as its key.
+**The keyboard.** A command asks the next solution of the latest query
+alive, with `;` in command mode as its key.
+
+**A button leaves the notebook where running the cell does**: the cell
+below is the active one, a new cell when there was none, and the keys are
+the notebook's. So the next run goes on from there, and `;` asks whichever
+cell is the active one.
 
 **`retry.` goes on working as in the reference.** Its cell shows the
 solution, and the buttons of the query it retried learn whether the query
@@ -152,13 +159,31 @@ the answer's text and no buttons.
 - The corpus does not cover `more` and `stop`: the reference has neither.
   The server's own tests do, and the browser check clicks the buttons.
 
-## To verify when it is built
+## What was built
 
-- How the kernel tells the answers in the page which queries are alive
-  after each request: an output of a type of its own, or a message of its
-  own on IOPub.
-- That an output the extension adds to a cell after its run ended is saved
-  with the notebook.
+- **The buttons are under the latest solution the page draws**, not the
+  latest asked for. An output area stops drawing its outputs after some
+  tens of them, so with All over a long query the latest solution was not
+  drawn, and Stop was gone when it was needed.
+- **The key and the active cell.** The decision had `;` ask the active
+  cell's answer, and said nothing of where a button leaves the notebook.
+  After a run the active cell is the one below, which has no answer, and a
+  button left the answer's cell active with the keys lost: going on took a
+  click. Both are as the decision now says.
+- **The kernel and the page share which queries are alive** in the page
+  itself, with no message: they are one extension in one page. An answer
+  names its session, its query and which solution it is in a MIME type of
+  its own, beside its plain text.
+- **The page asks through an execute request** with no code and no
+  history, which names the query in its `user_expressions`. The kernel
+  sends `more` or `stop` and shows the solutions as it shows a cell's, and
+  the page adds them to the query's cell.
+- **The two things left to verify held**: an output added to a cell after
+  its run ended is saved with the notebook, and a cell's request carries
+  the cell it came from.
+- **The protocol**: `more` on a query alive that is not the latest is
+  error -4714, and `stop` on a query that is not alive is not an error.
+- **While a query is being asked, its buttons say so** (`aria-busy`).
 
 ## Alternatives considered
 
