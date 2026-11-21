@@ -11,6 +11,8 @@
 // yet cross-origin isolated it asserted about SharedArrayBuffer before a single
 // line of main.js had run — no message, no theme, nothing to explain it.
 
+import { wakeThreadsOf, watchCalls, watcher } from './threads.js';
+
 /** Reply tags from queryNext, matching WebShumwayApp. */
 export const SOLUTION = 's';
 export const LAST = 'l';
@@ -27,6 +29,24 @@ export const wasmMemoryBytes = () => wasmModule?.HEAPU8?.byteLength ?? 0;
 
 /** How many threads the runtime was asked to make at boot. */
 export const threadPoolSize = () => poolSize;
+
+// A call into the runtime, or a step of its boot, still out after a while
+// wakes its threads (threads.js): in WebKit a thread now and then loses the
+// wait on which it is told of a message, and the call would never come back.
+const wakes = { times: 0, told: 0 };
+
+/** Wakes the runtime's threads that wait for a message (threads.js). Answers
+ *  how many were told by message. */
+export function wakeThreads() {
+  const told = wakeThreadsOf(wasmModule);
+  wakes.times++;
+  wakes.told += told;
+  if (told > 0) console.info(`[shumway] the runtime was slow to answer: told ${told} of its threads to look at their messages`);
+  return told;
+}
+
+/** How many times the threads were woken, and how many were told by message. */
+export const threadWakes = () => ({ ...wakes });
 
 let sessionAskForInput = null;
 
@@ -60,8 +80,13 @@ export async function startRuntime({ entry = './_framework/dotnet.js', threads =
   if (!globalThis.crossOriginIsolated)
     throw new Error('the page is not cross-origin isolated');
   const { dotnet } = await import(entry);
-  const runtime = await (threads > 0
-    ? dotnet.withConfig({ pthreadPoolInitialSize: threads }) : dotnet).create();
+  // The boot is watched as the calls are: a thread that loses its wait while
+  // the runtime starts leaves the page starting for good. The runtime hands
+  // its module to preRun, before its threads start.
+  const watch = watcher(wakeThreads);
+  const runtime = await watch((threads > 0 ? dotnet.withConfig({ pthreadPoolInitialSize: threads }) : dotnet)
+    .withModuleConfig({ preRun: [(module) => { wasmModule = module; }] })
+    .create());
   const { setModuleImports, getConfig, getAssemblyExports, runMain } = runtime;
   wasmModule = runtime.Module;
   poolSize = getConfig().pthreadPoolInitialSize ?? 0;
@@ -80,8 +105,8 @@ export async function startRuntime({ entry = './_framework/dotnet.js', threads =
       debugStopped: (json) => ui.debugStopped?.(JSON.parse(json)),
     },
   });
-  engine = (await getAssemblyExports(getConfig().mainAssemblyName)).Shumway.Web.WebShumwayApp;
-  await runMain();
+  engine = watchCalls((await watch(getAssemblyExports(getConfig().mainAssemblyName))).Shumway.Web.WebShumwayApp, watch);
+  await watch(runMain());
   return engine;
 }
 
