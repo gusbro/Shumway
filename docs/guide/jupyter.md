@@ -370,10 +370,10 @@ runtime that stopped from one that is busy.
 
 The kernel speaks the protocol of Hercutalk, Logtalk's Jupyter kernel, and
 answers its magics and `jupyter` predicates as it does, which a corpus of
-sessions recorded from it checks. `print_sld_tree/1` and the widgets are not
-here yet. Shumway adds `jupyter:display/2`, `jupyter:import_library/1` and
-the constraints left on an answer's variables. A notebook saved by
-hhu-stups' Prolog kernel opens with this one.
+sessions recorded from it checks. Hercutalk's widgets are not supported
+yet. Shumway adds `jupyter:display/2`, `jupyter:import_library/1` and the
+constraints left on an answer's variables. A notebook saved by hhu-stups'
+Prolog kernel opens with this one.
 
 ## A site of your own
 
