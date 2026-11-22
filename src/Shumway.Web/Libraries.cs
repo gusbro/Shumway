@@ -750,9 +750,11 @@ internal static partial class WebShumwayApp
 
     /// <summary>Puts a stored bundle back, and answers null, or why it was
     /// not put: what the page stored is not a bundle, as when it was closed
-    /// while storing one. Bytes, not base64: every page load restores every
-    /// stored bundle, and decoding strings of tens of megabytes held the
-    /// page up.</summary>
+    /// while storing one, or its wasm module was baked by another build of
+    /// the engine. The page drops from its storage what is not put back, and
+    /// the library is compiled again when it is used. Bytes, not base64:
+    /// every page load restores every stored bundle, and decoding strings of
+    /// tens of megabytes held the page up.</summary>
     [JSExport]
     internal static Task<string?> LibraryPutBundle(
         string name, string library, [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] bundle)
@@ -761,6 +763,13 @@ internal static partial class WebShumwayApp
             try
             {
                 if (!BundleReader.IsBundle(bundle)) return "not a bundle";
+                // Such a module is refused at every install, and the library
+                // would run from what the tier compiles for itself at every
+                // load. With the tier off the bundle stays: compiled now, it
+                // would carry no module at all.
+                if (RuntimeCaps.SupportsWasmCodegen && !Tier.Disabled
+                    && !WasmBundleTier.ModulesAreCurrent(BundleReader.FromBytes(bundle)))
+                    return "its wasm module was baked by another build";
                 string root = ResolveLibrary(name);
                 Directory.CreateDirectory(root);
                 // Moved into place, as a compile's is: a query may be

@@ -135,6 +135,16 @@ public static class WasmBundleTier
 
     private const int SnapshotBakeBase = 1 << 16;
 
+    /// <summary>Whether every wasm module <paramref name="bundle"/> carries
+    /// is one this engine installs (<see cref="WasmRelocatableModule.IsCurrent"/>).
+    /// True for a bundle with none.</summary>
+    public static bool ModulesAreCurrent(Bundle bundle)
+    {
+        foreach (var module in bundle.WasmModules)
+            if (!WasmRelocatableModule.IsCurrent(module)) return false;
+        return true;
+    }
+
     // A snapshot's module waits for its predicate's first call: the shadow
     // region it resolves against is linked then, in the goal's code.
     private static (IReadOnlyList<int> Installed, string Note) Hold(
