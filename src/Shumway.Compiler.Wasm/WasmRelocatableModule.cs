@@ -77,7 +77,7 @@ public sealed class WasmRelocatableModule
         var clock = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            var whole = Bake(members, liveEnv);
+            var whole = BakeLessOversize(ref members, liveEnv, onRefused);
             timing?.Invoke($"wasm: compiled in one pass, {clock.Elapsed.TotalSeconds:0.00} s");
             return whole;
         }
@@ -101,7 +101,8 @@ public sealed class WasmRelocatableModule
             clock.Restart();
             try
             {
-                var rest = Bake(good, liveEnv);
+                IReadOnlyList<WasmGroupMember> fitting = good;
+                var rest = BakeLessOversize(ref fitting, liveEnv, onRefused);
                 timing?.Invoke($"wasm: the whole group refused after {attempt:0.00} s ({first.Message}); "
                     + $"{members.Count - good.Count} of {members.Count} members refused, sorted out in "
                     + $"{sorted:0.00} s; the rest compiled in {clock.Elapsed.TotalSeconds:0.00} s");
@@ -124,10 +125,37 @@ public sealed class WasmRelocatableModule
                         onRefused?.Invoke(m, e.Message);
                     }
                 }
-                var rest = Bake(compiled, liveEnv);
+                IReadOnlyList<WasmGroupMember> fitting = compiled;
+                var rest = BakeLessOversize(ref fitting, liveEnv, onRefused);
                 timing?.Invoke($"wasm: refused again at emission ({late.Message}); "
                     + $"{good.Count} members compiled alone, the rest in {clock.Elapsed.TotalSeconds:0.00} s");
                 return rest;
+            }
+        }
+    }
+
+    /// <summary><see cref="Bake"/>, less each member whose function comes out
+    /// larger than a browser takes: found one at a time, when its function is
+    /// written, and the rest compiled again without it.</summary>
+    private static WasmRelocatableModule BakeLessOversize(ref IReadOnlyList<WasmGroupMember> members,
+        IWasmCompileEnv liveEnv, Action<WasmGroupMember, string>? onRefused)
+    {
+        while (true)
+        {
+            try
+            {
+                return Bake(members, liveEnv);
+            }
+            catch (WasmOversizeException oversize)
+            {
+                var rest = new List<WasmGroupMember>(members.Count);
+                foreach (var m in members)
+                {
+                    if (m.Predicate.FunctorId != oversize.FunctorId) rest.Add(m);
+                    else onRefused?.Invoke(m, oversize.Message);
+                }
+                if (rest.Count == members.Count) throw;
+                members = rest;
             }
         }
     }

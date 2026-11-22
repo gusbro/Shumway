@@ -1319,7 +1319,7 @@ internal static class BrowserWasmTier
                     store.ImagePoolProvider?.Invoke(pred.FunctorId)));
             try
             {
-                Install(store, world, members, env);
+                InstallLessOversize(store, world, ref members, env);
             }
             catch (WasmRegisterException)
             {
@@ -1341,7 +1341,7 @@ internal static class BrowserWasmTier
                     else store.Wasm?.MarkUnpromotable(m.Predicate.FunctorId, why);
                 }
                 if (good.Count == 0) return 0;
-                try { Install(store, world, good, env); }
+                try { InstallLessOversize(store, world, ref good, env); }
                 catch (WasmRegisterException) { return 0; }
                 catch (WasmCompileException)
                 {
@@ -1363,7 +1363,7 @@ internal static class BrowserWasmTier
                     if (compiled.Count == 0) return 0;
                     // Individually fine but jointly refused should not happen;
                     // if it does, nothing is installed.
-                    try { Install(store, world, compiled, env); }
+                    try { InstallLessOversize(store, world, ref compiled, env); }
                     catch (WasmCompileException) { return 0; }
                     good = compiled;
                 }
@@ -1442,6 +1442,29 @@ internal static class BrowserWasmTier
 
     /// <summary>Compiles the members as one module against the id the world
     /// will give it, and installs it. Throws before installing anything.</summary>
+    /// <summary><see cref="Install"/>, less each member whose function comes
+    /// out larger than a browser takes: it stays on Tier-0, and the rest is
+    /// built again without it.</summary>
+    private static void InstallLessOversize(IlPromotionStore store, BrowserWasmWorld world,
+        ref List<WasmGroupMember> members, EngineWasmCompileEnv env)
+    {
+        while (members.Count > 0)
+        {
+            try
+            {
+                Install(store, world, members, env);
+                return;
+            }
+            catch (WasmOversizeException oversize)
+            {
+                var rest = members.FindAll(m => m.Predicate.FunctorId != oversize.FunctorId);
+                if (rest.Count == members.Count) throw;
+                store.Wasm?.MarkUnpromotable(oversize.FunctorId, oversize.Message);
+                members = rest;
+            }
+        }
+    }
+
     private static void Install(IlPromotionStore store, BrowserWasmWorld world,
         List<WasmGroupMember> members, EngineWasmCompileEnv env)
     {

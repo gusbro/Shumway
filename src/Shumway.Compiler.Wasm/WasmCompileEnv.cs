@@ -10,6 +10,13 @@ namespace Shumway.Compiler.Wasm;
 /// </summary>
 public class WasmCompileException(string reason) : Exception(reason);
 
+/// <summary>The function of one member would be larger than a browser takes.
+/// The rest of its group compiles without it, and it stays on Tier-0.</summary>
+public sealed class WasmOversizeException(int functorId, string reason) : WasmCompileException(reason)
+{
+    public int FunctorId { get; } = functorId;
+}
+
 /// <summary>What the emitted code bakes in wherever it has to name something
 /// outside itself. The values differ by world -- the engine bakes interned
 /// resume markers and linked addresses, the desktop test harness bakes its

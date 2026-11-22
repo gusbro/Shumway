@@ -62,6 +62,7 @@ public static class WasmPredicateCompiler
         var c = new Compilation(members, env, moduleId, cps ?? CpsMode, grain ?? CpsGrain);
         c.RejectDispatchOnlyPredicates();
         c.Decode();
+        c.RejectOversizeMembers();
         c.RejectIfCrossingsDominate();
         c.AssignCursors();
         byte[] bytes = c.Emit();
@@ -85,6 +86,7 @@ public static class WasmPredicateCompiler
         {
             c.RejectDispatchOnlyPredicates();
             c.Decode();
+            c.RejectOversizeMembers();
             c.RejectIfCrossingsDominate();
             return null;
         }
@@ -93,6 +95,18 @@ public static class WasmPredicateCompiler
             return e.Message;
         }
     }
+
+    /// <summary>The largest function body a browser takes, in bytes: the
+    /// limit the WebAssembly JavaScript interface gives its implementations.
+    /// A module with a larger one is refused whole. A member is one function
+    /// at the least, so a member that large cannot be compiled.</summary>
+    public static int MaxFunctionBytes { get; set; } = 7_654_321;
+
+    /// <summary>A member with more instructions than this is refused before
+    /// anything is emitted: at what an instruction comes to on average its
+    /// function is at the limit already. A smaller one that still comes out
+    /// too large is found when its function is written.</summary>
+    public static int MaxMemberInstructions { get; set; } = 20_000;
 
     /// <summary>Diagnostic: emit a dispatch counter + loop breaker into the
     /// dispatcher (see the guard at the loop top). Off in production.</summary>
@@ -461,6 +475,24 @@ public static class WasmPredicateCompiler
                     $"{Shumway.Core.AtomTable.GetById(aid)?.Name}/{ar} is "
                     + "dispatched by the interpreter, not run as written");
             }
+        }
+
+        public void RejectOversizeMembers()
+        {
+            var instructions = new int[_members.Count];
+            foreach (var ins in _instrs) instructions[ins.Section]++;
+            for (int sec = 0; sec < _members.Count; sec++)
+                if (instructions[sec] > MaxMemberInstructions)
+                    throw Oversize(sec, $"{instructions[sec]} instructions");
+        }
+
+        private WasmOversizeException Oversize(int section, string size)
+        {
+            int fid = _members[section].Predicate.FunctorId;
+            var (aid, ar) = Shumway.Core.FunctorTable.Lookup(fid);
+            return new WasmOversizeException(fid,
+                $"{Shumway.Core.AtomTable.GetById(aid)?.Name}/{ar}: {size} -- its function "
+                + "would be larger than a browser takes");
         }
 
         public void RejectIfCrossingsDominate()
@@ -1352,7 +1384,12 @@ public static class WasmPredicateCompiler
             bodies.Add(Written(BuildDispatcherBody()));
             var addrsInOrder = new List<int>(_leaders);
             foreach (var part in _parts)
-                bodies.Add(Written(BuildPartitionBody(part, addrsInOrder)));
+            {
+                byte[] function = Written(BuildPartitionBody(part, addrsInOrder));
+                if (function.Length > MaxFunctionBytes)
+                    throw Oversize(LargestMemberOf(part, addrsInOrder), $"{function.Length} bytes");
+                bodies.Add(function);
+            }
             bodies.Add(Written(BuildResolverBody()));
             // Every call into a helper is emitted by now. A helper's body is
             // built when a call names it, and a body that calls another marks
@@ -1407,6 +1444,20 @@ public static class WasmPredicateCompiler
             module.WriteToBinary(ms);
             byte[] bytes = WithCode(ms.ToArray(), bodies);
             return _images.Count == 0 ? bytes : WithDataCount(bytes, _images.Count);
+        }
+
+        // The member with the most instructions among those the partition holds.
+        private int LargestMemberOf((int Lo, int Hi) part, List<int> addrsInOrder)
+        {
+            var instructions = new int[_members.Count];
+            foreach (var ins in _instrs) instructions[ins.Section]++;
+            int largest = _instrs[_byPc[addrsInOrder[part.Lo]]].Section;
+            for (int i = part.Lo + 1; i < part.Hi; i++)
+            {
+                int section = _instrs[_byPc[addrsInOrder[i]]].Section;
+                if (instructions[section] > instructions[largest]) largest = section;
+            }
+            return largest;
         }
 
         // A request for every live register carries the module's register
