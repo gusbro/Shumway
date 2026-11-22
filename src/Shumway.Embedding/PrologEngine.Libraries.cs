@@ -115,8 +115,12 @@ public sealed partial class PrologEngine
         if (_liveConsultEngine is { } live && before is not null)
         {
             EnsureLiveDynamicTrampolines(live);
-            LinkLoadedPredicatesLive(live, _precompiledStaticPredicates
+            var linked = LinkLoadedPredicatesLive(live, _precompiledStaticPredicates
                 .Where(kv => !before.Contains(kv.Key)).Select(kv => kv.Value).ToList());
+            // The bundle's wasm module binds to where its predicates are
+            // linked: here, for the goal that loaded it.
+            if (linked is not null && IlPromotion.PendingWasmModules.Count > 0)
+                IlPromotion.Wasm?.InstallPendingBundlesLive(this, linked);
         }
     }
 

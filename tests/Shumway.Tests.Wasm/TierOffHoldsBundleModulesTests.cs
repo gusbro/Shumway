@@ -51,7 +51,7 @@ public class TierOffHoldsBundleModulesTests
         var wasm = store.Wasm = new WasmPromotionStore(store)
         {
             Threshold = 0,   // jit_compile(off)
-            BundleInstaller = (eng, bytes) => WasmBundleTier.Install(eng, world, bytes),
+            BundleInstaller = (eng, bytes, linked) => WasmBundleTier.Install(eng, world, bytes, linked),
         };
         engine.LoadBundle(CoroutiningWithWasm());
 
@@ -75,7 +75,7 @@ public class TierOffHoldsBundleModulesTests
         var wasm = store.Wasm = new WasmPromotionStore(store)
         {
             Threshold = int.MaxValue,
-            BundleInstaller = (eng, bytes) => WasmBundleTier.Install(eng, world, bytes),
+            BundleInstaller = (eng, bytes, linked) => WasmBundleTier.Install(eng, world, bytes, linked),
         };
         wasm.SetBundles(on: false);
         engine.LoadBundle(CoroutiningWithWasm());

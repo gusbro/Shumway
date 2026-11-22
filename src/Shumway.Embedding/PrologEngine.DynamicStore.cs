@@ -1864,14 +1864,15 @@ public sealed partial class PrologEngine
     /// clauses: otherwise the query's next call into the library is
     /// undefined. Predicates the query already reaches, and dynamic ones
     /// (their trampolines are <see cref="EnsureLiveDynamicTrampolines"/>'s),
-    /// are skipped.</summary>
-    internal void LinkLoadedPredicatesLive(
+    /// are skipped. Answers what it linked, address to predicate, or null
+    /// when it linked nothing.</summary>
+    internal IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? LinkLoadedPredicatesLive(
         Activation engine, IEnumerable<Shumway.Compiler.Wam.CompiledPredicate> loaded)
     {
         if (engine.CurrentProgram is null
             || engine.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap
             || engine.SwitchTables is not { } switchTables)
-            return;
+            return null;
         var preds = new List<Shumway.Compiler.Wam.CompiledPredicate>();
         foreach (var pred in loaded)
         {
@@ -1882,7 +1883,7 @@ public sealed partial class PrologEngine
                 continue;
             preds.Add(pred);
         }
-        if (preds.Count == 0) return;
+        if (preds.Count == 0) return null;
         bool ownsHost = EngineOwnsHostBuffer(engine);
         var (loadOffset, tableBase, reserved) = PlaceLiveLink(engine, preds, switchTables);
         Shumway.Compiler.Wam.Linker.LinkResult link;
@@ -1896,9 +1897,10 @@ public sealed partial class PrologEngine
         {
             // The next top-level setup links the library whole.
             ReturnPlace(engine, loadOffset, reserved);
-            return;
+            return null;
         }
         PublishLiveLink(engine, link, loadOffset, tableBase, addrMap, switchTables, ownsHost);
+        return link.PredicatesByAddress;
     }
 
     /// <summary>Makes the imports a running goal just added callable bare

@@ -76,13 +76,15 @@ public static class WasmBundleTier
     }
 
     /// <summary>Installs a bundle's module into <paramref name="world"/>
-    /// against the engine's current static link and binds the tier's
-    /// delegates. The shape of <see
-    /// cref="WasmPromotionStore.BundleInstaller"/>: the functors installed,
-    /// with a note saying so or why not. Requires a linked engine with a
-    /// wasm store.</summary>
+    /// and binds the tier's delegates, against the engine's current static
+    /// link, or against <paramref name="linked"/> (address to predicate)
+    /// when a running goal linked the bundle into its own code. The shape of
+    /// <see cref="WasmPromotionStore.BundleInstaller"/>: the functors
+    /// installed, with a note saying so or why not. Requires an engine with
+    /// a wasm store, linked when <paramref name="linked"/> is null.</summary>
     public static (IReadOnlyList<int> Installed, string Note) Install(
-        PrologEngine engine, IWasmExecutionWorld world, byte[] bytes)
+        PrologEngine engine, IWasmExecutionWorld world, byte[] bytes,
+        IReadOnlyDictionary<int, CompiledPredicate>? linked = null)
     {
         var store = engine.IlPromotion;
         var wasm = store.Wasm
@@ -98,11 +100,18 @@ public static class WasmBundleTier
         }
         var biasByFid = new Dictionary<int, int>();
         var predByFid = new Dictionary<int, CompiledPredicate>();
-        foreach (var (addr, pred) in WasmPromotionStore.StaticPredicatesOf(engine))
-        {
-            biasByFid[pred.FunctorId] = addr;
-            predByFid[pred.FunctorId] = pred;
-        }
+        if (linked is null)
+            foreach (var (addr, pred) in WasmPromotionStore.StaticPredicatesOf(engine))
+            {
+                biasByFid[pred.FunctorId] = addr;
+                predByFid[pred.FunctorId] = pred;
+            }
+        else
+            foreach (var (addr, pred) in linked)
+            {
+                biasByFid[pred.FunctorId] = addr;
+                predByFid[pred.FunctorId] = pred;
+            }
         if (!module.TryResolve(new EngineWasmCompileEnv(),
                 fid => biasByFid.TryGetValue(fid, out int b) ? b : -1,
                 fid => WasmRelocatableModule.ShapeOf(predByFid[fid]),

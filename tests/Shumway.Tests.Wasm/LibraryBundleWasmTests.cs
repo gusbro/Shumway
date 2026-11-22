@@ -46,7 +46,7 @@ public class LibraryBundleWasmTests
         store.Wasm = new WasmPromotionStore(store)
         {
             Threshold = int.MaxValue,
-            BundleInstaller = (eng, bytes) => WasmBundleTier.Install(eng, world, bytes),
+            BundleInstaller = (eng, bytes, linked) => WasmBundleTier.Install(eng, world, bytes, linked),
         };
         return engine;
     }

@@ -99,6 +99,7 @@ public sealed class NotebookTierTests : IDisposable
                     return installed;
                 },
             };
+            Wasm.BundleInstaller = (eng, bytes, linked) => WasmBundleTier.Install(eng, world, bytes, linked);
             Wasm.StaleEvicted = world.Evict;
             Wasm.ShadowRetired = world.Retire;
             Wasm.LiveRefreshed = world.RefreshLiveAddresses;
@@ -248,6 +249,28 @@ public sealed class NotebookTierTests : IDisposable
         Assert.Equal("30", (string)interpreted["bindings"]!["S"]!);
         Assert.True(stayedOff, "the program went back on the tier while it was off");
         Assert.True(Compiled("work", 2) && Compiled("len", 2), "the program is not on the tier again");
+    }
+
+    /// <summary>The module a library was baked with is installed by the cell
+    /// that loads it: no query is set up after it in a session.</summary>
+    [Fact]
+    public void ALibraryACellLoads_RunsFromTheModuleItWasBakedWith()
+    {
+        var tier = new Tier(batch: false);
+        var (server, session) = _notebooks.Open("a", prepare: tier.Attach);
+        string library = LiveBundleInstallTests.BakedLibrary(_notebooks.DirectoryOf("a"), "coroutining");
+
+        JsonNode load = First(server, $"consult('{library}').");
+        int installed = tier.Wasm.BundleFids.Count;
+        JsonNode first = First(server, "coroutining:freeze(X, Y = done), X = go.");
+        JsonNode second = First(server, "coroutining:dif(A, B), A = 1, B = 2.");
+
+        Assert.Equal("success", (string)load["status"]!);
+        Assert.True(installed > 50, $"{installed} installed: {tier.Wasm.BundleInstallNote}");
+        Assert.Empty(session.Engine.IlPromotion.PendingWasmModules);
+        Assert.Equal("done", (string)first["bindings"]!["Y"]!);
+        Assert.Equal("1", (string)second["bindings"]!["A"]!);
+        Assert.DoesNotContain(tier.Offered(), name => name.StartsWith("coroutining$"));
     }
 
     /// <summary>Counter-proof, and what a notebook did: under the batch the

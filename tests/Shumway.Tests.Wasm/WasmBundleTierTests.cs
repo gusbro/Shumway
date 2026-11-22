@@ -59,7 +59,7 @@ public class WasmBundleTierTests
         {
             Threshold = int.MaxValue,
             BundleInstaller = installer
-                ? (eng, bytes) => WasmBundleTier.Install(eng, world, bytes)
+                ? (eng, bytes, linked) => WasmBundleTier.Install(eng, world, bytes, linked)
                 : null,
         };
         return (engine, world);

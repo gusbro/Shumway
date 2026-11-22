@@ -55,12 +55,14 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     public System.Action<int>? BatchStarting { get; set; }
 
     /// <summary>Installs one relocatable wasm module shipped in a bundle
-    /// (<c>shumway-link --wasm</c>) into the host's world, against the
-    /// engine's current static link, and returns the functors it installed
-    /// with a note (the count, or why nothing was installed). Wired by the
-    /// host that owns a world; without it the modules stay queued.</summary>
-    public System.Func<PrologEngine, byte[], (IReadOnlyList<int> Installed, string Note)>?
-        BundleInstaller { get; set; }
+    /// (<c>shumway-link --wasm</c>) into the host's world, and returns the
+    /// functors it installed with a note (the count, or why nothing was
+    /// installed). The third argument says where the module's predicates
+    /// are linked, address to predicate; null is the engine's current static
+    /// link. Wired by the host that owns a world; without it the modules
+    /// stay queued.</summary>
+    public System.Func<PrologEngine, byte[], IReadOnlyDictionary<int, CompiledPredicate>?,
+        (IReadOnlyList<int> Installed, string Note)>? BundleInstaller { get; set; }
 
     /// <summary>The functors running from a bundle's wasm module: a status
     /// report folds them into one count so the user's own promotions show.
@@ -81,16 +83,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     {
         var pending = ilStore.PendingWasmModules;
         if (pending.Count == 0 || BundleInstaller is null) return 0;
-        // jit_compile(off) holds them too: a module installed after the
-        // switch would run its predicates in wasm all the same.
-        if (!InstallBundles || Threshold <= 0)
-        {
-            _heldBundles.AddRange(pending);
-            pending.Clear();
-            BundleInstallNote = InstallBundles
-                ? "held: jit_compile(off)" : "held: jit_compile(bundles_off)";
-            return 0;
-        }
+        if (HoldsPending()) return 0;
         if (engine._staticLink is null)
         {
             engine.Query("true.");
@@ -99,10 +92,11 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         }
         var modules = pending.ToArray();
         pending.Clear();
+        _triedLive.Clear();
         int installed = 0;
         foreach (var module in modules)
         {
-            var (fids, note) = BundleInstaller(engine, module);
+            var (fids, note) = BundleInstaller(engine, module, null);
             foreach (int fid in fids) BundleFids.Add(fid);
             installed += fids.Count;
             BundleInstallNote = note;
@@ -112,6 +106,51 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         return installed;
     }
     private int _lastBundleInstalled;
+
+    // jit_compile(off) holds the queued modules too: one installed after the
+    // switch would run its predicates in wasm all the same.
+    private bool HoldsPending()
+    {
+        if (InstallBundles && Threshold > 0) return false;
+        var pending = ilStore.PendingWasmModules;
+        _heldBundles.AddRange(pending);
+        pending.Clear();
+        BundleInstallNote = InstallBundles
+            ? "held: jit_compile(off)" : "held: jit_compile(bundles_off)";
+        return true;
+    }
+
+    /// <summary><see cref="InstallPendingBundles"/> for the bundles a running
+    /// goal loaded. That load linked their predicates into the goal's code,
+    /// at the addresses of <paramref name="linked"/>, and a module installs
+    /// against those: a session that is one long query has no query setup
+    /// to install it at, and compiled a library's predicates one at a time
+    /// as each ran enough. A module with a member that load did not link
+    /// stays queued for a query setup, and is not tried here again.</summary>
+    public int InstallPendingBundlesLive(PrologEngine engine,
+        IReadOnlyDictionary<int, CompiledPredicate> linked)
+    {
+        var pending = ilStore.PendingWasmModules;
+        if (pending.Count == 0 || BundleInstaller is null || HoldsPending()) return 0;
+        int installed = 0;
+        for (int i = 0; i < pending.Count;)
+        {
+            byte[] module = pending[i];
+            if (!_triedLive.Add(module)) { i++; continue; }
+            var (fids, note) = BundleInstaller(engine, module, linked);
+            BundleInstallNote = note;
+            if (fids.Count == 0) { i++; continue; }
+            foreach (int fid in fids) BundleFids.Add(fid);
+            installed += fids.Count;
+            _installedBundles.Add(module);
+            _triedLive.Remove(module);
+            pending.RemoveAt(i);
+        }
+        return installed;
+    }
+
+    // Queued modules a live install could not place, by reference.
+    private readonly HashSet<byte[]> _triedLive = new(ReferenceEqualityComparer.Instance);
 
     /// <summary>Whether a bundle's baked wasm module is installed
     /// (jit_compile(bundles_on), jit_compile(bundles_off)). See <see cref="SetBundles"/>.</summary>

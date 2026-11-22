@@ -49,7 +49,7 @@ public class ArchiveWasmTests : IDisposable
         store.Wasm = new WasmPromotionStore(store)
         {
             Threshold = int.MaxValue,
-            BundleInstaller = (eng, bytes) => WasmBundleTier.Install(eng, world, bytes),
+            BundleInstaller = (eng, bytes, linked) => WasmBundleTier.Install(eng, world, bytes, linked),
         };
         engine.AddLibraryDirectory(_dir);
         return engine;

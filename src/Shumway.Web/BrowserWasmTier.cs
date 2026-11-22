@@ -1297,7 +1297,7 @@ internal static class BrowserWasmTier
         store.Wasm.LiveRefreshed = world.RefreshLiveAddresses;
         // A loaded bundle's wasm module (shumway-link --wasm) installs into
         // this world at the next link, instead of compiling its predicates.
-        store.Wasm.BundleInstaller = (eng, bytes) => WasmBundleTier.Install(eng, world, bytes);
+        store.Wasm.BundleInstaller = (eng, bytes, linked) => WasmBundleTier.Install(eng, world, bytes, linked);
     }
 
     /// <summary>The jit_compile(all) path: the whole candidate set in one
