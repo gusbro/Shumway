@@ -269,6 +269,29 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         return stale?.Count ?? 0;
     }
 
+    /// <summary>jit_compile(off), and a change of the tier's form: every
+    /// build leaves new calls now, a static one as after a consult that
+    /// defined its predicate again and a snapshot as after a mutation. A
+    /// call running in one finishes: its choice points resume in the
+    /// bytecode, or in the snapshot they began with. Waiting for the next
+    /// query setup, as the IL tier does, left a session that is one long
+    /// query compiled for good.</summary>
+    public void LeaveNow()
+    {
+        if (_installed.Count > 0)
+        {
+            var all = new List<int>(_installed.Keys);
+            Displaced(all);
+            var gone = StaleEvicted?.Invoke(all);
+            if (gone is not null) Displaced(gone);
+        }
+        foreach (int fid in new List<int>(_shadows.Keys))
+        {
+            ilStore.EvictDelegate(fid, mutation: false);
+            OnMutated(fid);
+        }
+    }
+
     /// <summary>Drops the delegates of functors the tier no longer covers
     /// -- evicted, or displaced by a takeover (<see
     /// cref="IWasmExecutionWorld.InstallGroup"/>) -- so they run on

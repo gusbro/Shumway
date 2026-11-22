@@ -1156,9 +1156,10 @@ public sealed partial class IlPromotionStore
     ///
     /// <para>0 stops further promotion at once -- safe, since no live
     /// delegate is touched -- and queues the return of what already promoted.
-    /// Dropping those here would strand a choice point created inside Tier-1
-    /// code with nowhere to redo, so the eviction waits for the next query
-    /// setup: "off" governs the goals after it.</para></summary>
+    /// Dropping an IL delegate here would strand a choice point created
+    /// inside Tier-1 code with nowhere to redo, so that eviction waits for
+    /// the next query setup: "off" governs the goals after it. A wasm build
+    /// leaves at once: a choice point inside one resumes in the bytecode.</para></summary>
     public bool SetJitThreshold(int threshold)
     {
         // A host whose tier needs more than a threshold supplies its own
@@ -1181,7 +1182,7 @@ public sealed partial class IlPromotionStore
             if (threshold > 0 && !Shumway.Core.RuntimeCaps.SupportsRuntimeCodegen) return false;
             Threshold = threshold;
         }
-        if (threshold == 0) _jitOffPending = true;
+        if (threshold == 0) QueueJitOff();
         return true;
     }
 
@@ -1209,8 +1210,13 @@ public sealed partial class IlPromotionStore
     public Func<bool, bool>? JitFormPolicy { get; set; }
 
     /// <summary>Queues the return of every promoted predicate to its
-    /// bytecode, for a host policy that turned the tier off.</summary>
-    public void QueueJitOff() => _jitOffPending = true;
+    /// bytecode, for a host policy that turned the tier off. The builds of
+    /// a wasm tier leave at once (<see cref="WasmPromotionStore.LeaveNow"/>).</summary>
+    public void QueueJitOff()
+    {
+        _wasm?.LeaveNow();
+        _jitOffPending = true;
+    }
 
     private bool _jitOffPending;
 

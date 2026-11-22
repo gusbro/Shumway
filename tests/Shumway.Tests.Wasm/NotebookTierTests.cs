@@ -30,6 +30,7 @@ public sealed class NotebookTierTests : IDisposable
         dbl([X|Xs], [Y|Ys]) :- Y is X * 2, dbl(Xs, Ys).
         work(N, S) :- numlist(1, N, L), dbl(L, D), len(D, S).
         pick(X) :- member(X, [1, 2, 3]).
+        opt(a). opt(b). opt(c).
         """.Replace("\r\n", "\n");
 
     private static string Call(int id, string code)
@@ -212,6 +213,41 @@ public sealed class NotebookTierTests : IDisposable
         JsonNode? bindings = JsonNode.Parse(line)!["result"]?["1"]?["bindings"];
         Assert.True(bindings is not null, line);
         Assert.Equal(expected, ((string)bindings!["L"]!).Replace(" ", ""));
+    }
+
+    /// <summary>jit_compile(off) left what was compiled for the setup of the
+    /// next query to send back to its bytecode, and a session has no next
+    /// query: its program stayed compiled. It leaves the tier at the goal,
+    /// and a query alive inside it gives its next solution.</summary>
+    [Fact]
+    public void JitCompileOff_SendsTheProgramBackToItsBytecode_AndACountCompilesItAgain()
+    {
+        var tier = new Tier(batch: false);
+        var (server, session) = _notebooks.Open("a", prepare: tier.Attach);
+        bool Compiled(string name, int arity) => OnTheTier(session.Engine, name, arity);
+
+        First(server, Program);
+        for (int i = 0; i < 3; i++) First(server, "work(20, S).");
+        First(server, "opt(X), opt(Y), X == c, Y == c.");
+        Assert.True(Compiled("opt", 1) && Compiled("work", 2) && Compiled("len", 2), "the program is not on the tier");
+
+        // The choice point of opt/1 is one of its compiled code.
+        JsonNode first = First(server, "opt(X), jit_compile(off).");
+        bool leftAtTheGoal = !Compiled("opt", 1) && !Compiled("work", 2) && !Compiled("len", 2);
+        JsonNode second = First(server, "retry.");
+        JsonNode interpreted = First(server, "work(30, S).");
+        for (int i = 0; i < 3; i++) First(server, "work(20, S).");
+        bool stayedOff = !Compiled("work", 2) && !Compiled("len", 2);
+        First(server, "jit_compile(2).");
+        for (int i = 0; i < 3; i++) First(server, "work(20, S).");
+
+        Assert.True(leftAtTheGoal, "the program stayed on the tier after jit_compile(off)");
+        Assert.Equal("a", (string)first["bindings"]!["X"]!);
+        Assert.True(second["bindings"] is not null, second.ToJsonString());
+        Assert.Equal("b", (string)second["bindings"]!["X"]!);
+        Assert.Equal("30", (string)interpreted["bindings"]!["S"]!);
+        Assert.True(stayedOff, "the program went back on the tier while it was off");
+        Assert.True(Compiled("work", 2) && Compiled("len", 2), "the program is not on the tier again");
     }
 
     /// <summary>Counter-proof, and what a notebook did: under the batch the

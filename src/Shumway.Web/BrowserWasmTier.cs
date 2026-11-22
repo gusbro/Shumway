@@ -1178,8 +1178,7 @@ internal static class BrowserWasmTier
     /// builds compile to, continuation functions at the budget grain
     /// (ADR-061, the wasm tier) or partitions. Under jit_compile(all) the
     /// next batch builds the program again in it; with a threshold, what
-    /// already promoted goes back at the next query setup and promotes again
-    /// in it.</summary>
+    /// already promoted goes back to its bytecode and promotes again in it.</summary>
     internal static (bool Ok, string Report) SetForm(PrologEngine engine,
         WasmTierSettings settings, bool cps)
     {
@@ -1213,9 +1212,9 @@ internal static class BrowserWasmTier
             settings.BootThreshold = 0;
             settings.BootBatch = false;
             if (store.Wasm is { } w) { w.Threshold = 0; w.CompileAllOnConsult = false; }
-            // The already-promoted go back to bytecode at the next query
-            // setup: dropping a delegate with a live choice point inside it
-            // would leave the redo nowhere to land.
+            // What is compiled leaves new calls now, and a choice point
+            // inside it resumes in the bytecode: a notebook's session has
+            // no later query setup to do it at.
             store.QueueJitOff();
             return (true, "% jit_compile: off. The goals after this one run on "
                 + "Tier-0, and restart. gives an engine with no wasm at all\n");
