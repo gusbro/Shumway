@@ -1342,32 +1342,37 @@ public static class WasmPredicateCompiler
                 module.CustomSections.Add(WasmCpsLayout.Section(_failCase, _parts.Select(p => p.Lo)));
             }
 
-            module.Codes.Add(BuildDispatcherBody());
+            // A body is written out when it is built, and its instructions
+            // are let go: held until the module was written, the bodies of a
+            // large module took some thirty times the module's size.
+            var bodies = new List<byte[]>(k + HelperCount + 3);
+            bodies.Add(Written(BuildDispatcherBody()));
             var addrsInOrder = new List<int>(_leaders);
             foreach (var part in _parts)
-                module.Codes.Add(BuildPartitionBody(part, addrsInOrder));
-            module.Codes.Add(BuildResolverBody());
+                bodies.Add(Written(BuildPartitionBody(part, addrsInOrder)));
+            bodies.Add(Written(BuildResolverBody()));
             // Every call into a helper is emitted by now. A helper's body is
             // built when a call names it, and a body that calls another marks
             // it in turn, until none is left; the others keep their slots
             // with a stub that traps, since nothing reaches it.
-            var helpers = new FunctionBody?[HelperCount];
+            var helpers = new byte[]?[HelperCount];
             for (bool more = true; more;)
             {
                 more = false;
                 for (int h = 0; h < HelperCount; h++)
                     if (_helperUsed[h] && helpers[h] is null)
                     {
-                        helpers[h] = BuildHelper(h);
+                        helpers[h] = Written(BuildHelper(h));
                         more = true;
                     }
             }
             for (int h = 0; h < HelperCount; h++)
-                module.Codes.Add(helpers[h] ?? new FunctionBody { Locals = [], Code = [new Unreachable(), new End()] });
+                bodies.Add(helpers[h]
+                    ?? Written(new FunctionBody { Locals = [], Code = [new Unreachable(), new End()] }));
             if (_cps)
             {
                 module.Functions.Add(new Function { Type = 3 });
-                module.Codes.Add(BuildCpsRouterBody());
+                bodies.Add(Written(BuildCpsRouterBody()));
             }
             else if (_epilogueUsed)
             {
@@ -1378,7 +1383,7 @@ public static class WasmPredicateCompiler
                 args.Add(WebAssemblyValueType.Int32);
                 module.Types.Add(new WebAssemblyType { Parameters = args.ToArray(), Returns = [WebAssemblyValueType.Int32] });
                 module.Functions.Add(new Function { Type = (uint)(module.Types.Count - 1) });
-                module.Codes.Add(BuildVerdictEpilogueBody());
+                bodies.Add(Written(BuildVerdictEpilogueBody()));
             }
 
             // A diagnostic build names its functions, so a browser profile
@@ -1390,12 +1395,124 @@ public static class WasmPredicateCompiler
             foreach (byte[] image in _images)
                 module.Data.Add(new Data { Kind = DataKind.Passive, RawData = image });
 
-            foreach (var live in _liveAllPatches)
-                live.Value = ((long)RegisterDemand << 32) | (uint)WasmAbi.WakeRequest;
+            long liveAll = ((long)RegisterDemand << 32) | (uint)WasmAbi.WakeRequest;
+            foreach (var (body, at) in _liveAllSites)
+                WasmRelocatableModule.WritePaddedLeb(body, at, liveAll, LiveAllWidth);
 
+            // Every section but the code, which is put in from the bodies.
             using var ms = new MemoryStream();
             module.WriteToBinary(ms);
-            return _images.Count == 0 ? ms.ToArray() : WithDataCount(ms.ToArray(), _images.Count);
+            byte[] bytes = WithCode(ms.ToArray(), bodies);
+            return _images.Count == 0 ? bytes : WithDataCount(bytes, _images.Count);
+        }
+
+        // A request for every live register carries the module's register
+        // demand, known once every body is built. A written body holds a
+        // stand-in of full width where the request goes.
+        private readonly List<(byte[] Body, int At)> _liveAllSites = new();
+        private const long LiveAllStandIn = (0x7E00_0000L << 32) | (uint)WasmAbi.WakeRequest;
+        private const int LiveAllWidth = 10;
+
+        /// <summary>The body as its entry of the code section: its size and
+        /// its bytes. The library writes instructions only as part of a
+        /// module, so the body goes through a module of its own.</summary>
+        private byte[] Written(FunctionBody body)
+        {
+            foreach (var live in _liveAllPatches) live.Value = LiveAllStandIn;
+            byte[] entry = CodeEntry(body);
+            if (_liveAllPatches.Count > 0)
+            {
+                // Where the stand-ins are: written again with another one,
+                // the entry differs in one byte of each, the fifth.
+                foreach (var live in _liveAllPatches) live.Value = LiveAllStandIn ^ (1L << 32);
+                byte[] other = CodeEntry(body);
+                int found = 0;
+                for (int i = 0; i < entry.Length; i++)
+                {
+                    if (entry[i] == other[i]) continue;
+                    _liveAllSites.Add((entry, i - 4));
+                    found++;
+                }
+                if (other.Length != entry.Length || found != _liveAllPatches.Count)
+                    throw new WasmCompileException("a request for every live register was not found in its body");
+                _liveAllPatches.Clear();
+            }
+            return entry;
+        }
+
+        private static byte[] CodeEntry(FunctionBody body)
+        {
+            var alone = new Module();
+            alone.Codes.Add(body);
+            using var ms = new MemoryStream();
+            alone.WriteToBinary(ms);
+            // Magic and version, the section's id and size, one entry.
+            if (!ms.TryGetBuffer(out ArraySegment<byte> written) || written.Array is null)
+                throw new WasmCompileException("the body's bytes cannot be read");
+            int at = written.Offset + 8;
+            if (written.Array[at++] != 10)
+                throw new WasmCompileException("a body did not come out as a code section");
+            ReadLeb(written.Array, ref at);
+            if (ReadLeb(written.Array, ref at) != 1)
+                throw new WasmCompileException("a body did not come out as one entry");
+            return written.Array.AsSpan(at, written.Offset + written.Count - at).ToArray();
+        }
+
+        /// <summary>The module with its code section, put where the library
+        /// would have written it: before the data section, which is last.</summary>
+        private static byte[] WithCode(byte[] module, List<byte[]> bodies)
+        {
+            long payload = 0;
+            foreach (byte[] body in bodies) payload += body.Length;
+            byte[] count = Leb(bodies.Count);
+            payload += count.Length;
+            byte[] size = Leb(checked((int)payload));
+            int at = 8;                                     // magic and version
+            while (at < module.Length && module[at] != 11)
+            {
+                int next = at + 1;
+                int length = ReadLeb(module, ref next);
+                at = next + length;
+            }
+            var whole = new byte[checked((int)(module.Length + 1 + size.Length + payload))];
+            Array.Copy(module, 0, whole, 0, at);
+            int to = at;
+            whole[to++] = 10;
+            size.CopyTo(whole, to); to += size.Length;
+            count.CopyTo(whole, to); to += count.Length;
+            foreach (byte[] body in bodies)
+            {
+                body.CopyTo(whole, to);
+                to += body.Length;
+            }
+            Array.Copy(module, at, whole, to, module.Length - at);
+            return whole;
+        }
+
+        private static int ReadLeb(byte[] bytes, ref int at)
+        {
+            int value = 0, shift = 0;
+            while (true)
+            {
+                byte b = bytes[at++];
+                value |= (b & 0x7F) << shift;
+                if ((b & 0x80) == 0) return value;
+                shift += 7;
+            }
+        }
+
+        private static byte[] Leb(int value)
+        {
+            var bytes = new List<byte>();
+            do
+            {
+                byte b = (byte)(value & 0x7F);
+                value >>= 7;
+                if (value != 0) b |= 0x80;
+                bytes.Add(b);
+            }
+            while (value != 0);
+            return bytes.ToArray();
         }
 
         /// <summary>The body of helper <paramref name="h"/>, counted from the
@@ -1487,31 +1604,11 @@ public static class WasmPredicateCompiler
                     Array.Copy(module, pos, withCount, pos + 1 + header.Length + payload.Length, module.Length - pos);
                     return withCount;
                 }
-                int size = 0, shift = 0, at = pos + 1;
-                while (true)
-                {
-                    byte b = module[at++];
-                    size |= (b & 0x7F) << shift;
-                    if ((b & 0x80) == 0) break;
-                    shift += 7;
-                }
+                int at = pos + 1;
+                int size = ReadLeb(module, ref at);
                 pos = at + size;
             }
             return module;
-
-            static byte[] Leb(int value)
-            {
-                var bytes = new List<byte>();
-                do
-                {
-                    byte b = (byte)(value & 0x7F);
-                    value >>= 7;
-                    if (value != 0) b |= 0x80;
-                    bytes.Add(b);
-                }
-                while (value != 0);
-                return bytes.ToArray();
-            }
         }
 
         /// <summary>run(mailbox, cursor): route the cursor to the partition

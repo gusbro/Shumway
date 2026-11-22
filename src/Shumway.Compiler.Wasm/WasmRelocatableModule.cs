@@ -318,7 +318,7 @@ public sealed class WasmRelocatableModule
         return n;
     }
 
-    private static void WritePaddedLeb(byte[] bytes, int at, long value, int width)
+    internal static void WritePaddedLeb(byte[] bytes, int at, long value, int width)
     {
         for (int i = 0; i < width; i++)
         {
