@@ -204,6 +204,13 @@ goal (`WasmPromotionStore.LeaveNow`). The rest of the goal that asked runs
 on the interpreter, and a choice point left inside a build gives its next
 solution from the bytecode. The IL compiler keeps the deferral.
 
+The call sites of that goal were linked while the tier was on, so each asks
+the dispatcher where a site linked with no tier on is bytecode-only and does
+not. With no tier on the dispatcher keeps its answer for such a site
+(`IlPromotionStore.StaysOnBytecode`), and a tier going on drops the answers
+kept. Before, every call went the whole way through the dispatcher, and a
+program ran slower after `off` than in a session that never compiled.
+
 ## Amendment (2026-11-22): the helpers of a bundle's dynamic rules are baked
 
 A rule of a dynamic predicate takes helper predicates when an engine first

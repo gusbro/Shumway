@@ -203,4 +203,60 @@ public sealed class JitCompileBuiltinTests
         Assert.True(e.Query("jit_compile(nocps).").Success);
         Assert.Equal(new[] { true, false }, asked);
     }
+
+    // The dispatches of len/2 that went the dispatcher's whole way: the
+    // indexing profile counts those, and a site that holds an answer asks
+    // for none.
+    private static int WholeDispatchesOfLen(PrologEngine e)
+        => e.JitIndexing.CallCountFor(Shumway.Core.FunctorTable.Intern(
+            Shumway.Core.AtomTable.Intern("user$len", permanent: true).Id, 2));
+
+    // A call site of len/2 in a clause, run 200 times.
+    private const string Loop = """
+        loop(0) :- !.
+        loop(N) :- len([a, b, c], 3), M is N - 1, loop(M).
+        """;
+
+    private const string Calls = "loop(200)";
+
+    private static PrologEngine LoopEngine()
+    {
+        var e = Engine(threshold: 1_000_000);
+        e.ConsultString(Loop);
+        return e;
+    }
+
+    /// <summary>jit_compile(off) in the middle of a goal. The goal's call
+    /// sites were linked while the tier was on, so they ask the dispatcher,
+    /// where a site linked with the tier off is bytecode-only and does not.
+    /// The dispatcher tells such a site once that the call runs its bytecode.
+    /// It went the whole way at every call, for the same answer: a notebook's
+    /// session is one goal, and its program ran slower after off than in a
+    /// session that never compiled.</summary>
+    [Fact]
+    public void AfterOffInsideAGoal_ACallSiteIsToldOnceThatItRunsItsBytecode()
+    {
+        // The guard: with the tier on, every call of the site goes the whole way.
+        var on = LoopEngine();
+        Assert.True(on.Query(Calls + ".").Success);
+        Assert.Equal(200, WholeDispatchesOfLen(on));
+
+        var e = LoopEngine();
+        Assert.True(e.Query("jit_compile(off), " + Calls + ".").Success);
+
+        Assert.Equal(0, WholeDispatchesOfLen(e));
+    }
+
+    /// <summary>The answer a site holds goes when a tier comes on: the same
+    /// goal promotes again.</summary>
+    [Fact]
+    public void ATierTurnedOnAgainInsideTheGoal_PromotesFromThoseSites()
+    {
+        var e = LoopEngine();
+
+        Assert.True(e.Query("jit_compile(off), " + Calls + ", jit_compile(1), " + Calls + ".").Success);
+
+        Assert.True(PromotedAfterDraining(e) > 0,
+            "the sites kept the answer they held while the tier was off");
+    }
 }

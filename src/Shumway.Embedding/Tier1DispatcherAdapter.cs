@@ -203,6 +203,16 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
             return existing;
         }
 
+        // A site the linker would have made bytecode-only, had it linked
+        // with the tiers as they are now. After jit_compile(off) in a
+        // running query every site of the program is one, and each paid the
+        // whole of this method at every call, for the same null.
+        if (_store.StaysOnBytecode(functorId, pred))
+        {
+            _dispatchCache[targetAddress] = null!;
+            return null;
+        }
+
         // The wasm tier counts the same dispatches; its install lands in the
         // store's table, so the wrapper below is the ordinary one.
         if (!WasmSuspended && _store.Wasm is { Enabled: true } wasm)

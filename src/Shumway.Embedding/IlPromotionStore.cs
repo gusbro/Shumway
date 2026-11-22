@@ -213,7 +213,7 @@ public sealed partial class IlPromotionStore
         // With no tier on, the linker made every site bytecode-only; these
         // have to count their dispatches.
         if (Threshold <= 0 && Wasm is not { Enabled: true })
-            PromotabilityChanged?.Invoke();
+            BytecodeOnlyChanged();
     }
 
     private void Stand(int functorId, bool wakes, bool isDynamic,
@@ -1129,7 +1129,7 @@ public sealed partial class IlPromotionStore
             _threshold = value;
             if (!flip) return;
             FollowTier();
-            PromotabilityChanged?.Invoke();
+            BytecodeOnlyChanged();
         }
     }
     private int _threshold = DefaultThreshold;
@@ -1147,6 +1147,28 @@ public sealed partial class IlPromotionStore
     /// invalidates the persistent program here and the next query relinks.
     /// </summary>
     internal Action? PromotabilityChanged { get; set; }
+
+    // The answer of IsPermanentlyBytecodeOnly may have changed. The next
+    // query links for it, and the sites a running query linked ask again:
+    // the dispatcher holds the old answer for them (StaysOnBytecode), under
+    // the eviction stamp.
+    private void BytecodeOnlyChanged()
+    {
+        EvictionStamp++;
+        PromotabilityChanged?.Invoke();
+    }
+
+    /// <summary>Whether a call to a static predicate with no compiled code
+    /// runs its bytecode for as long as the tiers stay as they are, because
+    /// none is on: what <see cref="IsPermanentlyBytecodeOnly"/> answers the
+    /// linker then, which makes the call site bytecode-only. A site linked
+    /// before the tier went off was not made so, and asks the dispatcher at
+    /// every call. With a tier on this is two comparisons, and the
+    /// dispatcher goes on to count the call. Not for a dynamic predicate,
+    /// whose calls the indexing profile counts.</summary>
+    internal bool StaysOnBytecode(int functorId, CompiledPredicate predicate)
+        => Wasm is not { Enabled: true } && !IlTierActive
+           && !_offers.ContainsKey(functorId) && !IsExcludedByLayout(predicate);
 
     /// <summary>Profile samples required before the phase-2 PGO recompile.</summary>
     public int PgoSampleThreshold { get; set; } = 32;
@@ -1248,7 +1270,7 @@ public sealed partial class IlPromotionStore
             _wasm = value;
             if (!flip) return;
             FollowTier();
-            PromotabilityChanged?.Invoke();
+            BytecodeOnlyChanged();
         }
     }
     private WasmPromotionStore? _wasm;
@@ -1264,7 +1286,7 @@ public sealed partial class IlPromotionStore
     internal void WasmEnabledChanged()
     {
         FollowTier();
-        PromotabilityChanged?.Invoke();
+        BytecodeOnlyChanged();
     }
 
     /// <summary>The delegate bound to <paramref name="functorId"/>, or null.</summary>
@@ -1814,7 +1836,7 @@ public sealed partial class IlPromotionStore
         // With no tier on, the linker made every site bytecode-only; a
         // delegate bound by hand still has to be reached from them.
         if (Threshold <= 0 && Wasm is not { Enabled: true })
-            PromotabilityChanged?.Invoke();
+            BytecodeOnlyChanged();
         InstallDelegate(functorId, del,
             ArtifactFor(functorId, del, compiledFrom, null, null, permanent: compiledFrom is null));
     }
