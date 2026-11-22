@@ -430,6 +430,24 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         if (reason is { Length: > 0 }) _refusalReason[functorId] = reason;
     }
 
+    /// <summary>Keeps the static predicates linked now off the tier, but for
+    /// those already on it: the code a host loads for its own use before the
+    /// user's program, which a batch would compile again in every engine.
+    /// False when there is no linked program yet, and nothing was marked.</summary>
+    public bool LeaveOutLinked(PrologEngine engine, string reason)
+    {
+        var link = engine._staticLink;
+        if (link is null) return false;
+        var promoted = new HashSet<int>(ilStore.PromotedFunctorIds());
+        foreach (var (_, pred) in link.PredicatesByAddress)
+        {
+            int fid = pred.FunctorId;
+            if (promoted.Contains(fid) || _unpromotable.Contains(fid)) continue;
+            MarkUnpromotable(fid, reason);
+        }
+        return true;
+    }
+
     /// <summary>What the compiler said when it refused this functor, or
     /// null when it was refused without one.</summary>
     public string? RefusalReason(int functorId)

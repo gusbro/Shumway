@@ -27,14 +27,18 @@ internal sealed class NotebookHarness : IDisposable
 
     /// <summary>A session in the directory <paramref name="folder"/>, its own
     /// unless named: two notebooks of one directory share it. The server has
-    /// the page's <paramref name="libraries"/>, or none.</summary>
+    /// the page's <paramref name="libraries"/>, or none.
+    /// <paramref name="prepare"/> sees the engine once it has the server's
+    /// code, as a host that attaches a tier does.</summary>
     public (NotebookServer Server, HostSession Session) Open(
-        string id, Page? page = null, string? folder = null, INotebookLibraries? libraries = null)
+        string id, Page? page = null, string? folder = null, INotebookLibraries? libraries = null,
+        Action<PrologEngine>? prepare = null)
     {
         HostSession session = _host.Create(id, page ?? new Page(), _ =>
         {
             var engine = new PrologEngine();
             NotebookServer.Install(engine);
+            prepare?.Invoke(engine);
             return engine;
         });
         // A cell that writes a file writes it there.

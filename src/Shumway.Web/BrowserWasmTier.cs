@@ -1221,7 +1221,8 @@ internal static class BrowserWasmTier
                 + "Tier-0, and restart. gives an engine with no wasm at all\n");
         }
         settings.Disabled = false;      // asking for any of it un-disables
-        bool batch = threshold == 1;    // "all" is the batch; a count is lazy
+        // "all" is the batch, where the session can have one; a count is lazy.
+        bool batch = threshold == 1 && settings.BatchAllowed;
         settings.BootThreshold = threshold;
         settings.BootBatch = batch;
         if (store.Wasm is null) Attach(engine, settings, threshold, batch);

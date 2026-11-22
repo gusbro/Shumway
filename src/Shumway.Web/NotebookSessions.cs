@@ -164,7 +164,8 @@ internal static partial class WebShumwayApp
         if (bundle != "prolog") return $"There is no notebook server '{bundle}'.";
         _notebooks ??= new SessionHost(_jsThread, _notebookLimit);
         HostSession session;
-        var tier = new WasmTierSettings();
+        // The server's loop is the session's one query (ADR-067 D5).
+        var tier = WasmTierSettings.ForOneLongQuery();
         try
         {
             session = _notebooks.Create(kernelId, new NotebookPage(kernelId), _ =>

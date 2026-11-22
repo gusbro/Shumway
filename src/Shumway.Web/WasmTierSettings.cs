@@ -20,6 +20,22 @@ internal sealed class WasmTierSettings
     /// <summary>Whether the restarted engine compiles in batches.</summary>
     public bool BootBatch = true;
 
+    /// <summary>False for a session whose program runs inside one query for
+    /// as long as it lives, as a notebook's does. What a goal of that query
+    /// consults is linked into the query's own code, and a batch compiles
+    /// against the static link, which the query does not run: its modules
+    /// would send the query to addresses that hold other code. There
+    /// jit_compile(all) is a threshold of one.</summary>
+    public bool BatchAllowed = true;
+
+    /// <summary>The settings of such a session: each predicate is compiled
+    /// where it runs, when it has been called enough.</summary>
+    public static WasmTierSettings ForOneLongQuery()
+        => new() { BatchAllowed = false, BootBatch = false, BootThreshold = LazyThreshold };
+
+    /// <summary>The threshold jit_compile(on) names.</summary>
+    public const int LazyThreshold = 16;
+
     /// <summary>The form the session's next builds compile to: continuation
     /// functions (ADR-061) or partitions.</summary>
     public bool Cps = WasmPredicateCompiler.CpsMode;

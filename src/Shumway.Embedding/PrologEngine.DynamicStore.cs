@@ -2037,7 +2037,10 @@ public sealed partial class PrologEngine
             if (entry != a)
             {
                 (retargeted ??= new())[entry] = link.PredicatesByAddress[a];
-                // Compiled code of the version it replaces leaves new calls too.
+                // Compiled code of the version it replaces leaves new calls
+                // too, and with it the wasm builds that jump into it: dropping
+                // its delegate alone left a compiled caller on the old clauses.
+                IlPromotion.Wasm?.OnStaticChanged(fid);
                 InvalidateIlForFunctor(fid);
             }
             addrMap[fid] = entry;
