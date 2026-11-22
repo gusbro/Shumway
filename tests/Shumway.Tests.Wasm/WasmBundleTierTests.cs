@@ -34,7 +34,7 @@ public class WasmBundleTierTests
     // differs from the baking engine's.
     private const string Filler = "filler(1, 2, 3). filler(4, 5, 6). filler(x, y, z).\n";
 
-    private static LinkResult Link(Func<Bundle, byte[]?>? baker, bool stripWam = false)
+    private static LinkResult Link(Func<Bundle, IReadOnlyList<byte[]>>? baker, bool stripWam = false)
         => ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { ShmoCompiler.CompileSource(Corpus, "user") },
@@ -44,7 +44,7 @@ public class WasmBundleTierTests
             StripWam = stripWam,
         });
 
-    private static byte[]? Bake(Bundle b) => WasmBundleTier.Bake(b, stdlib: false);
+    private static IReadOnlyList<byte[]> Bake(Bundle b) => WasmBundleTier.Bake(b, stdlib: false);
 
     /// <summary>A dirty engine with a wasm store: IL promotion off, wasm
     /// promotion never (the bundle's module is the only wasm it gets).</summary>

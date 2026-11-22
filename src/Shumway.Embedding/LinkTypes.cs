@@ -113,10 +113,11 @@ public sealed class LinkConfig
     /// <summary>When set, compiles the linked bundle's static predicates to
     /// a relocatable wasm module stored in the bundle (the <c>--wasm</c>
     /// option; the baker lives in Shumway.Compiler.Wasm, which this assembly
-    /// does not reference). Returns the module bytes, or null when nothing
+    /// does not reference). Returns the modules to store, the helpers of the
+    /// bundle's dynamic rules in one of their own; none when nothing
     /// compiled. Refused together with <see cref="StripWam"/>: the module
     /// runs the bytecode that option drops.</summary>
-    public Func<Bundle, byte[]?>? WasmBaker { get; init; }
+    public Func<Bundle, IReadOnlyList<byte[]>>? WasmBaker { get; init; }
 
     /// <summary>Stage 9 (dead-region) report opt-in. When true, after the reachability
     /// walk the linker decodes the reached modules, resolves the externally-reachable

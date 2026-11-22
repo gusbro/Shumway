@@ -2438,6 +2438,58 @@ public sealed partial class PrologEngine
         return result;
     }
 
+    /// <summary>The helpers of the rules this engine transformed, each with a
+    /// name that is the same in every process: its kind, a digest of the rule
+    /// that took it (module, place in its file, term, as the memo keys it) and
+    /// its place among that rule's helpers. Keyed by the helper's own name,
+    /// which carries a number of this engine's counter. A baked wasm module
+    /// names such a helper by the first, and an engine that loads it finds
+    /// its own helper of the same rule. A rule two files hold at the same
+    /// place gives its helpers none.</summary>
+    public Dictionary<string, string> PortableHelperNames()
+    {
+        var digests = new Dictionary<string, int>(_ruleTransforms.Count);
+        var rules = new List<(string Digest, List<Clause> Transformed)>(_ruleTransforms.Count);
+        foreach (var (key, memo) in _ruleTransforms)
+        {
+            int module = key.IndexOf('\0') + 1;
+            string digest = PortableDigest(key.Substring(0, module)
+                + ClausePipeline.PortableKey(key.Substring(module)) + (memo.InlineIte ? "\0i" : "\0"));
+            digests[digest] = digests.TryGetValue(digest, out int seen) ? seen + 1 : 1;
+            rules.Add((digest, memo.Transformed));
+        }
+        var names = new Dictionary<string, string>();
+        foreach (var (digest, transformed) in rules)
+        {
+            if (digests[digest] != 1) continue;
+            int ordinal = 0;
+            for (int i = 1; i < transformed.Count; i++)
+            {
+                var (atomId, _) = FunctorTable.Lookup(HeadFunctorIdOf(transformed[i]));
+                string name = AtomTable.GetById(atomId)!.Name;
+                if (names.ContainsKey(name)) continue;      // the helper's next clause
+                int number = name.LastIndexOf('_') + 1;
+                names[name] = name.Substring(0, number) + "@" + digest + "." + ordinal++;
+            }
+        }
+        return names;
+    }
+
+    // 128 bits, as two FNV-1a passes from different bases: a name two rules
+    // shared would bind a module's function to another rule's helper.
+    private static string PortableDigest(string text)
+    {
+        const ulong prime = 1099511628211UL;
+        ulong a = 14695981039346656037UL, b = 0x9E3779B97F4A7C15UL;
+        foreach (char c in text)
+        {
+            a = (a ^ c) * prime;
+            b = (b ^ (ulong)(c + 0x100)) * prime;
+        }
+        return a.ToString("x16", System.Globalization.CultureInfo.InvariantCulture)
+            + b.ToString("x16", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
     /// <summary>The memo keys a module's last whole transform took
     /// (<see cref="PruneRuleTransforms"/>).</summary>
     private readonly Dictionary<string, HashSet<string>> _moduleRuleTransformKeys = new();

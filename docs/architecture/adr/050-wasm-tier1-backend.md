@@ -14,7 +14,8 @@ many-modules arc remain open. The full design and the running record live in
 records the decisions the policy calls major: a new backend and a new
 external dependency. Amended 2026-11-11: the module writes state the host
 owns only through rings the host drains in order. Amended 2026-11-22:
-`jit_compile(off)` evicts this backend's builds at the goal.
+`jit_compile(off)` evicts this backend's builds at the goal, and the helpers
+of a bundle's dynamic rules are baked.
 
 ## Context
 
@@ -202,3 +203,46 @@ So with this backend `off`, and a change of form, evict every build at the
 goal (`WasmPromotionStore.LeaveNow`). The rest of the goal that asked runs
 on the interpreter, and a choice point left inside a build gives its next
 solution from the bytecode. The IL compiler keeps the deferral.
+
+## Amendment (2026-11-22): the helpers of a bundle's dynamic rules are baked
+
+A rule of a dynamic predicate takes helper predicates when an engine first
+links it: one for a disjunction, one for a negation, one for the goal of a
+`catch/3`. Each is named with a number of that engine's counter, so the same
+rule's helper is `'$disj_41'` in one process and `'$disj_97'` in the next. A
+relocatable module names its members, and the bake left these out: a member
+the loading engine names differently refuses the whole module. A host then
+compiled them itself at every load. For the largest library measured that was
+311 predicates and 1.5 to 4.3 seconds of each visit to the page.
+
+The IL tier's bake of a bundle already takes them. It compiles each dynamic
+predicate that has clauses as a snapshot (ADR-023), with the helpers that
+snapshot reaches, and loads them as delegates. A delegate is the whole
+implementation of its predicate, so the names of the baking engine do no
+harm: nothing in the loading engine has to match them.
+
+A module of this backend is not the whole implementation. It hands any
+instruction back to the interpreter, which runs the bytecode at a linked
+address, and the loading engine has that bytecode under its own helper's
+name. So the bake names a helper by something every process agrees on: the
+rule that took it and its place among that rule's helpers
+(`PrologEngine.PortableHelperNames`, `WasmPortableNames`). The rule is the
+key the engine already memoizes a rule's transform under, which is its
+module, its place in its file and its term up to a renaming of variables,
+less the file's id, which a process hands out. The module carries a digest of
+that key. At install each such name resolves to the loading engine's helper
+of the same rule, and the check of a member's code against the code it was
+compiled from compares call sites under the same names.
+
+These helpers go in a module of their own, the bundle's second
+(`WasmBundleTier.BakeLoaded`). An engine may not have one of the rules as it
+was baked: a clause retracted before the first goal, a rule transformed under
+debug code generation, which keeps no memo. A module installs whole or not at
+all, and such an engine refuses the helpers' module alone and compiles those
+helpers as it did before. The module of the static predicates names none of
+them and installs as it always did.
+
+A rule two files hold at the same place gives its helpers no portable name,
+and they stay out of the bake. The snapshots themselves are not baked yet: a
+dynamic predicate of a bundle starts on the interpreter and is compiled when
+it has run enough (ADR-054).

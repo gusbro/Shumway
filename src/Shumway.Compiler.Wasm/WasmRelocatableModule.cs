@@ -46,11 +46,26 @@ public sealed class WasmRelocatableModule
 
     private WasmRelocatableModule() { }
 
+    /// <summary>Whether a member is a rule's helper under the name every
+    /// process gives it (<see cref="WasmPortableNames"/>): the module was
+    /// baked with those names and resolves against the loading engine's.</summary>
+    public bool CarriesPortableNames
+    {
+        get
+        {
+            foreach (var m in Members)
+                if (WasmPortableNames.IsPortable(m.Name)) return true;
+            return false;
+        }
+    }
+
     /// <summary>A process-independent fingerprint of a predicate's code: its
     /// length, arity and call-site layout. Not the bytes (their operands
     /// carry this process's atom and functor ids); enough to refuse a
     /// module whose cursor offsets were taken against other code.</summary>
-    public static ulong ShapeOf(CompiledPredicate pred)
+    /// <param name="rename">The name a module carries for a callee's name
+    /// (<see cref="WasmPortableNames.ToPortable"/>), or null.</param>
+    public static ulong ShapeOf(CompiledPredicate pred, Func<string, string>? rename = null)
     {
         const ulong prime = 1099511628211UL;
         ulong h = 14695981039346656037UL;
@@ -60,6 +75,7 @@ public sealed class WasmRelocatableModule
         {
             h ^= (uint)site.OpcodeOffset; h *= prime;
             var (name, arity) = RelocatingCompileEnv.NameOf(site.CalleeFunctorId);
+            if (rename is not null) name = rename(name);
             foreach (char c in name) { h ^= c; h *= prime; }
             h ^= (uint)arity; h *= prime;
         }
@@ -72,12 +88,12 @@ public sealed class WasmRelocatableModule
     /// probe interns nothing, so the retry costs no process state.</summary>
     public static WasmRelocatableModule BakeCompilable(IReadOnlyList<WasmGroupMember> members,
         IWasmCompileEnv liveEnv, Action<WasmGroupMember, string>? onRefused = null,
-        Action<string>? timing = null)
+        Action<string>? timing = null, Func<string, string>? rename = null)
     {
         var clock = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            var whole = BakeLessOversize(ref members, liveEnv, onRefused);
+            var whole = BakeLessOversize(ref members, liveEnv, onRefused, rename);
             timing?.Invoke($"wasm: compiled in one pass, {clock.Elapsed.TotalSeconds:0.00} s");
             return whole;
         }
@@ -102,7 +118,7 @@ public sealed class WasmRelocatableModule
             try
             {
                 IReadOnlyList<WasmGroupMember> fitting = good;
-                var rest = BakeLessOversize(ref fitting, liveEnv, onRefused);
+                var rest = BakeLessOversize(ref fitting, liveEnv, onRefused, rename);
                 timing?.Invoke($"wasm: the whole group refused after {attempt:0.00} s ({first.Message}); "
                     + $"{members.Count - good.Count} of {members.Count} members refused, sorted out in "
                     + $"{sorted:0.00} s; the rest compiled in {clock.Elapsed.TotalSeconds:0.00} s");
@@ -126,7 +142,7 @@ public sealed class WasmRelocatableModule
                     }
                 }
                 IReadOnlyList<WasmGroupMember> fitting = compiled;
-                var rest = BakeLessOversize(ref fitting, liveEnv, onRefused);
+                var rest = BakeLessOversize(ref fitting, liveEnv, onRefused, rename);
                 timing?.Invoke($"wasm: refused again at emission ({late.Message}); "
                     + $"{good.Count} members compiled alone, the rest in {clock.Elapsed.TotalSeconds:0.00} s");
                 return rest;
@@ -138,13 +154,14 @@ public sealed class WasmRelocatableModule
     /// larger than a browser takes: found one at a time, when its function is
     /// written, and the rest compiled again without it.</summary>
     private static WasmRelocatableModule BakeLessOversize(ref IReadOnlyList<WasmGroupMember> members,
-        IWasmCompileEnv liveEnv, Action<WasmGroupMember, string>? onRefused)
+        IWasmCompileEnv liveEnv, Action<WasmGroupMember, string>? onRefused,
+        Func<string, string>? rename)
     {
         while (true)
         {
             try
             {
-                return Bake(members, liveEnv);
+                return Bake(members, liveEnv, rename);
             }
             catch (WasmOversizeException oversize)
             {
@@ -163,11 +180,18 @@ public sealed class WasmRelocatableModule
     /// <summary>Compiles the members with sentinels and locates every
     /// sentinel in the code section. <paramref name="liveEnv"/> supplies
     /// the builtin-form decisions; nothing of its encodings is baked.
-    /// </summary>
+    /// With <paramref name="rename"/>, every name the module carries is the
+    /// one it gives (<see cref="WasmPortableNames.ToPortable"/>).</summary>
     public static WasmRelocatableModule Bake(IReadOnlyList<WasmGroupMember> members,
-                                            IWasmCompileEnv liveEnv)
+                                            IWasmCompileEnv liveEnv,
+                                            Func<string, string>? rename = null)
     {
-        var env = new RelocatingCompileEnv(members, liveEnv);
+        (string, int) Named(int fid)
+        {
+            var (n, a) = RelocatingCompileEnv.NameOf(fid);
+            return (rename is null ? n : rename(n), a);
+        }
+        var env = new RelocatingCompileEnv(members, liveEnv, rename);
         var entry = WasmPredicateCompiler.CompileGroup(members, env);
         var relocs = new List<WasmRelocation>(env.Relocations);
         Scan(entry.Module, relocs);
@@ -192,15 +216,15 @@ public sealed class WasmRelocatableModule
         }
         for (int i = 0; i < members.Count; i++)
         {
-            var (name, arity) = RelocatingCompileEnv.NameOf(members[i].Predicate.FunctorId);
+            var (name, arity) = Named(members[i].Predicate.FunctorId);
             mems.Add(new WasmRelocatableMember(name, arity, cursors[i],
-                                               ShapeOf(members[i].Predicate)));
+                                               ShapeOf(members[i].Predicate, rename)));
         }
         var sites = new List<(string, int, string, int)>(entry.CallSites.Count);
         foreach (var (caller, callee) in entry.CallSites.Keys)
         {
-            var (cn, ca) = RelocatingCompileEnv.NameOf(caller);
-            var (en, ea) = RelocatingCompileEnv.NameOf(callee);
+            var (cn, ca) = Named(caller);
+            var (en, ea) = Named(callee);
             sites.Add((cn, ca, en, ea));
         }
         return new WasmRelocatableModule
@@ -376,12 +400,37 @@ public sealed class WasmRelocatableModule
     /// <see cref="ShapeOf"/> than the one the module was compiled from.</summary>
     /// <param name="shapeOf">The live shape of a member functor, or null to
     /// skip the check.</param>
+    /// <param name="localName">This process's name for a name the module
+    /// carries, null when it has none (<see cref="WasmPortableNames.ToLive"/>);
+    /// or null when the module carries every name as it is.</param>
     public bool TryResolve(IWasmCompileEnv env, Func<int, int> biasOf,
         Func<int, ulong>? shapeOf, int moduleId,
-        out WasmGroupEntry entry, out Dictionary<int, int> entryAddressByFid, out string reason)
+        out WasmGroupEntry entry, out Dictionary<int, int> entryAddressByFid, out string reason,
+        Func<string, string?>? localName = null)
     {
         entry = null!;
         entryAddressByFid = new Dictionary<int, int>(Members.Count);
+        // Before anything is interned: a name with no counterpart here
+        // refuses the module.
+        string? missing = null;
+        int Functor(string name, int arity)
+        {
+            string? local = localName is null ? name : localName(name);
+            if (local is null) { missing ??= name; local = name; }
+            return FunctorTable.Intern(AtomTable.Intern(local, permanent: true).Id, arity);
+        }
+        if (localName is not null)
+        {
+            foreach (var m in Members) missing ??= localName(m.Name) is null ? m.Name : null;
+            foreach (var ev in Builtins) missing ??= localName(ev.Name) is null ? ev.Name : null;
+            foreach (var r in Relocations)
+                if (r.Kind != WasmRelocKind.ModuleId)
+                    missing ??= localName(r.Name) is null ? r.Name : null;
+            foreach (var (cn, _, en, _) in CallSites)
+                missing ??= localName(cn) is null ? cn : localName(en) is null ? en : null;
+            if (missing is not null)
+            { reason = $"the helper {missing} has no counterpart in this engine"; return false; }
+        }
         var biasByName = new Dictionary<(string, int), int>(Members.Count);
         var fidByName = new Dictionary<(string, int), int>(Members.Count);
         foreach (var m in Members)
@@ -441,7 +490,8 @@ public sealed class WasmRelocatableModule
                     value = env.EncodeBuiltinId(id, r.Offset);
                     break;
                 case WasmRelocKind.Atom:
-                    value = env.AtomCell(AtomTable.Intern(r.Name, permanent: true).Id);
+                    value = env.AtomCell(AtomTable.Intern(
+                        localName is null ? r.Name : localName(r.Name)!, permanent: true).Id);
                     break;
                 case WasmRelocKind.Functor:
                     value = env.FunctorCell(Functor(r.Name, r.Arity));
@@ -478,9 +528,6 @@ public sealed class WasmRelocatableModule
         return true;
     }
 
-    private static int Functor(string name, int arity)
-        => FunctorTable.Intern(AtomTable.Intern(name, permanent: true).Id, arity);
-
     // ---- serialization ----
 
     /// <summary>The mailbox ABI's fingerprint mixed with the evidence
@@ -507,6 +554,8 @@ public sealed class WasmRelocatableModule
             Mix(name, (int)Enum.Parse(typeof(WasmInlineForms), name));
         // A relocation's wire form: its sites in the code, then in the data.
         Mix("WasmRelocation Sites DataSites", 2);
+        // A name may be a helper's portable one (WasmPortableNames).
+        Mix("portable helper names", 1);
         return h;
     }
 

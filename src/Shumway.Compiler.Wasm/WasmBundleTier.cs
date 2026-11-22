@@ -10,22 +10,29 @@ namespace Shumway.Compiler.Wasm;
 /// bundle's static predicates into one relocatable module
 /// (<see cref="WasmRelocatableModule"/>) and stores it in the bundle; a host
 /// with a wasm world installs it when the bundle is loaded, in place of
-/// compiling those predicates itself.</summary>
+/// compiling those predicates itself.
+///
+/// <para>The rules of the bundle's dynamic predicates take helper predicates
+/// when an engine first links them (<c>'$disj_N'</c> and kin), as the IL
+/// tier's bake of a dynamic predicate takes the helpers it reaches. They are
+/// baked into a second module, under names every process gives them
+/// (<see cref="WasmPortableNames"/>). Apart, so that an engine that has not
+/// one of those rules as it was baked refuses that module alone.</para></summary>
 public static class WasmBundleTier
 {
     /// <summary>Bakes the bundle's own static predicates: the bundle is
     /// loaded into a fresh engine (as the stdlib itself when <paramref
     /// name="stdlib"/>, else on top of the ordinary prelude) and every
-    /// static it added is compiled with relocations. Null when nothing
-    /// compiled. Members the compiler refuses are dropped and reported
-    /// through <paramref name="log"/>.
+    /// static it added is compiled with relocations. The modules to store
+    /// in the bundle: none when nothing compiled. Members the compiler
+    /// refuses are dropped and reported through <paramref name="log"/>.
     ///
     /// <para>The libraries an archive imports and does not hold (ADR-038
     /// §4) load first, through the library path <paramref name="prepare"/>
     /// gives the engine, and are not baked: a call into one is a relocation
     /// the install resolves against their code.</para></summary>
-    public static byte[]? Bake(Bundle bundle, bool stdlib, Action<string>? log = null,
-                               Action<PrologEngine>? prepare = null)
+    public static IReadOnlyList<byte[]> Bake(Bundle bundle, bool stdlib, Action<string>? log = null,
+                                             Action<PrologEngine>? prepare = null)
     {
         if (!stdlib) return new WasmBakeSession(prepare).Bake(bundle, log);
         var engine = PrologEngine.FromBundle(bundle);
@@ -34,35 +41,57 @@ public static class WasmBundleTier
     }
 
     /// <summary>Bakes what the last bundle loaded into <paramref name="engine"/>
-    /// added: its static predicates, but for those in <paramref name="before"/>.</summary>
-    internal static byte[]? BakeLoaded(PrologEngine engine, HashSet<int> before, Action<string>? log)
+    /// added, but for what is in <paramref name="before"/>: its static
+    /// predicates, and in a module of their own the helpers of its dynamic
+    /// predicates' rules.</summary>
+    internal static IReadOnlyList<byte[]> BakeLoaded(PrologEngine engine, HashSet<int> before,
+                                                    Action<string>? log)
     {
         // What the bundle registered, read before the query that links: that
-        // setup mints helpers for the bundle's dynamic clauses (a library's
-        // attribute_goals/4 hook) under per-process numbers, and a member
-        // the loading engine names differently refuses the whole module.
+        // setup mints the helpers of the bundle's dynamic rules (a library's
+        // attribute_goals/4 hook), under numbers of this engine's counter.
         var own = new HashSet<int>(engine.PrecompiledStaticPredicates.Keys);
         engine.Query("true.");
         var store = engine.IlPromotion;
+        var portable = new WasmPortableNames(engine);
         var members = new List<WasmGroupMember>();
+        var helpers = new List<WasmGroupMember>();
         foreach (var (addr, pred) in WasmPromotionStore.StaticPredicatesOf(engine))
         {
-            if (before.Contains(pred.FunctorId) || !own.Contains(pred.FunctorId)) continue;
-            members.Add(new WasmGroupMember(pred, addr,
-                store.FloatPoolProvider?.Invoke(pred.FunctorId),
-                store.ImagePoolProvider?.Invoke(pred.FunctorId)));
+            int fid = pred.FunctorId;
+            if (before.Contains(fid)) continue;
+            bool mine = own.Contains(fid);
+            if (!mine && !portable.Names(fid)) continue;
+            (mine ? members : helpers).Add(new WasmGroupMember(pred, addr,
+                store.FloatPoolProvider?.Invoke(fid), store.ImagePoolProvider?.Invoke(fid)));
         }
-        if (members.Count == 0) return null;
-        var module = WasmRelocatableModule.BakeCompilable(members, new EngineWasmCompileEnv(),
-            (m, why) =>
+        var modules = new List<byte[]>(2);
+        void Skipping(WasmGroupMember m, string why)
+        {
+            var (name, arity) = RelocatingCompileEnv.NameOf(m.Predicate.FunctorId);
+            log?.Invoke($"wasm: skipping {name}/{arity}: {why}");
+        }
+        if (members.Count > 0)
+        {
+            var module = WasmRelocatableModule.BakeCompilable(members, new EngineWasmCompileEnv(),
+                Skipping, log);
+            if (module.Members.Count > 0)
             {
-                var (name, arity) = RelocatingCompileEnv.NameOf(m.Predicate.FunctorId);
-                log?.Invoke($"wasm: skipping {name}/{arity}: {why}");
-            },
-            log);
-        if (module.Members.Count == 0) return null;
-        log?.Invoke($"wasm: {module.Members.Count} of {members.Count} predicates baked");
-        return module.ToBytes();
+                log?.Invoke($"wasm: {module.Members.Count} of {members.Count} predicates baked");
+                modules.Add(module.ToBytes());
+            }
+        }
+        if (helpers.Count > 0)
+        {
+            var module = WasmRelocatableModule.BakeCompilable(helpers, new EngineWasmCompileEnv(),
+                Skipping, log, portable.ToPortable);
+            if (module.Members.Count > 0)
+            {
+                log?.Invoke($"wasm: {module.Members.Count} of {helpers.Count} helpers of dynamic rules baked");
+                modules.Add(module.ToBytes());
+            }
+        }
+        return modules;
     }
 
     // No IL promotion in the baking engine: its work would be wasted, and
@@ -112,10 +141,15 @@ public static class WasmBundleTier
                 biasByFid[pred.FunctorId] = addr;
                 predByFid[pred.FunctorId] = pred;
             }
+        // A module of helpers names them as every process does; this
+        // engine's names for them are asked for only then.
+        var portable = module.CarriesPortableNames ? new WasmPortableNames(engine) : null;
         if (!module.TryResolve(new EngineWasmCompileEnv(),
                 fid => biasByFid.TryGetValue(fid, out int b) ? b : -1,
-                fid => WasmRelocatableModule.ShapeOf(predByFid[fid]),
-                world.NextModuleId, out var entry, out var entryAddr, out string reason))
+                fid => WasmRelocatableModule.ShapeOf(predByFid[fid],
+                    portable is null ? null : portable.ToPortable),
+                world.NextModuleId, out var entry, out var entryAddr, out string reason,
+                portable is null ? null : portable.ToLive))
             return (Array.Empty<int>(), "not installed: " + reason);
         try
         {
@@ -154,8 +188,10 @@ public sealed class WasmBakeSession
         prepare?.Invoke(_engine);
     }
 
-    /// <summary>Bakes the bundle's own static predicates; null when none compiled.</summary>
-    public byte[]? Bake(Bundle bundle, Action<string>? log = null)
+    /// <summary>Bakes the bundle's own static predicates and the helpers of
+    /// its dynamic rules (<see cref="WasmBundleTier.BakeLoaded"/>); no module
+    /// when none compiled.</summary>
+    public IReadOnlyList<byte[]> Bake(Bundle bundle, Action<string>? log = null)
     {
         var clock = System.Diagnostics.Stopwatch.StartNew();
         _engine.LoadLibraryDependencies(bundle);
