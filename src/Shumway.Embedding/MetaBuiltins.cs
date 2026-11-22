@@ -550,7 +550,8 @@ public static partial class MetaBuiltins
             + "An extensionless File that does not exist is retried as File.pl. File may "
             + "also be a list of specifications, each consulted in order, or the atom "
             + "user: clauses are then read from current input until end of input or a "
-            + "line reading end_of_file.");
+            + "line reading end_of_file. A file the load refuses whole, as one whose "
+            + "clauses for a predicate are not contiguous, raises system_error(Message).");
         BuiltinsRegistry.Register("$load_text", 2, LoadTextCore,
             Database, "'$load_text'(+TextAtom, +Options)",
             "Native core of load_text/2 (Trealla): consults TextAtom's characters "

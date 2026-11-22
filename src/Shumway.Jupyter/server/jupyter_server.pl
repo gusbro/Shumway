@@ -388,9 +388,13 @@ follow_rename(File) :-
 
 % A cell with a clause that does not parse is an error of the cell: nothing
 % of it is loaded, where a load from a program reports the clause and goes on.
+% So is a cell the load refuses whole, as one whose clauses for a predicate
+% are not together: the error is what the load says.
 load(File) :-
     setup_call_cleanup('$jupyter_strict_syntax'(true, Old),
-                       user:reconsult(File),
+                       catch(user:reconsult(File),
+                             error(system_error(Why), _),
+                             throw(jupyter(not_loaded(Why)))),
                        '$jupyter_strict_syntax'(Old, _)).
 
 cell_queries(Code, Queries) :-
@@ -877,5 +881,7 @@ error_text(Ball, Text) :-
         atom_chars('A clause is not a query. To define predicates, start the cell with %%user.', Text)
     ;   Ball = jupyter(tracer_in_cell(Goal)) ->
         tracer_text(Goal, Text)
+    ;   Ball = jupyter(not_loaded(Why)), atom(Why) ->
+        atom_chars(Why, Text)
     ;   '$jupyter_error_text'(Ball, Text)
     ).
