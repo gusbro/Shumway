@@ -44,6 +44,20 @@ public sealed class WasmRelocatableModule
         CallSites { get; private set; }
         = Array.Empty<(string, int, string, int)>();
 
+    /// <summary>The predicates the bake offered with these members and the
+    /// compiler refused, each with the compiler's reason. A host that
+    /// installs the module marks them refused: its own batch would offer
+    /// each one again at every load, to be refused again.</summary>
+    public IReadOnlyList<(string Name, int Arity, string Reason)> Refused { get; private set; }
+        = Array.Empty<(string, int, string)>();
+
+    /// <summary>This module, with what the bake refused beside it.</summary>
+    public WasmRelocatableModule WithRefused(IReadOnlyList<(string Name, int Arity, string Reason)> refused)
+    {
+        Refused = refused;
+        return this;
+    }
+
     private WasmRelocatableModule() { }
 
     /// <summary>For a module that is the snapshot of a dynamic predicate
@@ -574,6 +588,7 @@ public sealed class WasmRelocatableModule
         // A name may be a helper's portable one (WasmPortableNames).
         Mix("portable helper names", 1);
         Mix("SnapshotDigest", 1);
+        Mix("Refused", 1);
         return h;
     }
 
@@ -621,6 +636,9 @@ public sealed class WasmRelocatableModule
         w.Write(CallSites.Count);
         foreach (var (cn, ca, en, ea) in CallSites)
         { w.Write(cn); w.Write(ca); w.Write(en); w.Write(ea); }
+        w.Write(Refused.Count);
+        foreach (var (name, arity, reason) in Refused)
+        { w.Write(name); w.Write(arity); w.Write(reason); }
         w.Flush();
     }
 
@@ -684,6 +702,11 @@ public sealed class WasmRelocatableModule
         for (int i = 0; i < n; i++)
             sites2.Add((r.ReadString(), r.ReadInt32(), r.ReadString(), r.ReadInt32()));
         m.CallSites = sites2;
+        n = r.ReadInt32();
+        var refused = new List<(string, int, string)>(n);
+        for (int i = 0; i < n; i++)
+            refused.Add((r.ReadString(), r.ReadInt32(), r.ReadString()));
+        m.Refused = refused;
         return m;
     }
 }

@@ -50,4 +50,76 @@ public sealed class BakeRefusalTests : IDisposable
         engine.ConsultString(":- use_module(library(rlib)).");
         Assert.True(engine.Query("cube(2, 8), inc(2, 3), twice(2, 4).").Success);
     }
+
+    private static Bundle Linked()
+    {
+        var link = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { ShmoCompiler.CompileSource(Source, "rlib") },
+            Library = true,
+            WasmBaker = b => WasmBundleTier.Bake(b, stdlib: false),
+        });
+        Assert.True(link.Success, string.Join(", ", link.Diagnostics.Select(d => d.Message)));
+        return BundleReader.FromBytes(link.Bytes!);
+    }
+
+    // What a host's batch is offered after it loads the bundle and runs a goal.
+    private static (List<string> Offered, WasmPromotionStore Wasm) OfferedAfterLoading(Bundle bundle)
+    {
+        var engine = new PrologEngine();
+        var store = engine.IlPromotion;
+        store.Threshold = 0;
+        var world = new DesktopWasmWorld();
+        var offered = new List<string>();
+        var wasm = store.Wasm = new WasmPromotionStore(store)
+        {
+            Threshold = int.MaxValue,
+            BundleInstaller = (eng, bytes, linked) => WasmBundleTier.Install(eng, world, bytes, linked),
+            BatchPromoter = candidates =>
+            {
+                foreach (var (pred, _) in candidates)
+                    offered.Add(RelocatingCompileEnv.NameOf(pred.FunctorId).Name);
+                return 0;
+            },
+        };
+        engine.LoadBundle(bundle);
+        Assert.True(engine.Query("rlib:cube(2, 8), rlib:twice(2, 4).").Success);
+        Assert.Contains(wasm.BundleFids, f => RelocatingCompileEnv.NameOf(f).Name.EndsWith("twice"));
+        wasm.PromoteAllStatics(engine);
+        // The guard: the batch was offered the rest of the program.
+        Assert.NotEmpty(offered);
+        return (offered, wasm);
+    }
+
+    /// <summary>The module carries what the bake refused, and the host that
+    /// installs it marks those refused. Its batch offered each one again at
+    /// every load, to be refused again.</summary>
+    [Fact]
+    public void WhatTheBakeRefused_IsNotOfferedToTheBatchOfAHostThatLoadsTheBundle()
+    {
+        var bundle = Linked();
+        var module = WasmRelocatableModule.Read(new MemoryStream(Assert.Single(bundle.WasmModules)));
+        var refused = Assert.Single(module.Refused);
+        Assert.EndsWith("cube", refused.Name);
+
+        var (offered, wasm) = OfferedAfterLoading(bundle);
+
+        Assert.DoesNotContain(offered, name => name.EndsWith("cube"));
+        int cube = Assert.Single(wasm.UnpromotableFunctorIds(),
+            f => RelocatingCompileEnv.NameOf(f).Name.EndsWith("cube"));
+        Assert.Equal(refused.Reason, wasm.RefusalReason(cube));
+    }
+
+    /// <summary>Counter-proof: the same module without the list.</summary>
+    [Fact]
+    public void WithoutTheList_TheBatchIsOfferedIt()
+    {
+        var bundle = Linked();
+        var module = WasmRelocatableModule.Read(new MemoryStream(Assert.Single(bundle.WasmModules)));
+        byte[] bare = module.WithRefused(Array.Empty<(string, int, string)>()).ToBytes();
+
+        var (offered, _) = OfferedAfterLoading(bundle.WithWasmModules(new[] { bare }));
+
+        Assert.Contains(offered, name => name.EndsWith("cube"));
+    }
 }

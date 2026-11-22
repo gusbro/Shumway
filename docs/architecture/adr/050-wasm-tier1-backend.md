@@ -242,6 +242,12 @@ all, and such an engine refuses the helpers' module alone and compiles those
 helpers as it did before. The module of the static predicates names none of
 them and installs as it always did.
 
+A module also carries the predicates its bake refused, each with the
+compiler's reason (`WasmRelocatableModule.Refused`). A host that installs
+the module marks them refused: its batch offered each of them to the
+compiler again at every load, to be refused again. A refusal depends on the
+forms the builtins have, which the install has checked by then.
+
 A rule two files hold at the same place gives its helpers no portable name,
 and they stay out of the bake. The snapshots themselves are baked too, each
 in a module of its own: the amendment of the same date to

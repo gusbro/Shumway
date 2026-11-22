@@ -74,10 +74,16 @@ public static class WasmBundleTier
                 store.FloatPoolProvider?.Invoke(fid), store.ImagePoolProvider?.Invoke(fid)));
         }
         var modules = new List<byte[]>(2);
+        // What the compiler refuses goes with the module, under the name the
+        // module would carry for it: the host that installs the module does
+        // not offer those to its own batch.
+        var refused = new List<(string, int, string)>();
+        Func<string, string>? carried = null;
         void Skipping(WasmGroupMember m, string why)
         {
             var (name, arity) = RelocatingCompileEnv.NameOf(m.Predicate.FunctorId);
             log?.Invoke($"wasm: skipping {name}/{arity}: {why}");
+            refused.Add((carried is null ? name : carried(name), arity, why));
         }
         if (members.Count > 0)
         {
@@ -86,19 +92,25 @@ public static class WasmBundleTier
             if (module.Members.Count > 0)
             {
                 log?.Invoke($"wasm: {module.Members.Count} of {members.Count} predicates baked");
-                modules.Add(module.ToBytes());
+                modules.Add(module.WithRefused(refused).ToBytes());
             }
         }
         if (helpers.Count > 0)
         {
+            refused = new List<(string, int, string)>();
+            carried = portable.ToPortable;
             var module = WasmRelocatableModule.BakeCompilable(helpers, new EngineWasmCompileEnv(),
                 Skipping, log, portable.ToPortable);
             if (module.Members.Count > 0)
             {
                 log?.Invoke($"wasm: {module.Members.Count} of {helpers.Count} helpers of dynamic rules baked");
-                modules.Add(module.ToBytes());
+                modules.Add(module.WithRefused(refused).ToBytes());
             }
         }
+        // A snapshot the compiler refuses is found out by the predicate's
+        // own promotion, which is not a batch's.
+        refused = new List<(string, int, string)>();
+        carried = null;
         int dynamics = 0, snapshots = 0;
         foreach (var (fid, digest) in WasmPromotionStore.DynamicDigestsOf(engine))
         {
@@ -229,6 +241,15 @@ public static class WasmBundleTier
             store.RegisterBoundDelegate(fid, new WasmTierDelegate(fid, world).Invoke);
             wasm.NoteInstalled(fid, bias, predByFid[fid]);
             installed.Add(fid);
+        }
+        // The module's builtins have the forms the bake saw, so what the
+        // compiler refused there it refuses here.
+        foreach (var (name, arity, why) in module.Refused)
+        {
+            string? local = portable is null ? name : portable.ToLive(name);
+            if (local is null) continue;
+            int fid = FunctorTable.Intern(AtomTable.Intern(local, permanent: true).Id, arity);
+            if (biasByFid.ContainsKey(fid)) wasm.MarkUnpromotable(fid, why);
         }
         return (installed, $"{installed.Count} predicates installed from the bundle");
     }
