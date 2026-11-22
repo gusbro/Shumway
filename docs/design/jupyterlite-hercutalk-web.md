@@ -184,10 +184,12 @@ it first (section 9). If the first visit's wait is acceptable, the two
 packages are released independently of each other, and neither side
 follows the other's calendar.
 
-Measured (section 9): compiled with its WebAssembly module, as the site
-compiles a library, 24 to 33 s the first time and 2.4 s on the next visit,
-in Chromium. Compiled to bytecode alone, 6 to 11 s the first time and 1 to
-2 s on the next visit, in the three browsers.
+Measured (section 9): compiled with its WebAssembly modules, as the site
+compiles a library, 23 to 33 s the first time and 1.6 to 3.4 s on the next
+visit in Chromium, 47 s and 5.4 s in Firefox. Compiled to bytecode alone, 6
+to 11 s the first time and 1 to 2 s on the next visit, in the three
+browsers. A bundle a browser kept from another build of the runtime is
+compiled again, once: the third form's cost, as the table says.
 
 ## 8. How each side knows it works
 
@@ -248,15 +250,15 @@ page.
   initialization goals look for the libraries' sources each time the
   program loads.
 
-**With the WebAssembly module, measured on 2026-11-22.** The same program,
-on the branch `wasm-bounded-modules`, in Chromium. Firefox and WebKit are
-still to be measured.
+**With the WebAssembly modules, measured on 2026-11-22.** The same program,
+on the branch `wasm-bounded-modules`, in the demo's page.
 
-| | Chromium |
-|---|---|
-| The source compiled into a bundle with its module and kept, the first time | 24 to 33 s |
-| That bundle loaded on the next visit | 2.4 s |
-| The source consulted in the demo's page, and its program compiled there | 5.1 s and 11.8 s |
+| | Chromium | Firefox | WebKit |
+|---|---|---|---|
+| The source compiled into a bundle with its modules and kept, the first time | 23 to 33 s | 47 s | 25 s |
+| That bundle loaded on the next visit | 1.6 to 3.4 s | 5.4 s | no storage in the test browser |
+| What the page compiles after the bundle loads | nothing | nothing | nothing |
+| The source consulted in the page, and its program compiled there | 5.1 s and 11.8 s | not measured | not measured |
 
 - **The page builds the module.** Building a module held about 29 times
   its size in memory: every function stayed as a list of instruction
@@ -270,9 +272,20 @@ still to be measured.
   26,000 instructions, and its function would be larger than the 7,654,321
   bytes a browser takes for one. A module with such a function is refused
   whole, so the predicate is left out of it.
-- **The bundle in the browser's storage is 86 MB.** A page closed while it
+- **The program's dynamic predicates come compiled too.** Their rules take
+  helper predicates when the program is linked, 363 here, numbered by each
+  engine as it links. The bundle left them out, and the page compiled 311
+  of them at every visit, 1.5 to 2.5 s after the library loaded. They are
+  in the bundle now, in a module of their own, named by the rule each
+  belongs to. So is a snapshot of each of 35 dynamic predicates, installed
+  when the predicate is first called and again after a consult.
+- **The bundle in the browser's storage is 94 MB**: the module of the
+  static predicates, the helpers' and 35 snapshots. A page closed while it
   stores one leaves a file that is not a bundle, and the library is
-  compiled again on the next visit.
+  compiled again on the next visit. So is a bundle whose modules another
+  build of the runtime made: the format of a module changes between
+  builds, and such a bundle was kept and its modules refused at every
+  visit.
 - **A notebook compiles what its cells define.** A session did not: its
   program ran on the interpreter however often it ran. Each predicate is
   compiled when it has been called 16 times, and a library a cell loads
