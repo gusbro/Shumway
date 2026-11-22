@@ -97,7 +97,13 @@ top level's choices under an answer: Next, 5, All and Stop.
 1. **A session loads a server the site gives.** Today a session loads the
    Prolog server, which is inside the app. It will load the server the
    site's configuration names, fetched from the site in the form section 7
-   decides, and start it with the goal the variant names.
+   decides, and start it with the goal the variant names. It loads it as
+   the top level loads a program named on its command line: the
+   predicates of a file with no `:- module/2` are then callable from
+   `user`, as when the file is consulted. A `consult/1` of the bundle keeps
+   them local to the module the link gives the file, as ADR-008 has it. To
+   verify when it is built: that a bundle the browser compiled as a
+   library loads the same way.
 2. **Variants are data.** The extension registers one kernel for each
    variant the site's configuration lists: the kernelspec, `language_info`,
    the texts for success and failure, the query that gives the names to
@@ -113,11 +119,6 @@ top level's choices under an answer: Next, 5, All and Stop.
 5. **A package** (section 6). If the server ships compiled ahead, also
    the toolchain as something a build elsewhere can download:
    `shumway-compile` and `shumway-link`, which make a bundle.
-6. **A program the browser compiles without its WebAssembly module, when
-   the module is too big for the page.** A library the site compiles today
-   carries all its predicates as one WebAssembly module, built in the page.
-   For Logtalk's core and the server that module is 104 MB, and building it
-   takes more memory than the runtime has (section 9).
 
 ## 6. Packages, and who publishes what
 
@@ -183,8 +184,10 @@ it first (section 9). If the first visit's wait is acceptable, the two
 packages are released independently of each other, and neither side
 follows the other's calendar.
 
-Measured: 6 to 11 s the first time and 1 to 2 s on the next visit, with
-the change of section 5, item 6.
+Measured (section 9): compiled with its WebAssembly module, as the site
+compiles a library, 24 to 33 s the first time and 2.4 s on the next visit,
+in Chromium. Compiled to bytecode alone, 6 to 11 s the first time and 1 to
+2 s on the next visit, in the three browsers.
 
 ## 8. How each side knows it works
 
@@ -231,20 +234,49 @@ page.
 | A cell after any of them | about 20 ms | about 30 ms | about 90 ms |
 
 - **The first row is a compile without the WebAssembly module.** With it,
-  as the site compiles a library today, the module holds 5,247 predicates
-  in 104 MB. Building it takes the runtime past its 2 GB of memory, and
-  the runtime stops: the page has to be reloaded. On the desktop the same
-  module builds in 15 s. Hence section 5, item 6.
+  as the site compiles a library, the module held 5,247 predicates in
+  104 MB on 69f2436e. Building it took the runtime past its 2 GB of
+  memory, and the runtime stopped: the page had to be reloaded.
 - **A bundle compiled ahead** is 4.9 MB of bytecode, 0.86 MB with gzip.
-  With its WebAssembly module it is 109 MB, 8.7 MB with gzip, more than a
-  notebook's files can hold. A bundle for the browser is written
-  uncompressed: the runtime there has no Brotli codec.
+  With its WebAssembly module it was 109 MB on 69f2436e, 8.7 MB with gzip,
+  more than a notebook's files can hold. A bundle for the browser is
+  written uncompressed: the runtime there has no Brotli codec.
 - **The source needed two things.** Clauses of a multifile predicate that
   several libraries extend end up apart when the files are joined, which
   Shumway refuses by default: the source sets `discontiguous_check` to
   `warning`. And the libraries' loader files come with it, and their
   initialization goals look for the libraries' sources each time the
   program loads.
+
+**With the WebAssembly module, measured on 2026-11-22.** The same program,
+on the branch `wasm-bounded-modules`, in Chromium. Firefox and WebKit are
+still to be measured.
+
+| | Chromium |
+|---|---|
+| The source compiled into a bundle with its module and kept, the first time | 24 to 33 s |
+| That bundle loaded on the next visit | 2.4 s |
+| The source consulted in the demo's page, and its program compiled there | 5.1 s and 11.8 s |
+
+- **The page builds the module.** Building a module held about 29 times
+  its size in memory: every function stayed as a list of instruction
+  objects until the whole module was written. Each function is written
+  when it is built now, and the build of this module peaks at about 0.5 GB
+  on the desktop, where it took 2.9 GB.
+- **The module is 74 MB**, from 104. Binding an attributed variable was
+  inline at every place a unification could meet one, a fifth of the
+  module, and is a function of the module now.
+- **One predicate stays on the interpreter.** `$lgt_compile_body/5` has
+  26,000 instructions, and its function would be larger than the 7,654,321
+  bytes a browser takes for one. A module with such a function is refused
+  whole, so the predicate is left out of it.
+- **The bundle in the browser's storage is 86 MB.** A page closed while it
+  stores one leaves a file that is not a bundle, and the library is
+  compiled again on the next visit.
+- **A notebook compiles what its cells define.** A session did not: its
+  program ran on the interpreter however often it ran. Each predicate is
+  compiled when it has been called 16 times, and a library a cell loads
+  runs from the module it was compiled with.
 
 ## 10. Who does what
 
