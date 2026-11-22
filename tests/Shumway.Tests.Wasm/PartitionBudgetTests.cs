@@ -37,9 +37,9 @@ public sealed class PartitionBudgetTests(ITestOutputHelper o)
                 // run, the fail/proceed resolver, the unifier, the identity
                 // comparator, the expression evaluator, the two walks
                 // (ground, acyclic), the standard-order comparator, the
-                // extra trail's unwind and the verdict epilogue are not
-                // partitions.
-                return (int)ReadLeb(module, ref p) - 10;
+                // extra trail's unwind, the binding of an attributed
+                // variable and the verdict epilogue are not partitions.
+                return (int)ReadLeb(module, ref p) - 11;
             }
             at += (int)size;
         }

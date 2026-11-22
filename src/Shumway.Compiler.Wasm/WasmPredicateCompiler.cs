@@ -324,7 +324,8 @@ public static class WasmPredicateCompiler
         private int AcyclicIndex => _parts.Count + 6;   // and K+6 acyclic_term/1
         private int CompareIndex => _parts.Count + 7;   // and K+7 the standard order
         private int UnwindIndex => _parts.Count + 8;    // and K+8 the extra trail's unwind
-        private const int HelperCount = 7;              // K+2 .. K+8
+        private int ParkIndex => _parts.Count + 9;      // and K+9 an attributed variable's binding
+        private const int HelperCount = 8;              // K+2 .. K+9
 
         // The helpers the emitted code calls. A helper no call names keeps
         // its slot with a stub: the fixed cost of a module is what it uses
@@ -337,8 +338,8 @@ public static class WasmPredicateCompiler
             _helperUsed[index - UnifierIndex] = true;
             return (uint)index;
         }
-        private int RouterIndex => _parts.Count + 9;    // CPS only: K+9 the cursor router
-        private int EpilogueIndex => _parts.Count + 9;  // not CPS: K+9 the verdict epilogue
+        private int RouterIndex => _parts.Count + 10;   // CPS only: K+10 the cursor router
+        private int EpilogueIndex => _parts.Count + 10; // not CPS: K+10 the verdict epilogue
 
         /// <summary>CPS: the locals a transfer carries as arguments, 0 to
         /// <see cref="LCP"/>: the mailbox, the cursor (twice: the entry
@@ -1303,7 +1304,8 @@ public static class WasmPredicateCompiler
             // fail/proceed resolver; K+2: the general unifier; K+3: term
             // identity; K+4: arithmetic evaluation; K+5: ground/1's walk;
             // K+6: acyclic_term/1's; K+7: the standard order of two terms;
-            // K+8: the extra trail's unwind. All internal but run.
+            // K+8: the extra trail's unwind; K+9: the binding of an
+            // attributed variable. All internal but run.
             module.Types.Add(new WebAssemblyType
             {
                 Parameters = [WebAssemblyValueType.Int64, WebAssemblyValueType.Int32],
@@ -1326,6 +1328,7 @@ public static class WasmPredicateCompiler
             module.Functions.Add(new Function { Type = 2 });
             module.Functions.Add(new Function { Type = 1 });
             module.Functions.Add(new Function { Type = 2 });
+            module.Functions.Add(new Function { Type = 3 });
             module.Exports.Add(new Export
             {
                 Kind = ExternalKind.Function, Index = 0, Name = WasmAbi.EntryExport,
@@ -1574,11 +1577,12 @@ public static class WasmPredicateCompiler
                 ],
                 Code = BuildCompareBody(),
             },
-            _ => new FunctionBody
+            6 => new FunctionBody
             {
                 Locals = [new Local { Count = 10, Type = WebAssemblyValueType.Int32 }],
                 Code = BuildUnwindExtraBody(),
             },
+            _ => BuildParkAttvarBody(),
         };
 
         /// <summary>ADR-063: a module with passive data segments carries a
@@ -1783,7 +1787,7 @@ public static class WasmPredicateCompiler
             }
             names.Add("resolver"); names.Add("unifier"); names.Add("identity");
             names.Add("arith"); names.Add("ground"); names.Add("acyclic");
-            names.Add("compare"); names.Add("unwind");
+            names.Add("compare"); names.Add("unwind"); names.Add("park");
             if (_cps) names.Add("router");
             else if (_epilogueUsed) names.Add("epilogue");
 
@@ -2330,7 +2334,47 @@ public static class WasmPredicateCompiler
         /// ring, the trail or the heap has no room.</para></summary>
         private void EmitParkAttvarBind(int pc, int cells, Action writeCells, Action pushBoundCell)
         {
-            OpenBlock();                                    // $done
+            // An ATTVAR cell's payload is its home. LDa is not: a register
+            // can hold the bare cell, which Deref does not follow.
+            Op(new LocalGet(LC0));
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LAtHome));
+            // The function takes the machine as a partition of continuation
+            // functions does, in its arguments: the home where the entry
+            // cursor goes, and the cells less one where LCur does.
+            Op(new LocalGet(0));
+            Op(new LocalGet(LAtHome));
+            Op(new Int32Constant(cells - 1));
+            for (uint l = LHeapB; l <= LCP; l++) Op(new LocalGet(l));
+            Op(new WebAssembly.Instructions.Call(UseHelper(ParkIndex)));
+            Op(new Int32EqualZero());
+            OpenIf();
+            EmitDeopt(pc, 24);
+            CloseNested();
+            // The term the variable is bound to, at H, and the binding.
+            Op(new LocalGet(LH));
+            Op(new LocalSet(LAtIns));
+            writeCells();
+            Op(new LocalGet(LH));
+            Op(new Int32Constant(cells));
+            Op(new Int32Add());
+            Op(new LocalSet(LH));
+            CellStoreDyn(LHeapB, LAtHome, 0, pushBoundCell);
+            _wakeMayPend = true;
+        }
+
+        /// <summary>What <see cref="EmitParkAttvarBind"/> calls: everything
+        /// of the binding but the term's cells and the cell that binds, which
+        /// differ from site to site and are written there once this answers
+        /// 1. It answers 0, with nothing written, to step aside. One copy in
+        /// a module: inline it was a fifth of a large one, at sites a program
+        /// with no attributed variable never runs.</summary>
+        private FunctionBody BuildParkAttvarBody()
+        {
+            _code = new List<Instruction>();
+            _extraDepth = 0;
             OpenBlock();                                    // $slow
             LoadSlot32(WasmAbi.WakeRingBase);
             Op(new Int32EqualZero());
@@ -2359,18 +2403,13 @@ public static class WasmPredicateCompiler
             Op(new Int32GreaterThanOrEqualSigned());
             Op(new BranchIf(0));
             Op(new LocalGet(LH));
-            Op(new Int32Constant(cells - 1));
+            Op(new LocalGet(LCur));                         // the cells, less one
             Op(new Int32Add());
             LoadSlot32(WasmAbi.HeapWatermark);
             Op(new Int32GreaterThanOrEqualSigned());
             Op(new BranchIf(0));
 
-            // An ATTVAR cell's payload is its home. LDa is not: a register
-            // can hold the bare cell, which Deref does not follow.
-            Op(new LocalGet(LC0));
-            Op(new Int64Constant(Cell.PayloadMask));
-            Op(new Int64And());
-            Op(new Int32WrapInt64());
+            Op(new LocalGet(1));
             Op(new LocalSet(LAtHome));
             EmitAttrCountProbe();
             Op(new LocalGet(LAtCount));
@@ -2409,14 +2448,10 @@ public static class WasmPredicateCompiler
             CloseNested();                                  // $next
             CloseNested();                                  // $found
 
-            // The term the variable is bound to, at H.
+
+            // Where the caller writes the term.
             Op(new LocalGet(LH));
             Op(new LocalSet(LAtIns));
-            writeCells();
-            Op(new LocalGet(LH));
-            Op(new Int32Constant(cells));
-            Op(new Int32Add());
-            Op(new LocalSet(LH));
 
             // The wakeup: module, value, the term, the home.
             LoadSlot32(WasmAbi.WakeRingBase);
@@ -2463,18 +2498,18 @@ public static class WasmPredicateCompiler
                 });
             }
             CloseNested();
-            CellStoreDyn(LHeapB, LAtHome, 0, pushBoundCell);
             StoreSlot64(WasmAbi.Flags, () =>
             {
                 LoadSlot64(WasmAbi.Flags);
                 Op(new Int64Constant(WasmAbi.FlagWakeupPending));
                 Op(new Int64Or());
             });
-            _wakeMayPend = true;
-            Op(new Branch(1));                              // -> $done
+            Op(new Int32Constant(1));
+            Op(new Return());
             CloseNested();                                  // $slow
-            EmitDeopt(pc, 24);
-            CloseNested();                                  // $done
+            Op(new Int32Constant(0));
+            Op(new End());                                  // the function
+            return new FunctionBody { Locals = CpsEngineLocals(), Code = _code };
         }
 
         /// <summary>The image row of (LAtHome, LAtMod): its value's heap
