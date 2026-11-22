@@ -46,6 +46,23 @@ public sealed class WasmRelocatableModule
 
     private WasmRelocatableModule() { }
 
+    /// <summary>For a module that is the snapshot of a dynamic predicate
+    /// (ADR-054), its one member: the digest of the clauses it was compiled
+    /// from (<see cref="Shumway.Embedding.PrologEngine.DynamicClauseDigest"/>).
+    /// Empty for any other module.</summary>
+    public string SnapshotDigest { get; private set; } = "";
+
+    public bool IsSnapshot => SnapshotDigest.Length > 0;
+
+    /// <summary>This module, as the snapshot of its one member.</summary>
+    public WasmRelocatableModule AsSnapshot(string digest)
+    {
+        if (Members.Count != 1)
+            throw new InvalidOperationException("a snapshot module has one member");
+        SnapshotDigest = digest;
+        return this;
+    }
+
     /// <summary>Whether a member is a rule's helper under the name every
     /// process gives it (<see cref="WasmPortableNames"/>): the module was
     /// baked with those names and resolves against the loading engine's.</summary>
@@ -556,6 +573,7 @@ public sealed class WasmRelocatableModule
         Mix("WasmRelocation Sites DataSites", 2);
         // A name may be a helper's portable one (WasmPortableNames).
         Mix("portable helper names", 1);
+        Mix("SnapshotDigest", 1);
         return h;
     }
 
@@ -571,6 +589,7 @@ public sealed class WasmRelocatableModule
         // would read shifted slots with no error anywhere downstream.
         w.Write(FormatStamp);
         w.Write(RegisterDemand);
+        w.Write(SnapshotDigest);
         w.Write(Bytes.Length); w.Write(Bytes);
         w.Write(Members.Count);
         foreach (var m in Members)
@@ -624,6 +643,7 @@ public sealed class WasmRelocatableModule
                 + " as-is it would read the wrong mailbox slots, or misread"
                 + " the evidence, with nothing to catch it");
         var m = new WasmRelocatableModule { RegisterDemand = r.ReadInt32() };
+        m.SnapshotDigest = r.ReadString();
         m.Bytes = r.ReadBytes(r.ReadInt32());
         int n = r.ReadInt32();
         var members = new List<WasmRelocatableMember>(n);

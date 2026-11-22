@@ -878,6 +878,11 @@ public sealed partial class IlPromotionStore
     /// code space for the wasm tier (<see cref="WasmPromotionStore"/>).</summary>
     internal Func<Activation, int, DynamicShadow>? ShadowSnapshotProvider { get; set; }
 
+    /// <summary>The digest of a dynamic predicate's clauses
+    /// (<see cref="PrologEngine.DynamicClauseDigest"/>), for a baked snapshot
+    /// the wasm tier holds.</summary>
+    internal Func<int, string?>? DynamicDigestProvider { get; set; }
+
     // ADR-023 priming: a dynamic/visible predicate declared with source clauses is
     // read-hot and mutation-cold — promote on its first call (still fully evictable).
     private readonly HashSet<int> _primeImmediately = new();

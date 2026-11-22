@@ -43,7 +43,8 @@ public sealed class LiveBundleInstallTests : IDisposable
             WasmBaker = b => WasmBundleTier.Bake(b, stdlib: false),
         });
         Assert.True(link.Success, string.Join(", ", link.Diagnostics.Select(d => d.Message)));
-        Assert.Single(BundleReader.FromBytes(link.Bytes!).WasmModules);
+        // The statics, and the snapshot of the library's attribute_goals/4.
+        Assert.Equal(2, BundleReader.FromBytes(link.Bytes!).WasmModules.Count);
         string path = Path.Combine(directory, name + ".shum");
         File.WriteAllBytes(path, link.Bytes!);
         return path.Replace(Path.DirectorySeparatorChar, '/');
@@ -124,7 +125,7 @@ public sealed class LiveBundleInstallTests : IDisposable
 
         Assert.True(loading.Success);
         Assert.Equal(0, installed);
-        Assert.Equal(1, queued);
+        Assert.Equal(2, queued);
         Assert.True(next.Success);
         Assert.True(wasm.BundleFids.Count > 50, $"{wasm.BundleFids.Count} after the next query");
     }

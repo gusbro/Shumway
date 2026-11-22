@@ -2229,9 +2229,13 @@ internal static partial class WebShumwayApp
                         ? $"%   relink evictions: {w.RelinkEvictions} (a library "
                           + "load moved the code; evicted predicates re-promote)\n"
                         : "")
-                    + (w.ShadowPromotions > 0
-                        ? $"%   dynamic snapshots: {w.ShadowPromotions} promoted, "
-                          + $"{w.ShadowRetirements} retired by a mutation\n"
+                    + (w.ShadowPromotions > 0 || w.BakedSnapshotsHeld > 0
+                        ? $"%   dynamic snapshots: {w.ShadowPromotions} promoted"
+                          + (w.BakedSnapshotInstalls > 0 ? $" ({w.BakedSnapshotInstalls} from a bundle)" : "")
+                          + $", {w.ShadowRetirements} retired by a mutation"
+                          + (w.BakedSnapshotsHeld > 0
+                              ? $", {w.BakedSnapshotsHeld} of a bundle not called yet" : "")
+                          + "\n"
                         : "")
                     + $"%   promoted ({promoted.Count}"
                     + (folded.Count > 0 ? " + " + string.Join(" + ", folded) : "")

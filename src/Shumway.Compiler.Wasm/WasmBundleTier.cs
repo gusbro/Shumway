@@ -17,7 +17,13 @@ namespace Shumway.Compiler.Wasm;
 /// tier's bake of a dynamic predicate takes the helpers it reaches. They are
 /// baked into a second module, under names every process gives them
 /// (<see cref="WasmPortableNames"/>). Apart, so that an engine that has not
-/// one of those rules as it was baked refuses that module alone.</para></summary>
+/// one of those rules as it was baked refuses that module alone.</para>
+///
+/// <para>Each dynamic predicate the bundle gives clauses to is baked as its
+/// snapshot (ADR-054), a module of its own after those two, as the IL tier
+/// bakes it (ADR-023). A host holds it until the predicate is first called,
+/// and installs it then over the shadow region it links for the snapshot,
+/// when the predicate's clauses are the ones it was compiled from.</para></summary>
 public static class WasmBundleTier
 {
     /// <summary>Bakes the bundle's own static predicates: the bundle is
@@ -37,15 +43,17 @@ public static class WasmBundleTier
         if (!stdlib) return new WasmBakeSession(prepare).Bake(bundle, log);
         var engine = PrologEngine.FromBundle(bundle);
         Silence(engine);
-        return BakeLoaded(engine, new HashSet<int>(), log);
+        return BakeLoaded(engine, new HashSet<int>(), new Dictionary<int, string>(), log);
     }
 
     /// <summary>Bakes what the last bundle loaded into <paramref name="engine"/>
     /// added, but for what is in <paramref name="before"/>: its static
-    /// predicates, and in a module of their own the helpers of its dynamic
-    /// predicates' rules.</summary>
+    /// predicates, in a module of their own the helpers of its dynamic
+    /// predicates' rules, and then the snapshot of each dynamic predicate
+    /// whose clauses are not the ones of <paramref name="dynamicsBefore"/>
+    /// (<see cref="WasmPromotionStore.DynamicDigestsOf"/>).</summary>
     internal static IReadOnlyList<byte[]> BakeLoaded(PrologEngine engine, HashSet<int> before,
-                                                    Action<string>? log)
+        Dictionary<int, string> dynamicsBefore, Action<string>? log)
     {
         // What the bundle registered, read before the query that links: that
         // setup mints the helpers of the bundle's dynamic rules (a library's
@@ -91,7 +99,60 @@ public static class WasmBundleTier
                 modules.Add(module.ToBytes());
             }
         }
+        int dynamics = 0, snapshots = 0;
+        foreach (var (fid, digest) in WasmPromotionStore.DynamicDigestsOf(engine))
+        {
+            if (dynamicsBefore.TryGetValue(fid, out var was) && was == digest) continue;
+            dynamics++;
+            if (WasmPromotionStore.DynamicSnapshotOf(engine, fid) is not { } snapshot) continue;
+            // Compiled from the snapshot's own bytecode, which is linked
+            // nowhere until an engine calls the predicate: every site in it
+            // is an offset, so any base serves.
+            var member = new WasmGroupMember(snapshot, SnapshotBakeBase,
+                store.FloatPoolProvider?.Invoke(fid), store.ImagePoolProvider?.Invoke(fid));
+            var module = WasmRelocatableModule.BakeCompilable(new[] { member },
+                new EngineWasmCompileEnv(), Skipping, null, portable.ToPortable);
+            if (module.Members.Count == 0) continue;
+            modules.Add(module.AsSnapshot(digest).ToBytes());
+            snapshots++;
+        }
+        if (dynamics > 0)
+            log?.Invoke($"wasm: {snapshots} of {dynamics} dynamic predicates baked as snapshots");
         return modules;
+    }
+
+    private const int SnapshotBakeBase = 1 << 16;
+
+    // A snapshot's module waits for its predicate's first call: the shadow
+    // region it resolves against is linked then, in the goal's code.
+    private static (IReadOnlyList<int> Installed, string Note) Hold(
+        PrologEngine engine, IWasmExecutionWorld world, WasmRelocatableModule module)
+    {
+        var store = engine.IlPromotion;
+        var wasm = store.Wasm!;
+        var member = module.Members[0];
+        int fid = FunctorTable.Intern(AtomTable.Intern(member.Name, permanent: true).Id, member.Arity);
+        var portable = new WasmPortableNames(engine);
+        wasm.HoldBakedSnapshot(fid, module.SnapshotDigest, (snapshot, address) =>
+        {
+            if (!module.TryResolve(new EngineWasmCompileEnv(),
+                    f => f == fid ? address : -1,
+                    _ => WasmRelocatableModule.ShapeOf(snapshot, portable.ToPortable),
+                    world.NextModuleId, out var entry, out var entryAddr, out _,
+                    portable.ToLive))
+                return null;
+            try
+            {
+                var displaced = entry.InstallInto(world, entryAddr);
+                if (displaced.Count > 0) wasm.Displaced(displaced);
+            }
+            catch (WasmCompileException)
+            {
+                return null;
+            }
+            return new WasmTierDelegate(fid, world).Invoke;
+        });
+        return (Array.Empty<int>(), $"the snapshot of {member.Name}/{member.Arity} is held");
     }
 
     // No IL promotion in the baking engine: its work would be wasted, and
@@ -127,6 +188,7 @@ public static class WasmBundleTier
         {
             return (Array.Empty<int>(), "not installed: " + e.Message);
         }
+        if (module.IsSnapshot) return Hold(engine, world, module);
         var biasByFid = new Dictionary<int, int>();
         var predByFid = new Dictionary<int, CompiledPredicate>();
         if (linked is null)
@@ -199,10 +261,11 @@ public sealed class WasmBakeSession
         var before = new HashSet<int>();
         foreach (var (_, pred) in WasmPromotionStore.StaticPredicatesOf(_engine))
             before.Add(pred.FunctorId);
+        var dynamicsBefore = WasmPromotionStore.DynamicDigestsOf(_engine);
         double dependencies = clock.Elapsed.TotalSeconds;
         _engine.LoadBundle(bundle);
         log?.Invoke($"wasm: loaded what it imports in {dependencies:0.00} s, "
             + $"the bundle in {clock.Elapsed.TotalSeconds - dependencies:0.00} s");
-        return WasmBundleTier.BakeLoaded(_engine, before, log);
+        return WasmBundleTier.BakeLoaded(_engine, before, dynamicsBefore, log);
     }
 }

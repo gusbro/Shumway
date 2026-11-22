@@ -243,6 +243,6 @@ helpers as it did before. The module of the static predicates names none of
 them and installs as it always did.
 
 A rule two files hold at the same place gives its helpers no portable name,
-and they stay out of the bake. The snapshots themselves are not baked yet: a
-dynamic predicate of a bundle starts on the interpreter and is compiled when
-it has run enough (ADR-054).
+and they stay out of the bake. The snapshots themselves are baked too, each
+in a module of its own: the amendment of the same date to
+[ADR-054](054-dynamic-predicates-in-wasm.md).

@@ -94,14 +94,27 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         pending.Clear();
         _triedLive.Clear();
         int installed = 0;
+        string? placed = null, refused = null;
         foreach (var module in modules)
         {
+            _held = false;
             var (fids, note) = BundleInstaller(engine, module, null);
+            // A snapshot is held for its predicate's first call: nothing
+            // was installed, and nothing refused.
+            if (_held) continue;
             foreach (int fid in fids) BundleFids.Add(fid);
             installed += fids.Count;
-            BundleInstallNote = note;
-            if (fids.Count > 0) _installedBundles.Add(module);
+            if (fids.Count > 0)
+            {
+                _installedBundles.Add(module);
+                // One note for the modules of the drain: the count of them all.
+                placed = placed is null ? note : $"{installed} predicates installed from the bundle";
+            }
+            else refused ??= note;
         }
+        if (placed is not null || refused is not null)
+            BundleInstallNote = placed is null ? refused!
+                : refused is null ? placed : $"{placed}; a module {refused}";
         _lastBundleInstalled = installed;
         return installed;
     }
@@ -137,7 +150,14 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         {
             byte[] module = pending[i];
             if (!_triedLive.Add(module)) { i++; continue; }
+            _held = false;
             var (fids, note) = BundleInstaller(engine, module, linked);
+            if (_held)
+            {
+                _triedLive.Remove(module);
+                pending.RemoveAt(i);
+                continue;
+            }
             BundleInstallNote = note;
             if (fids.Count == 0) { i++; continue; }
             foreach (int fid in fids) BundleFids.Add(fid);
@@ -184,6 +204,13 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         _installedBundles.Clear();
         _heldBundles.AddRange(pending);
         pending.Clear();
+        // The snapshots running from a bundle leave too; the tier compiles
+        // those predicates as it compiles any other dynamic one.
+        foreach (int fid in new List<int>(_bakedShadows))
+        {
+            ilStore.EvictDelegate(fid, mutation: false);
+            Retire(fid);
+        }
         if (BundleFids.Count == 0) return 0;
         var all = new List<int>(BundleFids);
         Displaced(all);
@@ -327,7 +354,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         foreach (int fid in new List<int>(_shadows.Keys))
         {
             ilStore.EvictDelegate(fid, mutation: false);
-            OnMutated(fid);
+            Retire(fid);
         }
     }
 
@@ -410,6 +437,25 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         foreach (var (addr, pred) in link.PredicatesByAddress)
             yield return (addr, pred);
     }
+
+    /// <summary>The digest of the clauses of each dynamic predicate that has
+    /// any (<see cref="PrologEngine.DynamicClauseDigest"/>): what a bake
+    /// compares before and after loading a bundle, to know the predicates
+    /// the bundle gave clauses to.</summary>
+    public static Dictionary<int, string> DynamicDigestsOf(PrologEngine engine)
+    {
+        var digests = new Dictionary<int, string>();
+        foreach (int fid in engine.AllDynamicFunctors())
+            if (engine.DynamicClauseDigest(fid) is { } digest) digests[fid] = digest;
+        return digests;
+    }
+
+    /// <summary>The snapshot the tier would promote a dynamic predicate as
+    /// (ADR-054), for a bake; null when it has none, or would not be
+    /// promoted that way. Requires an engine a query has linked.</summary>
+    public static CompiledPredicate? DynamicSnapshotOf(PrologEngine engine, int functorId)
+        => engine._precompiledFloatPool.ContainsKey(functorId)
+            ? null : engine.BuildDynamicSnapshot(functorId);
 
     /// <summary>Every static predicate of <paramref name="engine"/>'s linked
     /// program through <see cref="BatchPromoter"/> in one build: the
@@ -565,6 +611,12 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
             && StaleEvicted is not null && ilStore.ShadowSnapshotProvider is not null
             && OpensDynamic(predicate);
         if (shadow && ilStore.DynamicChurnPinned(functorId)) return null;
+        // A snapshot the bundle brought runs from the first call, as the IL
+        // tier's does (ADR-023 priming).
+        if (shadow && InstallBundles && !predicate.IsDebuggable
+            && _bakedSnapshots.TryGetValue(functorId, out var baked)
+            && InstallBakedSnapshot(functorId, engine!, baked) is { } bakedDelegate)
+            return bakedDelegate;
         _counters.TryGetValue(functorId, out int count);
         count++;
         _counters[functorId] = count;
@@ -649,6 +701,77 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         return del;
     }
 
+    // Snapshots a bundle brought (ADR-054), by functor: the digest of the
+    // clauses each was compiled from, what installs it over a shadow region,
+    // and whether this engine's clauses were found to be those. And the ones
+    // running now.
+    private readonly Dictionary<int, BakedSnapshot> _bakedSnapshots = new();
+    private readonly HashSet<int> _bakedShadows = new();
+    private bool _held;
+
+    private sealed class BakedSnapshot(string digest,
+        System.Func<CompiledPredicate, int, PredicateDelegate?> install)
+    {
+        public readonly string Digest = digest;
+        public readonly System.Func<CompiledPredicate, int, PredicateDelegate?> Install = install;
+        public bool Verified;
+    }
+
+    /// <summary>Snapshots held and not running, and installs of one so far,
+    /// for the status report.</summary>
+    public int BakedSnapshotsHeld => _bakedSnapshots.Count - _bakedShadows.Count;
+    public int BakedSnapshotInstalls { get; private set; }
+
+    /// <summary>Takes a snapshot of a dynamic predicate a bundle brought,
+    /// compiled from the clauses of <paramref name="digest"/>
+    /// (<see cref="PrologEngine.DynamicClauseDigest"/>). It is installed at
+    /// the predicate's first call, and again at the first one after the code
+    /// space is rebuilt, by <paramref name="install"/>: given the snapshot's
+    /// bytecode and the address of its shadow region, the delegate, or null
+    /// when the module does not fit that code. A mutation of the predicate
+    /// drops it: the tier compiles the predicate then, when it has run
+    /// enough. Called by a <see cref="BundleInstaller"/> for a module that
+    /// is a snapshot.</summary>
+    public void HoldBakedSnapshot(int functorId, string digest,
+        System.Func<CompiledPredicate, int, PredicateDelegate?> install)
+    {
+        _bakedSnapshots[functorId] = new BakedSnapshot(digest, install);
+        _held = true;
+    }
+
+    private PredicateDelegate? InstallBakedSnapshot(int functorId, Activation engine, BakedSnapshot baked)
+    {
+        if (!baked.Verified)
+        {
+            // Other clauses than it was compiled from: another bundle's too,
+            // or the program's own.
+            if (ilStore.DynamicDigestProvider?.Invoke(functorId) != baked.Digest)
+            {
+                _bakedSnapshots.Remove(functorId);
+                return null;
+            }
+            baked.Verified = true;
+        }
+        var shadow = ilStore.ShadowSnapshotProvider!(engine, functorId);
+        if (shadow.Snapshot is null)
+        {
+            if (shadow.Refusal is not null) _bakedSnapshots.Remove(functorId);
+            return null;
+        }
+        var del = baked.Install(shadow.Snapshot, shadow.Address);
+        if (del is null)
+        {
+            _bakedSnapshots.Remove(functorId);
+            return null;
+        }
+        ilStore.RegisterBoundDelegate(functorId, del, compiledFrom: shadow.Snapshot);
+        _shadows[functorId] = shadow.Address;
+        _bakedShadows.Add(functorId);
+        ShadowPromotions++;
+        BakedSnapshotInstalls++;
+        return del;
+    }
+
     /// <summary>The predicate changed (assert, retract, abolish, a consult
     /// redefining it). A snapshot of it leaves new calls, which reach the
     /// predicate as it is now, and stays for the calls running in it; the
@@ -656,6 +779,14 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// eviction runs first, in the caller.</summary>
     public void OnMutated(int functorId)
     {
+        _bakedSnapshots.Remove(functorId);
+        Retire(functorId);
+    }
+
+    // The snapshot leaves new calls and stays for the calls running in it.
+    private void Retire(int functorId)
+    {
+        _bakedShadows.Remove(functorId);
         if (!_shadows.Remove(functorId)) return;
         ShadowRetired?.Invoke(functorId);
         _retiredShadows.Add(functorId);
@@ -682,6 +813,10 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// not count toward the churn pin.</summary>
     public void OnPersistentRebuilt()
     {
+        // A consult may have given a predicate other source clauses: each
+        // held snapshot is checked against its predicate again.
+        foreach (var baked in _bakedSnapshots.Values) baked.Verified = false;
+        _bakedShadows.Clear();
         if (_shadows.Count == 0 && _retiredShadows.Count == 0) return;
         var all = new List<int>(_shadows.Keys);
         foreach (int fid in _retiredShadows)

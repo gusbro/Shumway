@@ -2453,8 +2453,11 @@ public sealed partial class PrologEngine
         foreach (var (key, memo) in _ruleTransforms)
         {
             int module = key.IndexOf('\0') + 1;
-            string digest = PortableDigest(key.Substring(0, module)
-                + ClausePipeline.PortableKey(key.Substring(module)) + (memo.InlineIte ? "\0i" : "\0"));
+            var hash = new PortableDigest();
+            hash.Add(key.Substring(0, module));
+            hash.Add(ClausePipeline.PortableKey(key.Substring(module)));
+            hash.Add(memo.InlineIte ? "\0i" : "\0");
+            string digest = hash.ToString();
             digests[digest] = digests.TryGetValue(digest, out int seen) ? seen + 1 : 1;
             rules.Add((digest, memo.Transformed));
         }
@@ -2477,17 +2480,53 @@ public sealed partial class PrologEngine
 
     // 128 bits, as two FNV-1a passes from different bases: a name two rules
     // shared would bind a module's function to another rule's helper.
-    private static string PortableDigest(string text)
+    private struct PortableDigest
     {
-        const ulong prime = 1099511628211UL;
-        ulong a = 14695981039346656037UL, b = 0x9E3779B97F4A7C15UL;
-        foreach (char c in text)
+        private const ulong Prime = 1099511628211UL;
+        private ulong _a, _b;
+        private bool _started;
+
+        public void Add(string text)
         {
-            a = (a ^ c) * prime;
-            b = (b ^ (ulong)(c + 0x100)) * prime;
+            if (!_started) { _a = 14695981039346656037UL; _b = 0x9E3779B97F4A7C15UL; _started = true; }
+            foreach (char c in text)
+            {
+                _a = (_a ^ c) * Prime;
+                _b = (_b ^ (ulong)(c + 0x100)) * Prime;
+            }
         }
-        return a.ToString("x16", System.Globalization.CultureInfo.InvariantCulture)
-            + b.ToString("x16", System.Globalization.CultureInfo.InvariantCulture);
+
+        public override string ToString()
+            => _a.ToString("x16", System.Globalization.CultureInfo.InvariantCulture)
+             + _b.ToString("x16", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>A digest of the clauses a dynamic predicate has, in their
+    /// order: the same in every process that holds the same clauses, read
+    /// from the same places. A snapshot of the predicate baked into a bundle
+    /// (ADR-054) carries the digest of the clauses it was compiled from, and
+    /// stands for the predicate only in an engine that gives the same. Null
+    /// for a predicate with no clause, or with one no key names.</summary>
+    internal string? DynamicClauseDigest(int fid)
+    {
+        var hash = new PortableDigest();
+        int clauses = 0;
+        // The order a snapshot compiles them in (BuildDynamicSnapshot).
+        foreach (var clause in StaticClausesFor(fid))
+            if (!AddClause(clause)) return null;
+        foreach (var clause in DynamicClausesFor(fid))
+            if (!AddClause(clause)) return null;
+        return clauses == 0 ? null : hash.ToString();
+
+        bool AddClause(Clause clause)
+        {
+            string? key = ClausePipeline.VariantKey(clause);
+            if (key is null) return false;
+            hash.Add(ClausePipeline.PortableKey(key));
+            hash.Add("\n");
+            clauses++;
+            return true;
+        }
     }
 
     /// <summary>The memo keys a module's last whole transform took

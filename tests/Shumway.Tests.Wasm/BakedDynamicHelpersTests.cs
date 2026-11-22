@@ -74,7 +74,8 @@ public class BakedDynamicHelpersTests
 
     private static WasmRelocatableModule HelpersOf(Bundle bundle)
     {
-        Assert.Equal(2, bundle.WasmModules.Count);
+        // The statics, the helpers, and the snapshot of hop/2.
+        Assert.Equal(3, bundle.WasmModules.Count);
         Assert.False(Read(bundle.WasmModules[0]).CarriesPortableNames);
         var helpers = Read(bundle.WasmModules[1]);
         Assert.True(helpers.CarriesPortableNames);
