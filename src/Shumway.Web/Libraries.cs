@@ -748,9 +748,11 @@ internal static partial class WebShumwayApp
             return File.Exists(path) ? Convert.ToBase64String(File.ReadAllBytes(path)) : "";
         });
 
-    /// <summary>Puts a stored bundle back. Bytes, not base64: every page load
-    /// restores every stored bundle, and decoding strings of tens of megabytes
-    /// held the page up.</summary>
+    /// <summary>Puts a stored bundle back, and answers null, or why it was
+    /// not put: what the page stored is not a bundle, as when it was closed
+    /// while storing one. Bytes, not base64: every page load restores every
+    /// stored bundle, and decoding strings of tens of megabytes held the
+    /// page up.</summary>
     [JSExport]
     internal static Task<string?> LibraryPutBundle(
         string name, string library, [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] bundle)
@@ -758,9 +760,15 @@ internal static partial class WebShumwayApp
         {
             try
             {
+                if (!BundleReader.IsBundle(bundle)) return "not a bundle";
                 string root = ResolveLibrary(name);
                 Directory.CreateDirectory(root);
-                File.WriteAllBytes(Path.Combine(root, library + ".shum"), bundle);
+                // Moved into place, as a compile's is: a query may be
+                // looking for library(X) while this writes.
+                string target = Path.Combine(root, library + ".shum");
+                string partial = target + ".partial";
+                File.WriteAllBytes(partial, bundle);
+                File.Move(partial, target, overwrite: true);
                 return (string?)null;
             }
             catch (Exception ex) { return ex.Message; }

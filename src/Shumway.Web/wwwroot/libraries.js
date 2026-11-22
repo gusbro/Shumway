@@ -543,13 +543,18 @@ export function restoreBundles(names) {
       try {
         stored = await (await (await root()).getDirectoryHandle(name)).getDirectoryHandle('bundles');
       } catch { continue; }                  // none compiled
+      const broken = [];
       for await (const [library, handle] of stored.entries()) {
         if (handle.kind !== 'file') continue;
         try {
           const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
-          await engine.LibraryPutBundle(name, library, bytes);
+          // A page closed while it stored a bundle leaves the file empty. Put
+          // back, it is what library(X) finds, and the library never loads
+          // nor compiles again.
+          if (await engine.LibraryPutBundle(name, library, bytes)) broken.push(library);
         } catch { /* that library compiles again when it is used */ }
       }
+      for (const library of broken) await stored.removeEntry(library).catch(() => {});
     }
   })().finally(() => { bundlesPending = null; });
   return bundlesPending;
