@@ -116,9 +116,14 @@ top level's choices under an answer: Next, 5, All and Stop.
    engine reads files. The site ships them as an archive, mounted when a
    session first needs them. The mechanism exists for Prolog libraries
    (`jupyter:import_library/1`).
-5. **A package** (section 6). If the server ships compiled ahead, also
-   the toolchain as something a build elsewhere can download:
-   `shumway-compile` and `shumway-link`, which make a bundle.
+5. **A package** (section 6). The server ships with a bundle compiled
+   ahead beside its source (section 7), so also the toolchain as something
+   a build elsewhere can download: `shumway-link`, which makes the bundle.
+6. **An archive that carries a library compiled.** The import of a
+   collection took the sources of an archive and nothing else. It takes
+   the bundle beside a source too, and a bundle says in its first bytes
+   which format of compiled code it has. Done, on the branch
+   `baked-library-in-collection`.
 
 ## 6. Packages, and who publishes what
 
@@ -174,22 +179,31 @@ form a session can load. There are three:
 
 | Form | The Logtalk package depends on | What it costs |
 |---|---|---|
-| A bundle compiled ahead, with Shumway's linker | one exact version of the Shumway package. A bundle is read only by the version of Shumway that made it: before Shumway's first public release its format changes with no change of its version number | the Logtalk package is built and published again for every release of Shumway it moves to |
-| The same, once Shumway keeps its bundles readable across versions | a range of versions | Shumway keeps the format, the bytecode and the WebAssembly in a bundle stable from its first public release on |
-| Prolog source, as Logtalk's embedding writes it, compiled by the browser the first time and kept in its storage | a wide range: any Shumway the Logtalk adapter supports | the first visit compiles, and so does the first after the runtime changes |
+| A bundle compiled ahead, with Shumway's linker, and nothing else | the versions of Shumway with the format of compiled code the bundle has. A bundle says which in its first bytes, and a Shumway with another refuses it | a release of Shumway that changes the format leaves the Logtalk package unusable until it is built and published again |
+| Prolog source, as Logtalk's embedding writes it, compiled by the browser the first time and kept in its storage | a wide range: any Shumway the Logtalk adapter supports | the first visit compiles, 23 to 47 s, and so does the first after the format changes |
+| Both in one archive: the source, and beside it the bundle compiled ahead | the same wide range | a few seconds on the first visit. After a release of Shumway that changes the format, the first visit compiles from the source, until the Logtalk package is built again |
 
-The third is what the site does today for a Prolog library: it is compiled
-when first used and kept for the next visit. This plan proposes to measure
-it first (section 9). If the first visit's wait is acceptable, the two
-packages are released independently of each other, and neither side
-follows the other's calendar.
+**This plan proposes the third.** The bundle is a convenience and the source
+is what the package depends on, so the two packages are released
+independently of each other and neither side follows the other's calendar.
+A format of compiled code is not a version: it changes when the instruction
+set or the layout of a bundle does, which is not at every release, and a
+bundle built once is good for every Shumway with the same one. When it does
+change, nothing breaks: the page finds the bundle is of another format,
+leaves it out and compiles the source, once, as it does today for any
+Prolog library.
 
-Measured (section 9): compiled with its WebAssembly modules, as the site
-compiles a library, 23 to 33 s the first time and 1.6 to 3.4 s on the next
-visit in Chromium, 47 s and 5.4 s in Firefox. Compiled to bytecode alone, 6
-to 11 s the first time and 1 to 2 s on the next visit, in the three
-browsers. A bundle a browser kept from another build of the runtime is
-compiled again, once: the third form's cost, as the table says.
+The archive is a `.tar.gz` or a `.zip` with `x.pl` and `x.shum` side by side.
+A bundle for the browser is written without the bundle's own compression,
+which the runtime there cannot read, and the archive's compression does that
+work: 93 MB of bundle and 2.5 MB of source are 8.7 MB to download.
+
+Measured (section 9): from the archive with the bundle, 2.2 s to import and
+1.7 s to load the first time in Chromium, 3.8 s and 3.3 s in Firefox.
+Compiled in the browser with its WebAssembly modules, as the site compiles a
+library, 23 to 33 s the first time and 1.6 to 3.4 s on the next visit in
+Chromium, 47 s and 5.4 s in Firefox. Compiled to bytecode alone, 6 to 11 s
+the first time and 1 to 2 s on the next visit, in the three browsers.
 
 ## 8. How each side knows it works
 
@@ -286,6 +300,20 @@ on the branch `wasm-bounded-modules`, in the demo's page.
   build of the runtime made: the format of a module changes between
   builds, and such a bundle was kept and its modules refused at every
   visit.
+- **The archive with the bundle, measured on 2026-11-23** in the demo's
+  page, on the branch `baked-library-in-collection`, from a server on the
+  same machine, so with no time on the network:
+
+  | | Chromium | Firefox |
+  |---|---|---|
+  | The archive imported: fetched, unpacked and stored | 2.2 s | 3.8 s |
+  | The library loaded the first time, nothing compiled | 1.7 s | 3.3 s |
+  | Loaded on the next visit | 3.0 s | 4.3 s |
+
+  With a bundle of another format in the archive the import leaves it out,
+  the library compiles the first time (31 s in Chromium) and loads in 2.1 s
+  on the next visit. Not measured yet: the same in a notebook's session, and
+  the memory a session takes.
 - **A notebook compiles what its cells define.** A session did not: its
   program ran on the interpreter however often it ran. Each predicate is
   compiled when it has been called 16 times, and a library a cell loads
@@ -297,7 +325,7 @@ on the branch `wasm-bounded-modules`, in the demo's page.
 |---|---|---|
 | 1 | The measurements of section 9, with Hercutalk's server as it is and a local patch for its streams | Review of this plan: the decisions of section 11 |
 | 2 | A session loads the site's server; variants as data; the harness as a tool | The streams of the protocol; the `protocol` method |
-| 3 | The package, its addon and its release; the toolchain as a download, if the server ships compiled ahead | The embedding of the core and the server, in the form chosen; the variant's description |
+| 3 | The package, its addon and its release; the toolchain as a download, for the bundle the server ships with | The embedding of the core and the server, in the form chosen; the variant's description |
 | 4 | Its own site built from the package | The Logtalk package, its site, its notebooks |
 | 5 | The widgets' callback in the page; the file of a saved table | The widgets' callback in the server |
 | 6 | Asks for its kernel to be listed in JupyterLite's documentation | The same, for its own |
@@ -313,10 +341,13 @@ Steps 1 and 2 end with Hercutalk web running in a site built by hand. Steps
 3. **The names** of the two packages, and where Hercutalk web is published.
 4. **The three changes of section 4**, and which of the offered extensions
    Hercutalk takes.
-5. **The server's form** (section 7), once measured. With a bundle
-   compiled ahead, the Logtalk package is built again for each release of
-   Shumway: Hercutalk is published by hand and has no CI, so that would be
-   a workflow in Logtalk's repository, or a script run by hand.
+5. **The server's form** (section 7). This plan proposes the source with
+   a bundle compiled ahead beside it. The Logtalk package then works with
+   any Shumway its source does, and is built again only to give the fast
+   first visit back after a release of Shumway that changes the format of
+   compiled code. Hercutalk is published by hand and has no CI, so making
+   the bundle would be a workflow in Logtalk's repository, or a script run
+   by hand.
 6. **What Hercutalk web says of itself**: its `implementation` and version
    in `kernel_info`, when the server is Hercutalk's and the kernel is
    Shumway's core.
