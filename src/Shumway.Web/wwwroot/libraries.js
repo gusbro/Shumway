@@ -549,8 +549,9 @@ export async function importFor({ dialect: dial, location }) {
 }
 
 /** Puts the stored bundles of `names` back, which is what library(X) resolves
- *  to, without holding the caller up: restored() says when they are back. */
-export function restoreBundles(names) {
+ *  to, without holding the caller up: restored() says when they are back.
+ *  `say(collection, library)` is told of each one as its turn comes. */
+export function restoreBundles(names, say = () => { }) {
   bundlesPending = (async () => {
     for (const name of names) {
       let stored;
@@ -560,6 +561,7 @@ export function restoreBundles(names) {
       const broken = [];
       for await (const [library, handle] of stored.entries()) {
         if (handle.kind !== 'file') continue;
+        say(name, library);
         try {
           const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
           // A page closed while it stored a bundle leaves the file empty. Put

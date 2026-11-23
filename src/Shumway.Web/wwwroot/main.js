@@ -23,6 +23,36 @@ const programEl = document.getElementById('program');
 const program = () => (editor ? editor.getText() : '');
 const statusEl = document.getElementById('status');
 
+// --- starting ------------------------------------------------------------
+// What the page is doing while it starts: index.html has it from the first
+// paint. It stays the transcript's last line, with what is written meanwhile
+// above it, until the page can be used and its stored libraries are back.
+let startupEl = document.getElementById('startup');
+let askedWhileStarting = false;    // Enter on a goal before there was an engine
+const startup = {
+  counting: '',
+  share: 0,
+  /** Says the step. With `done` of `total`, the bar shows how far it is. */
+  step(text, done, total) {
+    if (!startupEl) return;
+    const counted = total > 0;
+    document.getElementById('startup-step').textContent =
+      counted ? `${text}: ${done} of ${total}…` : `${text}…`;
+    startupEl.classList.toggle('counted', counted);
+    // A total that grows while the step finds out how much there is must
+    // not take the bar back.
+    if (startup.counting !== text) { startup.counting = text; startup.share = 0; }
+    if (counted) startup.share = Math.max(startup.share, done / total);
+    document.getElementById('startup-fill').style.width =
+      counted ? `${Math.round(100 * startup.share)}%` : '';
+  },
+  /** Everything is in place, or the page will not start. */
+  end() {
+    startupEl?.remove();
+    startupEl = null;
+  },
+};
+
 // Attached once the engine exists (its colouring comes from the engine's lexer),
 // so the handlers registered below must tolerate it being absent for that moment.
 let editor = null;
@@ -66,7 +96,7 @@ function emit(text, role = '') {
   const span = document.createElement('span');
   if (role) span.className = role;
   span.textContent = text;
-  out.appendChild(span);
+  out.insertBefore(span, startupEl);     // at the end, once the page has started
   atLineStart = text.endsWith('\n');
 }
 
@@ -92,6 +122,8 @@ const emitNote = (text) => emit(text, 'note');
 const ISOLATION_ABORT = 'boot aborted: the page is not cross-origin isolated';
 const emitFailure = (what, detail) => {
   if (detail && detail.message === ISOLATION_ABORT) return;
+  // What escapes before the page can be used is the start itself failing.
+  if (document.body.classList.contains('starting')) startup.end();
   emit(`% ${what}: ${detail && detail.stack ? detail.stack : detail}\n`, 'error');
 };
 addEventListener('error', (e) => emitFailure('script error', e.error ?? e.message));
@@ -334,7 +366,7 @@ async function abandonQuery() {
 const stop = abandonQuery;
 
 document.getElementById('clear').addEventListener('click', () => {
-  out.replaceChildren();
+  out.replaceChildren(...(startupEl ? [startupEl] : []));
   atLineStart = true;
   queryInput.focus();
 });
@@ -356,6 +388,8 @@ document.getElementById('query-form').addEventListener('submit', async (e) => {
     return;
   }
   if (pending) return;          // Enter means "stop" while a query is pending
+  // No engine yet: the goal stays in the box, and is asked once there is.
+  if (document.body.classList.contains('starting')) { askedWhileStarting = true; return; }
   const text = queryInput.value.trim();
   if (!text) return;
   queryInput.value = '';
@@ -1620,8 +1654,6 @@ theme.attach(document.getElementById('theme'), config.theme,
              (choice) => settings.update({ theme: choice }));
 layout.init();
 
-out.textContent = '';
-
 // isolate.js (a plain script, ahead of this module) has already decided what
 // to do about cross-origin isolation. Aborting boot is CONTROL FLOW here, not
 // a failure — the marked throw below is skipped by the script-error reporter,
@@ -1632,6 +1664,7 @@ function explainIsolationFailure() {
   // one, and it asserts on SharedArrayBuffer before answering anything. The
   // old fallback message promised a shared-thread engine that no longer
   // exists in this build — what actually happened was that assert.
+  startup.end();
   freshLine();
   emit('% the engine needs cross-origin isolation (SharedArrayBuffer) and this'
      + ' page has not managed it yet — the worker that provides it did not'
@@ -1657,6 +1690,7 @@ if (!crossOriginIsolated) {
     // Normally invisible (the page is hidden and the reload is milliseconds
     // away); on a slow connection the hide times out and THIS text is what
     // the visitor reads while the install keeps going underneath.
+    startup.step('Setting up the first visit');
     emit('% first visit setup: installing the worker that lets this page run'
        + ' the engine. The page reloads itself when it is ready.\n', 'note');
     window.addEventListener('shumway-isolation-failed',
@@ -1700,12 +1734,14 @@ window.shumwayDebug = {
 session.onRuntimeStopped(() => {
   const text = "The page's runtime stopped answering, and only reloading the page starts it again. "
     + 'Copy what you changed in the editor first: it may not be saved.';
+  startup.end();
   emit(`\n% ${text}\n\n`, 'error');
   document.body.classList.add('runtime-stopped');
 });
 
-emit(await session.boot(emitEngineOutput, askForInput, emitDiagnostic, onDebugStop, emitNote) + '\n\n', 'note');
+emit(await session.boot(emitEngineOutput, askForInput, emitDiagnostic, onDebugStop, emitNote, startup.step) + '\n\n', 'note');
 setPending(false);
+startup.step('Bringing back your files');
 
 editor = attach(
   programEl, session.highlight, await session.highlightKinds(), session.complete);
@@ -1742,7 +1778,9 @@ const restored = await workspace.restoreAll();
 // The libraries' sources come back now; their bundles while the page is in use
 // (see libraries.js). A consult or a query waits for those.
 const storedLibs = await libraries.restoreSources();
-libraries.restoreBundles(storedLibs).then(() => {
+const bundlesBack = libraries.restoreBundles(storedLibs,
+  (collection, library) => startup.step(`Bringing back library(${library}) of ${collection}`));
+bundlesBack.then(() => {
   if (storedLibs.length > 0) emit(`% ${storedLibs.length} library(ies) restored\n`, 'note');
 });
 // The examples workspace reappears whenever it is ABSENT: deleting it and
@@ -1838,7 +1876,12 @@ async function warmOfflineCache() {
   } catch { /* no worker, or it never took control: the session is unaffected */ }
 }
 
+// The page can be used from here. What it is doing stays on show until the
+// stored libraries are back too: a goal or a consult waits for them.
+document.body.classList.remove('starting');
+bundlesBack.finally(() => startup.end());
 queryInput.focus();
+if (askedWhileStarting) document.getElementById('query-form').requestSubmit();
 
 const persistMode = /^#persist=(write|check)$/.exec(location.hash);
 if (persistMode) {

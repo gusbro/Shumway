@@ -317,6 +317,38 @@ pre#out .answer { color: var(--answer); }
 pre#out .error  { color: var(--error); }
 pre#out .note   { color: var(--muted); font-style: italic; }
 
+/* --- starting ---
+   The transcript's last line while the page starts: what it is doing, over a
+   bar that fills when the step can be counted and slides when it cannot. */
+.startup { display: block; color: var(--accent); }
+.startup-bar {
+  display: block;
+  height: 3px;
+  max-width: 22rem;
+  margin: .35rem 0 .2rem;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+#startup-fill {
+  display: block;
+  height: 100%;
+  width: 30%;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: startup-slide 1.4s ease-in-out infinite;
+}
+.startup.counted #startup-fill { animation: none; transition: width .2s; }
+@keyframes startup-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(334%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #startup-fill { animation: none; width: 100%; opacity: .5; }
+}
+/* No engine yet to answer a goal or to consult. */
+body.starting #query-form, body.starting #consult { opacity: .6; pointer-events: none; }
+
 .status {
   font: 12px var(--mono);
   color: var(--muted);

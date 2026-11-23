@@ -78,7 +78,7 @@ async function cells(options, notebooks) {
 
 /** Opens the demo with these waits (seconds a call is out before the runtime
  *  is asked, seconds it has to answer). With a query, runs it once the
- *  engine is there and waits for its answer; with none, waits for the page
+ *  page has started and waits for its answer; with none, waits for the page
  *  to say the runtime stopped, which with a wait of 0 it does while it
  *  boots. Answers what the page shows. */
 async function demo(waits, query = null) {
@@ -86,15 +86,29 @@ async function demo(waits, query = null) {
   const page = await (await browser.newContext()).newPage();
   const { diagnose } = watch(page, engineName);
   try {
+    // What the page says it is doing while it starts, each step once.
+    await page.addInitScript(() => {
+      window.startupSteps = [];
+      document.addEventListener('DOMContentLoaded', () => {
+        const step = document.getElementById('startup-step');
+        if (!step) return;
+        const look = () => {
+          if (window.startupSteps.at(-1) !== step.textContent) window.startupSteps.push(step.textContent);
+        };
+        look();
+        new MutationObserver(look).observe(step, { childList: true, characterData: true, subtree: true });
+      });
+    });
     await page.goto(`${server.url}index.html#stops=${waits}`);
     console.log(`[stall.mjs] the demo, waits ${waits}: ${query ?? 'no query'}`);
     if (query !== null) {
-      await page.waitForFunction(async () => {
-        const session = await import(new URL('./session.js', location.href).href);
-        const box = document.querySelector('#query');
-        return window.crossOriginIsolated === true && !!session.exports() && !!box && !box.disabled;
-      }, null, { timeout: 180000, polling: 500 });
-      await page.waitForTimeout(1000);
+      // The page has started once its body no longer says it is starting.
+      // Not a function that awaits: the promise it answers would be taken
+      // for a yes.
+      await page.waitForFunction(() => window.crossOriginIsolated === true
+          && !document.body.classList.contains('starting')
+          && document.querySelector('#query')?.disabled === false,
+        null, { timeout: 180000, polling: 200 });
       await page.fill('#query', query);
       await page.press('#query', 'Enter');
     }
@@ -108,7 +122,9 @@ async function demo(waits, query = null) {
       return {
         answered: out.includes('X = slept'),
         toldInOutput: /runtime stopped answering/.test(out) && /reloading the page/.test(out),
-        marked: document.body.classList.contains('runtime-stopped')
+        marked: document.body.classList.contains('runtime-stopped'),
+        steps: window.startupSteps,
+        stillStarting: document.getElementById('startup') !== null
       };
     });
   } catch (e) {
@@ -147,8 +163,11 @@ try {
   const answered = await demo('1,30', 'sleep(3), X = slept.');
   check(answered.answered && !answered.toldInOutput && !answered.marked,
     'the demo: a query that takes long ends, while the runtime answers', answered);
+  check(answered.steps.some((step) => /the runtime/.test(step))
+      && answered.steps.some((step) => /Starting the engine/.test(step)) && !answered.stillStarting,
+    'the demo says what it is doing while it starts, and no longer once it has', answered);
   const stoppedDemo = await demo('0.2,0');
-  check(stoppedDemo.toldInOutput && stoppedDemo.marked,
+  check(stoppedDemo.toldInOutput && stoppedDemo.marked && !stoppedDemo.stillStarting,
     'the demo: a runtime that does not answer is told, with what to do', stoppedDemo);
 } catch (e) {
   failures++;

@@ -104,19 +104,31 @@ export const onSessionImportLibrary = (handler) => { sessionImportLibrary = hand
  * @param {{ patienceMs?: number, timeoutMs?: number }} [options.stops] how
  *        long a call is out before the runtime is asked whether it answers,
  *        and how long it has to say so.
+ * @param {(text: string, done?: number, total?: number) => void} [options.step]
+ *        told what the start is doing, for a page that shows it: a step, and
+ *        how far it is when it can be counted.
  */
-export async function startRuntime({ entry = './_framework/dotnet.js', threads = 0, ui = {}, stops: waits = {} } = {}) {
+export async function startRuntime({ entry = './_framework/dotnet.js', threads = 0, ui = {}, stops: waits = {}, step = () => { } } = {}) {
   // The runtime asserts about SharedArrayBuffer and says nothing a reader of
   // the page can act on.
   if (!globalThis.crossOriginIsolated)
     throw new Error('the page is not cross-origin isolated');
+  step('Loading the runtime');
   const { dotnet } = await import(entry);
   // The boot is watched as the calls are: a thread that loses its wait while
   // the runtime starts leaves the page starting for good. The runtime hands
   // its module to preRun, before its threads start.
   const watch = watcher(wakeThreads);
   const runtime = await watch((threads > 0 ? dotnet.withConfig({ pthreadPoolInitialSize: threads }) : dotnet)
-    .withModuleConfig({ preRun: [(module) => { wasmModule = module; }] })
+    .withModuleConfig({
+      preRun: [(module) => { wasmModule = module; }],
+      // The total is of the files asked for so far, and grows while the
+      // runtime finds out what it needs.
+      onDownloadResourceProgress: (loaded, total) => {
+        if (loaded < total) step('Downloading the runtime', loaded, total);
+        else step('Starting the runtime');
+      },
+    })
     .create());
   const { setModuleImports, getConfig, getAssemblyExports, runMain } = runtime;
   wasmModule = runtime.Module;
@@ -152,8 +164,9 @@ export async function startRuntime({ entry = './_framework/dotnet.js', threads =
  *        as it is written — a program that prints while it searches should be
  *        watchable while it runs.
  */
-export async function boot(onOutput, onAskForInput, onDiagnostic, onDebugStop, onNote) {
+export async function boot(onOutput, onAskForInput, onDiagnostic, onDebugStop, onNote, onStep = () => { }) {
   await startRuntime({
+    step: onStep,
     // A hook that opens more sessions than the page's own asks for the
     // threads it needs: &threads=<n>.
     threads: parseInt(/[#&]threads=(\d+)/.exec(location.hash)?.[1] ?? '0', 10),
@@ -169,6 +182,7 @@ export async function boot(onOutput, onAskForInput, onDiagnostic, onDebugStop, o
       debugStopped: onDebugStop,
     },
   });
+  onStep('Starting the engine');
   return engine.Boot();
 }
 

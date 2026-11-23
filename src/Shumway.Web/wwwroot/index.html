@@ -30,7 +30,7 @@
   <script type="importmap"></script>
   <script type="module" src="main#[.{fingerprint}].js"></script>
 </head>
-<body>
+<body class="starting">
   <header>
     <div class="title">
       <h1>WebShumway</h1>
@@ -167,7 +167,10 @@ par(b, c)."></div>
         <button id="dbg-pause" type="button"
                 title="pause the running query at its next goal">Break</button>
       </div>
-      <pre id="out" tabindex="0">loading the engine…</pre>
+      <!-- What the page is doing while it starts: there from the first
+           paint, and taken away by main.js when everything is in place. On
+           one line, because the transcript keeps its white space. -->
+      <pre id="out" tabindex="0"><span id="startup" class="startup" role="status"><span id="startup-step">Starting…</span><span class="startup-bar"><span id="startup-fill"></span></span></span></pre>
       <p id="status" class="status" aria-live="polite"></p>
       <form id="query-form" autocomplete="off">
         <label for="query" class="prompt">?-</label>
