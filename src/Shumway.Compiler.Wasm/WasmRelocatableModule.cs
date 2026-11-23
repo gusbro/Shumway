@@ -594,10 +594,9 @@ public sealed class WasmRelocatableModule
 
     /// <summary>Whether <paramref name="module"/> is a relocatable module
     /// this engine reads: one baked with its <see cref="FormatStamp"/>. A
-    /// host that keeps bundles asks before it puts one back where
-    /// <c>library(X)</c> finds it: a module of another build is refused at
-    /// every install, and its library would run from what the tier compiles
-    /// for itself at every load.</summary>
+    /// host that keeps the bundles it compiles asks as it loads one: a
+    /// module of another build is refused at every install, and its library
+    /// would run from what the tier compiles for itself at every load.</summary>
     public static bool IsCurrent(ReadOnlySpan<byte> module)
         => module.Length >= 12
            && BinaryPrimitives.ReadUInt32LittleEndian(module) == Magic

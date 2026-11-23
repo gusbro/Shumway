@@ -208,8 +208,8 @@ public class WasmRelocatableModuleTests
         Assert.Contains("rebake", ex.Message);
     }
 
-    /// <summary>What a host that keeps bundles asks before it puts one back:
-    /// a module of another build would be refused at every install.</summary>
+    /// <summary>What a host that keeps the bundles it compiles asks as it
+    /// loads one: a module of another build would be refused at every install.</summary>
     [Fact]
     public void AModuleOfAnotherBuild_IsNotCurrent()
     {

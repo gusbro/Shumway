@@ -83,6 +83,7 @@ internal static partial class WebShumwayApp
     {
         Directory.CreateDirectory(LibrariesRoot);
         engine.LibrarySourceResolver = (library, source) => CompileOnDemand(engine, library, source);
+        engine.LibraryBundleFilter = (_, path, bundle) => TakesStored(path, bundle);
         foreach (string dir in Directory.GetDirectories(LibrariesRoot))
         {
             string marker = Path.Combine(dir, DialectMarker);
@@ -398,6 +399,29 @@ internal static partial class WebShumwayApp
             + " The library list has the details.");
         say.Flush();
         return null;
+    }
+
+    /// <summary>The engine's <see cref="PrologEngine.LibraryBundleFilter"/>.
+    /// A bundle a browser kept may carry a WebAssembly module another build
+    /// of the engine baked. Such a module is refused at every install, and
+    /// the library would run from what the tier compiles for itself at every
+    /// load: the bundle goes, and the resolver, asked next, compiles the
+    /// library again. The page stores what that compiles over what it had.
+    ///
+    /// <para>Asked as the library loads, about the bundle the load has read:
+    /// looking when the page puts the stored bundles back read every one of
+    /// them a second time, used or not. With the tier off the bundle stays:
+    /// compiled now, it would carry no module at all.</para></summary>
+    private static bool TakesStored(string path, Bundle bundle)
+    {
+        if (!RuntimeCaps.SupportsWasmCodegen || Tier.Disabled) return true;
+        if (WasmBundleTier.ModulesAreCurrent(bundle)) return true;
+        // Only what an imported collection compiled: there is a source to
+        // compile it from again.
+        if (Path.GetDirectoryName(Path.GetDirectoryName(path)) != LibrariesRoot) return true;
+        try { File.Delete(path); }
+        catch (IOException) { return true; }
+        return false;
     }
 
     private static bool LastCompileFailed(string root, string library)
@@ -750,11 +774,9 @@ internal static partial class WebShumwayApp
 
     /// <summary>Puts a stored bundle back, and answers null, or why it was
     /// not put: what the page stored is not a bundle, as when it was closed
-    /// while storing one, or its wasm module was baked by another build of
-    /// the engine. The page drops from its storage what is not put back, and
-    /// the library is compiled again when it is used. Bytes, not base64:
-    /// every page load restores every stored bundle, and decoding strings of
-    /// tens of megabytes held the page up.</summary>
+    /// while storing one. Bytes, not base64: every page load restores every
+    /// stored bundle, and decoding strings of tens of megabytes held the
+    /// page up.</summary>
     [JSExport]
     internal static Task<string?> LibraryPutBundle(
         string name, string library, [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] bundle)
@@ -763,13 +785,6 @@ internal static partial class WebShumwayApp
             try
             {
                 if (!BundleReader.IsBundle(bundle)) return "not a bundle";
-                // Such a module is refused at every install, and the library
-                // would run from what the tier compiles for itself at every
-                // load. With the tier off the bundle stays: compiled now, it
-                // would carry no module at all.
-                if (RuntimeCaps.SupportsWasmCodegen && !Tier.Disabled
-                    && !WasmBundleTier.ModulesAreCurrent(BundleReader.FromBytes(bundle)))
-                    return "its wasm module was baked by another build";
                 string root = ResolveLibrary(name);
                 Directory.CreateDirectory(root);
                 // Moved into place, as a compile's is: a query may be
