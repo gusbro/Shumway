@@ -39,6 +39,13 @@ Two panes. On the left a program and the files it belongs to; on the right the
 top level. The interaction is the one every Prolog top level has: type a goal,
 get an answer, press `;` for the next one and `.` to stop.
 
+While the page starts, the top level says what it is doing: downloading the
+runtime, with how many of its files have arrived, starting it, starting the
+engine, and bringing back your files and your compiled libraries. The first
+visit downloads the runtime, and so does the first after the site is updated.
+Later ones start from the browser's copy. A goal entered before the engine is
+there stays in its box and is asked once the page has started.
+
 Your program runs on two tiers, as it does on the desktop: the bytecode
 interpreter (Tier-0), and a just-in-time compiler (Tier-1) that turns it into
 WebAssembly. By default the whole program is compiled after each consult; the
