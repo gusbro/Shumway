@@ -15,10 +15,11 @@ namespace Shumway.Embedding;
 /// <code>
 ///   [0..3]    Magic 'S','H','U','M'
 ///   [4..7]    Format version (uint32, = CurrentVersion)
-///   [8]       Compression flag: 0 = raw body, 1 = the whole
+///   [8..15]   Format stamp (uint64, = Stamp): what the bytes below mean
+///   [16]      Compression flag: 0 = raw body, 1 = the whole
 ///             body below is one Brotli stream (bodies ≥ 4 KB compress;
 ///             typical ratio ~4-6× on real corpora)
-///   [9..]     Body (raw or decompressed):
+///   [17..]    Body (raw or decompressed):
 ///                 genMajor         : uint32  \
 ///                 genMinor         : uint32   > the Shumway that wrote this
 ///                 genPatch         : uint32  /  file (see ShumwayVersion)
@@ -80,6 +81,10 @@ namespace Shumway.Embedding;
 /// stale bundles by re-linking); the number starts meaning something at the
 /// first public release. Do not add <c>version &gt;=</c> conditionals to the
 /// reader.</para>
+///
+/// <para>What tells a stale file from a current one is the stamp
+/// (<see cref="Stamp"/>), not the number: a reader checks it before it reads
+/// anything else, and refuses a file with another.</para>
 /// </summary>
 public static class BundleFormat
 {
@@ -89,6 +94,64 @@ public static class BundleFormat
     /// (see the format-policy note above). Writer and reader both require
     /// exactly this value.</summary>
     public const int CurrentVersion = 6;
+
+    /// <summary>A fingerprint of what the bytes of a compiled file mean: the
+    /// instruction set and how each instruction is encoded, the cell tags,
+    /// and the layouts of a bundle and of an object file. A file carries the
+    /// stamp of the engine that wrote it, right after its version, and a
+    /// reader refuses one with another: read as this format, a file of
+    /// another is misread, with nothing downstream to catch it.
+    ///
+    /// <para>Computed, so it moves when the instruction set does, and stays
+    /// when a build changes nothing of the format: a bundle is good for every
+    /// version of the engine with the same stamp. A change to the wire form
+    /// of a section cannot be computed and is mixed in by hand, below.</para></summary>
+    public static readonly ulong Stamp = ComputeStamp();
+
+    private static ulong ComputeStamp()
+    {
+        const ulong prime = 1099511628211UL;
+        ulong h = 14695981039346656037UL;
+        void Mix(string text, long value)
+        {
+            foreach (char c in text) { h ^= c; h *= prime; }
+            h ^= (ulong)value; h *= prime;
+        }
+        Mix("shum", CurrentVersion);
+        Mix("shmo", ShmoFormat.CurrentVersion);
+        // The bytecode: each instruction's number, size and operands.
+        for (int op = 0; op < 256; op++)
+        {
+            var info = Shumway.Core.OpcodeTable.Get((byte)op);
+            if (!info.IsDefined) continue;
+            Mix(info.Mnemonic!, op);
+            Mix("size", info.Size);
+            if (info.OperandKinds is { } kinds)
+                foreach (var kind in kinds) Mix("operand", (int)kind);
+        }
+        foreach (string name in Enum.GetNames(typeof(Shumway.Core.OperandKind)))
+            Mix(name, (int)(Shumway.Core.OperandKind)Enum.Parse(typeof(Shumway.Core.OperandKind), name));
+        // The cells of a literal and of a term image.
+        foreach (string name in Enum.GetNames(typeof(Shumway.Core.Tag)))
+            Mix(name, (int)(Shumway.Core.Tag)Enum.Parse(typeof(Shumway.Core.Tag), name));
+        // The wire form of the sections of a .shum and of a .shmo, and of
+        // what they hold (CompiledModuleCodec, TermCodec). By hand: a change
+        // to any of them raises this, which BundleStampTests asks for when
+        // the image of a fixed bundle changes.
+        Mix("wire form", 1);
+        return h;
+    }
+
+    /// <summary>Reads the stamp that follows a file's version, and refuses
+    /// the file when it is not this engine's: the instruction set or a file
+    /// layout changed between the engine that wrote it and this one.</summary>
+    internal static void RequireStamp(System.IO.BinaryReader header, string what)
+    {
+        if (header.ReadUInt64() != Stamp)
+            throw new InvalidDataException(
+                $"{what}: written with another format of compiled code than this runtime "
+                + "reads. Build it again: compile its source, or link it, with this version.");
+    }
 
     // ---- whole-body compression ------------------------------
     // Layout addition: One flag byte follows the version; the rest of the
@@ -109,7 +172,7 @@ public static class BundleFormat
 
     /// <summary>turns a writer's raw image
     /// (<c>[magic 4][version 4][body…]</c>) into the on-disk form:
-    /// <c>[magic][version][flag][raw-or-brotli body]</c>. Shared by
+    /// <c>[magic][version][stamp][flag][raw-or-brotli body]</c>. Shared by
     /// <see cref="BundleWriter"/> and the linker's in-line serialiser so both
     /// emit identical framing.</summary>
     /// <summary>Set to leave every image uncompressed regardless of size. For
@@ -149,19 +212,24 @@ public static class BundleFormat
 #else
         bool forcePlain = DisableCompression;
 #endif
+        byte[] stamp = BitConverter.GetBytes(Stamp);
+        if (!BitConverter.IsLittleEndian) Array.Reverse(stamp);
+        const int framedBytes = headerBytes + sizeof(ulong) + 1;   // + stamp + flag
         if (bodyLen < CompressionThresholdBytes || forcePlain)
         {
-            var plain = new byte[raw.Length + 1];
+            var plain = new byte[framedBytes + bodyLen];
             Array.Copy(raw, 0, plain, 0, headerBytes);
-            plain[headerBytes] = CompressionNone;
-            Array.Copy(raw, headerBytes, plain, headerBytes + 1, bodyLen);
+            Array.Copy(stamp, 0, plain, headerBytes, sizeof(ulong));
+            plain[framedBytes - 1] = CompressionNone;
+            Array.Copy(raw, headerBytes, plain, framedBytes, bodyLen);
             return plain;
         }
 #if NETFRAMEWORK
         throw new InvalidOperationException("unreachable: forcePlain is constant true");
 #else
-        using var ms = new MemoryStream(headerBytes + 1 + bodyLen / 3);
+        using var ms = new MemoryStream(framedBytes + bodyLen / 3);
         ms.Write(raw, 0, headerBytes);
+        ms.Write(stamp, 0, sizeof(ulong));
         ms.WriteByte(CompressionBrotli);
         using (var brotli = new System.IO.Compression.BrotliStream(
                    ms, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))

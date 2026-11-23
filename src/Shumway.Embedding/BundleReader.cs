@@ -26,6 +26,38 @@ public static class BundleReader
         => data.Length >= BundleFormat.Magic.Length
            && data[..BundleFormat.Magic.Length].SequenceEqual(BundleFormat.Magic);
 
+    /// <summary>Whether <paramref name="data"/> starts as a bundle of this
+    /// engine's format does: its magic, its version and its stamp
+    /// (<see cref="BundleFormat.Stamp"/>). Looks at its first sixteen bytes
+    /// and reads nothing of the rest.</summary>
+    public static bool IsCurrent(ReadOnlySpan<byte> data)
+        => IsBundle(data) && data.Length >= 16
+           && System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(4))
+              == BundleFormat.CurrentVersion
+           && System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(data.Slice(8))
+              == BundleFormat.Stamp;
+
+    /// <summary><see cref="IsCurrent(ReadOnlySpan{byte})"/> of a file, of
+    /// which it reads the first sixteen bytes; false when there is none.</summary>
+    public static bool IsCurrentFile(string path)
+    {
+        try
+        {
+            using var file = File.OpenRead(path);
+            var head = new byte[16];
+            int read = 0;
+            while (read < head.Length)
+            {
+                int got = file.Read(head, read, head.Length - read);
+                if (got == 0) break;
+                read += got;
+            }
+            return IsCurrent(head.AsSpan(0, read));
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
+
     public static Bundle FromBytes(byte[] data)
     {
         ArgumentNullException.ThrowIfNull(data);
@@ -47,8 +79,9 @@ public static class BundleReader
                 $"Bundle: format version {version} is not supported by this runtime "
                 + $"(requires {BundleFormat.CurrentVersion}; pre-release formats are "
                 + "not backward compatible — rebuild the bundle).");
+        BundleFormat.RequireStamp(headerReader, "Bundle");
 
-        // the byte after the version selects the body encoding
+        // the byte after the stamp selects the body encoding
         // (raw / Brotli); everything below reads from the decoded body.
         byte compression = headerReader.ReadByte();
         using var br = BundleFormat.OpenBody(compression, ms);

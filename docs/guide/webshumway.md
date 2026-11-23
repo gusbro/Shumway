@@ -135,7 +135,8 @@ Two ways in:
     from anywhere else it is a file. The site must let pages of other sites
     read its files (CORS); a site that does not is named in the error. A
     directory that holds the whole archive, as a release's does, is not part
-    of the libraries' names.
+    of the libraries' names. An archive may bring a library compiled ahead,
+    beside its source (below).
 
 What you import is a **collection**, not a library. Scryer's `lib/` is one
 folder and about sixty libraries: every `x.pl` in it is `library(x)`. A
@@ -227,6 +228,31 @@ each of them:
 The mark and its reason survive a reload, which is when it matters: the batch
 that found out runs once, at import. A library recompiled cleanly loses the
 mark, since the record describes the *last* compile.
+
+### An archive that brings its libraries compiled
+
+Whoever publishes a collection can compile a library ahead and put the bundle
+in the archive beside its source, `x.shum` next to `x.pl`. The import puts it
+where the page's own compile of the library would go, so the library loads
+from it the first time it is used and nothing is compiled. This is what a
+large library wants: one that takes half a minute to compile in the browser
+loads in a few seconds.
+
+The bundle is made with the linker, with the WebAssembly modules and without
+the bundle's own compression, which the browser's runtime cannot read:
+
+```
+shumway-link --consult --library --wasm --no-compress -o x.shum x.pl
+```
+
+The archive's compression does the work: a bundle of 93 MB is 8 MB in a
+`.tar.gz`. The source has to be there too. A bundle is good for every version
+of Shumway with the same format of compiled code, and says which in its first
+bytes. One of another format is left out at the import, and the library
+compiles from its source the first time it is used, as any library of the
+collection does. The same happens later, when the page is updated to a
+version with another format: the stored bundle is dropped and the library
+compiles once.
 
 ### Sources are sources
 

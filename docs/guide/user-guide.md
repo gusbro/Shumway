@@ -832,6 +832,14 @@ shumway-compile [options] input1.pl [input2.pl ...]
   format eventually changes, rather than only rejected. `shumway-link
   --map` prints it, and it is on `Bundle.GeneratorVersion` /
   `ShmoObject.GeneratorVersion` for embedders.
+- Every `.shmo` and `.shum` carries **a stamp of its format** after the
+  version field (a `uint64`): a fingerprint of the instruction set and its
+  encoding, of the cell tags and of the two files' layouts. It is computed,
+  not counted, so it stays the same from one release to the next for as
+  long as the format does, and a bundle built once keeps loading. A file
+  with another stamp is refused when it is opened, with a message that says
+  to build it again; nothing of it is read. `BundleReader.IsCurrent` answers
+  the same question from a file's first sixteen bytes.
 
 Flags:
 

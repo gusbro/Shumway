@@ -18,11 +18,12 @@ namespace Shumway.Embedding;
 /// <code>
 ///   [0..3]    Magic 'S','H','M','O'
 ///   [4..7]    Format version (uint32, = 2)
-///   [8]       Compression flag: 0 = raw body, 1 = the whole
+///   [8..15]   Format stamp (uint64, = BundleFormat.Stamp)
+///   [16]      Compression flag: 0 = raw body, 1 = the whole
 ///             body below is one Brotli stream — the same framing as the
 ///             .shum (see BundleFormat.FinalizeImage / OpenBody; bodies
 ///             &lt; 4 KB stay raw)
-///   [9..]     Body (raw or decompressed):
+///   [17..]    Body (raw or decompressed):
 ///                 genMajor         : uint32  \
 ///                 genMinor         : uint32   > the Shumway that wrote this
 ///                 genPatch         : uint32  /  file (see ShumwayVersion)

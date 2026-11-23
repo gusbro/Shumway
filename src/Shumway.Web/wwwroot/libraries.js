@@ -219,7 +219,9 @@ export async function fetchCollection(url, report = () => {}) {
   return { files, from: address.host };
 }
 
-/** The Prolog sources of an archive's bytes: `[{path, text}]`. */
+/** What an archive's bytes hold of a collection: `{path, text}` for each
+ *  Prolog source, and `{path, bundle}` for each library the archive carries
+ *  compiled (`x.shum` beside `x.pl`), which importFolder puts in place. */
 export async function unpack(bytes) {
   const answer = JSON.parse(await engine.LibraryUnpack(bytes));
   if (!Array.isArray(answer)) throw new Error(answer.error);
@@ -293,8 +295,15 @@ export async function importFolder(name, dial, picked, report = () => {}, source
     if (failed) return failed;
   }
   for (const file of picked) {
+    if (file.bundle !== undefined) continue;
     const failed = await write(name, file.path, file.text);
     if (failed) return failed;
+  }
+  // The libraries the archive carried compiled. One the engine does not
+  // take, written with another format of compiled code, is left out: its
+  // library compiles from its source the first time it is used.
+  for (const file of picked) {
+    if (file.bundle !== undefined) await engine.LibraryTakeBundle(name, file.path, file.bundle);
   }
   report('storing');
   await persist(name);
@@ -529,9 +538,14 @@ export async function importFor({ dialect: dial, location }) {
   }
   const failed = await importFolder(name, tag, files, () => {}, source);
   if (failed) throw new Error(failed);
-  const count = (await entries(name)).length;
+  const all = await entries(name);
+  const count = all.length;
+  const compiled = all.filter((entry) => entry.compiled).length;
+  const rest = compiled === 0 ? 'Each compiles the first time it is used.'
+    : compiled === count ? (count === 1 ? 'It came compiled.' : 'They came compiled.')
+      : `${compiled} came compiled; each of the others compiles the first time it is used.`;
   return `% ${name}: ${count} librar${count === 1 ? 'y' : 'ies'} from ${from}`
-    + `${tag ? `, dialect ${tag}` : ''}. Each compiles the first time it is used.`;
+    + `${tag ? `, dialect ${tag}` : ''}. ${rest}`;
 }
 
 /** Puts the stored bundles of `names` back, which is what library(X) resolves

@@ -4,20 +4,25 @@ using System.Text;
 namespace Shumway.WebHost;
 
 /// <summary>The Prolog sources in a <c>.zip</c> or <c>.tar.gz</c> archive of a
-/// library collection, which a page imports from a URL or from a file.</summary>
+/// library collection, which a page imports from a URL or from a file, and
+/// the bundles the archive carries of them compiled.</summary>
 public static class LibraryArchive
 {
-    /// <summary>Each Prolog source of <paramref name="archive"/>, with its path
-    /// inside the collection. A single directory that holds everything, as a
-    /// release archive's does, is not part of the paths: <c>lib-1.0/x.pl</c> is
-    /// <c>x.pl</c>, which is <c>library(x)</c>. Entries that are not sources,
-    /// or whose path leaves the archive, are left out.</summary>
-    /// <exception cref="InvalidDataException">Neither a zip nor a tar (plain
-    /// or gzipped), or one with no Prolog source in it.</exception>
-    public static IReadOnlyList<(string Path, string Text)> Sources(byte[] archive)
+    /// <summary>What an archive of a collection holds: its sources, and the
+    /// bundle of each library whoever made the archive compiled ahead
+    /// (<c>x.shum</c> beside <c>x.pl</c>), as its bytes.</summary>
+    public sealed record Contents(
+        IReadOnlyList<(string Path, string Text)> Sources,
+        IReadOnlyList<(string Path, byte[] Bytes)> Bundles);
+
+    /// <summary>The sources and the bundles of <paramref name="archive"/>,
+    /// each with its path inside the collection, as <see cref="Sources"/>
+    /// gives the sources.</summary>
+    /// <exception cref="InvalidDataException">As <see cref="Sources"/>.</exception>
+    public static Contents Read(byte[] archive)
     {
         ArgumentNullException.ThrowIfNull(archive);
-        var found = new List<(string Path, string Text)>();
+        var found = new List<(string Path, byte[] Data)>();
         if (StartsWith(archive, 0x50, 0x4B, 0x03, 0x04)) ReadZip(archive, found);
         else if (StartsWith(archive, 0x1F, 0x8B))
         {
@@ -27,9 +32,27 @@ public static class LibraryArchive
         else if (IsTar(archive)) ReadTar(new MemoryStream(archive), found);
         else throw new InvalidDataException("not a .zip, .tar.gz or .tar archive");
 
-        if (found.Count == 0) throw new InvalidDataException("no Prolog sources in the archive");
-        return WithoutWrapper(found);
+        if (!found.Exists(f => IsSource(f.Path)))
+            throw new InvalidDataException("no Prolog sources in the archive");
+        var sources = new List<(string, string)>();
+        var bundles = new List<(string, byte[])>();
+        foreach ((string path, byte[] data) in WithoutWrapper(found))
+        {
+            if (IsSource(path)) sources.Add((path, Text(new MemoryStream(data))));
+            else bundles.Add((path, data));
+        }
+        return new Contents(sources, bundles);
     }
+
+    /// <summary>Each Prolog source of <paramref name="archive"/>, with its path
+    /// inside the collection. A single directory that holds everything, as a
+    /// release archive's does, is not part of the paths: <c>lib-1.0/x.pl</c> is
+    /// <c>x.pl</c>, which is <c>library(x)</c>. Entries that are not sources,
+    /// or whose path leaves the archive, are left out.</summary>
+    /// <exception cref="InvalidDataException">Neither a zip nor a tar (plain
+    /// or gzipped), or one with no Prolog source in it.</exception>
+    public static IReadOnlyList<(string Path, string Text)> Sources(byte[] archive)
+        => Read(archive).Sources;
 
     /// <summary>A Prolog source, as a collection keeps them.</summary>
     public static bool IsSource(string path)
@@ -37,21 +60,29 @@ public static class LibraryArchive
            || path.EndsWith(".pro", StringComparison.OrdinalIgnoreCase)
            || path.EndsWith(".prolog", StringComparison.OrdinalIgnoreCase);
 
-    private static void ReadZip(byte[] archive, List<(string, string)> found)
+    /// <summary>A library's compiled bundle, as a collection keeps one.</summary>
+    public static bool IsBundle(string path)
+        => path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase);
+
+    private static bool Kept(string path) => IsSource(path) || IsBundle(path);
+
+    private static void ReadZip(byte[] archive, List<(string, byte[])> found)
     {
         using var zip = new ZipArchive(new MemoryStream(archive), ZipArchiveMode.Read);
         foreach (ZipArchiveEntry entry in zip.Entries)
         {
-            if (Inside(entry.FullName) is not { } path || !IsSource(path)) continue;
+            if (Inside(entry.FullName) is not { } path || !Kept(path)) continue;
             using Stream content = entry.Open();
-            found.Add((path, Text(content)));
+            using var data = new MemoryStream();
+            content.CopyTo(data);
+            found.Add((path, data.ToArray()));
         }
     }
 
     // Read here rather than with System.Formats.Tar, which browser-wasm does
     // not support. Ustar and GNU headers, with the long names of either: a
     // PAX "path" record or a GNU 'L' entry before the file it names.
-    private static void ReadTar(Stream tar, List<(string, string)> found)
+    private static void ReadTar(Stream tar, List<(string, byte[])> found)
     {
         var header = new byte[512];
         string? longName = null;
@@ -73,8 +104,8 @@ public static class LibraryArchive
             }
             string name = longName ?? HeaderName(header);
             longName = null;
-            if (Inside(name) is not { } path || !IsSource(path)) continue;
-            found.Add((path, Text(new MemoryStream(data))));
+            if (Inside(name) is not { } path || !Kept(path)) continue;
+            found.Add((path, data));
         }
     }
 
@@ -156,14 +187,14 @@ public static class LibraryArchive
         return path;
     }
 
-    private static List<(string Path, string Text)> WithoutWrapper(List<(string Path, string Text)> found)
+    private static List<(string Path, byte[] Data)> WithoutWrapper(List<(string Path, byte[] Data)> found)
     {
         int slash = found[0].Path.IndexOf('/');
         if (slash <= 0) return found;
         string wrapper = found[0].Path[..(slash + 1)];
         foreach ((string path, _) in found)
             if (!path.StartsWith(wrapper, StringComparison.Ordinal)) return found;
-        return found.ConvertAll(f => (f.Path[wrapper.Length..], f.Text));
+        return found.ConvertAll(f => (f.Path[wrapper.Length..], f.Data));
     }
 
     private static string Text(Stream content)
