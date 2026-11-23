@@ -1864,14 +1864,15 @@ public sealed partial class PrologEngine
     /// clauses: otherwise the query's next call into the library is
     /// undefined. Predicates the query already reaches, and dynamic ones
     /// (their trampolines are <see cref="EnsureLiveDynamicTrampolines"/>'s),
-    /// are skipped.</summary>
-    internal void LinkLoadedPredicatesLive(
+    /// are skipped. Answers what it linked, address to predicate, or null
+    /// when it linked nothing.</summary>
+    internal IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? LinkLoadedPredicatesLive(
         Activation engine, IEnumerable<Shumway.Compiler.Wam.CompiledPredicate> loaded)
     {
         if (engine.CurrentProgram is null
             || engine.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap
             || engine.SwitchTables is not { } switchTables)
-            return;
+            return null;
         var preds = new List<Shumway.Compiler.Wam.CompiledPredicate>();
         foreach (var pred in loaded)
         {
@@ -1882,7 +1883,7 @@ public sealed partial class PrologEngine
                 continue;
             preds.Add(pred);
         }
-        if (preds.Count == 0) return;
+        if (preds.Count == 0) return null;
         bool ownsHost = EngineOwnsHostBuffer(engine);
         var (loadOffset, tableBase, reserved) = PlaceLiveLink(engine, preds, switchTables);
         Shumway.Compiler.Wam.Linker.LinkResult link;
@@ -1896,9 +1897,10 @@ public sealed partial class PrologEngine
         {
             // The next top-level setup links the library whole.
             ReturnPlace(engine, loadOffset, reserved);
-            return;
+            return null;
         }
         PublishLiveLink(engine, link, loadOffset, tableBase, addrMap, switchTables, ownsHost);
+        return link.PredicatesByAddress;
     }
 
     /// <summary>Makes the imports a running goal just added callable bare
@@ -2037,7 +2039,10 @@ public sealed partial class PrologEngine
             if (entry != a)
             {
                 (retargeted ??= new())[entry] = link.PredicatesByAddress[a];
-                // Compiled code of the version it replaces leaves new calls too.
+                // Compiled code of the version it replaces leaves new calls
+                // too, and with it the wasm builds that jump into it: dropping
+                // its delegate alone left a compiled caller on the old clauses.
+                IlPromotion.Wasm?.OnStaticChanged(fid);
                 InvalidateIlForFunctor(fid);
             }
             addrMap[fid] = entry;
@@ -2431,6 +2436,97 @@ public sealed partial class PrologEngine
                 helperIdProvider: NextMetaHelperId), plain.Count, result, ref helpers);
         if (helpers is not null) result.AddRange(helpers);
         return result;
+    }
+
+    /// <summary>The helpers of the rules this engine transformed, each with a
+    /// name that is the same in every process: its kind, a digest of the rule
+    /// that took it (module, place in its file, term, as the memo keys it) and
+    /// its place among that rule's helpers. Keyed by the helper's own name,
+    /// which carries a number of this engine's counter. A baked wasm module
+    /// names such a helper by the first, and an engine that loads it finds
+    /// its own helper of the same rule. A rule two files hold at the same
+    /// place gives its helpers none.</summary>
+    public Dictionary<string, string> PortableHelperNames()
+    {
+        var digests = new Dictionary<string, int>(_ruleTransforms.Count);
+        var rules = new List<(string Digest, List<Clause> Transformed)>(_ruleTransforms.Count);
+        foreach (var (key, memo) in _ruleTransforms)
+        {
+            int module = key.IndexOf('\0') + 1;
+            var hash = new PortableDigest();
+            hash.Add(key.Substring(0, module));
+            hash.Add(ClausePipeline.PortableKey(key.Substring(module)));
+            hash.Add(memo.InlineIte ? "\0i" : "\0");
+            string digest = hash.ToString();
+            digests[digest] = digests.TryGetValue(digest, out int seen) ? seen + 1 : 1;
+            rules.Add((digest, memo.Transformed));
+        }
+        var names = new Dictionary<string, string>();
+        foreach (var (digest, transformed) in rules)
+        {
+            if (digests[digest] != 1) continue;
+            int ordinal = 0;
+            for (int i = 1; i < transformed.Count; i++)
+            {
+                var (atomId, _) = FunctorTable.Lookup(HeadFunctorIdOf(transformed[i]));
+                string name = AtomTable.GetById(atomId)!.Name;
+                if (names.ContainsKey(name)) continue;      // the helper's next clause
+                int number = name.LastIndexOf('_') + 1;
+                names[name] = name.Substring(0, number) + "@" + digest + "." + ordinal++;
+            }
+        }
+        return names;
+    }
+
+    // 128 bits, as two FNV-1a passes from different bases: a name two rules
+    // shared would bind a module's function to another rule's helper.
+    private struct PortableDigest
+    {
+        private const ulong Prime = 1099511628211UL;
+        private ulong _a, _b;
+        private bool _started;
+
+        public void Add(string text)
+        {
+            if (!_started) { _a = 14695981039346656037UL; _b = 0x9E3779B97F4A7C15UL; _started = true; }
+            foreach (char c in text)
+            {
+                _a = (_a ^ c) * Prime;
+                _b = (_b ^ (ulong)(c + 0x100)) * Prime;
+            }
+        }
+
+        public override string ToString()
+            => _a.ToString("x16", System.Globalization.CultureInfo.InvariantCulture)
+             + _b.ToString("x16", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>A digest of the clauses a dynamic predicate has, in their
+    /// order: the same in every process that holds the same clauses, read
+    /// from the same places. A snapshot of the predicate baked into a bundle
+    /// (ADR-054) carries the digest of the clauses it was compiled from, and
+    /// stands for the predicate only in an engine that gives the same. Null
+    /// for a predicate with no clause, or with one no key names.</summary>
+    internal string? DynamicClauseDigest(int fid)
+    {
+        var hash = new PortableDigest();
+        int clauses = 0;
+        // The order a snapshot compiles them in (BuildDynamicSnapshot).
+        foreach (var clause in StaticClausesFor(fid))
+            if (!AddClause(clause)) return null;
+        foreach (var clause in DynamicClausesFor(fid))
+            if (!AddClause(clause)) return null;
+        return clauses == 0 ? null : hash.ToString();
+
+        bool AddClause(Clause clause)
+        {
+            string? key = ClausePipeline.VariantKey(clause);
+            if (key is null) return false;
+            hash.Add(ClausePipeline.PortableKey(key));
+            hash.Add("\n");
+            clauses++;
+            return true;
+        }
     }
 
     /// <summary>The memo keys a module's last whole transform took

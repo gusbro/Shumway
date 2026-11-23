@@ -277,9 +277,30 @@ public static partial class MetaBuiltins
         // at depth > 0 keeps the SWI-style auto-import off (the same way a
         // use_module dependency loads).
         host._useModuleLoadDepth++;
-        try { host.ConsultString(source); }
+        try { LoadForGoal(host, engine, () => host.ConsultString(source)); }
         finally { host._useModuleLoadDepth--; }
         return true;
+    }
+
+    /// <summary>Runs a load a goal asked for. A load the consult refuses
+    /// whole (clauses that are not contiguous, a malformed directive) throws
+    /// to the host that asked for it. A goal has no host to tell: it gets
+    /// <c>system_error(Message)</c>, which its program can catch, where the
+    /// host's exception would end the query. A load asked by a directive of
+    /// a file that is loading is left to that file, which reports the
+    /// directive and goes on.</summary>
+    private static void LoadForGoal(PrologEngine host, Activation engine, Action load)
+    {
+        if (host._consultDepth > 0)
+        {
+            load();
+            return;
+        }
+        try { load(); }
+        catch (InvalidOperationException refused)
+        {
+            throw new ShumwayPrologException(IsoError.SystemError(refused.Message, engine));
+        }
     }
 
     public static bool Consult(Activation engine)
@@ -336,7 +357,7 @@ public static partial class MetaBuiltins
                         (object)new Shumway.Compiler.Ast.AtomTerm(a.Name));
                 // Runtime consult: thread the live engine so source-declared dynamic
                 // clauses become visible to a later call in the same query.
-                host.ConsultFileLive(path, engine, intoModule);
+                LoadForGoal(host, engine, () => host.ConsultFileLive(path, engine, intoModule));
                 return;
             }
             case Shumway.Compiler.Ast.CompoundTerm { Functor: ".", Args: [var f, var fs] }:
@@ -377,7 +398,7 @@ public static partial class MetaBuiltins
             text.Append(s).Append('\n');
             if (ch < 0) break;                        // last line without newline
         }
-        host.ConsultString(text.ToString());
+        LoadForGoal(host, engine, () => host.ConsultString(text.ToString()));
     }
 
     /// <summary><c>'$timeout_push'(+Seconds)</c> — starts the deadline that
@@ -457,8 +478,11 @@ public static partial class MetaBuiltins
         // not append to it — otherwise the stale clauses stay and the file is
         // effectively loaded twice, which is the one thing this predicate
         // exists to prevent.
-        if (host.WasConsulted(path)) host.ReconsultFileLive(path, engine, intoModule);
-        else host.ConsultFileLive(path, engine, intoModule);
+        LoadForGoal(host, engine, () =>
+        {
+            if (host.WasConsulted(path)) host.ReconsultFileLive(path, engine, intoModule);
+            else host.ConsultFileLive(path, engine, intoModule);
+        });
         return true;
     }
 
@@ -723,7 +747,7 @@ public static partial class MetaBuiltins
                 (object)new Shumway.Compiler.Ast.AtomTerm(given));
 
         // Runtime reconsult: the rest of this query sees the file, as with consult/1.
-        host.ReconsultFileLive(path, engine, intoModule);
+        LoadForGoal(host, engine, () => host.ReconsultFileLive(path, engine, intoModule));
         return true;
     }
 

@@ -46,7 +46,7 @@ public class LibraryBundleWasmTests
         store.Wasm = new WasmPromotionStore(store)
         {
             Threshold = int.MaxValue,
-            BundleInstaller = (eng, bytes) => WasmBundleTier.Install(eng, world, bytes),
+            BundleInstaller = (eng, bytes, linked) => WasmBundleTier.Install(eng, world, bytes, linked),
         };
         return engine;
     }
@@ -55,10 +55,11 @@ public class LibraryBundleWasmTests
     public void LibraryLinkedWithWasm_RunsFromTheBakedModule()
     {
         var bundle = BakeLibrary("coroutining", wasm: true);
-        Assert.Single(bundle.WasmModules);
+        // The statics, and the snapshot of its attribute_goals/4.
+        Assert.Equal(2, bundle.WasmModules.Count);
         var engine = Host(new DesktopWasmWorld());
         engine.LoadBundle(bundle);
-        Assert.Single(engine.IlPromotion.PendingWasmModules);
+        Assert.Equal(2, engine.IlPromotion.PendingWasmModules.Count);
 
         WasmTierDelegate.ResetDiag();
         // A library bundle loaded directly imports nothing into user: the

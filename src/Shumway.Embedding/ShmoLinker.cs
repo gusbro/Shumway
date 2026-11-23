@@ -1180,13 +1180,17 @@ public static class ShmoLinker
                 }
                 else
                 {
-                    byte[]? module = config.WasmBaker(bundle);
-                    if (module is not null)
+                    var modules = config.WasmBaker(bundle);
+                    if (modules.Count > 0)
                     {
-                        bundle = bundle.WithWasmModules(new[] { module });
+                        bundle = bundle.WithWasmModules(modules);
                         bytes = SerialiseBundle(bundle);
+                        long size = 0;
+                        foreach (var module in modules) size += module.Length;
                         Emit(LinkSeverity.Info, "wasm_module",
-                            $"wasm module: {module.Length} bytes.");
+                            modules.Count == 1
+                                ? $"wasm module: {size} bytes."
+                                : $"wasm modules: {modules.Count}, {size} bytes.");
                     }
                     else
                         Emit(LinkSeverity.Warning, "wasm_module",

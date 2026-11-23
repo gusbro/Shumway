@@ -337,6 +337,27 @@ public sealed class NotebookServerTests : IDisposable
         Assert.Contains("syntax error: ", (string)consult["output"]!);
     }
 
+    /// <summary>A file the consult refuses whole is an error of the cell, as
+    /// a clause that does not parse is. The session goes on.</summary>
+    [Theory]
+    [InlineData("%%user\np(1).\nq(1).", "%%user+\np(2).")]
+    [InlineData("%%user\nq(0).", "%%user\np(1).\nq(1).\np(2).")]
+    public void ACellWhoseClausesAreNotContiguous_IsAnError_AndTheServerGoesOn(string first, string second)
+    {
+        NotebookServer server = _notebooks.Open("a").Server;
+
+        First(server, first);
+        string? line = NotebookHarness.Ask(server, Call(1, second));
+        Assert.True(line is not null, "the server stopped: " + server.Failure);
+        JsonNode load = JsonNode.Parse(line)!["result"]!["1"]!;
+        string? next = NotebookHarness.Ask(server, Call(1, "findall(X, q(X), L)."));
+
+        Assert.Equal(-4712, (int)load["error"]!["code"]!);
+        Assert.Contains("p/1 are not contiguous", Message(load));
+        Assert.True(next is not null, "the server stopped: " + server.Failure);
+        Assert.StartsWith("[", (string)JsonNode.Parse(next)!["result"]!["1"]!["bindings"]!["L"]!);
+    }
+
     [Fact]
     public void ASavedTable_IsAFileWithItsValuesQuotedWhereTheyMustBe()
     {

@@ -115,8 +115,12 @@ public sealed partial class PrologEngine
         if (_liveConsultEngine is { } live && before is not null)
         {
             EnsureLiveDynamicTrampolines(live);
-            LinkLoadedPredicatesLive(live, _precompiledStaticPredicates
+            var linked = LinkLoadedPredicatesLive(live, _precompiledStaticPredicates
                 .Where(kv => !before.Contains(kv.Key)).Select(kv => kv.Value).ToList());
+            // The bundle's wasm module binds to where its predicates are
+            // linked: here, for the goal that loaded it.
+            if (linked is not null && IlPromotion.PendingWasmModules.Count > 0)
+                IlPromotion.Wasm?.InstallPendingBundlesLive(this, linked);
         }
     }
 
@@ -692,6 +696,16 @@ public sealed partial class PrologEngine
     /// reaches it.</summary>
     public Func<string, string, string?>? LibrarySourceResolver { get; set; }
 
+    /// <summary>Asked when <c>use_module(library(Name))</c> resolves to a
+    /// bundle (ADR-038), with the bundle as the load has read it. False, and
+    /// the library loads as one that has no bundle: from its source, through
+    /// <see cref="LibrarySourceResolver"/>. A host that keeps the bundles it
+    /// compiles refuses one it can no longer use and compiles the library
+    /// again. Called with the library's name, the bundle's full path and the
+    /// bundle, on the thread doing the load; not for the bundle the resolver
+    /// answers with after a refusal.</summary>
+    public Func<string, string, Bundle, bool>? LibraryBundleFilter { get; set; }
+
     /// <summary>Adds <paramref name="path"/> to this engine's library search
     /// path (ADR-038), so a later <c>use_module(library(X))</c> can resolve
     /// <c>X.pl</c> / <c>X.shum</c> under it. Idempotent; the directory need not
@@ -989,7 +1003,7 @@ public sealed partial class PrologEngine
     // ConsultFile is extension-routed (.shum → LoadBundle, else source). A failed
     // import warns and continues — a predicate genuinely needed surfaces a clearer
     // existence_error at its call site — rather than aborting the importing consult.
-    private string? LoadResolvedLibrary(string name, string path)
+    private string? LoadResolvedLibrary(string name, string path, bool refusedBefore = false)
     {
         string full;
         try { full = _directory.FullPath(path); }
@@ -1019,6 +1033,16 @@ public sealed partial class PrologEngine
             // Reloading replaces what the file defines rather than adding to it;
             // a first load has nothing to replace, so the two are the same call.
             if (_consultedPaths.Contains(full)) ReconsultFile(path);
+            else if (isBundle && !refusedBefore && LibraryBundleFilter is { } accepts)
+            {
+                // Read here, once: the host is asked about the bundle the
+                // load is about to take.
+                var bundle = BundleReader.ReadFromFile(full);
+                if (!accepts(name, full, bundle)) return LoadLibraryWithNoBundle(name);
+                LoadBundleLinkingLive(() => LoadBundleCore(
+                    bundle, System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(full))));
+                ImportLoadedBundleIntoUser();
+            }
             else ConsultFile(path);
 
             // ADR-035: a library bundle is code the user did not write, as
@@ -1045,6 +1069,23 @@ public sealed partial class PrologEngine
                 $"warning: use_module(library({name})) failed: {ex.Message}");
             return null;
         }
+    }
+
+    // The host refused the library's bundle (LibraryBundleFilter): its
+    // source, and what the host's resolver gives for it, which may be the
+    // bundle it has just compiled where the refused one was.
+    private string? LoadLibraryWithNoBundle(string name)
+    {
+        foreach (string dir in EnumerateLibraryDirs())
+        {
+            string source = System.IO.Path.Combine(dir, name + ".pl");
+            if (!System.IO.File.Exists(source)) continue;
+            source = System.IO.Path.GetFullPath(source);
+            string load = LibrarySourceResolver?.Invoke(name, source) ?? source;
+            return LoadResolvedLibrary(name, load, refusedBefore: true);
+        }
+        Warn($"warning: use_module(library({name})): its bundle was refused and it has no source");
+        return null;
     }
 
     /// <summary>One bare module aliased into <c>user</c> (or, for a collision

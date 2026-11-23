@@ -48,9 +48,13 @@ internal static class ServerPredicates
 
     // '$jupyter_attach': the session's request and response streams, under
     // their aliases. Once per engine: the registry outlives a query.
+    // What is linked when the server starts is its own code, which every
+    // session would compile again as it warms up: it stays off the wasm tier.
     private static bool Attach(Activation activation)
     {
         NotebookServer server = ServerOf(activation);
+        if (activation.Host is PrologEngine { IlPromotion.Wasm: { } wasm } engine)
+            wasm.LeaveOutLinked(engine, "the notebook server's own code");
         StreamRegistry streams = activation.Streams!;
         if (streams.IsAliasTaken(Requests)) return true;
         streams.Add(new StreamHandle(streams.NextId(),

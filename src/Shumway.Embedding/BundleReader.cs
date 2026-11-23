@@ -19,6 +19,13 @@ public static class BundleReader
         return FromBytes(File.ReadAllBytes(path));
     }
 
+    /// <summary>Whether <paramref name="data"/> starts as a bundle does. An
+    /// empty or cut file does not: a host that keeps bundles asks before it
+    /// puts one where <c>library(X)</c> would find it.</summary>
+    public static bool IsBundle(ReadOnlySpan<byte> data)
+        => data.Length >= BundleFormat.Magic.Length
+           && data[..BundleFormat.Magic.Length].SequenceEqual(BundleFormat.Magic);
+
     public static Bundle FromBytes(byte[] data)
     {
         ArgumentNullException.ThrowIfNull(data);

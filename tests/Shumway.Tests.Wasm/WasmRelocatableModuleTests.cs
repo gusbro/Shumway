@@ -208,6 +208,28 @@ public class WasmRelocatableModuleTests
         Assert.Contains("rebake", ex.Message);
     }
 
+    /// <summary>What a host that keeps the bundles it compiles asks as it
+    /// loads one: a module of another build would be refused at every install.</summary>
+    [Fact]
+    public void AModuleOfAnotherBuild_IsNotCurrent()
+    {
+        var (_, membersA) = Linked();
+        byte[] bytes = WasmRelocatableModule.Bake(membersA, new EngineWasmCompileEnv()).ToBytes();
+        var bundle = new Bundle(Array.Empty<BundleEntry>(), foreignAssemblies: null,
+            snapshot: null, archiveMembers: Array.Empty<BundleArchiveMember>());
+
+        Assert.True(WasmRelocatableModule.IsCurrent(bytes));
+        Assert.True(WasmBundleTier.ModulesAreCurrent(bundle));
+        Assert.True(WasmBundleTier.ModulesAreCurrent(bundle.WithWasmModules(new[] { bytes })));
+
+        byte[] other = (byte[])bytes.Clone();
+        other[4] ^= 0xFF;
+
+        Assert.False(WasmRelocatableModule.IsCurrent(other));
+        Assert.False(WasmBundleTier.ModulesAreCurrent(bundle.WithWasmModules(new[] { bytes, other })));
+        Assert.False(WasmRelocatableModule.IsCurrent(bytes.AsSpan(0, 8)));
+    }
+
     // ADR-063: a body term with a hole, copied from an image the module
     // carries as a data segment.
     private const string ImageCorpus = """

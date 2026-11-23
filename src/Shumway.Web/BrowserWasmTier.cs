@@ -1178,8 +1178,7 @@ internal static class BrowserWasmTier
     /// builds compile to, continuation functions at the budget grain
     /// (ADR-061, the wasm tier) or partitions. Under jit_compile(all) the
     /// next batch builds the program again in it; with a threshold, what
-    /// already promoted goes back at the next query setup and promotes again
-    /// in it.</summary>
+    /// already promoted goes back to its bytecode and promotes again in it.</summary>
     internal static (bool Ok, string Report) SetForm(PrologEngine engine,
         WasmTierSettings settings, bool cps)
     {
@@ -1213,15 +1212,16 @@ internal static class BrowserWasmTier
             settings.BootThreshold = 0;
             settings.BootBatch = false;
             if (store.Wasm is { } w) { w.Threshold = 0; w.CompileAllOnConsult = false; }
-            // The already-promoted go back to bytecode at the next query
-            // setup: dropping a delegate with a live choice point inside it
-            // would leave the redo nowhere to land.
+            // What is compiled leaves new calls now, and a choice point
+            // inside it resumes in the bytecode: a notebook's session has
+            // no later query setup to do it at.
             store.QueueJitOff();
             return (true, "% jit_compile: off. The goals after this one run on "
                 + "Tier-0, and restart. gives an engine with no wasm at all\n");
         }
         settings.Disabled = false;      // asking for any of it un-disables
-        bool batch = threshold == 1;    // "all" is the batch; a count is lazy
+        // "all" is the batch, where the session can have one; a count is lazy.
+        bool batch = threshold == 1 && settings.BatchAllowed;
         settings.BootThreshold = threshold;
         settings.BootBatch = batch;
         if (store.Wasm is null) Attach(engine, settings, threshold, batch);
@@ -1297,7 +1297,7 @@ internal static class BrowserWasmTier
         store.Wasm.LiveRefreshed = world.RefreshLiveAddresses;
         // A loaded bundle's wasm module (shumway-link --wasm) installs into
         // this world at the next link, instead of compiling its predicates.
-        store.Wasm.BundleInstaller = (eng, bytes) => WasmBundleTier.Install(eng, world, bytes);
+        store.Wasm.BundleInstaller = (eng, bytes, linked) => WasmBundleTier.Install(eng, world, bytes, linked);
     }
 
     /// <summary>The jit_compile(all) path: the whole candidate set in one
@@ -1318,7 +1318,7 @@ internal static class BrowserWasmTier
                     store.ImagePoolProvider?.Invoke(pred.FunctorId)));
             try
             {
-                Install(store, world, members, env);
+                InstallLessOversize(store, world, ref members, env);
             }
             catch (WasmRegisterException)
             {
@@ -1340,7 +1340,7 @@ internal static class BrowserWasmTier
                     else store.Wasm?.MarkUnpromotable(m.Predicate.FunctorId, why);
                 }
                 if (good.Count == 0) return 0;
-                try { Install(store, world, good, env); }
+                try { InstallLessOversize(store, world, ref good, env); }
                 catch (WasmRegisterException) { return 0; }
                 catch (WasmCompileException)
                 {
@@ -1362,7 +1362,7 @@ internal static class BrowserWasmTier
                     if (compiled.Count == 0) return 0;
                     // Individually fine but jointly refused should not happen;
                     // if it does, nothing is installed.
-                    try { Install(store, world, compiled, env); }
+                    try { InstallLessOversize(store, world, ref compiled, env); }
                     catch (WasmCompileException) { return 0; }
                     good = compiled;
                 }
@@ -1441,6 +1441,29 @@ internal static class BrowserWasmTier
 
     /// <summary>Compiles the members as one module against the id the world
     /// will give it, and installs it. Throws before installing anything.</summary>
+    /// <summary><see cref="Install"/>, less each member whose function comes
+    /// out larger than a browser takes: it stays on Tier-0, and the rest is
+    /// built again without it.</summary>
+    private static void InstallLessOversize(IlPromotionStore store, BrowserWasmWorld world,
+        ref List<WasmGroupMember> members, EngineWasmCompileEnv env)
+    {
+        while (members.Count > 0)
+        {
+            try
+            {
+                Install(store, world, members, env);
+                return;
+            }
+            catch (WasmOversizeException oversize)
+            {
+                var rest = members.FindAll(m => m.Predicate.FunctorId != oversize.FunctorId);
+                if (rest.Count == members.Count) throw;
+                store.Wasm?.MarkUnpromotable(oversize.FunctorId, oversize.Message);
+                members = rest;
+            }
+        }
+    }
+
     private static void Install(IlPromotionStore store, BrowserWasmWorld world,
         List<WasmGroupMember> members, EngineWasmCompileEnv env)
     {
@@ -2206,9 +2229,13 @@ internal static partial class WebShumwayApp
                         ? $"%   relink evictions: {w.RelinkEvictions} (a library "
                           + "load moved the code; evicted predicates re-promote)\n"
                         : "")
-                    + (w.ShadowPromotions > 0
-                        ? $"%   dynamic snapshots: {w.ShadowPromotions} promoted, "
-                          + $"{w.ShadowRetirements} retired by a mutation\n"
+                    + (w.ShadowPromotions > 0 || w.BakedSnapshotsHeld > 0
+                        ? $"%   dynamic snapshots: {w.ShadowPromotions} promoted"
+                          + (w.BakedSnapshotInstalls > 0 ? $" ({w.BakedSnapshotInstalls} from a bundle)" : "")
+                          + $", {w.ShadowRetirements} retired by a mutation"
+                          + (w.BakedSnapshotsHeld > 0
+                              ? $", {w.BakedSnapshotsHeld} of a bundle not called yet" : "")
+                          + "\n"
                         : "")
                     + $"%   promoted ({promoted.Count}"
                     + (folded.Count > 0 ? " + " + string.Join(" + ", folded) : "")

@@ -31,7 +31,8 @@ public class TierOffHoldsBundleModulesTests
         });
         Assert.True(link.Success, string.Join(", ", link.Diagnostics.Select(d => d.Message)));
         var bundle = BundleReader.FromBytes(link.Bytes!);
-        Assert.Single(bundle.WasmModules);
+        // The statics, and the snapshot of its attribute_goals/4.
+        Assert.Equal(2, bundle.WasmModules.Count);
         return bundle;
     }
 
@@ -51,7 +52,7 @@ public class TierOffHoldsBundleModulesTests
         var wasm = store.Wasm = new WasmPromotionStore(store)
         {
             Threshold = 0,   // jit_compile(off)
-            BundleInstaller = (eng, bytes) => WasmBundleTier.Install(eng, world, bytes),
+            BundleInstaller = (eng, bytes, linked) => WasmBundleTier.Install(eng, world, bytes, linked),
         };
         engine.LoadBundle(CoroutiningWithWasm());
 
@@ -75,7 +76,7 @@ public class TierOffHoldsBundleModulesTests
         var wasm = store.Wasm = new WasmPromotionStore(store)
         {
             Threshold = int.MaxValue,
-            BundleInstaller = (eng, bytes) => WasmBundleTier.Install(eng, world, bytes),
+            BundleInstaller = (eng, bytes, linked) => WasmBundleTier.Install(eng, world, bytes, linked),
         };
         wasm.SetBundles(on: false);
         engine.LoadBundle(CoroutiningWithWasm());

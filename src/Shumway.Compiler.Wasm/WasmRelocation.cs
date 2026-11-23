@@ -209,13 +209,19 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
     private readonly List<WasmRelocation> _relocations = new();
     private readonly Dictionary<int, WasmBuiltinEvidence> _evidence = new();
     private readonly MemberAddressIndex _byAddress;
+    private readonly Func<string, string>? _rename;
 
-    public RelocatingCompileEnv(IReadOnlyList<WasmGroupMember> members, IWasmCompileEnv inner)
+    /// <param name="rename">The name a module carries for a name of this
+    /// process (<see cref="WasmPortableNames.ToPortable"/>), or null to
+    /// carry every name as it is.</param>
+    public RelocatingCompileEnv(IReadOnlyList<WasmGroupMember> members, IWasmCompileEnv inner,
+                                Func<string, string>? rename = null)
     {
         _inner = inner;
+        _rename = rename;
         foreach (var m in members)
         {
-            var (name, arity) = NameOf(m.Predicate.FunctorId);
+            var (name, arity) = Named(m.Predicate.FunctorId);
             _memberByFid[m.Predicate.FunctorId] = _members.Count;
             _members.Add((name, arity, m.Bias, m.Predicate.Bytecode.Length));
         }
@@ -230,6 +236,15 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
         var (atomId, arity) = FunctorTable.Lookup(functorId);
         return (AtomTable.GetById(atomId)!.Name, arity);
     }
+
+    // Every name the module carries goes through here, or through Carried.
+    private (string Name, int Arity) Named(int functorId)
+    {
+        var (name, arity) = NameOf(functorId);
+        return (Carried(name), arity);
+    }
+
+    private string Carried(string name) => _rename is null ? name : _rename(name);
 
     private int Slot(WasmRelocKind kind, string name, int arity, int offset, bool wide)
     {
@@ -286,7 +301,7 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
 
     public int EncodeCallTarget(int calleeFunctorId)
     {
-        var (n, a) = NameOf(calleeFunctorId);
+        var (n, a) = Named(calleeFunctorId);
         return IntSentinel(WasmRelocKind.CallTarget, n, a, 0);
     }
 
@@ -304,11 +319,11 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
     }
 
     public long AtomCell(int atomId)
-        => CellSentinel(WasmRelocKind.Atom, AtomTable.GetById(atomId)!.Name, 0);
+        => CellSentinel(WasmRelocKind.Atom, Carried(AtomTable.GetById(atomId)!.Name), 0);
 
     public long FunctorCell(int functorId)
     {
-        var (n, a) = NameOf(functorId);
+        var (n, a) = Named(functorId);
         return CellSentinel(WasmRelocKind.Functor, n, a);
     }
 
@@ -319,7 +334,7 @@ public sealed class RelocatingCompileEnv : IWasmCompileEnv
         bool found = _inner.TryGetBuiltin(calleeFunctorId, out builtinId);
         if (!_evidence.ContainsKey(calleeFunctorId))
         {
-            var (n, a) = NameOf(calleeFunctorId);
+            var (n, a) = Named(calleeFunctorId);
             _evidence[calleeFunctorId] = found
                 ? EvidenceFor(n, a, builtinId)
                 : new WasmBuiltinEvidence(n, a, false, false, false, false, false);

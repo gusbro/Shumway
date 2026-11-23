@@ -1242,6 +1242,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         // Tier-1 IL (a snapshot of its visible clauses), evicted on any mutation.
         IlPromotion.DynamicSnapshotProvider = BuildDynamicSnapshot;
         IlPromotion.ShadowSnapshotProvider = BuildShadowSnapshot;
+        IlPromotion.DynamicDigestProvider = DynamicClauseDigest;
         IlPromotion.FloatPoolProvider = FloatPoolForFid;
         IlPromotion.ImagePoolProvider = ImagePoolForFid;
         IlPromotion.StringPoolProvider = StringPoolForFid;

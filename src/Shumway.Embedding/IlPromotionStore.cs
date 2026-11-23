@@ -213,7 +213,7 @@ public sealed partial class IlPromotionStore
         // With no tier on, the linker made every site bytecode-only; these
         // have to count their dispatches.
         if (Threshold <= 0 && Wasm is not { Enabled: true })
-            PromotabilityChanged?.Invoke();
+            BytecodeOnlyChanged();
     }
 
     private void Stand(int functorId, bool wakes, bool isDynamic,
@@ -878,6 +878,11 @@ public sealed partial class IlPromotionStore
     /// code space for the wasm tier (<see cref="WasmPromotionStore"/>).</summary>
     internal Func<Activation, int, DynamicShadow>? ShadowSnapshotProvider { get; set; }
 
+    /// <summary>The digest of a dynamic predicate's clauses
+    /// (<see cref="PrologEngine.DynamicClauseDigest"/>), for a baked snapshot
+    /// the wasm tier holds.</summary>
+    internal Func<int, string?>? DynamicDigestProvider { get; set; }
+
     // ADR-023 priming: a dynamic/visible predicate declared with source clauses is
     // read-hot and mutation-cold — promote on its first call (still fully evictable).
     private readonly HashSet<int> _primeImmediately = new();
@@ -1124,7 +1129,7 @@ public sealed partial class IlPromotionStore
             _threshold = value;
             if (!flip) return;
             FollowTier();
-            PromotabilityChanged?.Invoke();
+            BytecodeOnlyChanged();
         }
     }
     private int _threshold = DefaultThreshold;
@@ -1143,6 +1148,28 @@ public sealed partial class IlPromotionStore
     /// </summary>
     internal Action? PromotabilityChanged { get; set; }
 
+    // The answer of IsPermanentlyBytecodeOnly may have changed. The next
+    // query links for it, and the sites a running query linked ask again:
+    // the dispatcher holds the old answer for them (StaysOnBytecode), under
+    // the eviction stamp.
+    private void BytecodeOnlyChanged()
+    {
+        EvictionStamp++;
+        PromotabilityChanged?.Invoke();
+    }
+
+    /// <summary>Whether a call to a static predicate with no compiled code
+    /// runs its bytecode for as long as the tiers stay as they are, because
+    /// none is on: what <see cref="IsPermanentlyBytecodeOnly"/> answers the
+    /// linker then, which makes the call site bytecode-only. A site linked
+    /// before the tier went off was not made so, and asks the dispatcher at
+    /// every call. With a tier on this is two comparisons, and the
+    /// dispatcher goes on to count the call. Not for a dynamic predicate,
+    /// whose calls the indexing profile counts.</summary>
+    internal bool StaysOnBytecode(int functorId, CompiledPredicate predicate)
+        => Wasm is not { Enabled: true } && !IlTierActive
+           && !_offers.ContainsKey(functorId) && !IsExcludedByLayout(predicate);
+
     /// <summary>Profile samples required before the phase-2 PGO recompile.</summary>
     public int PgoSampleThreshold { get; set; } = 32;
 
@@ -1156,9 +1183,10 @@ public sealed partial class IlPromotionStore
     ///
     /// <para>0 stops further promotion at once -- safe, since no live
     /// delegate is touched -- and queues the return of what already promoted.
-    /// Dropping those here would strand a choice point created inside Tier-1
-    /// code with nowhere to redo, so the eviction waits for the next query
-    /// setup: "off" governs the goals after it.</para></summary>
+    /// Dropping an IL delegate here would strand a choice point created
+    /// inside Tier-1 code with nowhere to redo, so that eviction waits for
+    /// the next query setup: "off" governs the goals after it. A wasm build
+    /// leaves at once: a choice point inside one resumes in the bytecode.</para></summary>
     public bool SetJitThreshold(int threshold)
     {
         // A host whose tier needs more than a threshold supplies its own
@@ -1181,7 +1209,7 @@ public sealed partial class IlPromotionStore
             if (threshold > 0 && !Shumway.Core.RuntimeCaps.SupportsRuntimeCodegen) return false;
             Threshold = threshold;
         }
-        if (threshold == 0) _jitOffPending = true;
+        if (threshold == 0) QueueJitOff();
         return true;
     }
 
@@ -1209,8 +1237,13 @@ public sealed partial class IlPromotionStore
     public Func<bool, bool>? JitFormPolicy { get; set; }
 
     /// <summary>Queues the return of every promoted predicate to its
-    /// bytecode, for a host policy that turned the tier off.</summary>
-    public void QueueJitOff() => _jitOffPending = true;
+    /// bytecode, for a host policy that turned the tier off. The builds of
+    /// a wasm tier leave at once (<see cref="WasmPromotionStore.LeaveNow"/>).</summary>
+    public void QueueJitOff()
+    {
+        _wasm?.LeaveNow();
+        _jitOffPending = true;
+    }
 
     private bool _jitOffPending;
 
@@ -1237,7 +1270,7 @@ public sealed partial class IlPromotionStore
             _wasm = value;
             if (!flip) return;
             FollowTier();
-            PromotabilityChanged?.Invoke();
+            BytecodeOnlyChanged();
         }
     }
     private WasmPromotionStore? _wasm;
@@ -1253,7 +1286,7 @@ public sealed partial class IlPromotionStore
     internal void WasmEnabledChanged()
     {
         FollowTier();
-        PromotabilityChanged?.Invoke();
+        BytecodeOnlyChanged();
     }
 
     /// <summary>The delegate bound to <paramref name="functorId"/>, or null.</summary>
@@ -1803,7 +1836,7 @@ public sealed partial class IlPromotionStore
         // With no tier on, the linker made every site bytecode-only; a
         // delegate bound by hand still has to be reached from them.
         if (Threshold <= 0 && Wasm is not { Enabled: true })
-            PromotabilityChanged?.Invoke();
+            BytecodeOnlyChanged();
         InstallDelegate(functorId, del,
             ArtifactFor(functorId, del, compiledFrom, null, null, permanent: compiledFrom is null));
     }

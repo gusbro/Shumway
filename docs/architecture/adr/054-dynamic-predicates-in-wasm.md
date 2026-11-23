@@ -3,7 +3,9 @@
 ## Status
 
 Accepted (2026-09-26). Extends [ADR-023](023-dynamic-predicates-in-il.md) to
-the wasm backend of [ADR-050](050-wasm-tier1-backend.md).
+the wasm backend of [ADR-050](050-wasm-tier1-backend.md). Amended 2026-11-22:
+a bundle carries the snapshots of its dynamic predicates, and a host installs
+one at the predicate's first call.
 
 ## Context
 
@@ -146,3 +148,49 @@ because a snapshot of stale sources would be a silent wrong answer.
 Dynamic predicates with no source clauses (runtime-assert-only) stay
 Tier-0, as in ADR-023. Reclaiming retired shadow regions is the dead-region
 reuse question ADR-015's layout already carries, unchanged here.
+
+## Amendment (2026-11-22): a bundle carries its snapshots
+
+The IL tier's bake of a bundle compiles each dynamic predicate that has
+clauses as its snapshot, and a process that loads the bundle runs the
+predicate from that snapshot at its first call (ADR-023, priming). This
+backend baked the static predicates only. A dynamic predicate of a library
+started on the interpreter in every process, and was compiled there once it
+had been called enough.
+
+The bake now compiles the snapshot of each dynamic predicate the bundle gives
+clauses to, as the tier would promote it, into a module of its own
+(`WasmBundleTier.BakeLoaded`). It is a module of its own for the reason every
+snapshot is one: it is retired alone. The module names the helpers of the
+predicate's rules as every process does (the amendment of the same date to
+[ADR-050](050-wasm-tier1-backend.md)), and carries a digest of the clauses it
+was compiled from (`PrologEngine.DynamicClauseDigest`): each clause's term up
+to a renaming of variables and its place in its file, in order.
+
+A host does not install that module when the bundle loads. A snapshot runs
+over a shadow region, and a shadow region is linked into a goal's code. The
+host holds the module (`WasmPromotionStore.HoldBakedSnapshot`) and at the
+predicate's first call links the shadow as it does for a promotion, resolves
+the module against it and installs it. Nothing is compiled. When the code
+space is built again the shadow goes, as point 7 says, and the first call
+after that installs the module again over a new one.
+
+The snapshot stands for the predicate only while its clauses are the ones it
+was compiled from, which the IL tier decides by counting them. Here the
+digest decides, checked before the first install and again after each
+rebuild of the code space. The predicate's code under those clauses is
+compared too, by its length and call sites, as every member of a baked
+module is. A predicate another bundle also gave clauses to, or the program
+asserted into before calling it, fails the check: the module is dropped and
+the predicate is promoted the ordinary way, at the threshold. The first
+mutation retires the snapshot as it retires any, and drops the module:
+after it the predicate is no longer the one that was baked.
+
+`jit_compile(bundles_off)` retires the snapshots running from a bundle and
+holds the rest, and `jit_compile(bundles_on)` lets them install again.
+
+Tests: `BakedDynamicSnapshotTests`, with a synthetic library: the snapshot is
+baked; it is installed at the first call with a promoter that would throw; a
+mutation retires it and the bake is not used again; a consult between two
+goals has it installed again; an engine whose clauses are others does not
+use it; bundles off and on. `BakedDynamicHelpersTests` covers the helpers.
