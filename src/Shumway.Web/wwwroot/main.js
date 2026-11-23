@@ -833,8 +833,10 @@ document.getElementById('libraries').addEventListener('click', async () => {
 /** Names a set of fetched sources, writes them in, and starts building. Shared
  *  by both ways in — where the files came from stops mattering here. */
 async function adoptCollection(files, { name: suggestedName, dialect = '', from, source = '' }) {
+  const compiled = files.filter((file) => file.bundle !== undefined).length;
   document.getElementById('import-detail').textContent =
-    `${files.length} source file(s) from “${from}”.`;
+    `${files.length - compiled} source file(s) from “${from}”`
+    + (compiled > 0 ? `, ${compiled} of them compiled ahead.` : '.');
   document.getElementById('import-name').value = suggestedName;
   document.getElementById('import-dialect').value = dialect;
   importDialog.showModal();
@@ -853,8 +855,11 @@ async function adoptCollection(files, { name: suggestedName, dialect = '', from,
 
   if (err) { emit(`% ${name}: ${err}\n`, 'error'); return; }
   const provided = await libraries.entries(name);
+  const ready = provided.filter((entry) => entry.compiled).length;
   emit(`% ${name}: ${provided.length} librar${provided.length === 1 ? 'y' : 'ies'} available`
-     + ` — compiling them in the background; each gets faster as it lands\n`, 'note');
+     + (ready === provided.length ? ', compiled ahead\n'
+       : ` — compiling ${ready > 0 ? 'the others' : 'them'} in the background;`
+         + ' each gets faster as it lands\n'), 'note');
   await refreshLibraries();
   buildCollection(name);        // not awaited: it runs while the page is used
 }

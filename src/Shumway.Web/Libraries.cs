@@ -182,8 +182,11 @@ internal static partial class WebShumwayApp
             catch (Exception ex) { return ex.Message; }
         });
 
-    /// <summary>The Prolog sources of a .zip, .tar.gz or .tar archive, as a
-    /// JSON array of <c>{path, text}</c>, or <c>{"error": ...}</c>.</summary>
+    /// <summary>What a .zip, .tar.gz or .tar archive of a collection holds,
+    /// as a JSON array, or <c>{"error": ...}</c>: <c>{path, text}</c> for a
+    /// Prolog source, and <c>{path, bundle}</c> for the bundle of a library
+    /// compiled ahead (<c>x.shum</c>), whose bytes stay here until
+    /// <see cref="LibraryTakeBundle"/> is given that <c>bundle</c>.</summary>
     [JSExport]
     internal static Task<string> LibraryUnpack([JSMarshalAs<JSType.Array<JSType.Number>>] byte[] archive)
         => Task.Run(() =>
@@ -193,14 +196,25 @@ internal static partial class WebShumwayApp
             {
                 try
                 {
-                    IReadOnlyList<(string Path, string Text)> sources =
-                        Shumway.WebHost.LibraryArchive.Sources(archive);
+                    var contents = Shumway.WebHost.LibraryArchive.Read(archive);
                     json.WriteStartArray();
-                    foreach ((string path, string text) in sources)
+                    foreach ((string path, string text) in contents.Sources)
                     {
                         json.WriteStartObject();
                         json.WriteString("path", path);
                         json.WriteString("text", text);
+                        json.WriteEndObject();
+                    }
+                    // The bundles of one archive at a time: an import that
+                    // was given up leaves the last one's here, and no more.
+                    UnpackedBundles.Clear();
+                    foreach ((string path, byte[] bytes) in contents.Bundles)
+                    {
+                        string id = Guid.NewGuid().ToString("N");
+                        UnpackedBundles[id] = bytes;
+                        json.WriteStartObject();
+                        json.WriteString("path", path);
+                        json.WriteString("bundle", id);
                         json.WriteEndObject();
                     }
                     json.WriteEndArray();
@@ -213,6 +227,40 @@ internal static partial class WebShumwayApp
                 }
             }
             return System.Text.Encoding.UTF8.GetString(buffer.ToArray());
+        });
+
+    // What the last archive unpacked carried compiled, until it is taken.
+    private static readonly ConcurrentDictionary<string, byte[]> UnpackedBundles = new();
+
+    /// <summary>Puts into a collection the bundle an archive carried of one
+    /// of its libraries (<see cref="LibraryUnpack"/>), where
+    /// <c>library(X)</c> finds it, as if this engine had compiled it. Answers
+    /// null, or why it was not put: one written with another format of
+    /// compiled code is left out, and the library compiles from its source
+    /// the first time it is used. <paramref name="path"/> is the bundle's
+    /// path in the archive, <c>x.shum</c> beside <c>x.pl</c>.</summary>
+    [JSExport]
+    internal static Task<string?> LibraryTakeBundle(string name, string path, string bundle)
+        => OnLibraries(() =>
+        {
+            try
+            {
+                if (!UnpackedBundles.TryRemove(bundle, out byte[]? bytes))
+                    return "its bytes are not here any more";
+                if (!BundleReader.IsCurrent(bytes))
+                    return "written with another format of compiled code";
+                string library = path.Substring(0, path.Length - ".shum".Length);
+                foreach (string segment in library.Split('/'))
+                    if (segment.Length == 0 || segment == "..") return "not a path inside the collection";
+                string root = ResolveLibrary(name);
+                string target = Path.Combine(root, library + ".shum");
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                string partial = target + ".partial";
+                File.WriteAllBytes(partial, bytes);
+                File.Move(partial, target, overwrite: true);
+                return (string?)null;
+            }
+            catch (Exception ex) { return ex.Message; }
         });
 
     /// <summary>A file the engine sees, base64-encoded: an archive or a source
