@@ -10,7 +10,8 @@ format, `LoadBundle` and the bundling API live on and grew (compiled-IL
 bundles, archives, snapshots); the `shumway-bundler` CLI described below was
 RETIRED in Phase 23, replaced by the separate-compilation toolchain —
 `shumway-compile` / `shumway-link` / `shumway-lib` (ADR-038 era, Phase 13+).
-The CLI sections stand as the record of the original tool.
+The CLI sections stand as the record of the original tool. Amended
+2026-11-22: a bundle and an object file carry a stamp of their format.
 
 ## Context
 
@@ -413,3 +414,51 @@ The bundler is deterministic given the same inputs: the output bytes are identic
 ## Related Design Docs
 
 - `design/bundle-format.md` (to be created): binary format details.
+
+## Amendment (2026-11-22): a file carries a stamp of its format
+
+A `.shum` and a `.shmo` open with their magic and a version number. The
+number is frozen until the first public release: the format changes in place
+and the number does not move. So nothing told a file written before a change
+from one written after it, and a stale file was read as a current one, to
+fail somewhere in the middle of a section or not to fail at all.
+
+A file now carries a stamp after its version, eight bytes, and a reader
+checks it before it reads anything else (`BundleFormat.Stamp`). The stamp is
+a fingerprint of what the bytes mean:
+
+- the instruction set: each instruction's number, size and operands, from
+  the table the interpreter and the disassembler use;
+- the kinds of operand and the cell tags;
+- the version numbers of the two files;
+- a mark raised by hand when the wire form of a section changes, which
+  cannot be computed. `BundleStampTests` pins the image of a fixed bundle
+  beside the stamp, and fails when the image changes and the stamp does not.
+
+It is computed, not counted. It does not move from one build to the next, nor
+from one release to the next, for as long as the format is the same, so a
+bundle built once is good for every engine with its stamp. It moves by itself
+when an instruction is added or renumbered.
+
+A file with another stamp is refused with a message that says to build it
+again. Three places use that answer in place of an error:
+
+- `use_module(library(X))` that resolves to a bundle of another format loads
+  the library's source when it is on the search path, with a warning, and
+  asks the host's resolver for it first (`LibrarySourceResolver`), which may
+  compile it again.
+- A page that keeps the bundles it compiles drops one of another format when
+  it puts the stored ones back, from the file's first sixteen bytes
+  (`BundleReader.IsCurrent`).
+- A page that imports a collection from an archive takes the bundle the
+  archive carries of a library compiled ahead only when it is of this
+  format; the library compiles from its source otherwise.
+
+A bundle's WebAssembly modules have a stamp of their own
+(`WasmRelocatableModule.FormatStamp`, ADR-050), for what the bundle's stamp
+does not cover: the module's layout and the mailbox it shares with the
+engine. A bundle of this format whose modules are of another loads, and the
+modules are refused at install.
+
+Every `.shum` and `.shmo` built before this amendment is refused. That is the
+policy the frozen number already stated, now applied by the reader.

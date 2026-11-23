@@ -37,8 +37,9 @@ public static class ShmoReader
                 $".shmo: format version {version} is not supported by this linker "
                 + $"(requires {ShmoFormat.CurrentVersion}; pre-release formats are "
                 + "not backward compatible — recompile the source).");
+        BundleFormat.RequireStamp(headerReader, ".shmo");
 
-        // the byte after the version selects the body encoding
+        // the byte after the stamp selects the body encoding
         // (raw / Brotli), sharing the .shum framing; see BundleFormat.
         byte compression = headerReader.ReadByte();
         using var br = BundleFormat.OpenBody(compression, ms);

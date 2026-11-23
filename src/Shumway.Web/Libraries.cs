@@ -248,7 +248,7 @@ internal static partial class WebShumwayApp
             EnterCompileGate(onDemand: false);
             try
             {
-                if (!force && File.Exists(Path.Combine(root, library + ".shum"))) return null;
+                if (!force && HasCurrentBundle(root, library)) return null;
                 return CompileLibrary(root, name, library);
             }
             finally { ExitCompileGate(); }
@@ -379,8 +379,9 @@ internal static partial class WebShumwayApp
         try
         {
             _compileLog = say;
-            // The batch may have been compiling this very library.
-            failed = File.Exists(target) ? null : CompileLibrary(root, name, library);
+            // The batch may have been compiling this very library. A bundle
+            // of another format is as none: the compile writes over it.
+            failed = HasCurrentBundle(root, library) ? null : CompileLibrary(root, name, library);
         }
         finally
         {
@@ -388,7 +389,7 @@ internal static partial class WebShumwayApp
             ExitCompileGate();
         }
 
-        if (failed is null && File.Exists(target))
+        if (failed is null && HasCurrentBundle(root, library))
         {
             _compiledOnDemand.Enqueue($"{name}\t{library}");
             say.WriteLine($"% library({library}) compiled in {clock.Elapsed.TotalSeconds:0.#} s.");
@@ -423,6 +424,12 @@ internal static partial class WebShumwayApp
         catch (IOException) { return true; }
         return false;
     }
+
+    /// <summary>Whether the library has a bundle this engine reads: one of
+    /// its format (<see cref="BundleFormat.Stamp"/>), which the first bytes
+    /// of the file say.</summary>
+    private static bool HasCurrentBundle(string root, string library)
+        => BundleReader.IsCurrentFile(Path.Combine(root, library + ".shum"));
 
     private static bool LastCompileFailed(string root, string library)
     {
@@ -574,12 +581,12 @@ internal static partial class WebShumwayApp
         if (dir != Path.GetFullPath(Path.Combine(root, SourceDir))) return null;
         if (compiling.Contains(library) || LastCompileFailed(root, library)) return null;
         string target = Path.Combine(root, library + ".shum");
-        if (!File.Exists(target))
+        if (!HasCurrentBundle(root, library))
         {
             if (CompileLibrary(root, name, library, compiling) is not null) return null;
             _compiledOnDemand.Enqueue($"{name}\t{library}");
         }
-        return File.Exists(target) ? target : null;
+        return HasCurrentBundle(root, library) ? target : null;
     }
 
     /// <summary>Whether <paramref name="module"/> is a library of the collection
@@ -682,7 +689,7 @@ internal static partial class WebShumwayApp
         if (ProvidedNatively(root, library)) return $"{library}\tnative";
         var (kind, headline) = ReadDiagnostic(root, library);
         string state = kind == "failed" ? "failed"
-            : File.Exists(Path.Combine(root, library + ".shum")) ? "compiled"
+            : HasCurrentBundle(root, library) ? "compiled"
             : "source";
         return headline is null ? $"{library}\t{state}" : $"{library}\t{state}\t{headline}";
     }
@@ -773,10 +780,14 @@ internal static partial class WebShumwayApp
         });
 
     /// <summary>Puts a stored bundle back, and answers null, or why it was
-    /// not put: what the page stored is not a bundle, as when it was closed
-    /// while storing one. Bytes, not base64: every page load restores every
-    /// stored bundle, and decoding strings of tens of megabytes held the
-    /// page up.</summary>
+    /// not put: what the page stored is not a bundle of this engine's format.
+    /// A page closed while it stored one leaves an empty file, and a bundle
+    /// kept from an engine with another format of compiled code says so in
+    /// its first bytes (<see cref="BundleReader.IsCurrent(ReadOnlySpan{byte})"/>).
+    /// The page drops from its storage what is not put back, and the library
+    /// compiles again when it is used. Bytes, not base64: every page load
+    /// restores every stored bundle, and decoding strings of tens of
+    /// megabytes held the page up.</summary>
     [JSExport]
     internal static Task<string?> LibraryPutBundle(
         string name, string library, [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] bundle)
@@ -784,7 +795,7 @@ internal static partial class WebShumwayApp
         {
             try
             {
-                if (!BundleReader.IsBundle(bundle)) return "not a bundle";
+                if (!BundleReader.IsCurrent(bundle)) return "not a bundle of this format";
                 string root = ResolveLibrary(name);
                 Directory.CreateDirectory(root);
                 // Moved into place, as a compile's is: a query may be

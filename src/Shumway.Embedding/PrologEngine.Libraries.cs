@@ -1033,6 +1033,15 @@ public sealed partial class PrologEngine
             // Reloading replaces what the file defines rather than adding to it;
             // a first load has nothing to replace, so the two are the same call.
             if (_consultedPaths.Contains(full)) ReconsultFile(path);
+            else if (isBundle && !refusedBefore && !BundleReader.IsCurrentFile(full)
+                     && TryResolveLibrarySource(name, out _))
+            {
+                // Written with another format (BundleFormat.Stamp): as none,
+                // when the library's source is there to load in its place.
+                Warn($"warning: library({name}): its bundle was written with another format "
+                   + "and is not loaded; its source is");
+                return LoadLibraryWithNoBundle(name);
+            }
             else if (isBundle && !refusedBefore && LibraryBundleFilter is { } accepts)
             {
                 // Read here, once: the host is asked about the bundle the
@@ -1071,21 +1080,32 @@ public sealed partial class PrologEngine
         }
     }
 
-    // The host refused the library's bundle (LibraryBundleFilter): its
-    // source, and what the host's resolver gives for it, which may be the
-    // bundle it has just compiled where the refused one was.
+    // The library's bundle is not one to load (another format, or the host
+    // refused it through LibraryBundleFilter): its source, and what the
+    // host's resolver gives for it, which may be the bundle it has just
+    // compiled where the other was.
     private string? LoadLibraryWithNoBundle(string name)
+    {
+        if (!TryResolveLibrarySource(name, out string source))
+        {
+            Warn($"warning: use_module(library({name})): its bundle was refused and it has no source");
+            return null;
+        }
+        string load = LibrarySourceResolver?.Invoke(name, source) ?? source;
+        return LoadResolvedLibrary(name, load, refusedBefore: true);
+    }
+
+    private bool TryResolveLibrarySource(string name, out string source)
     {
         foreach (string dir in EnumerateLibraryDirs())
         {
-            string source = System.IO.Path.Combine(dir, name + ".pl");
-            if (!System.IO.File.Exists(source)) continue;
-            source = System.IO.Path.GetFullPath(source);
-            string load = LibrarySourceResolver?.Invoke(name, source) ?? source;
-            return LoadResolvedLibrary(name, load, refusedBefore: true);
+            string candidate = System.IO.Path.Combine(dir, name + ".pl");
+            if (!System.IO.File.Exists(candidate)) continue;
+            source = System.IO.Path.GetFullPath(candidate);
+            return true;
         }
-        Warn($"warning: use_module(library({name})): its bundle was refused and it has no source");
-        return null;
+        source = "";
+        return false;
     }
 
     /// <summary>One bare module aliased into <c>user</c> (or, for a collision

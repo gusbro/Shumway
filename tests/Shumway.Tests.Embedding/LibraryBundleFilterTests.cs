@@ -119,4 +119,71 @@ public sealed class LibraryBundleFilterTests : IDisposable
     {
         Assert.Equal("stored", Loaded(Engine()));
     }
+
+    // The library's bundle, as an engine with another format of compiled
+    // code wrote it: the stamp after its version is another.
+    private void WriteABundleOfAnotherFormat()
+    {
+        byte[] stale = Compiled("stale");
+        stale[8] ^= 0xFF;
+        File.WriteAllBytes(Bundle, stale);
+    }
+
+    /// <summary>A bundle of another format is as none, when the library's
+    /// source is there: the source loads, with a warning, and the host is
+    /// not asked about a bundle the engine cannot read.</summary>
+    [Fact]
+    public void ABundleOfAnotherFormat_IsAsNone_TheSourceLoads()
+    {
+        var e = Engine();
+        var warnings = new StringWriter();
+        e.Warnings = warnings;
+        WriteABundleOfAnotherFormat();
+        int asked = 0;
+        e.LibraryBundleFilter = (_, _, _) => { asked++; return true; };
+
+        string loaded = Loaded(e);
+
+        Assert.Equal("source", loaded);
+        Assert.Equal(0, asked);
+        Assert.Contains("library(verlib): its bundle was written with another format", warnings.ToString());
+    }
+
+    /// <summary>A host that compiles on demand is asked for the library's
+    /// source, and the bundle it compiles in the stale one's place loads.</summary>
+    [Fact]
+    public void ABundleOfAnotherFormat_IsCompiledAgainByAHostThatDoes()
+    {
+        var e = Engine();
+        WriteABundleOfAnotherFormat();
+        int resolved = 0;
+        e.LibrarySourceResolver = (_, _) =>
+        {
+            resolved++;
+            File.WriteAllBytes(Bundle, Compiled("compiled_again"));
+            return Bundle;
+        };
+
+        string loaded = Loaded(e);
+
+        Assert.Equal("compiled_again", loaded);
+        Assert.Equal(1, resolved);
+    }
+
+    /// <summary>With no source to load in its place the load fails, and says
+    /// what to do about the bundle.</summary>
+    [Fact]
+    public void ABundleOfAnotherFormatWithNoSource_FailsSayingSo()
+    {
+        var e = Engine();
+        var warnings = new StringWriter();
+        e.Warnings = warnings;
+        WriteABundleOfAnotherFormat();
+        File.Delete(Path.Combine(Sources, "verlib.pl"));
+
+        e.ConsultString(":- use_module(library(verlib)).");
+
+        Assert.Contains("another format of compiled code", warnings.ToString());
+        Assert.False(e.Query("catch(version(_), _, fail).").Success);
+    }
 }
