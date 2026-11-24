@@ -2264,7 +2264,9 @@ internal sealed class DynamicCodePatcher
     internal void SyncOrInvalidateAfterMutation(Activation engine, bool ownedHostBuffer)
     {
         if (ownedHostBuffer) SyncPersistentFromEngine(engine);
-        else E.InvalidatePersistent("mutation by a non-owner");
+        // The host's buffer does not hold it: laid out again from the store.
+        // No clause of a module changed, so the derivation stays.
+        else E.InvalidateLayout(statics: false, "mutation by a non-owner");
     }
 
     /// <summary>synchronises <see cref="E._persistentProgram"/>

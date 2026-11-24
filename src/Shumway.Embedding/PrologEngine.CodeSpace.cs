@@ -317,6 +317,41 @@ public sealed partial class PrologEngine
         if (!dropped) ResetDynChains();
     }
 
+    /// <summary>Marks the linked program stale and leaves the derivation as
+    /// it is: for a change of what is linked that changes no clause a module
+    /// was consulted with, no manifest and no set of dynamic functors. The
+    /// next setup lays the program out and links it again, from the compiles
+    /// it has: nothing is transformed again, and only a dynamic predicate
+    /// that was mutated is compiled. <paramref name="statics"/> when the set
+    /// of static predicates changed, which links the static region again
+    /// too.</summary>
+    internal void InvalidateLayout(bool statics,
+        [System.Runtime.CompilerServices.CallerMemberName] string caller = "")
+    {
+        PersistentInvalidations++;
+        if (LoadProfEnabled) ProfProductDrop("setup " + ProfSetupCalls + " layout: " + caller);
+        bool dropped = _persistentProgram is null && _dynamicLink is null;
+        _persistentProgram = null;
+        _persistentLength = 0;
+        _dynamicLink = null;
+        // The product holds a mutated predicate's compile as it was, which a
+        // link of the buffer must not use (DeferStaleDynamicPredicates).
+        _programProduct = null;
+        if (statics)
+        {
+            _staticLink = null;
+            _skipCompileMergedCache = null;
+        }
+        if (!dropped) ResetDynChains();
+    }
+
+    /// <summary>Set by a change of tier, which changes the form of a call to
+    /// a static predicate: the next setup links the static region again.
+    /// Not at once, as <see cref="InvalidateLayout"/> does for new code: the
+    /// tiers read the link they are installed against until then, and the
+    /// change can come in the middle of a setup.</summary>
+    internal bool _staticRelinkPending;
+
     /// <summary>user-facing entry point for
     /// persistent-buffer compaction. Invalidates the cached dynamic-
     /// region link so the next query setup rebuilds it from current
@@ -469,9 +504,53 @@ public sealed partial class PrologEngine
     /// product after every assert cost O(program) per query.</summary>
     private readonly HashSet<int> _productStaleDynamicFids = new();
 
+    /// <summary>Dynamic predicates the query setups compiled: one that kept
+    /// its compile from an earlier setup is not counted.</summary>
+    internal long DynamicPredicateCompiles;
+
+    // A cached compile outlives the buffer it was linked into: across a
+    // change of derivation for a predicate of facts, across a new layout for
+    // every one. Linked code holds the literals and the transient atoms it
+    // names (ADR-003); code that is only in the cache has to hold them
+    // itself, or a sweep between the old buffer and the next link frees a
+    // literal, and a collection gives an atom's id to another atom.
+    private readonly Dictionary<int, (Shumway.Compiler.Wam.CompiledPredicate Pred, bool Literals, bool Atoms)>
+        _dynamicCacheHeld = new();
+
+    internal void CacheDynamicCompile(int functorId, Shumway.Compiler.Wam.CompiledPredicate pred)
+    {
+        ReleaseDynamicCompile(functorId);
+        _dynamicPredicateCache[functorId] = pred;
+        bool literals = ReferenceEquals(pred.PoolsRef, _literalPools);
+        if (literals) _literalPools.AddRefs(pred.Bytecode);
+        int[] atoms = Shumway.Compiler.Wam.CodeAtoms.Of(pred).Ids;
+        bool held = atoms.Length > 0 && HostAtoms is not null;
+        if (held) RetainCode(atoms);
+        if (literals || held) _dynamicCacheHeld[functorId] = (pred, literals, held);
+    }
+
+    private void ReleaseDynamicCompile(int functorId)
+    {
+        if (!_dynamicCacheHeld.Remove(functorId, out var held)) return;
+        if (held.Literals) _literalPools.Release(held.Pred.Bytecode);
+        if (held.Atoms) DropCode(Shumway.Compiler.Wam.CodeAtoms.Of(held.Pred).Ids);
+    }
+
+    internal void UncacheDynamicCompile(int functorId)
+    {
+        ReleaseDynamicCompile(functorId);
+        _dynamicPredicateCache.Remove(functorId);
+    }
+
+    internal void ClearDynamicCompiles()
+    {
+        foreach (int fid in new List<int>(_dynamicCacheHeld.Keys)) ReleaseDynamicCompile(fid);
+        _dynamicPredicateCache.Clear();
+    }
+
     private void DropDynamicCompiled(int functorId)
     {
-        _dynamicPredicateCache.Remove(functorId);
+        UncacheDynamicCompile(functorId);
         var merged = _skipCompileMergedCache;
         if (merged is null) return;
         if (_staticPredicateCache.TryGetValue(functorId, out var stat))

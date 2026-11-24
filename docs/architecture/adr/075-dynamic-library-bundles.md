@@ -221,10 +221,17 @@ page.
   parses the whole file. Measured on the desktop with the bundle of 967
   modules of the Context: 0.4 s and 85 MB, and 0.14 s in a browser, so no
   index is needed.
-- **The query after a module is brought in compiles every dynamic
-  predicate again**, as the query after any consult does: 0.15 to 0.3 s on
-  the desktop with the 5,500 clauses above, 2.4 s with the 99,861, and 1.5 s
-  in a page.
+- **The query after a module is brought in links the whole program
+  again.** It compiles nothing: the module was declared at the attach, so
+  its code changes what is linked and no derivation, and a change of
+  derivation keeps the compile of a dynamic predicate that holds only facts
+  (the query after a consult went from 3.9 s to 0.8 s with the 99,861
+  clauses loaded). What is left is the link: 0.16 s on the desktop and 0.4
+  to 0.5 s in a page for the library above. Adding the module's code to the
+  linked program would remove it.
+- **In a page a table that gets hot is compiled to WebAssembly as a
+  snapshot**, 2.6 s for one of 800 clauses of eleven arguments, and again
+  after each change to it.
 - **Baked WebAssembly is one module per bundle**, installed when every
   predicate in it is linked. A dynamic library of one module that is
   brought in at the attach, a runtime, installs it at once. One of several

@@ -140,7 +140,7 @@ public sealed partial class PrologEngine
         if (engine is not null) _liveConsultEngine = engine;
         try
         {
-            LoadBundleLinkingLive(() => Bundles.LoadEntryCode(am.Entry, am.ShippedClausesRead));
+            LoadBundleLinkingLive(() => Bundles.LoadEntryCode(am.Entry, am.ShippedClausesRead, broughtIn: true));
         }
         finally { _liveConsultEngine = prevLive; }
     }
@@ -284,7 +284,7 @@ public sealed partial class PrologEngine
         if (engine is not null) return;
         // No goal named: the next query links the predicate from the store,
         // and each open activation's view of it is built again.
-        InvalidatePersistent("pending clauses");
+        InvalidateLayout(statics: false, "pending clauses");
         HashSet<DynChainTable>? seen = null;
         foreach (var live in new List<Activation>(ChainPatcher.LiveActivations()))
             if (GetChainTable(live) is { } table && (seen ??= new()).Add(table))

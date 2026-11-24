@@ -711,6 +711,27 @@ public sealed partial class PrologEngine
         return entry;
     }
 
+    /// <summary>A new derivation drops the compile of every dynamic predicate
+    /// but one whose clauses are all facts of the store. Do not relax this to
+    /// the rewrite entries' per-entry fingerprint: reusing a dynamic rule's
+    /// compiled bytecode across a derivation bump broke clpz's propagators at
+    /// runtime (constraints silently stopped firing) even though every unit
+    /// gate stayed green. A fact has no body, so its code names no helper and
+    /// no predicate of the derivation that ends here, and a table of facts is
+    /// where the clauses are. A predicate a module gives source clauses to,
+    /// before or now, is compiled from them too, and one that is no longer
+    /// dynamic has a static compile to give way to.</summary>
+    private void PruneDynamicCompiles(HashSet<int>? staticHeadsBefore, HashSet<int> staticHeadsNow)
+    {
+        List<int>? drop = null;
+        foreach (int fid in _dynamicPredicateCache.Keys)
+            if (!_dynStore.IsDynamic(fid) || !_dynStore.HoldsOnlyFacts(fid)
+                || staticHeadsNow.Contains(fid) || staticHeadsBefore?.Contains(fid) == true)
+                (drop ??= new()).Add(fid);
+        if (drop is not null)
+            foreach (int fid in drop) UncacheDynamicCompile(fid);
+    }
+
     /// <summary>Leaves the product's compile of each predicate a dynamic
     /// mutation left stale (<see cref="_productStaleDynamicFids"/>) as it is.
     /// Nothing reads it before the next full build: the persistent buffer
@@ -802,6 +823,15 @@ public sealed partial class PrologEngine
         // mid-flight -- so it waits for the next real query, exactly as the
         // compaction does.
         if (_debugEvalDepth == 0) IlPromotion.ApplyPendingJitChange();
+        // A change of tier asked for the static region to be linked again
+        // (InvalidateLayout). Here and not when it asked: until this setup the
+        // tiers read the link they are installed against.
+        if (_staticRelinkPending)
+        {
+            _staticRelinkPending = false;
+            _staticLink = null;
+            _skipCompileMergedCache = null;
+        }
         // Retract leaves tombstones so no clause position moves mid-query;
         // readers compact the slot they touch and the proportional trigger
         // bounds the rest, and this tidies up whatever is left at a point
@@ -997,15 +1027,9 @@ public sealed partial class PrologEngine
             //    dynamic clause recompiled under the new derivation calls new
             //    '$disj_N' helpers, and those helper predicates are static:
             //    they only reach the code space through a fresh static link.
-            // The dynamic compiled cache still clears wholesale. Do not relax
-            // this to the rewrite entries' per-entry fingerprint: reusing a
-            // dynamic predicate's compiled bytecode across a derivation bump
-            // broke clpz's propagators at runtime (constraints silently
-            // stopped firing) even though every unit gate stayed green — the
-            // rewrite ASTs are safely reusable, the compiled form is not.
-            // Recompiling the handful of dynamic predicates from their kept
-            // ASTs is cheap.
-            _dynamicPredicateCache.Clear();
+            // The dynamic compiled cache is pruned below, once the modules'
+            // head functors are known (PruneDynamicCompiles).
+            var staticHeadsBefore = _staticRewriteHeadFids;
             _skipCompileMergedCache = null;
             _staticLink = null;
             // The IL tier's promoted delegates are deliberately not evicted
@@ -1162,6 +1186,7 @@ public sealed partial class PrologEngine
             _staticRewriteModuleLocals = moduleLocalsCache;
             _staticRewriteHeadFids = new HashSet<int>(rewrittenHeadFids);
             _staticRewriteGen = _derivationGen;
+            PruneDynamicCompiles(staticHeadsBefore, rewrittenHeadFids);
         }
 
         // Dynamic clauses asserted at runtime (or declared
@@ -1237,7 +1262,20 @@ public sealed partial class PrologEngine
                         namedDynCtx[seedModule] = fidCtx;
                     }
                 }
-                if (!_dynamicRewriteCache.TryGetValue(fid, out var entry)
+                bool cached = _dynamicRewriteCache.TryGetValue(fid, out var entry);
+                // A predicate of facts under another locals set: its rewrite
+                // is the same when its head's name is, which one clause tells.
+                if (cached && entry.ModesVersion == modeTable.Version
+                    && !ReferenceEquals(entry.LocalsRef, fidCtx.LocalFunctors)
+                    && entry.HeadFids.Count == clauses.Count
+                    && _dynStore.HoldsOnlyFacts(fid)
+                    && HeadFunctorIdOf(ModuleRewrite.Rewrite(clauses[0], fidCtx)) == entry.HeadFids[0])
+                {
+                    entry = (entry.Clauses, entry.HeadFids, fidCtx.LocalFunctors, entry.ModesVersion);
+                    _dynamicRewriteCache[fid] = entry;
+                    _dynamicHelperContext[fid] = (entry.HeadFids, fidCtx.LocalFunctors, entry.ModesVersion);
+                }
+                if (!cached
                     || !ReferenceEquals(entry.LocalsRef, fidCtx.LocalFunctors)
                     || entry.ModesVersion != modeTable.Version)
                 {
@@ -1445,10 +1483,11 @@ public sealed partial class PrologEngine
                 _jitIndexProfile.RecordCompileDecision(
                     pred.FunctorId, _jitIndexProfile.IsHot(pred.FunctorId));
                 if (_dynamicPredicateCache.ContainsKey(pred.FunctorId)) continue;
+                DynamicPredicateCompiles++;
                 if (ReferenceEquals(pred.PoolsRef, _literalPools)
                     || Shumway.Compiler.Wam.ModuleCompiler.IsCachedPredicateReusable(pred))
                 {
-                    _dynamicPredicateCache[pred.FunctorId] = pred;
+                    CacheDynamicCompile(pred.FunctorId, pred);
                     // mirror into the merged skip-compile
                     // cache (dynamic has top precedence in the merge).
                     if (_skipCompileMergedCache is not null)

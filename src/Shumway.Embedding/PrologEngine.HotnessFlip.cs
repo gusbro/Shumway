@@ -152,7 +152,7 @@ public sealed partial class PrologEngine
             // build compiles from.
             product.DynamicPreds[index] = pred;
             _productStaleDynamicFids.Remove(fid);
-            _dynamicPredicateCache[fid] = pred;
+            CacheDynamicCompile(fid, pred);
             if (_skipCompileMergedCache is { } merged) merged[fid] = pred;
             _jitIndexProfile.RecordCompileDecision(fid, true);
             HotnessFlipsInPlace++;

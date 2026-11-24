@@ -334,6 +334,42 @@ public sealed class DynamicLibraryBundleTests : IDisposable
         Assert.DoesNotContain("dynlib", text);
     }
 
+    // ---- what bringing a module in costs the next query ----
+
+    [Fact]
+    public void BringingAModuleIn_LeavesTheDerivation_AndEveryCompileOfADynamicPredicate()
+    {
+        Tables();
+        var e = Engine();
+        e.ConsultString(@"
+            :- dynamic(tbl/2).
+            tbl(z, 0).
+            :- dynamic(ruled/1).
+            ruled(X) :- X > 10.
+            ");
+        Assert.True(e.Query("ensure_loaded(bundle(tables)).").Success);
+        Assert.True(e.Query("findall(K, tbl(K, _), [z, a, b, c]), ruled(11).").Success);
+        int tbl = Shumway.Core.FunctorTable.Intern(Shumway.Core.AtomTable.Intern("tbl", permanent: true).Id, 2);
+        int ruled = Shumway.Core.FunctorTable.Intern(Shumway.Core.AtomTable.Intern("ruled", permanent: true).Id, 1);
+        Assert.True(e.Query("true.").Success);
+        var facts = e.DynamicPredicateCache[tbl];
+        var rule = e.DynamicPredicateCache[ruled];
+        int derivation = e._derivationGen;
+        long layouts = e.PersistentInvalidations;
+        long compiles = e.DynamicPredicateCompiles;
+
+        Assert.True(e.IsCodePending("t2"));
+        Assert.True(e.Query("other(1).").Success);
+        Assert.False(e.IsCodePending("t2"));
+        Assert.True(e.Query("findall(K, tbl(K, _), [z, a, b, c]), ruled(11), other(1).").Success);
+
+        Assert.True(e.PersistentInvalidations > layouts, "the module's code was not linked into the program");
+        Assert.Equal(derivation, e._derivationGen);
+        Assert.Equal(compiles, e.DynamicPredicateCompiles);
+        Assert.Same(facts, e.DynamicPredicateCache[tbl]);
+        Assert.Same(rule, e.DynamicPredicateCache[ruled]);
+    }
+
     // ---- from code promoted to Tier-1 ----
 
     // The no branch promotes probe/3 and calls into nothing of the library.

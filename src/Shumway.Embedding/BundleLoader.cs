@@ -1290,54 +1290,70 @@ internal sealed class BundleLoader
             foreach (var (from, to) in aliases) { AddInt(from); AddInt(to); }
         AddInt(staticPreds.Count);
         foreach (var p in staticPreds)
+            sha.AppendData(_linkDigests.GetValue(p, LinkDigest));
+        return Convert.ToHexString(sha.GetHashAndReset());
+    }
+
+    // A compiled predicate does not change, so what it gives the key is
+    // computed once: hashing every predicate's bytecode at each link of the
+    // static region cost the size of the program per consult.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
+        Shumway.Compiler.Wam.CompiledPredicate, byte[]> _linkDigests = new();
+
+    private static byte[] LinkDigest(Shumway.Compiler.Wam.CompiledPredicate p)
+    {
+        using var sha = System.Security.Cryptography.IncrementalHash.CreateHash(
+            System.Security.Cryptography.HashAlgorithmName.SHA256);
+        var word = new byte[4];
+        void AddInt(int v)
         {
-            AddInt(p.FunctorId);
-            AddInt(p.Bytecode.Length);
-            sha.AppendData(p.Bytecode);
-            AddInt(p.SwitchTables.Count);
-            foreach (var t in p.SwitchTables)
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(word, v);
+            sha.AppendData(word);
+        }
+        AddInt(p.FunctorId);
+        AddInt(p.Bytecode.Length);
+        sha.AppendData(p.Bytecode);
+        AddInt(p.SwitchTables.Count);
+        foreach (var t in p.SwitchTables)
+        {
+            AddInt(t.DefaultAddress);
+            AddInt(t.Count);
+            for (int i = 0; i < t.Count; i++) { AddInt(t.Keys[i]); AddInt(t.Values[i]); }
+        }
+        AddInt(p.CallSites.Count);
+        foreach (var c in p.CallSites)
+        {
+            AddInt(c.OpcodeOffset);
+            AddInt(c.CalleeFunctorId);
+            AddInt(c.IsExecute ? 1 : 0);
+        }
+        // ADR-035 — the debug metadata is part of the identity, even though it is
+        // not part of the bytecode. Two programs can compile to byte-identical code
+        // and be written on entirely different lines: the stop sites and the frame
+        // maps are what tell them apart. Leaving them out of the key let one
+        // program's link be handed to another, which then reported its neighbour's
+        // source positions — a debugger showing the wrong file, with no error
+        // anywhere.
+        AddInt(p.DebugStops.Count);
+        foreach (var s in p.DebugStops)
+        {
+            AddInt(s.Offset);
+            AddInt(s.SiteId);
+        }
+        AddInt(p.DebugFrames.Count);
+        foreach (var f in p.DebugFrames)
+        {
+            AddInt(f.Start);
+            AddInt(f.End);
+            AddInt(f.HasFrame ? 1 : 0);
+            AddInt(f.Variables.Count);
+            foreach (var v in f.Variables)
             {
-                AddInt(t.DefaultAddress);
-                AddInt(t.Count);
-                for (int i = 0; i < t.Count; i++) { AddInt(t.Keys[i]); AddInt(t.Values[i]); }
-            }
-            AddInt(p.CallSites.Count);
-            foreach (var c in p.CallSites)
-            {
-                AddInt(c.OpcodeOffset);
-                AddInt(c.CalleeFunctorId);
-                AddInt(c.IsExecute ? 1 : 0);
-            }
-            // ADR-035 — the debug metadata is part of the identity, even though it is
-            // not part of the bytecode. Two programs can compile to byte-identical code
-            // and be written on entirely different lines: the stop sites and the frame
-            // maps are what tell them apart. Leaving them out of the key let one
-            // program's link be handed to another, which then reported its neighbour's
-            // source positions — a debugger showing the wrong file, with no error
-            // anywhere. Debug programs are also exactly the case this cache was never
-            // for (it exists so a pool can load one bundle N times), so the extra
-            // hashing costs nothing that matters.
-            AddInt(p.DebugStops.Count);
-            foreach (var s in p.DebugStops)
-            {
-                AddInt(s.Offset);
-                AddInt(s.SiteId);
-            }
-            AddInt(p.DebugFrames.Count);
-            foreach (var f in p.DebugFrames)
-            {
-                AddInt(f.Start);
-                AddInt(f.End);
-                AddInt(f.HasFrame ? 1 : 0);
-                AddInt(f.Variables.Count);
-                foreach (var v in f.Variables)
-                {
-                    AddInt(v.Slot);
-                    sha.AppendData(System.Text.Encoding.UTF8.GetBytes(v.Name));
-                }
+                AddInt(v.Slot);
+                sha.AppendData(System.Text.Encoding.UTF8.GetBytes(v.Name));
             }
         }
-        return Convert.ToHexString(sha.GetHashAndReset());
+        return sha.GetHashAndReset();
     }
 
     /// <summary>SHUMWAY_BUNDLE_DIAG audit: recompute every patch site's
@@ -1985,7 +2001,7 @@ internal sealed class BundleLoader
     /// <summary>The second half of <see cref="LoadEntryFromBytecode"/>: the
     /// entry's static clauses for clause/2, its native blocks, its bytecode
     /// and its persisted Tier-1 code.</summary>
-    internal void LoadEntryCode(BundleEntry entry, bool shippedClausesRead)
+    internal void LoadEntryCode(BundleEntry entry, bool shippedClausesRead, bool broughtIn = false)
     {
         E.DropStaticClauseCaches();
         if (!shippedClausesRead && entry.ModuleName != Prelude.ModuleName
@@ -2030,6 +2046,14 @@ internal sealed class BundleLoader
         // The static program just changed shape — drop the cached
         // static link region so the next query rebuild picks up the
         // new predicates.
+        // The module of an attached library was declared when the library
+        // was attached (ADR-075): its code changes what is linked and nothing
+        // a transform reads, so the derivation stays and so does every compile.
+        if (broughtIn)
+        {
+            E.InvalidateLayout(statics: true);
+            return;
+        }
         E._staticLink = null;
         E._staticPredicateCache.Clear();
         E._skipCompileMergedCache = null;   // static cache cleared
@@ -2138,7 +2162,7 @@ internal sealed class BundleLoader
             E.ForgetAttachedLibraries();
             E.ResetDynChains();
             E._staticPredicateCache.Clear();
-            E._dynamicPredicateCache.Clear();
+            E.ClearDynamicCompiles();
             E._skipCompileMergedCache = null;   // both caches cleared
             E._precompiledStaticPredicates.Clear();
             E._staticLink = null;

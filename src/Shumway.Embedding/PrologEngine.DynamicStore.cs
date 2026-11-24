@@ -481,7 +481,7 @@ public sealed partial class PrologEngine
         // this engine's buffer; the host's newer buffer would keep the
         // clause visible on cross-query reuse. Force a rebuild from the
         // (already-updated) store. Owner engines pay nothing.
-        if (!EngineOwnsHostBuffer(engine)) InvalidatePersistent("retract by a non-owner");
+        if (!EngineOwnsHostBuffer(engine)) InvalidateLayout(statics: false, "retract by a non-owner");
         // For the chain layout, PatchDiedFromChain walks
         // the predicate's single chain and patches entry[idx]'s
         // died slot. For the indexed layout, the chain
