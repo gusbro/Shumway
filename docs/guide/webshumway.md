@@ -249,8 +249,15 @@ The bundle is made with the linker, with the WebAssembly modules and without
 the bundle's own compression, which the browser's runtime cannot read:
 
 ```
-shumway-link --consult --library --wasm --no-compress -o x.shum x.pl
+shumway-link --library --wasm --no-compress -o x.shum x.pl
 ```
+
+The library's `initialization/1` goals run where it loads, in the page. A
+library that generates clauses while it loads, through its expansion hooks
+or the operators of a library it uses, is compiled with `--consult` as well,
+the way the page compiles it. Its initialization goals then run once, when it
+is linked, and the bundle holds what they leave: a value they take from the
+machine, such as a temporary directory, is that machine's.
 
 The archive's compression does the work: a bundle of 93 MB is 8 MB in a
 `.tar.gz`. The source has to be there too. A bundle is good for every version

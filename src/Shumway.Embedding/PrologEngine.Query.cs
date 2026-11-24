@@ -1707,7 +1707,7 @@ public sealed partial class PrologEngine
             // buffer, dynamic snapshots' shadow regions included (ADR-054).
             IlPromotion.Wasm?.OnPersistentRebuilt();
             int dynamicLoadOffset = prefix.Length + staticLink.Bytecode.Length;
-            _dynamicLink = new Linker().Link(
+            _dynamicLink = new Linker { Aliases = BareLibraryAliases() }.Link(
                 dynamicPreds,
                 loadOffset: dynamicLoadOffset,
                 externalSymbols: staticLink.Addresses,
@@ -1773,7 +1773,7 @@ public sealed partial class PrologEngine
         }
         var persistentAddresses = _persistentAddressesCache;
 
-        var queryLink = new Linker().Link(
+        var queryLink = new Linker { Aliases = BareLibraryAliases() }.Link(
             queryPreds,
             loadOffset: queryStart,
             externalSymbols: persistentAddresses,
@@ -1896,7 +1896,7 @@ public sealed partial class PrologEngine
             int dollar = ModuleSeparatorIndex(name);
             if (dollar <= 0) continue;
             if (!_modules.ContainsKey(name.Substring(0, dollar))) continue;
-            if (!IsHelperAliasName(name, dollar)) continue;
+            if (!KeepsBareAlias(name, dollar)) continue;
             int bareFid = FunctorTable.Intern(
                 AtomTable.Intern(name.Substring(dollar + 1), permanent: true).Id, arity);
             if (!addressMap.ContainsKey(bareFid))
@@ -1918,7 +1918,7 @@ public sealed partial class PrologEngine
             int dollar = ModuleSeparatorIndex(name);
             if (dollar <= 0) continue;
             if (!_modules.ContainsKey(name.Substring(0, dollar))) continue;
-            if (!IsHelperAliasName(name, dollar)) continue;
+            if (!KeepsBareAlias(name, dollar)) continue;
             int bareFid = FunctorTable.Intern(
                 AtomTable.Intern(name.Substring(dollar + 1), permanent: true).Id, arity);
             if (!addressMap.ContainsKey(bareFid))
@@ -2509,14 +2509,17 @@ public sealed partial class PrologEngine
 
     /// <summary>ADR-056: which module-local predicates keep a bare alias.
     /// <c>user</c>'s do, since user is the global module and its predicates
-    /// are reachable from everywhere; so does a compiler-generated helper
-    /// (<c>m$'$neg_3'</c>), whose callers name it unqualified. Any other
-    /// module's local is private: an alias would let a runtime call/1
-    /// anywhere reach it.</summary>
-    private static bool IsHelperAliasName(string mangledName, int dollar)
+    /// are reachable from everywhere; so do those of a library without a module
+    /// directive loaded from its bundle, which are user's as its source's are
+    /// (amendment); so does a compiler-generated helper (<c>m$'$neg_3'</c>),
+    /// whose callers name it unqualified. Any other module's local is private:
+    /// an alias would let a runtime call/1 anywhere reach it.</summary>
+    private bool KeepsBareAlias(string mangledName, int dollar)
         => (dollar + 1 < mangledName.Length && mangledName[dollar + 1] == '$')
            || (dollar == DefaultModuleName.Length
-               && string.CompareOrdinal(mangledName, 0, DefaultModuleName, 0, dollar) == 0);
+               && string.CompareOrdinal(mangledName, 0, DefaultModuleName, 0, dollar) == 0)
+           || (_bareLibraryModules.Count > 0
+               && _bareLibraryModules.Contains(mangledName.Substring(0, dollar)));
 
     /// <summary>True when every meta-argument spec a cached transform used
     /// is still what the engine would answer.</summary>
@@ -2555,7 +2558,7 @@ public sealed partial class PrologEngine
             int dollar = ModuleSeparatorIndex(mangledName);
             if (dollar <= 0) continue;
             if (!_modules.ContainsKey(mangledName.Substring(0, dollar))) continue;
-            if (!IsHelperAliasName(mangledName, dollar)) continue;
+            if (!KeepsBareAlias(mangledName, dollar)) continue;
             int bareFunctorId = FunctorTable.Intern(
                 AtomTable.Intern(mangledName.Substring(dollar + 1), permanent: true).Id,
                 arity);

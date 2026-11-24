@@ -97,6 +97,118 @@ public sealed class BundleLibraryImportTests : IDisposable
         Assert.True(e.Query("use_module(library(chainlib)), top(ok), G = top(Y), call(G), Y == ok.").Success);
     }
 
+    // A bundle compiled file by file carries its initialization goals and runs
+    // them where it loads. Loaded by a running goal, they run once what the
+    // bundle defines is linked into that goal: one that calls the file's own
+    // predicate found nothing before.
+    [Theory]
+    [InlineData("ensure_loaded(library(initlib))")]
+    [InlineData("use_module(library(initlib))")]
+    [InlineData("consult('{0}')")]
+    public void ItsInitializationGoals_CallWhatItDefines_WhenAGoalLoadsIt(string load)
+    {
+        string bundle = BuildLibrary("initlib", @"
+            :- dynamic(done/1).
+            init :- assertz(done(yes)).
+            :- initialization(init).
+            ");
+        var said = new StringWriter();
+        var e = new PrologEngine { Out = new StringWriter(), Warnings = said };
+        e.AddLibraryDirectory(_dir);
+
+        Assert.True(e.Query(string.Format(load, bundle.Replace('\\', '/')) + ", done(yes).").Success);
+        Assert.True(e.Query("findall(X, done(X), [yes]).").Success);
+        Assert.Equal("", said.ToString());
+    }
+
+    /// <summary>A library's source and its bundle in one directory, the
+    /// bundle answering which(bundle) and the source which(source), with the
+    /// bundle written <paramref name="bundleAge"/> after the source.</summary>
+    private void SourceAndBundle(string name, System.TimeSpan bundleAge, bool otherFormat = false)
+    {
+        string bundle = BuildLibrary(name, $":- module({name}, [which/1]).\nwhich(bundle).\n");
+        if (otherFormat)
+        {
+            byte[] bytes = File.ReadAllBytes(bundle);
+            bytes[8] ^= 0xFF;   // the format stamp follows the magic and the version
+            File.WriteAllBytes(bundle, bytes);
+        }
+        string source = Path.Combine(_dir, name + ".pl");
+        File.WriteAllText(source, $":- module({name}, [which/1]).\nwhich(source).\n");
+        var t = new System.DateTime(2026, 1, 1, 0, 0, 0, System.DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(source, t);
+        File.SetLastWriteTimeUtc(bundle, t + bundleAge);
+    }
+
+    private string WhichLoads(string name) => WhichLoads(name, out _);
+
+    private string WhichLoads(string name, out string warnings)
+    {
+        var said = new StringWriter();
+        var e = new PrologEngine { Out = new StringWriter(), Warnings = said };
+        e.AddLibraryDirectory(_dir);
+        var answer = e.Query($"use_module(library({name})), which(W).");
+        Assert.True(answer.Success);
+        warnings = said.ToString();
+        return answer.Get<string>("W");
+    }
+
+    [Fact]
+    public void BesideItsSource_ABundleNoOlderThanIt_IsTheLibrary()
+    {
+        SourceAndBundle("newerbundle", System.TimeSpan.FromMinutes(1));
+        Assert.Equal("bundle", WhichLoads("newerbundle"));
+        SourceAndBundle("samebundle", System.TimeSpan.Zero);
+        Assert.Equal("bundle", WhichLoads("samebundle"));
+    }
+
+    [Fact]
+    public void BesideItsSource_ABundleOlderThanIt_IsNot()
+    {
+        SourceAndBundle("olderbundle", System.TimeSpan.FromMinutes(-1));
+        Assert.Equal("source", WhichLoads("olderbundle"));
+    }
+
+    [Fact]
+    public void BesideItsSource_ABundleOfAnotherFormat_IsNot()
+    {
+        SourceAndBundle("stalebundle", System.TimeSpan.FromMinutes(1), otherFormat: true);
+        Assert.Equal("source", WhichLoads("stalebundle", out string warnings));
+        Assert.Equal("", warnings);
+    }
+
+    // Two bundles give clauses to one dynamic predicate, as an application
+    // gives its entries to the tables of a runtime loaded before it. The goal
+    // that loads the second sees its clauses, as it does for a source.
+    [Fact]
+    public void ClausesASecondBundleGivesADynamic_AreSeenInTheQueryThatLoadsIt()
+    {
+        BuildLibrary("seedbase", ":- dynamic(t/1).\nt(base).\n");
+        BuildLibrary("seedext", ":- dynamic(t/1).\n:- multifile(t/1).\nt(ext).\n");
+
+        var e = new PrologEngine { Out = new StringWriter() };
+        e.AddLibraryDirectory(_dir);
+
+        Assert.True(e.Query("ensure_loaded(library(seedbase)), ensure_loaded(library(seedext)), "
+            + "findall(X, t(X), L), L == [base, ext].").Success);
+        Assert.True(e.Query("findall(X, t(X), [base, ext]).").Success);
+    }
+
+    // The same when the predicate was there before the query began.
+    [Fact]
+    public void ClausesABundleGivesADynamicTheQueryStartedWith_AreSeenInThatQuery()
+    {
+        BuildLibrary("seedfirst", ":- dynamic(t/1).\nt(first).\n");
+        BuildLibrary("seedlater", ":- dynamic(t/1).\n:- multifile(t/1).\nt(later).\n");
+
+        var e = new PrologEngine { Out = new StringWriter() };
+        e.AddLibraryDirectory(_dir);
+
+        Assert.True(e.Query("ensure_loaded(library(seedfirst)), t(first).").Success);
+        Assert.True(e.Query("ensure_loaded(library(seedlater)), "
+            + "findall(X, t(X), L), L == [first, later].").Success);
+    }
+
     [Fact]
     public void ABundleConsultedInAQuery_IsCalledInThatQuery()
     {

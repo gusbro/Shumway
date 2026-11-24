@@ -69,11 +69,13 @@ one file, so they share one namespace:
 ```
 
 ```
-shumway-link --consult -o wumpus.shum --exe wumpus --goal "'::'(wumpus,main)" wumpus.pl
+shumway-link -o wumpus.shum --exe wumpus --goal "'::'(wumpus,main)" wumpus.pl
 ```
 
-`--consult` runs the runtime's initialization goals while linking, and the
-executable starts from the state they leave.
+The runtime's initialization goals run when the executable starts, so what
+they find (the startup directory, a temporary directory) is that of the
+machine it runs on. Two files linked apart are two modules, and the
+application then cannot call the runtime.
 
 ## Running test suites
 

@@ -10,6 +10,9 @@ export-qualified module belongs to that module (the amendment at the end).
 Amended 2026-11-08 (accepted; built with it): the engine's own libraries are
 export-qualified modules (the second amendment at the end).
 
+Amended 2026-11-23: a library's bundle beside its source is the library when
+it is current (the fourth amendment at the end).
+
 ## Implementation status
 
 All four components are implemented and tested:
@@ -128,7 +131,7 @@ fed from all of:
 - the shipped `lib/` directory (added by the REPL/CLI).
 
 `use_module(library(X))` resolves in order: (1) baked C# switch (unchanged) →
-(2) file resolver (`Dir/X.pl` then `Dir/X.shum`) → (3) `CompatLibraries` (unchanged) →
+(2) file resolver (`Dir/X.pl` or `Dir/X.shum`; with both, the fourth amendment) → (3) `CompatLibraries` (unchanged) →
 (4) error.
 
 A host may set `PrologEngine.LibrarySourceResolver`. When step (2) lands on a
@@ -640,3 +643,35 @@ which the unqualified form still lists. Text without `:- module/2`, loaded
 each way it can be (consulted, under `:- module/1`, compiled and linked,
 linked through a consult), sees what `user` imports; under `:- module/2` it
 does not.
+
+## Fourth amendment (2026-11-23): a library's source and its bundle in one directory
+
+### Context
+
+The resolver took `Dir/X.pl` before `Dir/X.shum`. A bundle written beside
+its source, as a tool that builds both into one output directory leaves it,
+was never loaded: the library compiled from its source on every load.
+
+### Decision
+
+In one directory with both, `library(X)` is the bundle when it is of this
+format of compiled code (its stamp, ADR-009) and was written no earlier than
+the source; otherwise it is the source. Across directories nothing changes:
+the first directory of the search path with either file answers.
+
+### Consequences
+
+- Editing the source makes it newer, so it loads until the bundle is built
+  again.
+- A bundle of another format beside its source is passed over without a
+  warning. One found alone still falls back to the source on the search
+  path, with the warning.
+- A collection of the web page keeps its bundle at the root and its source
+  under `src/`, so its resolution is unchanged.
+
+### Tests
+
+`BundleLibraryImportTests`: beside its source, a newer bundle and one of the
+same time are the library, an older one and one of another format are not,
+the last without a warning. Red counter-proof: with the source first, the
+newer bundle is not loaded.

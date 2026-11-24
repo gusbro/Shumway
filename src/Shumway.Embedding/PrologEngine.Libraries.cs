@@ -111,10 +111,20 @@ public sealed partial class PrologEngine
     {
         var before = _liveConsultEngine is null
             ? null : new HashSet<int>(_precompiledStaticPredicates.Keys);
-        load();
+        // The bundles' initialization goals run in that goal, so they wait
+        // for what the bundles define to be linked into it.
+        List<(Term Goal, string Module)>? initialization = null;
+        var outer = _deferredBundleInitialization;
+        if (before is not null) _deferredBundleInitialization = initialization = new();
+        try { load(); }
+        finally { _deferredBundleInitialization = outer; }
         if (_liveConsultEngine is { } live && before is not null)
         {
             EnsureLiveDynamicTrampolines(live);
+            // A bundle's clauses for a dynamic the goal already dispatches
+            // (another bundle's, or the program's) went to the store only; the
+            // goal's view takes them here, as at the end of a source consult.
+            ReconcileEngineDynamicView(live);
             var linked = LinkLoadedPredicatesLive(live, _precompiledStaticPredicates
                 .Where(kv => !before.Contains(kv.Key)).Select(kv => kv.Value).ToList());
             // The bundle's wasm module binds to where its predicates are
@@ -122,6 +132,9 @@ public sealed partial class PrologEngine
             if (linked is not null && IlPromotion.PendingWasmModules.Count > 0)
                 IlPromotion.Wasm?.InstallPendingBundlesLive(this, linked);
         }
+        if (initialization is not null)
+            foreach (var (goal, module) in initialization)
+                RunInitializationGoal(goal, module);
     }
 
     // Compatibility libraries loaded on demand by use_module(library(Name)),
@@ -814,32 +827,43 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>Resolves <c>library(<paramref name="name"/>)</c> to a file on the
-    /// library search path (ADR-038): the first <c>Dir/name.pl</c> or
-    /// <c>Dir/name.shum</c> that exists, in search-path order. Returns the full
-    /// path in <paramref name="path"/>, or <c>false</c> if none is found.</summary>
+    /// library search path (ADR-038): in search-path order, the first directory
+    /// with <c>name.pl</c> or <c>name.shum</c>. With both, the bundle when it is
+    /// of this format of compiled code and not older than its source, else the
+    /// source. Returns the full path in <paramref name="path"/>, or <c>false</c>
+    /// if none is found.</summary>
     internal bool TryResolveLibrary(string name, out string path)
     {
         foreach (string dir in EnumerateLibraryDirs())
         {
-            foreach (string ext in LibraryExtensions)
-            {
-                string candidate = System.IO.Path.Combine(dir, name + ext);
-                try
-                {
-                    if (System.IO.File.Exists(candidate))
-                    {
-                        path = System.IO.Path.GetFullPath(candidate);
-                        return true;
-                    }
-                }
-                catch { /* an invalid path component — skip this candidate */ }
-            }
+            string? source = Existing(System.IO.Path.Combine(dir, name + ".pl"));
+            string? bundle = Existing(System.IO.Path.Combine(dir, name + ".shum"));
+            string? chosen = source is null ? bundle
+                : bundle is null ? source
+                : BundleIsTheLibrary(source, bundle) ? bundle : source;
+            if (chosen is null) continue;
+            path = System.IO.Path.GetFullPath(chosen);
+            return true;
         }
         path = "";
         return false;
-    }
 
-    private static readonly string[] LibraryExtensions = { ".pl", ".shum" };
+        static string? Existing(string candidate)
+        {
+            try { return System.IO.File.Exists(candidate) ? candidate : null; }
+            catch { return null; }   // an invalid path component
+        }
+
+        static bool BundleIsTheLibrary(string source, string bundle)
+        {
+            try
+            {
+                return System.IO.File.GetLastWriteTimeUtc(bundle) >= System.IO.File.GetLastWriteTimeUtc(source)
+                    && BundleReader.IsCurrentFile(bundle);
+            }
+            catch { return false; }
+        }
+    }
 
     // ADR-038 — the module name the most recent consult defined, set at
     // manifest creation (ConsultPipeline). A nested library consult sets it, so
@@ -1032,27 +1056,35 @@ public sealed partial class PrologEngine
 
             // Reloading replaces what the file defines rather than adding to it;
             // a first load has nothing to replace, so the two are the same call.
-            if (_consultedPaths.Contains(full)) ReconsultFile(path);
-            else if (isBundle && !refusedBefore && !BundleReader.IsCurrentFile(full)
-                     && TryResolveLibrarySource(name, out _))
+            if (isBundle) _libraryBundleLoadDepth++;
+            try
             {
-                // Written with another format (BundleFormat.Stamp): as none,
-                // when the library's source is there to load in its place.
-                Warn($"warning: library({name}): its bundle was written with another format "
-                   + "and is not loaded; its source is");
-                return LoadLibraryWithNoBundle(name);
+                if (_consultedPaths.Contains(full)) ReconsultFile(path);
+                else if (isBundle && !refusedBefore && !BundleReader.IsCurrentFile(full)
+                         && TryResolveLibrarySource(name, out _))
+                {
+                    // Written with another format (BundleFormat.Stamp): as none,
+                    // when the library's source is there to load in its place.
+                    Warn($"warning: library({name}): its bundle was written with another format "
+                       + "and is not loaded; its source is");
+                    return LoadLibraryWithNoBundle(name);
+                }
+                else if (isBundle && !refusedBefore && LibraryBundleFilter is { } accepts)
+                {
+                    // Read here, once: the host is asked about the bundle the
+                    // load is about to take.
+                    var bundle = BundleReader.ReadFromFile(full);
+                    if (!accepts(name, full, bundle)) return LoadLibraryWithNoBundle(name);
+                    LoadBundleLinkingLive(() => LoadBundleCore(
+                        bundle, System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(full))));
+                    ImportLoadedBundleIntoUser();
+                }
+                else ConsultFile(path);
             }
-            else if (isBundle && !refusedBefore && LibraryBundleFilter is { } accepts)
+            finally
             {
-                // Read here, once: the host is asked about the bundle the
-                // load is about to take.
-                var bundle = BundleReader.ReadFromFile(full);
-                if (!accepts(name, full, bundle)) return LoadLibraryWithNoBundle(name);
-                LoadBundleLinkingLive(() => LoadBundleCore(
-                    bundle, System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(full))));
-                ImportLoadedBundleIntoUser();
+                if (isBundle) _libraryBundleLoadDepth--;
             }
-            else ConsultFile(path);
 
             // ADR-035: a library bundle is code the user did not write, as
             // clpfd is. Release-compiled is not enough: the interpreter raises
@@ -1115,10 +1147,41 @@ public sealed partial class PrologEngine
 
     /// <summary>The outcome of <see cref="PromoteBareBundleModulesToUser"/>:
     /// modules whose locals were aliased into <c>user</c>, and modules skipped
-    /// wholesale because a predicate name collided.</summary>
+    /// wholesale because a predicate name collided, each the first time it is.</summary>
     internal readonly record struct BundlePromotionResult(
         List<BareModulePromotion> Promoted,
         List<BareModulePromotion> SkippedForCollision);
+
+    private readonly HashSet<string> _bareModulesReportedSkipped = new(StringComparer.Ordinal);
+
+    // Keyed by what it is computed from: the libraries and their locals, which
+    // change only with a load.
+    private IReadOnlyDictionary<int, int>? _bareLibraryAliases;
+    private (int Modules, int Locals) _bareLibraryAliasesKey = (-1, -1);
+
+    /// <summary>ADR-056, amendment: the bare name of each local of a library
+    /// whose predicates are user's, to its module's functor, for the links of
+    /// the program, so that a call another bundle compiled finds it as it finds
+    /// the source's. The library loaded first answers for a name two define.
+    /// <c>null</c> when there is no such library.</summary>
+    internal IReadOnlyDictionary<int, int>? BareLibraryAliases()
+    {
+        if (_bareLibraryModules.Count == 0) return null;
+        int locals = 0;
+        foreach (string module in _bareLibraryModules)
+            if (_precompiledModuleLocals.TryGetValue(module, out var set)) locals += set.Count;
+        var key = (_bareLibraryModules.Count, locals);
+        if (_bareLibraryAliases is not null && key == _bareLibraryAliasesKey) return _bareLibraryAliases;
+        var map = new Dictionary<int, int>();
+        foreach (string module in _bareLibraryModules)
+            if (_precompiledModuleLocals.TryGetValue(module, out var set))
+                foreach (int fid in set)
+                    if (!IsMetaHelperFunctorName(fid))
+                        map.TryAdd(fid, MangleFunctor(module, fid));
+        _bareLibraryAliases = map;
+        _bareLibraryAliasesKey = key;
+        return map;
+    }
 
     /// <summary>REPL usability (ADR-038): a bundle loaded interactively leaves
     /// the top level standing in <c>user</c>, so the bundle's module-local
@@ -1142,7 +1205,12 @@ public sealed partial class PrologEngine
     /// or one already claimed in <c>user</c> — that whole module is skipped, so
     /// <c>user</c> never sees a module half-promoted. The decision is computed
     /// over all candidates at once, so a name shared by two modules skips both.
-    /// Public/dynamic predicates are already bare-global and need no alias.</para></summary>
+    /// Public/dynamic predicates are already bare-global and need no alias.</para>
+    ///
+    /// <para>The compiler's control helpers (<c>$disj_N</c> and the rest) are
+    /// never aliased: only their own module's clauses call them, and two bundles
+    /// linked apart mint the same names. A module an earlier call promoted is no
+    /// longer a candidate; its aliases are part of what <c>user</c> resolves.</para></summary>
     internal BundlePromotionResult PromoteBareBundleModulesToUser()
     {
         var promoted = new List<BareModulePromotion>();
@@ -1150,15 +1218,22 @@ public sealed partial class PrologEngine
         if (!_modules.TryGetValue(DefaultModuleName, out ModuleManifest? userManifest))
             return new BundlePromotionResult(promoted, skipped);
 
-        // Bare candidates: non-library modules carrying aliasable locals.
+        // Bare candidates: non-library modules with a local that user does not
+        // resolve to them yet.
         var candidates = new List<string>();
         foreach (var (name, m) in _modules)
         {
             if (name == DefaultModuleName || name == PreludeModuleName) continue;
             if (m.IsExportQualified) continue;   // library — never promote
-            if (_precompiledModuleLocals.TryGetValue(name, out var locals)
-                && locals.Count > 0)
-                candidates.Add(name);
+            if (_bareLibraryModules.Contains(name)) continue;   // user's already
+            if (!_precompiledModuleLocals.TryGetValue(name, out var locals)) continue;
+            foreach (int fid in locals)
+                if (!IsMetaHelperFunctorName(fid)
+                    && !(userManifest.Imports.TryGetValue(fid, out string? to) && to == name))
+                {
+                    candidates.Add(name);
+                    break;
+                }
         }
         if (candidates.Count == 0)
             return new BundlePromotionResult(promoted, skipped);
@@ -1168,7 +1243,8 @@ public sealed partial class PrologEngine
         List<(int Fid, string Target)> Contributions(string mod)
         {
             var list = new List<(int, string)>();
-            foreach (int fid in _precompiledModuleLocals[mod]) list.Add((fid, mod));
+            foreach (int fid in _precompiledModuleLocals[mod])
+                if (!IsMetaHelperFunctorName(fid)) list.Add((fid, mod));
             foreach (var (fid, src) in _modules[mod].Imports) list.Add((fid, src));
             return list;
         }
@@ -1200,13 +1276,16 @@ public sealed partial class PrologEngine
                 }
             if (colliding.Count > 0)
             {
-                skipped.Add(new BareModulePromotion(mod, colliding));
+                // Still a candidate on later calls, so that its names keep
+                // counting against a new module's; reported once.
+                if (_bareModulesReportedSkipped.Add(mod))
+                    skipped.Add(new BareModulePromotion(mod, colliding));
                 continue;   // all-or-nothing: promote none of this module
             }
             // Clean — commit its locals (reported) and inherited imports (silent).
             var aliased = new List<(string, int)>();
             foreach (int fid in _precompiledModuleLocals[mod])
-                if (userManifest.Imports.TryAdd(fid, mod))
+                if (!IsMetaHelperFunctorName(fid) && userManifest.Imports.TryAdd(fid, mod))
                 {
                     changed = true;
                     var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);

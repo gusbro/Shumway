@@ -102,7 +102,7 @@ public sealed partial class PrologEngine
             Linker.LinkResult link;
             try
             {
-                link = new Linker().Link(
+                link = new Linker { Aliases = BareLibraryAliases() }.Link(
                     module.Predicates, at, externalSymbols: _persistentAddressesCache,
                     switchTableIdBase: _staticLink.SwitchTables.Count + dynTables.Count);
             }
