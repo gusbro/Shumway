@@ -1076,6 +1076,7 @@ export async function run(session, emit, out, editor, workspace) {
     'process_wait(x, _)', 'process_wait(x, _, [])', 'process_kill(x)', 'process_kill(x, 9)',
     'process_group_kill(x)', 'process_group_kill(x, 9)', 'process_release(x)',
     'process_id(_)', 'process_id(x, _)', 'process_which(ls, _)',
+    'shell(ls)', 'shell(ls, _)',
   ]) {
     check(`in a browser ${goal} refuses`, await solutions(
       `catch((${goal}, R = ran), error(system_error(_), _), R = refused).`), 'R = refused');
