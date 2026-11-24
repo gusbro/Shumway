@@ -920,6 +920,7 @@ public static partial class MetaBuiltins
         int fid = ExtractCallableFunctorId(headPattern, "'$all_clauses_of'/2");
 
         var candidates = new List<Clause>();
+        host.InstallPendingClauses(engine, fid);
         candidates.AddRange(host.DynamicClausesFor(fid));
         candidates.AddRange(host.StaticClausesFor(fid));
 
@@ -1014,6 +1015,7 @@ public static partial class MetaBuiltins
         // match at all: the rest of a large predicate is never looked at.
         // The index says only what cannot match, the prefilter and the
         // unification decide; a tombstone is a slot a retract emptied.
+        host.InstallPendingClauses(engine, fid);
         List<Clause> physical = host.PhysicalClausesFor(fid);
         if (physical.Count > 0)
         {
@@ -1271,7 +1273,10 @@ public static partial class MetaBuiltins
         IEnumerable<Clause> source;
         int key = host.DatabaseFunctorFor(mod.Name, fid, create: false);
         if (host.IsDynamic(key))
+        {
+            host.InstallPendingClauses(engine, key);
             source = host.DynamicClausesFor(key);
+        }
         else if (host.ModuleDefinesFunctor(mod.Name, fid))
             // user's view is the global one: a program's predicate, in a
             // bundle's file-named module as much as consulted into user.
@@ -1475,6 +1480,7 @@ public static partial class MetaBuiltins
         int printed = 0;
         foreach (int fid in matchingFids)
         {
+            host.InstallPendingClauses(engine, fid);
             foreach (var clause in host.ClausesForListing(fid))
             {
                 PrintAstClause(output, clause);

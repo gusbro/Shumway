@@ -823,6 +823,8 @@ internal sealed class ConsultPipeline
         // §7.6.2: a source-declared clause for a dynamic predicate enters the
         // database in its converted form, exactly as an assertz'd one does.
         c = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(c);
+        // After the clauses attached libraries hold for it (ADR-075).
+        E.InstallPendingClauses(E._liveConsultEngine, fid);
         int at;
         if (insertAt < 0)
         {
@@ -2029,6 +2031,13 @@ internal sealed class ConsultPipeline
                 // where the directive stands. A file name stays a goal below.
                 string? src = E.ExecuteUseModuleDirective(elLib);
                 RecordLibraryLoad(elLib, src, filter: null);
+            }
+            else if (body is CompoundTerm { Functor: "ensure_loaded",
+                         Args: [CompoundTerm { Functor: "bundle", Args: [AtomTerm elBundle] }] })
+            {
+                // ADR-075: attaches the library, so that this file's calls
+                // into it resolve when they run.
+                E.AttachBundleByName(elBundle.Name);
             }
             else
             {

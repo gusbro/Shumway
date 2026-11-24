@@ -2,7 +2,11 @@
 
 ## Status
 
-Proposed (2026-11-23). Design only; nothing is implemented. Extends section 4
+Proposed (2026-11-23). In implementation: attaching with
+`ensure_loaded(bundle(x))`, the modules brought in on demand (decisions 2,
+4, 7, 8 and 10) and the clauses of a dynamic predicate (decision 9) are in.
+The linker option, the record in the bundle (decisions 5 and 6) and the
+reflection of decision 11 are not. Extends section 4
 of [ADR-038](038-library-loading.md), which loads the dependencies a
 librarian archive leaves out, and builds on the amendment of 2026-11-23 to
 [ADR-056](056-private-predicates-stay-private.md).
@@ -41,6 +45,16 @@ ends the browser's runtime, out of memory. The shape that fits is a runtime
 with its Tier-1 code baked, and the libraries as bytecode, each brought in
 when it is used and promoted as its predicates get hot.
 
+Every library written for that runtime, one module per source file and
+bytecode only, is a bundle of 967 modules and 48,609 predicates: 65.8 MB,
+9.4 MB with the bundle's own compression. Loading all of it as bundles load
+today takes 9 s on the desktop and 541 MB. Reading and parsing the file is
+0.4 s of that. The code is 1.5 s. The clauses the modules give to the
+runtime's dynamic tables, 99,861 of them, take 1.1 s to install and 4.2 s
+more at the first query, with 270 MB; 94% of them are tables of properties
+that an ordinary run may never ask for. This is why neither the code nor the
+dynamic clauses are loaded when the library is attached.
+
 Verified in two browsers: a runtime bundle with baked WebAssembly and an
 application bundle with bytecode only load one after the other, the
 application calls the runtime, and the code the page compiles for the
@@ -56,30 +70,35 @@ from the start.
 
 ### What a dynamic library is
 
-1. **A dynamic library is a bundle with a registry.** The registry lists the
-   bundle's modules and, for each: its name, whether it has a `:- module/2`
-   directive, the predicates it offers with their properties, the clauses it
-   gives to predicates of other modules, the operators and flags it sets
-   outside itself, the modules it needs, and whether it has initialization
-   goals.
-2. **Attaching it reads the registry.** No code of the library is loaded,
-   except what decisions 9 and 10 bring in.
+1. **A dynamic library is a library bundle, and its registry is what each
+   entry already says of its module**: its name, whether it has a
+   `:- module/2` directive, its exports and imports, the predicates it
+   defines with their kind, its dynamic clauses, its operators and flags,
+   and its initialization goals. Any bundle linked with `--library` can be
+   attached; nothing special is asked when it is built.
+2. **Attaching it declares every module and loads no code.** Each module
+   exists from then on, with its exports, its imports, its operators, its
+   flags and its dynamic predicates declared. The code of its predicates
+   and the clauses of its dynamic predicates stay in the bundle, which is
+   read whole into memory. Decision 10 is the exception.
 3. **A library is attached in two ways.** By `ensure_loaded(bundle(x))`, a
    directive or a goal, which finds `x.shum` on the library search path. By
-   the linker: `shumway-link --against x.shum` resolves the inputs against
-   the library (decision 5), and the bundle it writes attaches `x` when it
-   loads. A directive `:- ensure_loaded(bundle(x))` in an input means the
-   same to the linker. `library(x)` keeps its meaning: it loads `x`.
-4. **The module is the unit that is brought in.** Bringing a module in loads
-   all of it: its predicates, its dynamic clauses, its operators, its Tier-1
-   code. When a running goal brings it in, its code is linked into that
-   goal, as a bundle loaded by a goal is.
+   the linker: `shumway-link --dynlib x.shum` (`-dl`) resolves the inputs
+   against the library (decision 5), and the bundle it writes attaches `x`
+   when it loads. The option is repeatable, one per library, and takes a
+   file or a name found in the `-L` directories. A directive
+   `:- ensure_loaded(bundle(x))` in an input means the same to the linker.
+   `library(x)` keeps its meaning: it loads `x`.
+4. **The module is the unit of code that is brought in.** Bringing a module
+   in loads the code of all its predicates and its Tier-1 code. When a
+   running goal brings it in, the code is linked into that goal, as a
+   bundle loaded by a goal is.
 
 ### How a call finds a predicate of a library
 
 5. **A call the linker sees is resolved when it links.** The inputs' calls
    are resolved against the registries of the libraries given with
-   `--against`. A call that the inputs, the engine and those libraries leave
+   `--dynlib`. A call that the inputs, the engine and those libraries leave
    undefined is an error, as today. The bundle records, for each library,
    the predicates it calls from it.
 6. **Loading that bundle brings in what it references.** The library is
@@ -111,11 +130,19 @@ from the start.
 What a program observes does not depend on which modules have been brought
 in.
 
-9. **What a module gives outside itself is installed when the library is
-   attached**: the clauses it gives to a multifile or dynamic predicate of
-   another module, its expansion hooks, and the operators and flags a module
-   without a module directive sets for `user`. The bodies of those clauses
-   call the module's own predicates, which bring it in when they run.
+9. **A dynamic predicate is the unit of clauses that is brought in.** Its
+   clauses are installed the first time it is touched, by a call,
+   `clause/2`, `assertz/1`, `retract/1` or a listing, and then all of them
+   are, from every module of every attached library that gives it clauses.
+   Nobody sees the predicate with part of them. The bodies of those clauses
+   call their module's predicates, which bring the module in when they run.
+   Expansion hooks, and the operators and flags a module sets, are there
+   from the attach. While a predicate has clauses pending, its first clause
+   is one the engine put there: it installs them, as `assertz/1` would each,
+   and calls the predicate again. A call pays nothing for this once they are
+   installed, and a predicate with nothing pending never did. A module
+   brought in at the attach (decision 10) leaves its clauses pending too, so
+   the predicate gets them in the library's order.
 10. **A module with initialization goals is brought in when the library is
     attached**, and its goals run then, in the library's order, after
     decision 9. A shared library of C does the same: binding is lazy, the
@@ -124,9 +151,9 @@ in.
     depend on what the program happened to call.
 11. **The predicates of an attached module are defined.**
     `predicate_property/2`, `current_predicate/1` and `current_module/1`
-    answer from the registry. What the registry cannot answer brings the
-    module in first: `clause/2`, a count of clauses, `listing/1`, and an
-    `assertz/1` or `retract/1` on a dynamic predicate the module owns.
+    answer from the registry, and bring nothing in. `clause/2` and
+    `listing/1` of a static predicate bring its module in; of a dynamic one,
+    its clauses (decision 9).
 
 ### Tiers
 
@@ -138,11 +165,12 @@ in.
     tier. No region, no inlined fact and no direct call crosses that line,
     so a module can be brought in, and a bundle replaced, without rebuilding
     its callers.
-14. **A module that came as bytecode is promoted by count**, as a consulted
-    program is. A host that compiles the whole program after each consult
-    does not do so for a library's module. Measured: that default compiled
-    the 1,880 predicates of the application above at the first query after
-    its load, 5.6 to 7.1 s.
+14. **A module that came as bytecode is promoted by the host's rules**, the
+    ones a consulted source gets: by count, or compiled after it is brought
+    in where the host compiles a program after each consult. Nothing is
+    special to a library. Brought in on demand, the cost follows what is
+    used: the page compiled the 1,880 predicates of the application above
+    in 5.6 to 7.1 s because it came as one module.
 
 ### What does not change
 
@@ -159,8 +187,24 @@ page.
   when it is linked or when it is loaded, not in the middle of a run.
 - A runtime that keeps a table of the entities loaded, each entity's file
   giving its entry to the runtime's dynamic predicates, works unchanged and
-  on demand: the entries are there from the moment the library is attached,
-  and the first call into an entity brings its module in.
+  on demand: the first look at the table installs its entries, all of them,
+  and the first call into an entity brings its module in. A table nobody
+  asks for is never installed.
+- Measured on the desktop with the 967 modules of the Context: attaching
+  takes 1 s, 0.4 s of it reading the file, against 6.5 s with the clauses
+  installed at the attach. The first message to an object of a library
+  takes 0.13 s and installs the 5,500 clauses of the tables it reads; the
+  next takes 3 ms. The initialization goals of that library add 1.9 s, most
+  of it one module that looks for a program on the machine.
+- The same in a page, the runtime with its WebAssembly baked (67 MB) and the
+  967 modules as bytecode (66 MB), 18 MB together in a `.tar.gz`: the runtime
+  loads in 2.2 s and the library is attached in 3.4 to 4.1 s, 1.8 to 2.2 s
+  of it the attach and the rest the initialization goals. The first message
+  to an object of a library takes 1.9 to 2.6 s, the page then compiles the
+  module's predicates to WebAssembly in 0.7 to 1.2 s; from then on a
+  message takes what any query of the page does. With promotion by count,
+  as a notebook has it, the first message takes 0.3 to 0.6 s and nothing is
+  compiled then.
 - A file whose only content is an initialization goal that loads other
   files, a loader, would be brought in at once by decision 10 and should
   stay out of a dynamic library: the registry holds the dependencies.
@@ -173,12 +217,22 @@ page.
 
 ## Open questions
 
-- **Which tool writes a dynamic library, and with which option.** And what
-  `ensure_loaded(bundle(x))` does with a bundle that has no registry: load
-  it whole is the obvious answer.
-- **Where the registry and each module sit in the file**, so that a module
-  is read without reading the bundle, in a browser's storage too. A bundle
-  with every module is still downloaded whole.
+- **Reading a module without reading the bundle.** Attaching reads and
+  parses the whole file. Measured on the desktop with the bundle of 967
+  modules of the Context: 0.4 s and 85 MB, and 0.14 s in a browser, so no
+  index is needed.
+- **The query after a module is brought in compiles every dynamic
+  predicate again**, as the query after any consult does: 0.15 to 0.3 s on
+  the desktop with the 5,500 clauses above, 2.4 s with the 99,861, and 1.5 s
+  in a page.
+- **Baked WebAssembly is one module per bundle**, installed when every
+  predicate in it is linked. A dynamic library of one module that is
+  brought in at the attach, a runtime, installs it at once. One of several
+  modules runs each on bytecode, promoted at run time as any program is,
+  until the last is in. A WebAssembly module per entry would lift that.
+  The fact inlining of persisted IL crosses entries in the same way.
+- **`ensure_loaded(bundle(x))` of a bundle that is not a library** loads it
+  whole.
 - **Two attached libraries that offer the same predicate.** The order of
   attaching decides in this proposal; an error at the second attach is the
   alternative.
@@ -202,10 +256,11 @@ To be written with the implementation. The cases the design has to hold:
   `call/1`, in the query that makes the call;
 - a module with `:- module/2` is not brought in by an unqualified call, and
   is by `use_module/1`, by `m:Goal` and by a recorded import;
-- the clauses a module gives another module's predicate are there after the
-  attach, and so is the answer of `predicate_property/2`,
-  `current_predicate/1` and `current_module/1`; `clause/2` and `assertz/1`
-  bring the module in;
+- a dynamic predicate that two modules give clauses to has none installed
+  after the attach and all of them at its first call, `clause/2`,
+  `assertz/1` or `retract/1`, in the order of the modules;
+  `predicate_property/2`, `current_predicate/1` and `current_module/1`
+  answer after the attach and install nothing;
 - a module with initialization goals is brought in at the attach, and its
   goals run once, before those of the bundle that attached the library;
 - a bytecode module over a module with baked Tier-1 code, and the reverse,

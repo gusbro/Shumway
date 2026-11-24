@@ -367,7 +367,14 @@ internal sealed class BundleLoader
                 && entry.CompiledBytecode is not null
                 && entry.Defined.Count > 0)
             {
-                LoadEntryFromBytecode(entry);
+                // ADR-075: a module of a library being attached is declared,
+                // and its code waits for the first call into it. One with
+                // initialization goals is loaded now (decision 10).
+                if (E._attachingLibrary is not null && entry.InitializationGoals.Count == 0
+                    && entry.ModuleName != Prelude.ModuleName)
+                    E.NoteAttachedModule(entry, LoadEntryFromBytecode(entry, deferCode: true));
+                else
+                    LoadEntryFromBytecode(entry);
                 continue;
             }
             // ADR-035 — a Debuggable bundle bakes the debug-shape WAM (frames, Y-slots, no
@@ -430,7 +437,7 @@ internal sealed class BundleLoader
         // whole-bundle pass (cached, first-wins) that also covers source-carrying
         // entries, whose warm runs in the loop below.
         foreach (var entry in effectiveEntries)
-            BindPersistedIlForEntry(entry);
+            if (!E.IsCodePending(entry.ModuleName)) BindPersistedIlForEntry(entry);
 
         // Decode each source-carrying entry's CompiledModule and feed IL warmup
         // (its PrecompiledClauseCache substitution remains active — made the
@@ -439,6 +446,7 @@ internal sealed class BundleLoader
         foreach (var entry in effectiveEntries)
         {
             if (entry.CompiledBytecode is null) continue;
+            if (E.IsCodePending(entry.ModuleName)) continue;   // ADR-075: with its code
             // Source-less entries already decoded above (via LoadEntryFromBytecode).
             if (E._precompiledModules.ContainsKey(entry.ModuleName)
                 && string.IsNullOrEmpty(entry.Source)) continue;
@@ -1723,7 +1731,13 @@ internal sealed class BundleLoader
         return module;
     }
 
-    private void LoadEntryFromBytecode(BundleEntry entry)
+    /// <summary>Loads a source-less entry: declares its module (exports,
+    /// imports, dynamic predicates and their clauses, hooks) and then loads
+    /// its code. With <paramref name="deferCode"/> only the first half runs
+    /// (ADR-075: a module of an attached library), and
+    /// <see cref="LoadEntryCode"/> runs the second when the module is brought
+    /// in. Answers whether the entry's shipped clauses were read.</summary>
+    private bool LoadEntryFromBytecode(BundleEntry entry, bool deferCode = false)
     {
         if (entry.CompiledBytecode is null)
             throw new InvalidOperationException(
@@ -1846,7 +1860,10 @@ internal sealed class BundleLoader
         // which expands nothing: a library that exists to install a hook
         // (Scryer's atts) did nothing for a program loaded after it.
         bool joinedHook = false;
-        if (!isPrelude)
+        // Deferred with the code, unless the module has clauses of a hook,
+        // which join the global hook now.
+        bool readClauses = !isPrelude && (!deferCode || DefinesGlobalHook(entry));
+        if (readClauses)
             foreach (var encoded in entry.ClauseTerms)
             {
                 var clause = TermCodec.DecodeClause(encoded);
@@ -1875,9 +1892,10 @@ internal sealed class BundleLoader
         // at born=current-gen / died=MAX initial clauses.
         foreach (var seed in entry.DynamicSeeds)
         {
-            int fid = Shumway.Core.FunctorTable.Intern(
+            int bareFid = Shumway.Core.FunctorTable.Intern(
                 Shumway.Core.AtomTable.Intern(seed.Indicator.Name, permanent: true).Id,
                 seed.Indicator.Arity);
+            int fid = bareFid;
             // A module that owns its dynamics keys them by its name; the seed
             // names the predicate bare (ADR-038, amendment). Its multifile
             // predicate is its own too: what other sources gave it is in the
@@ -1892,6 +1910,20 @@ internal sealed class BundleLoader
             // tabling driver reads it through.
             if (isPrelude && seed.EncodedClauses.Count > 0)
                 E._preludeFunctors.Add(fid);
+            // ADR-075, decision 9: an attached library's clauses wait for the
+            // predicate's first touch, those of a module brought in at the
+            // attach too, so the predicate gets them in the library's order.
+            if (E._attachingLibrary is not null && !isPrelude)
+            {
+                if (seed.EncodedClauses.Count > 0)
+                    E.NotePendingSeed(fid, bareFid,
+                        manifest.OwnsDynamics ? entry.ModuleName : null, seed);
+                if (entry.ModuleName != PrologEngine.DefaultModuleName && !seed.Multifile)
+                    E._dynamicSeedModule[fid] = entry.ModuleName;
+                continue;
+            }
+            // Loaded now: after the clauses attached libraries hold for it.
+            E.InstallPendingClauses(E._liveConsultEngine, fid);
             bool hadClauses = E._dynStore.TryGetClauses(fid, out var prior)
                 && prior.Count > 0;
             foreach (var encoded in seed.EncodedClauses)
@@ -1935,6 +1967,34 @@ internal sealed class BundleLoader
             if (entry.ModuleName != PrologEngine.DefaultModuleName && !seed.Multifile)
                 E._dynamicSeedModule[fid] = entry.ModuleName;
         }
+
+        if (!deferCode) LoadEntryCode(entry, shippedClausesRead: true);
+        return readClauses;
+    }
+
+    private static bool DefinesGlobalHook(BundleEntry entry)
+    {
+        foreach (var d in entry.Defined)
+            if (PrologEngine.IsGlobalHookFunctor(Shumway.Core.FunctorTable.Intern(
+                    Shumway.Core.AtomTable.Intern(d.Indicator.Name, permanent: true).Id,
+                    d.Indicator.Arity)))
+                return true;
+        return false;
+    }
+
+    /// <summary>The second half of <see cref="LoadEntryFromBytecode"/>: the
+    /// entry's static clauses for clause/2, its native blocks, its bytecode
+    /// and its persisted Tier-1 code.</summary>
+    internal void LoadEntryCode(BundleEntry entry, bool shippedClausesRead)
+    {
+        E.DropStaticClauseCaches();
+        if (!shippedClausesRead && entry.ModuleName != Prelude.ModuleName
+            && E._modules.TryGetValue(entry.ModuleName, out var manifest))
+            foreach (var encoded in entry.ClauseTerms)
+            {
+                var clause = TermCodec.DecodeClause(encoded);
+                if (!ConsultPipeline.IsHookClauseHead(clause)) manifest.ShippedClauses.Add(clause);
+            }
 
         // ADR-022 — repopulate this engine's native-block table so the baked
         // `'$native_run'('$nb$…', Vars)` dispatch (in the entry's bytecode) finds
@@ -2008,6 +2068,7 @@ internal sealed class BundleLoader
 
     private Bundle BuildSnapshotBundle(bool dynamicOnly)
     {
+        E.InstallAllPendingClauses(null);
         var consultHistory = dynamicOnly
             ? (IReadOnlyList<string>)Array.Empty<string>()
             : E._consultHistory.ToArray();
@@ -2074,6 +2135,7 @@ internal sealed class BundleLoader
             E._modules.Clear();
             E._modules[PrologEngine.DefaultModuleName] = new ModuleManifest(PrologEngine.DefaultModuleName);
             E._dynStore.ClearAllSlots();
+            E.ForgetAttachedLibraries();
             E.ResetDynChains();
             E._staticPredicateCache.Clear();
             E._dynamicPredicateCache.Clear();

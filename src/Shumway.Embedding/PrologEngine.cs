@@ -1432,6 +1432,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// independently of the calling engine's choice-point stack.</summary>
     internal PrologEngine CreateSubEngine()
     {
+        InstallAllPendingClauses(null);
         var sub = new PrologEngine { Out = Out, _madeBy = this };
         // Replace the sub-engine's default empty module set with deep copies
         // of ours so modifications in the sub-engine never bleed back.

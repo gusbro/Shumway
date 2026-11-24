@@ -549,6 +549,13 @@ public sealed partial class Activation
     /// before <see cref="ResolveLateHelper"/>.</summary>
     public Func<int, int>? ResolveModuleFallback { get; set; }
 
+    /// <summary>ADR-075: the modules (atom ids) an attached library declares
+    /// whose code is not in yet, owned by the host, which brings one in
+    /// through <see cref="BringInModule"/>. A qualified call made at run time
+    /// asks where it learns its module, before it looks the predicate up.</summary>
+    public HashSet<int>? PendingModules { get; set; }
+    public Action<int>? BringInModule { get; set; }
+
     /// <summary>jit_compile/1's control over Tier-1 promotion, supplied by the
     /// host because the promotion store lives above this assembly. The
     /// argument is the threshold in calls: 0 turns promotion off and returns

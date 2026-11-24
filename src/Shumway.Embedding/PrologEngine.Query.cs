@@ -2023,8 +2023,14 @@ public sealed partial class PrologEngine
         // copying it a second time.
         var mutableSwitchTables = mergedSwitchTables;
         engine.SwitchTables = mutableSwitchTables;
-        engine.ResolveLateHelper = fid => TryMaterializeAssertHelper(engine, fid);
+        engine.ResolveLateHelper = fid =>
+        {
+            int address = TryMaterializeAssertHelper(engine, fid);
+            return address != -1 ? address : ResolveFromAttachedLibraries(engine, fid);
+        };
         engine.ResolveModuleFallback = fid => ResolveModuleFallback(engine, fid);
+        engine.PendingModules = _pendingModuleAtoms;
+        engine.BringInModule = atom => EnsureModuleCode(engine, AtomTable.GetById(atom)?.Name ?? "");
         engine.MetaArgSpecOf = MetaArgSpec;
         engine.JitControl = IlPromotion.SetJitThreshold;
         engine.JitFormControl = IlPromotion.SetJitForm;

@@ -27,6 +27,7 @@ public sealed partial class PrologEngine
     /// head and is keyed by its mangled name (ADR-038, amendment).</summary>
     internal int Assertz(Clause clause, int fid)
     {
+        InstallPendingClauses(null, fid);
         clause = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(clause);
         EnsureDynamic(fid);
         _dynStore.AppendClause(fid, clause);
@@ -40,6 +41,7 @@ public sealed partial class PrologEngine
 
     internal int Asserta(Clause clause, int fid)
     {
+        InstallPendingClauses(null, fid);
         clause = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(clause);
         EnsureDynamic(fid);
         _dynStore.PrependClause(fid, clause);
@@ -57,6 +59,7 @@ public sealed partial class PrologEngine
     internal bool RemoveDynamic(Clause clause)
     {
         int fid = ExtractHeadFunctorId(clause);
+        InstallPendingClauses(null, fid);
         if (!_dynStore.TryGetClauses(fid, out var list)) return false;
         for (int i = 0; i < list.Count; i++)
         {
@@ -88,6 +91,15 @@ public sealed partial class PrologEngine
     /// used by the runtime <c>retract/1</c> path to enumerate candidates
     /// before unifying with the user's pattern.</summary>
     internal IReadOnlyList<Clause> DynamicClausesFor(int functorId)
+    {
+        InstallPendingClauses(null, functorId);
+        return ClausesInStore(functorId);
+    }
+
+    /// <summary>The clauses the store holds for a predicate, as they are: the
+    /// engine's own readers, which install nothing an attached library holds
+    /// (ADR-075, decision 9).</summary>
+    private IReadOnlyList<Clause> ClausesInStore(int functorId)
     {
         return _dynStore.TryGetClauses(functorId, out var list)
             ? list
@@ -126,7 +138,7 @@ public sealed partial class PrologEngine
             for (int i = 0; i < entry.Clauses.Count; i++)
                 if (entry.HeadFids[i] == fid) own.Add(entry.Clauses[i]);
         if (own.Count == 0) return null;
-        var raw = new List<Clause>(DynamicClausesFor(fid));
+        var raw = new List<Clause>(ClausesInStore(fid));
         raw.AddRange(StaticClausesFor(fid));
         var snap = new Shumway.Compiler.Wam.PredicateCompiler { EmitDebugInfo = _flags.EmitDebugInfo }
             .Compile(own, _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts,
@@ -330,9 +342,12 @@ public sealed partial class PrologEngine
     /// compact first, so a tombstone cannot reach anything that shows a
     /// clause to a program.</summary>
     internal List<Clause> PhysicalClausesFor(int fid)
-        => _dynStore.HasClauses(fid)
+    {
+        InstallPendingClauses(null, fid);
+        return _dynStore.HasClauses(fid)
             ? _dynStore.PhysicalClauses(fid)
             : new List<Clause>();
+    }
 
     /// <summary>Compacts every slot holding tombstones — called at the
     /// query-setup safe point; a never-returning query compacts through the
@@ -342,11 +357,14 @@ public sealed partial class PrologEngine
     internal long ClauseSlotCompactions => _dynStore.Compactions;
 
     internal DynamicClauseIndex? ClauseIndexFor(int fid)
+    {
+        InstallPendingClauses(null, fid);
         // Over the physical list: the index's positions are slot positions,
         // and the dense accessor would compact once per retract.
-        => _dynStore.HasClauses(fid) && _dynStore.PhysicalClauses(fid).Count > 0
+        return _dynStore.HasClauses(fid) && _dynStore.PhysicalClauses(fid).Count > 0
             ? _dynStore.IndexFor(fid, _dynStore.PhysicalClauses(fid))
             : null;
+    }
 
     /// <summary>Index rebuilds forced by a clause list that had been mutated
     /// outside the store — zero unless something escaped the chokepoint.</summary>
@@ -685,6 +703,7 @@ public sealed partial class PrologEngine
     /// <c>abolish/1</c>.</summary>
     internal void AbolishDynamic(int functorId)
     {
+        DropPendingClauses(functorId);
         _dynStore.RemoveSlot(functorId);
         _dynStore.UnmarkDynamic(functorId);
         _dynStore.Abolished.Add(functorId);
@@ -774,6 +793,7 @@ public sealed partial class PrologEngine
     /// (caches, IL eviction, the ADR-034 mutated-fids set).</summary>
     internal void ClearDynamicClauses(Activation engine, int functorId)
     {
+        DropPendingClauses(functorId);
         _dynStore.ClearClauses(functorId);
         InvalidateDynamicCache(functorId);
         InvalidatePersistent();
@@ -787,6 +807,7 @@ public sealed partial class PrologEngine
     /// lists) in memory, replacing any previous snapshot.</summary>
     internal void SaveDb()
     {
+        InstallAllPendingClauses(null);
         var snap = new Dictionary<int, List<Clause>>();
         foreach (var (fid, list) in _dynStore.Slots)
             if (list.Count > 0 && IsUserDynamicFid(fid))
@@ -802,6 +823,7 @@ public sealed partial class PrologEngine
 
     private void RestoreDbFrom(Activation engine, Dictionary<int, List<Clause>>? snapshot)
     {
+        InstallAllPendingClauses(engine);
         // Wipe first — every user dynamic that currently has clauses.
         var toClear = new List<int>();
         foreach (var (fid, list) in _dynStore.Slots)
@@ -837,6 +859,7 @@ public sealed partial class PrologEngine
     /// storage name/arity + <see cref="TermCodec"/>-encoded clauses).</summary>
     internal void SaveDbToFile(string path)
     {
+        InstallAllPendingClauses(null);
         path = _directory.Resolve(path);
         using var fs = new FileStream(path, FileMode.Create, FileAccess.Write);
         using var w = new BinaryWriter(fs, System.Text.Encoding.UTF8);
@@ -1146,6 +1169,7 @@ public sealed partial class PrologEngine
     /// synthetic <c>_GN</c> names.</summary>
     internal IEnumerable<Shumway.Compiler.Ast.Clause> ClausesForListing(int functorId)
     {
+        InstallPendingClauses(null, functorId);
         foreach (var (name, manifest) in _modules)
         {
             if (IsLibraryModule(name)) continue;
@@ -2523,7 +2547,7 @@ public sealed partial class PrologEngine
         // The order a snapshot compiles them in (BuildDynamicSnapshot).
         foreach (var clause in StaticClausesFor(fid))
             if (!AddClause(clause)) return null;
-        foreach (var clause in DynamicClausesFor(fid))
+        foreach (var clause in ClausesInStore(fid))
             if (!AddClause(clause)) return null;
         return clauses == 0 ? null : hash.ToString();
 
