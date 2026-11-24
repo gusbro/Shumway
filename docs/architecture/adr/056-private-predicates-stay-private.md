@@ -10,6 +10,10 @@ Amended 2026-11-06 (built 2026-11-07): points 2 and 6 hold for the legacy
 world only, and point 3 is withdrawn. A dynamic predicate of an
 export-qualified module is that module's own (ADR-038, amendment).
 
+Amended 2026-11-23: a library without a module directive defines
+predicates of `user` loaded from its bundle as it does loaded from its
+source (the amendment at the end).
+
 ## Context
 
 A predicate that a `:- module` file does not export is private to that
@@ -129,3 +133,45 @@ externally reachable seeds. Red counter-proofs: restoring every alias fails
 the runtime-goal tests, dropping the meta-argument specs fails the closure
 tests, and dropping the qualified targets from the seeds fails the seed
 test.
+
+## Amendment (2026-11-23): a library without a module directive, from its bundle
+
+### Context
+
+Point 2 says that a file without a module directive defines predicates of
+`user`. A link gives such a file a module named after it, and its
+predicates become that module's locals. Loaded from its source by
+`use_module(library(X))`, the library defined predicates of `user`; loaded
+from its bundle, the same library had none, because by point 4 its locals
+kept no bare alias. Two such libraries compiled apart could not call each
+other: an application compiled for a runtime library, loaded after the
+runtime's bundle, raised `existence_error` for every runtime predicate it
+called, and so did the top level, until each call was qualified.
+
+### Decision
+
+1. A library without a module directive that `use_module/1` or
+   `ensure_loaded/1` loads from its bundle defines predicates of `user`, as
+   its source does. Its locals keep a bare alias, like `user`'s.
+2. The links of the program (the static region, the dynamic region, a
+   query, a relink) resolve a bare call that nothing else defines to such a
+   local, so the compiled code of another bundle, a clause asserted later
+   and the top level reach it as they reach the source's predicates. The
+   library loaded first answers for a name that two of them define.
+3. `consult/1` of a bundle is unchanged: the bundle's modules keep their
+   locals, and the REPL's promotion of a command-line bundle is unchanged.
+
+### Consequences
+
+- A bare library's bundle and its source are interchangeable.
+- A library with `:- module/2` is unaffected: its exports are imported, its
+  privates stay private.
+
+### Tests
+
+`BareLibraryBundleTests`: two such libraries from their bundles, each call
+from the top level, from either library, from an unrelated module and
+through `call/1`, in the query that loads them and in the next ones; a
+clause asserted later; and `consult/1` of the bundle, which keeps them its
+module's. Red counter-proof: without point 1, every call but the
+`consult/1` case fails.

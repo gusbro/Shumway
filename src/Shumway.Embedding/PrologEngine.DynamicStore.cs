@@ -1975,13 +1975,22 @@ public sealed partial class PrologEngine
     // The bare name of a predicate `user` defines is an alias of user$name
     // (AddBareLocalAliases), not a definition: a library public of that name is
     // the bare definition, as the full setup links it, and the alias's entry is
-    // user's code, which must not become a trampoline to the library's.
-    private static bool IsBareAliasOfUserLocal(Shumway.Core.LayeredIntMap<int> addrMap, int fid, int addr)
+    // user's code, which must not become a trampoline to the library's. The
+    // same for a library whose predicates are user's (_bareLibraryModules).
+    private bool IsBareAliasOfUserLocal(Shumway.Core.LayeredIntMap<int> addrMap, int fid, int addr)
     {
         var (nameId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
-        int user = Shumway.Core.AtomTable.Intern(DefaultModuleName, permanent: true).Id;
-        return addrMap.TryGetValue(Shumway.Core.ModuleQualify.Mangle(user, nameId, arity), out int own)
-            && own == addr;
+        if (IsAliasOf(DefaultModuleName)) return true;
+        foreach (string module in _bareLibraryModules)
+            if (IsAliasOf(module)) return true;
+        return false;
+
+        bool IsAliasOf(string module)
+        {
+            int moduleId = Shumway.Core.AtomTable.Intern(module, permanent: true).Id;
+            return addrMap.TryGetValue(Shumway.Core.ModuleQualify.Mangle(moduleId, nameId, arity), out int own)
+                && own == addr;
+        }
     }
 
     private void ReturnPlace(Activation engine, int offset, int reserved)

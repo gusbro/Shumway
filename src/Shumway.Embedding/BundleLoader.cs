@@ -463,6 +463,15 @@ internal sealed class BundleLoader
             .Distinct().ToList();
         foreach (string module in LastLoadedModules)
             if (module != PrologEngine.DefaultModuleName) E._modulesFromBundles.Add(module);
+        // Before the live link and the initialization goals, which resolve
+        // through the bare aliases this gives (ADR-056, amendment).
+        if (E._libraryBundleLoadDepth > 0)
+            foreach (string module in LastLoadedModules)
+                if (module != PrologEngine.DefaultModuleName
+                    && E._modules.TryGetValue(module, out var loadedManifest)
+                    && !loadedManifest.IsExportQualified
+                    && !E._bareLibraryModules.Contains(module))
+                    E._bareLibraryModules.Add(module);
 
         // The set_prolog_flag/2 calls the modules' loads made, in entry order.
         // Nothing loaded above reads them: a source-less entry is not read,
@@ -474,9 +483,10 @@ internal sealed class BundleLoader
         // alone, once the whole program is in (ISO 7.4.2.8), each in its
         // module. One that fails or raises is reported and the next runs;
         // halt ends the load.
+        var later = deferredInitialization ?? E._deferredBundleInitialization;
         foreach (var entry in effectiveEntries)
             foreach (var goal in entry.InitializationGoals)
-                if (deferredInitialization is not null) deferredInitialization.Add((goal, entry.ModuleName));
+                if (later is not null) later.Add((goal, entry.ModuleName));
                 else E.RunInitializationGoal(goal, entry.ModuleName);
 
         // Cross-process functor-id drift diagnostic (see PersistedIlBuilder).
@@ -1225,7 +1235,8 @@ internal sealed class BundleLoader
     internal Shumway.Compiler.Wam.Linker.LinkResult GetOrLinkStatic(
         List<Shumway.Compiler.Wam.CompiledPredicate> staticPreds, int loadOffset)
     {
-        string key = StaticLinkKey(staticPreds, loadOffset);
+        var aliases = E.BareLibraryAliases();
+        string key = StaticLinkKey(staticPreds, loadOffset, aliases);
         lock (_sharedStaticLinksLock)
         {
             if (_sharedStaticLinks.Find(key) is { } hit)
@@ -1240,6 +1251,7 @@ internal sealed class BundleLoader
                 // out, owning nothing, so the code after them keeps its
                 // address (PrologEngine.OrderStaticRegion).
                 DeadIndices = E.StaticDeadIndices,
+                Aliases = aliases,
             }.Link(staticPreds, loadOffset: loadOffset);
             System.Threading.Interlocked.Increment(ref StaticLinkBuildCount);
             _sharedStaticLinks.Add(key, link);
@@ -1250,9 +1262,11 @@ internal sealed class BundleLoader
     /// <summary>Content fingerprint of the static link inputs: load offset
     /// plus, per predicate in order, functor id, bytecode bytes, and the
     /// switch-table content (keys/values/default live outside the bytecode)
-    /// and call-site table (drives the linker's resolution).</summary>
+    /// and call-site table (drives the linker's resolution), and the aliases
+    /// the link resolves bare names through.</summary>
     private static string StaticLinkKey(
-        List<Shumway.Compiler.Wam.CompiledPredicate> staticPreds, int loadOffset)
+        List<Shumway.Compiler.Wam.CompiledPredicate> staticPreds, int loadOffset,
+        IReadOnlyDictionary<int, int>? aliases)
     {
         using var sha = System.Security.Cryptography.IncrementalHash.CreateHash(
             System.Security.Cryptography.HashAlgorithmName.SHA256);
@@ -1263,6 +1277,9 @@ internal sealed class BundleLoader
             sha.AppendData(word);
         }
         AddInt(loadOffset);
+        AddInt(aliases?.Count ?? 0);
+        if (aliases is not null)
+            foreach (var (from, to) in aliases) { AddInt(from); AddInt(to); }
         AddInt(staticPreds.Count);
         foreach (var p in staticPreds)
         {

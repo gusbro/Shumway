@@ -1038,7 +1038,7 @@ internal sealed class ConsultPipeline
 
         // Contiguity was deferred (unexpanded grammar clauses shared one head);
         // check it now on the expanded clauses.
-        ValidateContiguity(rebuilt, pendingDiscontiguous);
+        ValidateContiguity(rebuilt, pendingDiscontiguous, pendingMultifile);
 
         if (changed)
         {
@@ -2131,7 +2131,7 @@ internal sealed class ConsultPipeline
         foreach (var c0 in clauses)
             if (IsHookClauseHead(c0)) { inFileHooks = true; break; }
         if (!inFileHooks)
-            ValidateContiguity(clauses, pendingDiscontiguous);
+            ValidateContiguity(clauses, pendingDiscontiguous, pendingMultifile);
 
         // ADR-022 — embedded native-code wiring. Rewrite each captured
         // `$native_goal(RawText)` body goal into a portable `'$native_run'('$nb$…',
@@ -2948,9 +2948,10 @@ internal sealed class ConsultPipeline
     /// Splitting them is almost always a bug — the discontiguous
     /// declaration is the explicit opt-in that turns the diagnostic
     /// off for predicates that legitimately need scattered
-    /// definitions.</summary>
+    /// definitions. A multifile predicate is not checked: its clauses come
+    /// from several sources, and a file that gathers them interleaves them.</summary>
     private void ValidateContiguity(
-        IReadOnlyList<Clause> clauses, HashSet<int>? discontiguous)
+        IReadOnlyList<Clause> clauses, HashSet<int>? discontiguous, HashSet<int>? multifile)
     {
         bool warnOnly = E.Flags.DiscontiguousCheck == "warning";
         // A module-qualified head (`prolog:message(X) --> …`) is a multifile
@@ -2980,6 +2981,8 @@ internal sealed class ConsultPipeline
             currentFid = fid;
             if (closed.Contains(fid)
                 && (discontiguous is null || !discontiguous.Contains(fid))
+                && multifile?.Contains(fid) != true
+                && !E.IsMultifileFunctor(fid)
                 // term_expansion / goal_expansion are hooks — implicitly
                 // discontiguous + multifile in every Prolog; a library scatters
                 // their clauses among helpers (format.pl, clpz.pl).
