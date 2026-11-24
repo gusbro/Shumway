@@ -299,6 +299,7 @@ public sealed partial class PrologEngine
         _persistentProgram = null;
         _persistentLength = 0;
         _dynamicLink = null;
+        if (_adoptedStatics.Count > 0) _staticRelinkPending = true;
         // every mutation that can change the per-module
         // transform derivation funnels through here (consult, bundle
         // load, abolish, restore_state, dynamic-functor-set changes);
@@ -342,8 +343,117 @@ public sealed partial class PrologEngine
             _staticLink = null;
             _skipCompileMergedCache = null;
         }
+        // The adopted code goes with the buffer: the next link of the static
+        // region has it, with the rest.
+        else if (_adoptedStatics.Count > 0) _staticRelinkPending = true;
         if (!dropped) ResetDynChains();
     }
+
+    // ---- static code added to the linked program (ADR-015, amendment) ----
+    //
+    // The code of a module a running goal brought in is linked into the
+    // host's buffer by that goal. Kept here, it is part of the program for
+    // the queries that follow, with no link of the whole program: its
+    // predicates by address, their addresses by functor, and its switch
+    // tables at the slots its code names. All of it goes when the buffer is
+    // laid out again, which links these predicates with the static region.
+    internal readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> _adoptedStatics = new();
+    internal readonly Dictionary<int, int> _adoptedAddresses = new();
+    internal readonly List<(int Index, Shumway.Core.SwitchTable Table)> _adoptedTables = new();
+
+    /// <summary>Advances when the static predicates of the linked program
+    /// change: a link of the static region, and code adopted into the buffer.
+    /// What a tier compares to know whether there is anything new.</summary>
+    internal int StaticProgramVersion;
+
+    /// <summary>Links of the whole program a module brought in did without.</summary>
+    internal long AdoptedLinks;
+
+    /// <summary>The static predicates of the linked program, by address: the
+    /// static region's and the adopted ones.</summary>
+    internal IEnumerable<KeyValuePair<int, Shumway.Compiler.Wam.CompiledPredicate>> LinkedStatics()
+    {
+        if (_staticLink is not { } link) yield break;
+        foreach (var kv in link.PredicatesByAddress) yield return kv;
+        foreach (var kv in _adoptedStatics) yield return kv;
+    }
+
+    /// <summary>The first switch-table slot a query's own tables may take:
+    /// past the static and the dynamic regions' and past every adopted one.</summary>
+    private int QueryTableBase(int persistentTables)
+    {
+        int at = persistentTables;
+        foreach (var (index, _) in _adoptedTables)
+            if (index >= at) at = index + 1;
+        return at;
+    }
+
+    /// <summary>Makes what <paramref name="engine"/> just linked into the
+    /// host's buffer part of the linked program. False, and nothing changed,
+    /// when it cannot be: the caller lays the program out again.</summary>
+    internal bool AdoptLiveLink(Activation engine, LivePublish published)
+    {
+        if (_persistentProgram is null || _staticLink is null || _dynamicLink is null
+            || _programProduct is null
+            || _persistentAddressesCache is null || _persistentAddressBaseCache is null
+            || _persistentPredsByAddressCache is null)
+            return false;
+        if (!ReferenceEquals(published.Engine, engine) || published.Retargeted
+            || !EngineOwnsHostBuffer(engine))
+            return false;
+        // A debug session keeps a record per buffer of what is linked in it.
+        if (_debugEvalDepth > 0 || DebugSession is not null || _flags.EmitDebugInfo || _flags.DebugCodegen)
+            return false;
+
+        // New maps, not the ones in use: an activation suspended on this
+        // buffer reads them, and it has neither these tables in its list nor
+        // a reason to see a predicate appear under it.
+        var addresses = new Dictionary<int, int>(_persistentAddressesCache);
+        var baseMap = new Dictionary<int, int>(_persistentAddressBaseCache);
+        foreach (var (fid, at) in published.Entries)
+        {
+            addresses[fid] = at;
+            baseMap[fid] = at;
+            _adoptedAddresses[fid] = at;
+        }
+        AddBareLocalAliases(baseMap, published.Entries);
+        var byAddress = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(_persistentPredsByAddressCache);
+        foreach (var (at, pred) in published.Link.PredicatesByAddress)
+        {
+            byAddress[at] = pred;
+            _adoptedStatics[at] = pred;
+        }
+        _persistentAddressesCache = addresses;
+        _persistentAddressBaseCache = baseMap;
+        _persistentPredsByAddressCache = byAddress;
+        for (int i = 0; i < published.Link.SwitchTables.Count; i++)
+            _adoptedTables.Add((published.TableBase + i, published.Link.SwitchTables[i]));
+
+        // The static region's calls to these predicates were linked before
+        // there was anything to call: they name them now, as a link of the
+        // region would have them (TryFlipHotnessInPlace does the same).
+        var aliases = BareLibraryAliases();
+        byte[] program = _persistentProgram;
+        foreach (var (offset, callee) in _staticLink.UnresolvedSites)
+        {
+            if (!published.Entries.TryGetValue(callee, out int target)
+                && !(aliases is not null && aliases.TryGetValue(callee, out int named)
+                     && published.Entries.TryGetValue(named, out target)))
+                continue;
+            Shumway.Core.BytecodeIO.WriteInt32(program, _persistentPrefixLength + offset + 1, target);
+        }
+        StaticProgramVersion++;
+        AdoptedLinks++;
+        return true;
+    }
+
+    /// <summary>What a live link published, for <see cref="AdoptLiveLink"/>:
+    /// the link, where its switch tables went, and each predicate's entry.</summary>
+    internal sealed record LivePublish(Activation Engine, Shumway.Compiler.Wam.Linker.LinkResult Link,
+        int TableBase, Dictionary<int, int> Entries, bool Retargeted);
+
+    internal LivePublish? _lastLivePublish;
+    internal bool _captureLivePublish;
 
     /// <summary>Set by a change of tier, which changes the form of a call to
     /// a static predicate: the next setup links the static region again.

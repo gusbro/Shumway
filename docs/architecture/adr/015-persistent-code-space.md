@@ -617,6 +617,57 @@ Growing past the limit, or failing to allocate the grown array, is
 `resource_error(code_space)`; an assert checks for room, at the end or in a
 hole, before it changes the database.
 
+## Amendment (2026-11-24): a module brought in is added to the linked program
+
+The code of a module of an attached library comes in when a goal first needs
+it ([ADR-075](075-dynamic-library-bundles.md)). The goal links that code into
+the buffer it runs on, as it links what a consult defines while it runs.
+That link was the goal's alone: bringing the module in marked the buffer
+stale, and the next query linked the whole program again, the module's code
+with the static region. A program that brings its libraries in one at a time
+paid one link of everything for each: 0.14 s on the desktop and 0.4 to 0.5 s
+in a page, with a runtime of 4,300 predicates.
+
+When the goal runs on the host's buffer, what it linked stays.
+
+- The code is where the goal put it, after the dynamic region. Its versions,
+  its literal references and its atom claims are in the buffer's table, as
+  for any code linked while a query runs.
+- The engine keeps its predicates by address, their addresses by functor
+  with the bare names a module's locals take, and its switch tables at the
+  slots its code names. The calls the static region made to these predicates
+  before there was anything to call are written with their addresses, as a
+  link of the region would have them.
+- The queries that follow find the program as it is. Their address maps are
+  the ones the adoption left. Their switch-table list has the adopted tables
+  at their slots and the query's own after them. The adopted tables take
+  their slots past a gap of 1,024 after the dynamic region's, which grow in
+  place when a predicate turns hot.
+- The maps are replaced, not changed. An activation suspended on the buffer
+  keeps the ones it has: it has no slots for these tables, and it finds the
+  module by the undefined-predicate path, as before.
+- The static predicates of the linked program are the static region's and
+  the adopted ones. The WebAssembly tier's batch and its reconciliation read
+  both, and compare a version that advances with either.
+
+The program is laid out again, as before, when the goal runs on a buffer the
+host has replaced, when no goal is running, when a debug session is attached,
+and when the link did not take every static predicate of the module. A
+layout for any other reason (a consult, a change of tier, a compaction)
+links the adopted predicates with the static region and empties the record.
+
+Measured with a runtime and a library of 967 modules attached, CPU capped,
+the query after a module is brought in costs 0.03 s on the desktop against
+0.14 s. In a page it takes what any query of the page does, 0.15 s, against
+0.4 to 0.5 s. The page's WebAssembly tier gains more than the link: a layout
+of the program drops every snapshot of a dynamic predicate (ADR-054), and
+the query after it compiled them again. Where the page compiles a program
+after each change, the second message to an object of a library just brought
+in went from 2.3 to 3.2 s to 0.15 to 0.27 s.
+
+A consult made by a running goal is not adopted: it changes the clauses of a
+module, which the next setup transforms and compiles.
+
 ## Quick reference
 
 | Decision | See |

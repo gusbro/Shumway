@@ -92,7 +92,9 @@ from the start.
 4. **The module is the unit of code that is brought in.** Bringing a module
    in loads the code of all its predicates and its Tier-1 code. When a
    running goal brings it in, the code is linked into that goal, as a
-   bundle loaded by a goal is.
+   bundle loaded by a goal is, and it stays linked for the queries that
+   follow ([ADR-015](015-persistent-code-space.md), amendment of
+   2026-11-24).
 
 ### How a call finds a predicate of a library
 
@@ -221,14 +223,10 @@ page.
   parses the whole file. Measured on the desktop with the bundle of 967
   modules of the Context: 0.4 s and 85 MB, and 0.14 s in a browser, so no
   index is needed.
-- **The query after a module is brought in links the whole program
-  again.** It compiles nothing: the module was declared at the attach, so
-  its code changes what is linked and no derivation, and a change of
-  derivation keeps the compile of a dynamic predicate that holds only facts
-  (the query after a consult went from 3.9 s to 0.8 s with the 99,861
-  clauses loaded). What is left is the link: 0.16 s on the desktop and 0.4
-  to 0.5 s in a page for the library above. Adding the module's code to the
-  linked program would remove it.
+- **A module brought in by the query that attached the library**, or by
+  any goal running on a buffer the host has replaced, is linked with the
+  whole program by the next query, as it was before the code of a module
+  could stay linked. A notebook's server is one query.
 - **In a page a table that gets hot is compiled to WebAssembly as a
   snapshot**, 2.6 s for one of 800 clauses of eleven arguments, and again
   after each change to it.

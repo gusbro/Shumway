@@ -138,11 +138,39 @@ public sealed partial class PrologEngine
         _pendingModuleAtoms.Remove(AtomTable.Intern(am.Entry.ModuleName, permanent: true).Id);
         var prevLive = _liveConsultEngine;
         if (engine is not null) _liveConsultEngine = engine;
+        // A dynamic predicate's code is linked from the store, and it was
+        // declared at the attach: only the static ones are new to the program.
+        int statics = 0;
+        _lastLivePublish = null;
+        _captureLivePublish = true;
         try
         {
-            LoadBundleLinkingLive(() => Bundles.LoadEntryCode(am.Entry, am.ShippedClausesRead, broughtIn: true));
+            LoadBundleLinkingLive(() =>
+            {
+                Bundles.LoadEntryCode(am.Entry, am.ShippedClausesRead, broughtIn: true);
+                if (_precompiledModules.TryGetValue(am.Entry.ModuleName, out var compiled))
+                    foreach (var pred in compiled.Predicates)
+                        if (!_dynStore.IsDynamic(pred.FunctorId)) statics++;
+            });
         }
-        finally { _liveConsultEngine = prevLive; }
+        finally
+        {
+            _liveConsultEngine = prevLive;
+            _captureLivePublish = false;
+        }
+        // The goal linked the module's code into the buffer it runs on. When
+        // that is the host's buffer and the link has every predicate, it
+        // stays: the next query finds the program as it is (ADR-015,
+        // amendment). Else the program is laid out again, the module's code
+        // with the static region.
+        var published = _lastLivePublish;
+        _lastLivePublish = null;
+        if (statics == 0) return;
+        if (engine is not null && published is not null
+            && published.Link.PredicatesByAddress.Count == statics
+            && AdoptLiveLink(engine, published))
+            return;
+        InvalidateLayout(statics: true);
     }
 
     /// <summary>Brings in the module <paramref name="module"/> names, when an
@@ -155,6 +183,10 @@ public sealed partial class PrologEngine
             BringInModule(am, engine);
     }
 
+    /// <summary>Times the undefined-predicate path asked the attached
+    /// libraries: a call that resolves does not come here.</summary>
+    internal long AttachedLibraryLookups;
+
     /// <summary>The undefined-predicate path (ADR-075, decision 7): the
     /// address of <paramref name="fid"/> in <paramref name="engine"/> when a
     /// module of an attached library defines it, bringing the module in, or
@@ -163,6 +195,7 @@ public sealed partial class PrologEngine
     internal int ResolveFromAttachedLibraries(Activation engine, int fid)
     {
         if (_attachedByFid is null) return -1;
+        AttachedLibraryLookups++;
         if (!_attachedByFid.TryGetValue(fid, out var am))
         {
             // A name user imported from a module with module/2 after this goal

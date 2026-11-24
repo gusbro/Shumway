@@ -112,6 +112,11 @@ public sealed partial class PrologEngine
             }
             if (link.Bytecode.Length != pred.Bytecode.Length || link.Addresses[fid] != at)
                 return "link: " + FunctorDisplayName(fid);
+            // The version's tables go after the dynamic region's: not into
+            // the slots adopted code has past the gap.
+            foreach (var (adoptedAt, _) in _adoptedTables)
+                if (adoptedAt < _staticLink.SwitchTables.Count + dynTables.Count + link.SwitchTables.Count)
+                    return "adopted code: " + FunctorDisplayName(fid);
             PlacePersistent(link.Bytecode, at);
             dynTables.AddRange(link.SwitchTables);
             laid.Add((fid, oldAddr, index, at, pred, link));

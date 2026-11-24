@@ -363,11 +363,141 @@ public sealed class DynamicLibraryBundleTests : IDisposable
         Assert.False(e.IsCodePending("t2"));
         Assert.True(e.Query("findall(K, tbl(K, _), [z, a, b, c]), ruled(11), other(1).").Success);
 
-        Assert.True(e.PersistentInvalidations > layouts, "the module's code was not linked into the program");
+        Assert.Equal(layouts, e.PersistentInvalidations);
         Assert.Equal(derivation, e._derivationGen);
         Assert.Equal(compiles, e.DynamicPredicateCompiles);
         Assert.Same(facts, e.DynamicPredicateCache[tbl]);
         Assert.Same(rule, e.DynamicPredicateCache[ruled]);
+    }
+
+    // ---- the module's code stays linked (ADR-015, amendment) ----
+
+    // Two modules with a predicate each that is indexed by a switch table,
+    // and one a consulted file calls before the library is attached.
+    private void Indexed() => BuildLibrary("indexed",
+        ("ix1", @"
+            sw1(a, 1). sw1(b, 2). sw1(c, 3). sw1(d, 4). sw1(e, 5). sw1(f, 6). sw1(g, 7). sw1(h, 8).
+            "),
+        ("ix2", @"
+            sw2(p, 11). sw2(q, 12). sw2(r, 13). sw2(s, 14). sw2(t, 15). sw2(u, 16). sw2(v, 17). sw2(w, 18).
+            via2(K, V) :- sw2(K, V).
+            "),
+        ("ix3", @"
+            called_from_a_file(K, V) :- sw1(K, V0), V is V0 * 100.
+            "));
+
+    private PrologEngine WithIndexedAttached()
+    {
+        Indexed();
+        var e = Engine();
+        e.ConsultString(@"
+            caller(K, V) :- called_from_a_file(K, V).
+            ");
+        Assert.True(e.Query("ensure_loaded(bundle(indexed)).").Success);
+        // The query after the attach lays the program out: from here the
+        // next one runs on the host's buffer.
+        Assert.True(e.Query("true.").Success);
+        return e;
+    }
+
+    [Fact]
+    public void AModuleBroughtIn_StaysLinked_AndNoQueryLinksTheProgramAgain()
+    {
+        var e = WithIndexedAttached();
+        long layouts = e.PersistentInvalidations;
+        long adopted = e.AdoptedLinks;
+
+        Assert.True(e.Query("sw1(c, V), V == 3.").Success);
+        Assert.Equal(adopted + 1, e.AdoptedLinks);
+        Assert.NotEmpty(e._adoptedTables);
+        Assert.True(e.Query("findall(K-V, sw1(K, V), L), length(L, 8), sw1(h, 8).").Success);
+
+        Assert.True(e.Query("via2(s, V), V == 14.").Success);
+        Assert.Equal(adopted + 2, e.AdoptedLinks);
+        // From here every call finds them, written in the query or made at
+        // run time: none comes through the undefined-predicate path.
+        long lookups = e.AttachedLibraryLookups;
+        Assert.True(e.Query("sw1(e, A), A == 5, sw2(w, B), B == 18, via2(p, C), C == 11.").Success);
+        Assert.True(e.Query("G = sw1(g, V), call(G), V == 7, findall(K, via2(K, _), [p, q, r, s, t, u, v, w]).").Success);
+        Assert.Equal(lookups, e.AttachedLibraryLookups);
+        Assert.True(e.Query(@"\+ sw1(z, _), \+ sw2(z, _), findall(K, sw2(K, _), [p, q, r, s, t, u, v, w]).").Success);
+
+        Assert.Equal(layouts, e.PersistentInvalidations);
+        Assert.False(e.IsCodePending("ix1"));
+        Assert.False(e.IsCodePending("ix2"));
+        Assert.True(e.IsCodePending("ix3"));
+    }
+
+    [Fact]
+    public void ACallLinkedBeforeTheModuleCameIn_NamesItFromThenOn()
+    {
+        var e = WithIndexedAttached();
+        long layouts = e.PersistentInvalidations;
+
+        Assert.True(e.Query("caller(b, V), V == 200.").Success);
+        Assert.False(e.IsCodePending("ix3"));
+        Assert.False(e.IsCodePending("ix1"));
+        long lookups = e.AttachedLibraryLookups;
+        Assert.True(lookups > 0, "the first call did not come through the undefined-predicate path");
+
+        Assert.True(e.Query("caller(c, V), V == 300.").Success);
+        Assert.True(e.Query("findall(V, caller(_, V), L), length(L, 8).").Success);
+        Assert.Equal(lookups, e.AttachedLibraryLookups);
+        Assert.Equal(layouts, e.PersistentInvalidations);
+    }
+
+    [Fact]
+    public void ALaterLayOutOfTheProgram_LinksTheAdoptedCodeWithTheRest()
+    {
+        var e = WithIndexedAttached();
+        Assert.True(e.Query("sw1(c, 3), via2(s, 14).").Success);
+        Assert.NotEmpty(e._adoptedStatics);
+
+        e.ConsultString("consulted_later(1).");
+        Assert.True(e.Query("consulted_later(1), sw1(d, V), V == 4, via2(u, W), W == 16.").Success);
+        Assert.Empty(e._adoptedStatics);
+        Assert.Empty(e._adoptedTables);
+        Assert.True(e.Query("caller(a, V), V == 100, findall(K, sw2(K, _), [p, q, r, s, t, u, v, w]).").Success);
+    }
+
+    // A dynamic predicate that turns hot is laid out indexed in place, with
+    // its tables after the dynamic region's: the adopted code keeps its own.
+    [Fact]
+    public void APredicateThatTurnsHotBesideAdoptedCode_IsIndexedInPlace()
+    {
+        Indexed();
+        var e = Engine();
+        e.JitIndexing.Threshold = 2;
+        e.ConsultString(@"
+            :- dynamic(hot/2).
+            hot(k1, 1). hot(k2, 2). hot(k3, 3). hot(k4, 4). hot(k5, 5). hot(k6, 6).
+            ");
+        Assert.True(e.Query("ensure_loaded(bundle(indexed)).").Success);
+        Assert.True(e.Query("true.").Success);
+        Assert.True(e.Query("sw1(c, 3), via2(s, 14).").Success);
+        Assert.NotEmpty(e._adoptedTables);
+        long layouts = e.PersistentInvalidations;
+        long flips = e.HotnessFlipsInPlace;
+
+        // Hot at its second call: the setup of the third lays it out.
+        for (int i = 0; i < 3; i++)
+            Assert.True(e.Query("hot(k4, V), V == 4.").Success);
+
+        Assert.Equal(flips + 1, e.HotnessFlipsInPlace);
+        Assert.Equal(layouts, e.PersistentInvalidations);
+        Assert.True(e.Query("hot(k6, 6), sw1(h, 8), via2(w, 18), findall(K, sw1(K, _), [a, b, c, d, e, f, g, h]).").Success);
+        Assert.True(e.Query("assertz(hot(k7, 7)), hot(k7, V), V == 7, sw2(p, 11).").Success);
+    }
+
+    [Fact]
+    public void BroughtInByTheQueryThatAttached_TheProgramIsLaidOutAgain()
+    {
+        Indexed();
+        var e = Engine();
+        long adopted = e.AdoptedLinks;
+        Assert.True(e.Query("ensure_loaded(bundle(indexed)), sw1(c, V), V == 3.").Success);
+        Assert.Equal(adopted, e.AdoptedLinks);
+        Assert.True(e.Query("sw1(f, V), V == 6, via2(q, W), W == 12.").Success);
     }
 
     // ---- from code promoted to Tier-1 ----

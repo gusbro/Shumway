@@ -2048,10 +2048,11 @@ internal sealed class BundleLoader
         // new predicates.
         // The module of an attached library was declared when the library
         // was attached (ADR-075): its code changes what is linked and nothing
-        // a transform reads, so the derivation stays and so does every compile.
+        // a transform reads, so the derivation stays and so does every
+        // compile. How it gets linked is the caller's (BringInModule).
         if (broughtIn)
         {
-            E.InvalidateLayout(statics: true);
+            E._skipCompileMergedCache = null;   // the precompiled cache grew
             return;
         }
         E._staticLink = null;

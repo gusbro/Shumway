@@ -1910,6 +1910,17 @@ public sealed partial class PrologEngine
         if (preds.Count == 0) return null;
         bool ownsHost = EngineOwnsHostBuffer(engine);
         var (loadOffset, tableBase, reserved) = PlaceLiveLink(engine, preds, switchTables);
+        // Code that may stay in the program (AdoptLiveLink) takes its tables
+        // past a gap after the dynamic region's, which grow in place when a
+        // predicate turns hot (TryFlipHotnessInPlace).
+        if (_captureLivePublish && ownsHost && _staticLink is not null && _dynamicLink is not null)
+        {
+            int tables = 0;
+            foreach (var pred in preds) tables += pred.SwitchTables.Count;
+            tableBase = FreeTableRun(switchTables, tables,
+                _staticLink.SwitchTables.Count + _dynamicLink.SwitchTables.Count + AdoptedTableGap);
+            while (switchTables.Count < tableBase) switchTables.Add(null!);
+        }
         Shumway.Compiler.Wam.Linker.LinkResult link;
         try
         {
@@ -1984,11 +1995,16 @@ public sealed partial class PrologEngine
         return (at >= 0 ? at : engine.ProgramLength, FreeTableRun(switchTables, tables), at >= 0 ? size : 0);
     }
 
-    private static int FreeTableRun(List<Shumway.Core.SwitchTable> tables, int count)
+    /// <summary>Slots left between the dynamic region's switch tables and
+    /// the adopted code's.</summary>
+    internal const int AdoptedTableGap = 1024;
+
+    private static int FreeTableRun(List<Shumway.Core.SwitchTable> tables, int count, int from = 0)
     {
+        if (from >= tables.Count) return from;
         if (count == 0) return tables.Count;
         int run = 0;
-        for (int i = 0; i < tables.Count; i++)
+        for (int i = from; i < tables.Count; i++)
         {
             run = tables[i] is null ? run + 1 : 0;
             if (run == count) return i - count + 1;
@@ -2133,6 +2149,8 @@ public sealed partial class PrologEngine
         SyncOrInvalidateAfterMutation(engine, ownsHost);
         RefreshLiteralPoolsIfChanged(engine);
         engine.BumpProgramGeneration();
+        if (_captureLivePublish)
+            _lastLivePublish = new LivePublish(engine, link, tableBase, entries, retargeted is not null);
     }
 
     /// <summary>

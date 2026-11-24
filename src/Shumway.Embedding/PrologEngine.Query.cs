@@ -1551,7 +1551,9 @@ public sealed partial class PrologEngine
         {
             for (int i = pStatic.Count - 1; i >= 0; i--)
             {
-                if (cachedStatic.Addresses.ContainsKey(pStatic[i].FunctorId))
+                // Adopted code is linked too, after the region (ADR-015, amendment).
+                if (cachedStatic.Addresses.ContainsKey(pStatic[i].FunctorId)
+                    || _adoptedAddresses.ContainsKey(pStatic[i].FunctorId))
                     continue;
                 pExtraQuery.Add(pStatic[i]);
                 pStatic.RemoveAt(i);
@@ -1707,6 +1709,7 @@ public sealed partial class PrologEngine
         if (staticLink is null)
         {
             staticLink = _staticLink = GetOrLinkStatic(staticPreds, prefix.Length);
+            StaticProgramVersion++;
             // Static code: its literals stay for the engine's life.
             _literalPools.Pin(staticLink.Bytecode);
             // A bundle's wasm modules bind to linked addresses: install them
@@ -1745,6 +1748,10 @@ public sealed partial class PrologEngine
             // The code appended after the dynamic region goes with the old
             // buffer, dynamic snapshots' shadow regions included (ADR-054).
             IlPromotion.Wasm?.OnPersistentRebuilt();
+            // And the adopted code, which this build linked with the static region.
+            _adoptedStatics.Clear();
+            _adoptedAddresses.Clear();
+            _adoptedTables.Clear();
             int dynamicLoadOffset = prefix.Length + staticLink.Bytecode.Length;
             _dynamicLink = new Linker { Aliases = BareLibraryAliases() }.Link(
                 dynamicPreds,
@@ -1792,6 +1799,7 @@ public sealed partial class PrologEngine
         {
             var pa = CollectionsCompat.Copy(staticLink.Addresses);
             foreach (var (fid, a) in _dynamicLink!.Addresses) pa[fid] = a;
+            foreach (var (fid, a) in _adoptedAddresses) pa[fid] = a;
             _persistentAddressesCache = pa;
 
             // Runtime call/1 dispatches a goal by its bare
@@ -1808,6 +1816,7 @@ public sealed partial class PrologEngine
 
             var pba = CollectionsCompat.Copy(staticLink.PredicatesByAddress);
             foreach (var (a, p) in _dynamicLink.PredicatesByAddress) pba[a] = p;
+            foreach (var (a, p) in _adoptedStatics) pba[a] = p;
             _persistentPredsByAddressCache = pba;
         }
         var persistentAddresses = _persistentAddressesCache;
@@ -1820,7 +1829,7 @@ public sealed partial class PrologEngine
                 // _dynamicLink is non-null here (built in the
                 // builtPersistentNow block above); ! matches the sibling
                 // sites at _dynamicLink!.Addresses / .SwitchTables.
-                staticLink.SwitchTables.Count + _dynamicLink!.SwitchTables.Count);
+                QueryTableBase(staticLink.SwitchTables.Count + _dynamicLink!.SwitchTables.Count));
 
         byte[] queryBytes = queryLink.Bytecode;
         PlacePersistent(queryBytes, queryStart);
@@ -1856,6 +1865,15 @@ public sealed partial class PrologEngine
         var mergedSwitchTables =
             new List<Shumway.Core.SwitchTable>(staticLink.SwitchTables);
         mergedSwitchTables.AddRange(_dynamicLink!.SwitchTables);
+        // Adopted code names its tables by the slots they had when it was
+        // linked (ADR-015, amendment): they keep them, and the query's own
+        // go after.
+        if (_adoptedTables.Count > 0)
+        {
+            int queryTables = QueryTableBase(mergedSwitchTables.Count);
+            while (mergedSwitchTables.Count < queryTables) mergedSwitchTables.Add(null!);
+            foreach (var (index, table) in _adoptedTables) mergedSwitchTables[index] = table;
+        }
         mergedSwitchTables.AddRange(queryLink.SwitchTables);
         // persistent part pre-merged at rebuild time; the query's predicates
         // layered on top (their addresses are disjoint from the program's,

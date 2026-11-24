@@ -233,6 +233,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     // 800-odd predicates -- hashing each one's bytecode -- for nothing, which
     // reads to the user as the engine thinking for a second after each query.
     private object? _lastLink;
+    private int _lastVersion = -1;
 
     // Functors that crossed the threshold while the batch owns compilation:
     // picked up whole at the next boundary instead of each rebuilding the
@@ -406,6 +407,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         // compare.
         if (engine._staticLink is not null
             && ReferenceEquals(engine._staticLink, _lastLink)
+            && engine.StaticProgramVersion == _lastVersion
             && _pendingBatch.Count == 0
             && ilStore.PendingWasmModules.Count == 0) return 0;
         bool anythingToDo = _installed.Count > 0
@@ -415,6 +417,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         if (engine._staticLink is null) engine.Query("true.");
         InstallPendingBundles(engine);
         _lastLink = engine._staticLink;
+        _lastVersion = engine.StaticProgramVersion;
         BatchTicksWorked++;
         // Evict the stale before the batch, so it recompiles them against
         // the addresses the modules will actually bake.
@@ -432,9 +435,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     public static IEnumerable<(int Addr, CompiledPredicate Pred)>
         StaticPredicatesOf(PrologEngine engine)
     {
-        var link = engine._staticLink;
-        if (link is null) yield break;
-        foreach (var (addr, pred) in link.PredicatesByAddress)
+        foreach (var (addr, pred) in engine.LinkedStatics())
             yield return (addr, pred);
     }
 
@@ -466,11 +467,10 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     public int PromoteAllStatics(PrologEngine engine)
     {
         if (BatchPromoter is null) return -1;
-        var link = engine._staticLink;
-        if (link is null) return -1;
+        if (engine._staticLink is null) return -1;
         var already = new HashSet<int>(ilStore.PromotedFunctorIds());
         var candidates = new List<(CompiledPredicate, int)>();
-        foreach (var (addr, pred) in link.PredicatesByAddress)
+        foreach (var (addr, pred) in engine.LinkedStatics())
         {
             int fid = pred.FunctorId;
             if (_unpromotable.Contains(fid)) continue;
@@ -498,11 +498,10 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     {
         if (Promoter is null) return -1;
         if (engine._staticLink is null) engine.Query("true.");
-        var link = engine._staticLink;
-        if (link is null) return -1;
+        if (engine._staticLink is null) return -1;
         var already = new HashSet<int>(ilStore.PromotedFunctorIds());
         int installed = 0;
-        foreach (var (addr, pred) in link.PredicatesByAddress)
+        foreach (var (addr, pred) in engine.LinkedStatics())
         {
             int fid = pred.FunctorId;
             if (_unpromotable.Contains(fid) || already.Contains(fid)) continue;
@@ -544,10 +543,9 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// False when there is no linked program yet, and nothing was marked.</summary>
     public bool LeaveOutLinked(PrologEngine engine, string reason)
     {
-        var link = engine._staticLink;
-        if (link is null) return false;
+        if (engine._staticLink is null) return false;
         var promoted = new HashSet<int>(ilStore.PromotedFunctorIds());
-        foreach (var (_, pred) in link.PredicatesByAddress)
+        foreach (var (_, pred) in engine.LinkedStatics())
         {
             int fid = pred.FunctorId;
             if (promoted.Contains(fid) || _unpromotable.Contains(fid)) continue;
