@@ -225,6 +225,117 @@ public sealed class BundleModulePromotionTests
     }
 
     [Fact]
+    public void BundlesLinkedApart_MintTheSameHelperNames_AndBothArePromoted()
+    {
+        // Each file has a disjunction, so each bundle carries a $disj_N helper,
+        // and two links number their helpers alike. The top level never calls a
+        // helper: one in both bundles is no clash. The REPL promotes after each.
+        using var t = new TempDir();
+        string a = t.Add("a.pl", "pa(X) :- ( X = 1 ; X = 2 ).\ngo_a :- pa(_).\n");
+        string b = t.Add("b.pl", "pb(X) :- ( X = a ; X = b ).\ngo_b :- pb(_).\n");
+        var bundleA = ViaConsultBundle(a, new PredicateRef("go_a", 0));
+        var bundleB = ViaConsultBundle(b, new PredicateRef("go_b", 0));
+        Assert.NotEmpty(DisjunctionHelpers(bundleA).Intersect(DisjunctionHelpers(bundleB)));
+
+        var e = new PrologEngine();
+        e.LoadBundle(bundleA);
+        var first = e.PromoteBareBundleModulesToUser();
+        e.LoadBundle(bundleB);
+        var second = e.PromoteBareBundleModulesToUser();
+
+        Assert.Contains(first.Promoted, p => p.Module == "a");
+        Assert.Contains(second.Promoted, p => p.Module == "b");
+        Assert.Empty(first.SkippedForCollision);
+        Assert.Empty(second.SkippedForCollision);
+        Assert.True(e.Query("findall(X-Y, (pa(X), pb(Y)), L), L == [1-a, 1-b, 2-a, 2-b].").Success);
+    }
+
+    [Fact]
+    public void AModuleAnEarlierLoadPromoted_IsNotReportedByALaterClash()
+    {
+        // a is promoted with the first bundle; b, loaded next, clashes with it
+        // on dup/1. b is skipped; a stays promoted and is not reported.
+        using var t = new TempDir();
+        string a = t.Add("a.pl", "dup(1).\ngo_a :- dup(_).\n");
+        string b = t.Add("b.pl", "dup(2).\ngo_b :- dup(_).\n");
+
+        var e = new PrologEngine();
+        e.LoadBundle(ViaConsultBundle(a, new PredicateRef("go_a", 0)));
+        Assert.Contains(e.PromoteBareBundleModulesToUser().Promoted, p => p.Module == "a");
+        e.LoadBundle(ViaConsultBundle(b, new PredicateRef("go_b", 0)));
+        var second = e.PromoteBareBundleModulesToUser();
+
+        var skip = Assert.Single(second.SkippedForCollision);
+        Assert.Equal("b", skip.Module);
+        Assert.Contains(skip.Predicates, p => p.Name == "dup" && p.Arity == 1);
+        Assert.DoesNotContain(second.Promoted, p => p.Module == "a");
+        Assert.True(e.Query("findall(X, dup(X), [1]).").Success);
+    }
+
+    [Fact]
+    public void AClash_IsReportedOnce_NotWithEveryLaterBundle()
+    {
+        using var t = new TempDir();
+        string a = t.Add("a.pl", "dup(1).\ngo_a :- dup(_).\n");
+        string b = t.Add("b.pl", "dup(2).\ngo_b :- dup(_).\n");
+        string c = t.Add("c.pl", "only_c(3).\ngo_c :- only_c(_).\n");
+
+        var e = new PrologEngine();
+        e.LoadBundle(ViaConsultBundle(a, new PredicateRef("go_a", 0)));
+        e.PromoteBareBundleModulesToUser();
+        e.LoadBundle(ViaConsultBundle(b, new PredicateRef("go_b", 0)));
+        Assert.Contains(e.PromoteBareBundleModulesToUser().SkippedForCollision, s => s.Module == "b");
+        e.LoadBundle(ViaConsultBundle(c, new PredicateRef("go_c", 0)));
+        var third = e.PromoteBareBundleModulesToUser();
+
+        Assert.Empty(third.SkippedForCollision);
+        Assert.Contains(third.Promoted, p => p.Module == "c");
+        Assert.True(e.Query("only_c(3).").Success);
+    }
+
+    [Fact]
+    public void ANameTwoSkippedModulesShare_StillKeepsALaterModuleWithItOut()
+    {
+        // x and y clash on dup/1 and neither is promoted. z, loaded later with
+        // its own dup/1, clashes with them too: they are not reported again,
+        // and their names still count.
+        using var t = new TempDir();
+        string x = t.Add("x.pl", ":- module(x).\ndup(1).\ngo_x :- dup(_).\n");
+        string y = t.Add("y.pl", ":- module(y).\ndup(2).\ngo_y :- dup(_).\n");
+        string z = t.Add("z.pl", ":- module(z).\ndup(3).\ngo_z :- dup(_).\n");
+
+        var e = new PrologEngine();
+        e.LoadBundle(FileAtATimeBundle(new[] { x, y },
+            new PredicateRef("go_x", 0), new PredicateRef("go_y", 0)));
+        var first = e.PromoteBareBundleModulesToUser();
+        Assert.Equal(new[] { "x", "y" },
+            first.SkippedForCollision.Select(s => s.Module).OrderBy(m => m).ToArray());
+        e.LoadBundle(FileAtATimeBundle(new[] { z }, new PredicateRef("go_z", 0)));
+        var second = e.PromoteBareBundleModulesToUser();
+
+        var skip = Assert.Single(second.SkippedForCollision);
+        Assert.Equal("z", skip.Module);
+        Assert.DoesNotContain(second.Promoted, p => p.Module == "z");
+        Assert.False(Succeeds(e, "once(dup(_))."));
+    }
+
+    // The $disj_N helpers a bundle defines, without the module's prefix.
+    private static System.Collections.Generic.HashSet<string> DisjunctionHelpers(Bundle bundle)
+    {
+        var names = new System.Collections.Generic.HashSet<string>();
+        foreach (var entry in bundle.Entries)
+            foreach (var d in entry.Defined)
+            {
+                string n = d.Indicator.Name;
+                int mangle = n.IndexOf("$$", System.StringComparison.Ordinal);
+                if (mangle >= 0) n = n[(mangle + 1)..];
+                if (n.StartsWith("$disj_", System.StringComparison.Ordinal))
+                    names.Add($"{n}/{d.Indicator.Arity}");
+            }
+        return names;
+    }
+
+    [Fact]
     public void LibraryModule_IsNeverPromoted()
     {
         using var t = new TempDir();

@@ -247,8 +247,9 @@ false.
   (`use_module(library(X))`). If two bare modules would define the same name,
   **neither** is promoted (all-or-nothing per module, so `user` is never left
   half-populated); the REPL says so (`%   NOT promoted 'a' - name clash …`)
-  and you call those by qualifying (`a:pred(…)`). This convenience is
-  REPL-only; an embedded `PrologEngine.LoadBundle` leaves the namespaces
+  and you call those by qualifying (`a:pred(…)`). A module promoted with an
+  earlier bundle stays promoted when a later bundle clashes with it. This
+  convenience is REPL-only; an embedded `PrologEngine.LoadBundle` leaves the namespaces
   exactly as linked.
 
 The REPL is also AOT-publishable: see
@@ -589,6 +590,18 @@ fed by all of:
   program can add to the path at load time;
 - the embedding API: `engine.AddLibraryDirectory("/path/to/libs")` (or
   `engine.AddDefaultLibraryDirectories()` for the shipped `lib/`).
+
+The first directory with either file answers. With both `X.pl` and `X.shum`
+in it, the bundle is the library when it was built by a version of Shumway
+with the same format of compiled code and is not older than the source; else
+the source is. Editing the source therefore loads the source until the
+bundle is built again.
+
+A library without `:- module/2` defines predicates of `user`, whether it
+loads from its source or from its bundle: the top level, other modules and
+other libraries call them by name. `consult/1` of a bundle is different: a
+module of it without `:- module/2` keeps its predicates, which are called
+qualified (`m:pred(…)`).
 
 ```prolog
 :- use_module(library(lists_ext)).      % imports its whole export surface

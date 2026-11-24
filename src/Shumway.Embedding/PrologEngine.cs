@@ -378,6 +378,19 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// their bundle's code, so compiling a library emits no object for them.</summary>
     internal readonly HashSet<string> _modulesFromBundles = new(StringComparer.Ordinal);
 
+    /// <summary>ADR-056, amendment: the modules without a module directive that
+    /// a library's bundle brought (use_module, ensure_loaded), in load order.
+    /// Their predicates are user's, as the library's source defines them.</summary>
+    internal readonly List<string> _bareLibraryModules = new();
+
+    /// <summary>Loads of a library from its bundle in progress.</summary>
+    internal int _libraryBundleLoadDepth;
+
+    /// <summary>Where a bundle load inside a running goal puts the bundle's
+    /// initialization goals, to run once its code is linked into the goal
+    /// (<see cref="LoadBundleLinkingLive"/>); null otherwise.</summary>
+    internal List<(Shumway.Compiler.Ast.Term Goal, string Module)>? _deferredBundleInitialization;
+
     /// <summary>ADR-038 §4: the dynamic clauses that bundle loads seeded, kept
     /// only by an engine that compiles a library (null elsewhere): its object
     /// seeds what its own load added, never what a bundle did.</summary>
