@@ -32,8 +32,8 @@ public static class LibraryArchive
         else if (IsTar(archive)) ReadTar(new MemoryStream(archive), found);
         else throw new InvalidDataException("not a .zip, .tar.gz or .tar archive");
 
-        if (!found.Exists(f => IsSource(f.Path)))
-            throw new InvalidDataException("no Prolog sources in the archive");
+        if (!found.Exists(f => Kept(f.Path)))
+            throw new InvalidDataException("no Prolog sources nor libraries compiled ahead in the archive");
         var sources = new List<(string, string)>();
         var bundles = new List<(string, byte[])>();
         foreach ((string path, byte[] data) in WithoutWrapper(found))
@@ -63,6 +63,34 @@ public static class LibraryArchive
     /// <summary>A library's compiled bundle, as a collection keeps one.</summary>
     public static bool IsBundle(string path)
         => path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The text of library <paramref name="library"/>'s own module,
+    /// when its bundle carries it: a module compiled in debug mode keeps its
+    /// source, and the link keeps it unless it strips the bundle. The module
+    /// is the bundle's only one, or the one named as the library is (the
+    /// last segment of <paramref name="library"/>). Null when there is no
+    /// such module, it carries no text, or the bytes are not a bundle this
+    /// engine reads.</summary>
+    public static string? SourceOfBundle(byte[] bundle, string library)
+    {
+        ArgumentNullException.ThrowIfNull(bundle);
+        ArgumentNullException.ThrowIfNull(library);
+        Shumway.Embedding.Bundle read;
+        // Another format of compiled code is refused at the header.
+        try { read = Shumway.Embedding.BundleReader.FromBytes(bundle); }
+        catch (InvalidDataException) { return null; }
+        string own = library.Substring(library.LastIndexOf('/') + 1);
+        var modules = new List<(string Name, string Source)>();
+        foreach (var entry in read.Entries) modules.Add((entry.ModuleName, entry.Source));
+        foreach (var member in read.ArchiveMembers)
+        {
+            var obj = Shumway.Embedding.ShmoReader.FromBytes(member.ShmoBytes);
+            modules.Add((obj.ModuleName, obj.Source));
+        }
+        string? text = modules.Count == 1 ? modules[0].Source
+            : modules.Find(m => m.Name == own).Source;
+        return string.IsNullOrEmpty(text) ? null : text;
+    }
 
     private static bool Kept(string path) => IsSource(path) || IsBundle(path);
 

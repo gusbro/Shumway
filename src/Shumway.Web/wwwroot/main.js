@@ -669,6 +669,9 @@ async function buildCollection(name) {
   const queue = (await libraries.entries(name))
     .filter((e) => !e.compiled && e.state !== 'native');
   const total = queue.length;
+  // A collection that came compiled has nothing to build, and the import
+  // said so.
+  if (total === 0) { buildRun = null; return; }
   let built = 0, stoppedEarly = false;
   const failed = [];
   let wanted = await librariesInUse();
@@ -727,7 +730,7 @@ async function buildCollection(name) {
      + (stoppedEarly
           ? '. That is what your programs import; “compile the rest” for the others,'
             + ' which still load from source.\n'
-          : '. The rest still load from source.\n'), 'note');
+          : queue.length > 0 ? '. The rest still load from source.\n' : '.\n'), 'note');
 
   // Named, because "11 could not be" leaves you having to find out which. The
   // list marks them and holds the reason.
@@ -799,16 +802,22 @@ async function refreshLibraries() {
       open.type = 'button';
       open.className = 'file';
       open.textContent = `library(${entry.name})`;
-      open.title = `open ${entry.name}.pl`;
-      open.addEventListener('click', async () => {
-        await openLibraryFile(name, entry.name + '.pl');
-        librariesDialog.close('');
-      });
+      if (entry.source) {
+        open.title = `open ${entry.name}.pl`;
+        open.addEventListener('click', async () => {
+          await openLibraryFile(name, entry.name + '.pl');
+          librariesDialog.close('');
+        });
+      } else {
+        open.disabled = true;
+        open.title = 'it came compiled, without its source';
+      }
 
       const state = document.createElement('span');
       state.textContent = entry.state === 'native' ? 'provided by Shumway'
         : entry.state === 'failed' ? 'will not compile'
         : entry.note ? 'compiled, with warnings'
+        : !entry.source ? 'compiled, no source'
         : entry.compiled ? 'compiled'
         : 'source only';
       if (entry.note) {
@@ -851,7 +860,8 @@ async function refreshLibraries() {
       });
 
       // The engine has its own version: nothing to build.
-      row.append(open, state, ...(entry.state === 'native' ? [] : [build]));
+      // Nor for one that came compiled without its source.
+      row.append(open, state, ...(entry.state === 'native' || !entry.source ? [] : [build]));
       if (why) row.append(why);
       parts.push(row);
     }
@@ -867,10 +877,21 @@ document.getElementById('libraries').addEventListener('click', async () => {
 /** Names a set of fetched sources, writes them in, and starts building. Shared
  *  by both ways in — where the files came from stops mattering here. */
 async function adoptCollection(files, { name: suggestedName, dialect = '', from, source = '' }) {
-  const compiled = files.filter((file) => file.bundle !== undefined).length;
-  document.getElementById('import-detail').textContent =
-    `${files.length - compiled} source file(s) from “${from}”`
-    + (compiled > 0 ? `, ${compiled} of them compiled ahead.` : '.');
+  // A bundle this engine cannot read, with no source to compile its library
+  // from, is a library that could not load: the one for this version is
+  // what to bring.
+  const stale = libraries.unreadable(files);
+  if (stale.length > 0) {
+    emit(`% ${nameList(stale)}: written by another version of Shumway, which this one cannot read.`
+       + ' Import the bundle built for this version, or the library\'s source with it.\n', 'error');
+    return;
+  }
+  const compiled = files.filter(libraries.compiledAhead).length;
+  const sources = files.length - compiled;
+  document.getElementById('import-detail').textContent = `From “${from}”: `
+    + [sources > 0 ? `${sources} source file(s)` : '',
+       compiled > 0 ? `${compiled} librar${compiled === 1 ? 'y' : 'ies'} compiled ahead` : '']
+      .filter(Boolean).join(', ') + '.';
   document.getElementById('import-name').value = suggestedName;
   document.getElementById('import-dialect').value = dialect;
   importDialog.showModal();
@@ -905,7 +926,22 @@ document.getElementById('import-library').addEventListener('click', async () => 
   const picked = await libraries.pickFolder();
   if (!picked) return;
   if (picked.files.length === 0) {
-    emit('% that folder holds no Prolog sources\n', 'error');
+    emit('% that folder holds no Prolog sources nor libraries compiled ahead\n', 'error');
+    return;
+  }
+  await adoptCollection(picked.files, { name: picked.name, from: picked.name });
+});
+
+document.getElementById('import-files').addEventListener('click', async () => {
+  librariesDialog.close('');          // see import-library: modal hides progress
+  // Opened before anything is awaited: see libraries.pickCollectionFiles.
+  const chosen = await libraries.pickCollectionFiles();
+  if (chosen.length === 0) return;
+  let picked;
+  try {
+    picked = await withBusy('reading the files', () => libraries.collectionOfFiles(chosen));
+  } catch (ex) {
+    emit(`% ${ex.message ?? ex}\n`, 'error');
     return;
   }
   await adoptCollection(picked.files, { name: picked.name, from: picked.name });
@@ -1208,8 +1244,10 @@ async function openWorkspaceFile(name) {
 
 async function refreshFiles() {
   // Runs after every change of which file is on screen, so it is also the
-  // one place that tells the debug gutter to show THAT file's dots.
+  // one place that tells the debug gutter to show THAT file's dots, and the
+  // Consult button whether it loads that file.
   debugUi.fileChanged();
+  syncConsultButton();
   const names = await workspace.list();
   const chips = names.map((name) => {
     const item = document.createElement('button');
@@ -1325,13 +1363,15 @@ document.getElementById('export-workspace').addEventListener('click', async () =
 // --- files ---------------------------------------------------------------
 
 document.getElementById('open-file').addEventListener('click', async () => {
-  // Saved BEFORE the picker opens, not after it returns: what you typed
-  // belongs to the file you were on whether you go on to open that same file,
-  // a different one, or nothing at all. (It ran after, and so reopening the
-  // file you were editing wrote the stale buffer back over what had just
-  // arrived — the file could only be brought in again by deleting it first.)
+  // The picker opens first, in the click: a browser that wants a user's
+  // gesture for it does not see one after an await. What you typed is saved
+  // while it is open, and before what you picked comes in: it belongs to the
+  // file you were on whether you go on to open that same file, a different
+  // one, or nothing at all. (Saved after, reopening the file you were editing
+  // wrote the stale buffer back over what had just arrived.)
+  const picking = workspace.pickFiles();
   await saveBuffer();               // may be a library file: it saves where it belongs
-  const arrived = await workspace.openFiles(async (name) =>
+  const arrived = await workspace.acceptFiles(await picking, async (name) =>
     (await askChoice(
       `Replace “${name}” in this workspace?`,
       'The file you picked holds different text from the copy here. '
@@ -1600,6 +1640,10 @@ addEventListener('hashchange', () => openSharedFromHash());
  * returns whether it loaded.
  */
 async function consultBuffer(note) {
+  if (!consultable(currentFile)) {
+    emit(`% ${currentFile} is not a Prolog source: Consult loads .pl, .pro and .prolog files\n`, 'note');
+    return false;
+  }
   // Loading a program ends any query still open over the old one — running, or
   // waiting for the next solution. Otherwise `;` would go on asking a search
   // whose clauses have been replaced underneath it.
@@ -1643,6 +1687,20 @@ async function consultBuffer(note) {
 // Whether this engine has been given a program — what makes switching workspace
 // worth a word first.
 let consultedSomething = false;
+
+/** Whether Consult loads this file: a Prolog source, or a name with no
+ *  extension. A workspace may hold other files, a program's data or another
+ *  language's source, which a query loads its own way. */
+const consultable = (name) => libraries.isSource(name) || !/\.[^./]+$/.test(name);
+
+/** The Consult button says whether the file on screen is one it loads. */
+function syncConsultButton() {
+  const button = document.getElementById('consult');
+  const yes = consultable(currentFile);
+  button.disabled = !yes;
+  button.title = yes ? 'load this program into the engine (Ctrl-Enter)'
+    : `${currentFile} is not a Prolog source: Consult loads .pl, .pro and .prolog files`;
+}
 
 document.getElementById('consult').addEventListener('click',
   () => consultBuffer('% consulted.\n'));
@@ -1779,7 +1837,10 @@ const restored = await workspace.restoreAll();
 // (see libraries.js). A consult or a query waits for those.
 const storedLibs = await libraries.restoreSources();
 const bundlesBack = libraries.restoreBundles(storedLibs,
-  (collection, library) => startup.step(`Bringing back library(${library}) of ${collection}`));
+  (collection, library) => startup.step(`Bringing back library(${library}) of ${collection}`),
+  // Came as its bundle alone, and this version of Shumway cannot read it.
+  (collection, library) => emit(`% library(${library}) of ${collection} was compiled by another`
+    + ' version of Shumway, which this one cannot read: import it again\n', 'error'));
 bundlesBack.then(() => {
   if (storedLibs.length > 0) emit(`% ${storedLibs.length} library(ies) restored\n`, 'note');
 });

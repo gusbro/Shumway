@@ -111,8 +111,13 @@ from one that is busy.
 **Open** brings files from your computer into the workspace. It is also how you
 pick up an edit you made to one of them elsewhere: open it again and the newer
 text comes in. If the copy here differs, you are asked which of the two to
-keep. Whatever you were editing is saved before the picker opens, so choosing
-either one costs you nothing.
+keep. Whatever you were editing is saved before the files you picked come
+in, so choosing either one costs you nothing.
+
+**Consult** loads the file on screen when it is a Prolog source, `.pl`, `.pro`
+or `.prolog`, or a name with no extension. A workspace may hold other files,
+the data a program reads or another language's source, and the button is
+off for them: a query loads such a file its own way.
 
 The `examples` workspace comes back whenever it is missing, so deleting it and
 reloading the page is how you ask for a fresh copy. On later visits the
@@ -130,9 +135,11 @@ over.
 
 ### Importing
 
-Two ways in:
+Three ways in:
 
 - **Import folder…**: a folder from your computer.
+- **Import files…**: from your computer, a `.zip` or `.tar.gz` archive of a
+  collection, or the collection's files themselves, picked together.
 - **Import from URL…**: one of these.
   - A GitHub directory address, the one you get by navigating there and
     copying the bar. Scryer's, SWI's and Trealla's are offered, so borrowing
@@ -142,8 +149,10 @@ Two ways in:
     from anywhere else it is a file. The site must let pages of other sites
     read its files (CORS); a site that does not is named in the error. A
     directory that holds the whole archive, as a release's does, is not part
-    of the libraries' names. An archive may bring a library compiled ahead,
-    beside its source (below).
+    of the libraries' names.
+
+A folder, an archive or the files picked may bring a library compiled
+ahead, with its source or alone (below).
 
 What you import is a **collection**, not a library. Scryer's `lib/` is one
 folder and about sixty libraries: every `x.pl` in it is `library(x)`. A
@@ -236,10 +245,11 @@ The mark and its reason survive a reload, which is when it matters: the batch
 that found out runs once, at import. A library recompiled cleanly loses the
 mark, since the record describes the *last* compile.
 
-### An archive that brings its libraries compiled
+### A collection that brings its libraries compiled
 
-Whoever publishes a collection can compile a library ahead and put the bundle
-in the archive beside its source, `x.shum` next to `x.pl`. The import puts it
+Whoever publishes a collection can compile a library ahead and bring the
+bundle, `x.shum`, in the folder or the archive that is imported, or picked
+with the other files: beside its source `x.pl`, or alone. The import puts it
 where the page's own compile of the library would go, so the library loads
 from it the first time it is used and nothing is compiled. This is what a
 large library wants: one that takes half a minute to compile in the browser
@@ -259,14 +269,24 @@ the way the page compiles it. Its initialization goals then run once, when it
 is linked, and the bundle holds what they leave: a value they take from the
 machine, such as a temporary directory, is that machine's.
 
-The archive's compression does the work: a bundle of 93 MB is 8 MB in a
-`.tar.gz`. The source has to be there too. A bundle is good for every version
-of Shumway with the same format of compiled code, and says which in its first
-bytes. One of another format is left out at the import, and the library
+An archive's compression does the work: a bundle of 93 MB is 8 MB in a
+`.tar.gz`, and a bundle picked alone needs none.
+
+A bundle that comes alone is listed as compiled, with no source. When it
+carries the text of its library, because the library was compiled keeping
+its source and the bundle was linked without `--strip`, the import writes
+the text beside the bundle as `x.pl`, where it can be read like the source
+of any library of the collection.
+
+A bundle is good for every version of Shumway with the same format of
+compiled code, and says which in its first bytes. One of another format that
+comes with its library's source is left out at the import, and the library
 compiles from its source the first time it is used, as any library of the
-collection does. The same happens later, when the page is updated to a
-version with another format: the stored bundle is dropped and the library
-compiles once.
+collection does. One that comes alone cannot be used, and the import says so:
+bring the bundle built for this version. The same holds later, when the page
+is updated to a version with another format: a stored bundle with its source
+is dropped and the library compiles once; one without is dropped, and the
+page says that the library has to be imported again.
 
 ### Sources are sources
 
