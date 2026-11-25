@@ -113,13 +113,13 @@ public static class ShmoCompiler
     /// extension) when no <c>:- module(Name).</c> directive is
     /// present.</summary>
     public static ShmoObject CompileFile(string path,
-        ShmoBuildMode buildMode = ShmoBuildMode.Release)
+        ShmoBuildMode buildMode = ShmoBuildMode.Release, bool withSource = false)
     {
         ArgumentNullException.ThrowIfNull(path);
         string source = Shumway.Core.TextFile.ReadAllText(path);
         string fallback = Path.GetFileNameWithoutExtension(path);
         var result = TryCompileSource(source, fallback, buildMode,
-            includeBaseDir: Path.GetDirectoryName(Path.GetFullPath(path)));
+            includeBaseDir: Path.GetDirectoryName(Path.GetFullPath(path)), withSource: withSource);
         if (result.Errors.Count > 0)
         {
             var first = result.Errors[0];
@@ -135,13 +135,17 @@ public static class ShmoCompiler
     /// longer collapsed to "user"; per-file module identity is what keeps
     /// two module-less files' locals from aliasing). Pass the empty
     /// string for "<c>user</c>" — Shumway's default.</summary>
+    /// <param name="withSource">Keep the text in the object in a release
+    /// build too, as a debug build keeps it: a bundle linked from it carries
+    /// its module's source, and still loads from its bytecode.</param>
     public static ShmoObject CompileSource(string source,
         string moduleNameFallback = "user",
         ShmoBuildMode buildMode = ShmoBuildMode.Release,
-        Func<PredicateRef, bool>? clauseFilter = null)
+        Func<PredicateRef, bool>? clauseFilter = null,
+        bool withSource = false)
     {
         var result = TryCompileSource(source, moduleNameFallback, buildMode,
-            maxErrors: 100, clauseFilter: clauseFilter);
+            maxErrors: 100, clauseFilter: clauseFilter, withSource: withSource);
         if (result.Errors.Count > 0)
         {
             var first = result.Errors[0];
@@ -169,7 +173,8 @@ public static class ShmoCompiler
         int maxErrors = 100,
         bool arityCompat = false,
         Func<PredicateRef, bool>? clauseFilter = null,
-        string? includeBaseDir = null)
+        string? includeBaseDir = null,
+        bool withSource = false)
     {
         ArgumentNullException.ThrowIfNull(source);
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
@@ -511,6 +516,7 @@ public static class ShmoCompiler
             imports: importEntries, libraryDeps: libraryDeps,
             flagSettings: flagSettings,
             initializationGoals: initializationGoals,
+            keepSource: withSource,
             metaArgSpec: (fid, local) => fileMetaTemplates.TryGetValue(fid, out Term? t)
                 ? ModuleRewrite.MetaArgSpecOfTemplate(t,
                     system: Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _))
@@ -553,7 +559,8 @@ public static class ShmoCompiler
         Func<int, bool>? isVisibleGlobal = null,
         Func<string, bool>? sourceOwnsDynamics = null,
         IReadOnlyList<ShmoFlagSetting>? flagSettings = null,
-        IReadOnlyList<Term>? initializationGoals = null)
+        IReadOnlyList<Term>? initializationGoals = null,
+        bool keepSource = false)
     {
         // A clause for a predicate the prelude declares dynamic is a dynamic
         // clause here too (what the live consult does through its store),
@@ -952,7 +959,9 @@ public static class ShmoCompiler
         // can still dispatch it. Debug keeps Source so the linker's
         // map output, the IL warmup's source-position helpers, and
         // standard "consult from source" tooling stay intact.
-        string persistedSource = buildMode == ShmoBuildMode.Release ? "" : source;
+        // With keepSource (--with-source) a release build keeps it as well:
+        // its bytecode is the release one, and the text rides along.
+        string persistedSource = buildMode == ShmoBuildMode.Release && !keepSource ? "" : source;
 
         // A multifile clause the consult pipeline stored is already rewritten
         // under its module (ConsultPipeline.StoreDynamicClause), so a call in it
@@ -1094,13 +1103,14 @@ public static class ShmoCompiler
     public static ShmoCompileResult TryCompileFile(string path,
         ShmoBuildMode buildMode = ShmoBuildMode.Release,
         int maxErrors = 100,
-        bool arityCompat = false)
+        bool arityCompat = false,
+        bool withSource = false)
     {
         ArgumentNullException.ThrowIfNull(path);
         string source = Shumway.Core.TextFile.ReadAllText(path);
         string fallback = Path.GetFileNameWithoutExtension(path);
         return TryCompileSource(source, fallback, buildMode, maxErrors, arityCompat,
-            includeBaseDir: Path.GetDirectoryName(Path.GetFullPath(path)));
+            includeBaseDir: Path.GetDirectoryName(Path.GetFullPath(path)), withSource: withSource);
     }
 
     // ------------------------------------------------------------------------

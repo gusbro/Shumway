@@ -487,3 +487,40 @@ Three ports the tracer lacked:
   an error nobody caught leaves nothing in the trace of the next one.
 
 Tests: `Adr035TracerTests`.
+
+## Amendment (2026-11-24): a module's text and its code are independent
+
+A bundle entry has a text, or none, and code compiled in one mode. The loader
+consulted the text of every entry that had one: a debug build outside a debug
+session, to get code that can be promoted, and a release build inside one, to
+get code to stop in. Only a debug build kept its text, so the two questions
+were one.
+
+They are two now. `shumway-compile --with-source` keeps the text with release
+code, and what the loader does depends on the code:
+
+- Release code loads as it is, with its text or without, in a debug session
+  too. The text is there to be read; the debugger does not stop in release
+  code, as in a release bundle without text. To debug a bundle, its modules
+  are compiled with `--debug`.
+- Debuggable code loads as it is in a debug session, and its text is
+  materialised for the debugger to open, as before. Outside a session it
+  cannot be debugged and only runs slower, so when the entry carries its text
+  (the text that debug build compiled, file by file) the text is consulted, as
+  code that can be promoted. Without its text the debug code runs.
+- An entry with no code of its own, a bundle written from sources, is
+  consulted from its text, as before.
+
+The link carries a release object's text as it was written. A debuggable
+object's text gets at its end the declarations its consult needs: `:- public`
+for the local entry points the link promotes, and `:- dynamic` for the
+implicit empty dynamics of an Arity module. Appended, they move no line, so
+the stop sites still name the lines of the materialised text (the dynamic
+declarations used to be prepended). A release object is promoted from its
+clause terms, which the entry now keeps with its text, for clause/2 and
+listing/1; a module a consult compiled need not compile from its text alone.
+`--strip` of a debug build still compiles it as release, so no source
+positions stay in a bundle without text. A `--debug` executable needs a module
+with debuggable code and its text.
+
+Tests: `WithSourceBundleTests`.

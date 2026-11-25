@@ -178,21 +178,39 @@ internal sealed class BundleLoader
     /// <summary>ADR-035 — does this entry's bytecode carry the baked debug side tables (was it
     /// compiled <see cref="ShmoBuildMode.Debuggable"/>)? Decodes the module and looks for any
     /// stop site — a real module compiled debuggable always has some (even a fact gets one).
-    /// Only ever called on the debug-session load path, so the decode cost is never on a
-    /// release load; the decode re-interns the sites, which is idempotent with the load that
-    /// follows.</summary>
+    /// Called only for an entry that carries its text, so the decode cost is never on the load
+    /// of one without; the decode re-interns the sites, which is idempotent with the load that
+    /// follows. The answer is kept: a load asks it more than once.</summary>
     private static bool EntryCarriesDebugWam(BundleEntry entry)
     {
         if (entry.CompiledBytecode is not { Length: > 0 }) return false;
+        if (s_debugWam.TryGetValue(entry, out var known)) return known.Value;
+        bool found = false;
         try
         {
             var module = CompiledModuleCodec.Decode(entry.CompiledBytecode);
             foreach (var pred in module.Predicates)
-                if (pred.DebugStops.Count > 0) return true;
+                if (pred.DebugStops.Count > 0) { found = true; break; }
         }
         catch (Exception) { /* undecodable → not a debug entry we can use directly */ }
-        return false;
+        s_debugWam.AddOrUpdate(entry, new System.Runtime.CompilerServices.StrongBox<bool>(found));
+        return found;
     }
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
+        BundleEntry, System.Runtime.CompilerServices.StrongBox<bool>> s_debugWam = new();
+
+    /// <summary>Does this entry load from its code? Release code does, whatever text it
+    /// carries: the text is there to be read (<c>shumway-compile --with-source</c>), in a
+    /// debug session too. Debuggable code does in a debug session. Outside one it cannot be
+    /// debugged and only runs slower, so when the entry carries the text that debug build
+    /// compiled, the text is consulted, as code that can be promoted (ADR-035); without
+    /// it the debug code runs. An entry with no code of its own (no defined list: a bundle
+    /// written from sources) is consulted from its text.</summary>
+    private bool LoadsFromBytecode(BundleEntry entry)
+        => entry.CompiledBytecode is not null && entry.Defined.Count > 0
+           && (E._flags.DebugCodegen || string.IsNullOrEmpty(entry.Source)
+               || !EntryCarriesDebugWam(entry));
 
     /// <summary>Arity programs assume unknown=fail (a call to a predicate
     /// nothing defined or asserted just fails). Applied when a loaded
@@ -352,58 +370,45 @@ internal sealed class BundleLoader
                         xl.Add((od.Priority, t, od.Name));
                 }
             }
-            // source-less load. When the bundle was built
-            // with --strip (or compiled in Release with
-            // source omission), Source is empty and we cannot
-            // ConsultString. The entry's CompiledBytecode + Defined
-            // metadata carry everything we need — the bytecode is
-            // already runtime-ready (mangled) and the
-            // Defined list tells us which functors are public /
-            // dynamic / local. Set up a ModuleManifest from the
-            // metadata and queue the precompiled predicates for the
-            // static-link region; SetupQueryFromTerm will plug them
-            // in next time it rebuilds the link.
-            if (string.IsNullOrEmpty(entry.Source)
-                && entry.CompiledBytecode is not null
-                && entry.Defined.Count > 0)
+            // The entry's CompiledBytecode + Defined metadata carry everything the
+            // module needs: the bytecode is runtime-ready (mangled) and the Defined
+            // list tells which functors are public / dynamic / local. Set up a
+            // ModuleManifest from them and queue the precompiled predicates for the
+            // static-link region; SetupQueryFromTerm plugs them in when it next
+            // rebuilds the link.
+            if (LoadsFromBytecode(entry))
             {
-                LoadEntryFromBytecode(entry);
-                continue;
-            }
-            // ADR-035 — a Debuggable bundle bakes the debug-shape WAM (frames, Y-slots, no
-            // trimming/LCO, stop sites + frame/variable maps) straight into its bytecode. Under
-            // a debug session we run that directly — no re-consult, zero recompile at load — and
-            // materialise the embedded source only for the debugger to open. The baked stop
-            // sites already reference "<module>.pl" (by base name), and the materialised file
-            // has that base name, so interning its full path upgrades the site's file to an
-            // openable one; the stop sites then flow into the query-setup breakpoint index
-            // (SetupQueryFromTerm) exactly as a fresh debug consult's would.
-            if (E._flags.DebugCodegen && entry.CompiledBytecode is { Length: > 0 }
-                && entry.Defined.Count > 0 && EntryCarriesDebugWam(entry))
-            {
-                string dbgFile = MaterialiseDebugSource(entry.ModuleName, entry.Source);
-                Shumway.Core.DebugSiteTable.InternFile(dbgFile);   // upgrade to an openable path
-                if (E.DebugSession is not null)
-                    Debugging.ShumwayDebugHelper.NoteSourceFile(dbgFile);
+                // ADR-035 — under a debug session, debuggable code is shown from
+                // the text it carries: materialise it for the debugger to open.
+                // The baked stop sites reference "<module>.pl" (by base name),
+                // and the materialised file has that base name, so interning its
+                // full path upgrades the sites' file to an openable one.
+                if (E._flags.DebugCodegen && !string.IsNullOrEmpty(entry.Source)
+                    && EntryCarriesDebugWam(entry))
+                {
+                    string dbgFile = MaterialiseDebugSource(entry.ModuleName, entry.Source);
+                    Shumway.Core.DebugSiteTable.InternFile(dbgFile);   // upgrade to an openable path
+                    if (E.DebugSession is not null)
+                        Debugging.ShumwayDebugHelper.NoteSourceFile(dbgFile);
+                }
                 LoadEntryFromBytecode(entry);
                 continue;
             }
 
-            // Otherwise (a non-Debuggable source-carrying entry): when debugging, show the code
-            // from that source. The source-stripped entry took the bytecode branch above; there
-            // is nothing to show but the module name, and the debugger resolves it the ordinary
-            // way (by module name to a `<module>.pl` on disk). But here the exact text the
-            // module was compiled from is in hand, so materialise it to a file the debugger can
-            // open and stamp this consult's stop sites with that path — a breakpoint in the
-            // .shum's code then resolves to the code that is in the .shum, not a possibly-
-            // different .pl someone happens to have on disk. (This re-consult path is the
-            // fallback for a Debug — not Debuggable — bundle loaded under a debug session.)
+            // Consulted from its text: debuggable code outside a debug session,
+            // or an entry with no code of its own, a bundle written from sources
+            // (whose bytecode, if any, is a cache of that text, compiled without
+            // the module's mangling and with no defined list). Under a debug
+            // session its stop sites are stamped with a materialised copy of the
+            // text, so a breakpoint resolves to the code the bundle holds, not to
+            // a possibly different .pl on disk.
+            string text = entry.Source;
             int prevDebugFile = E._debugFileId;
             try
             {
-                if (E._flags.DebugCodegen)
+                if (E._flags.DebugCodegen && text.Length > 0)
                 {
-                    string materialised = MaterialiseDebugSource(entry.ModuleName, entry.Source);
+                    string materialised = MaterialiseDebugSource(entry.ModuleName, text);
                     E._debugFileId = Shumway.Core.DebugSiteTable.InternFile(materialised);
                     if (E.DebugSession is not null)
                         Debugging.ShumwayDebugHelper.NoteSourceFile(materialised);
@@ -412,7 +417,7 @@ internal sealed class BundleLoader
                 // module-less file keeps the per-file module identity its
                 // .shmo bytecode was compiled (and mangled) with, instead of
                 // merging into the rolling "user" module.
-                E.ConsultStringInner(entry.Source, recordInHistory: true,
+                E.ConsultStringInner(text, recordInHistory: true,
                     moduleNameFallback: entry.ModuleName);
             }
             finally
@@ -423,25 +428,25 @@ internal sealed class BundleLoader
 
         // Bind persisted Tier-1 IL. RegisterBoundDelegate is first-wins, so this
         // must precede any IL warm — else warm compiles a region root
-        // standalone and blocks the persisted delegate. A source-STRIPPED entry
-        // warms inside LoadEntryFromBytecode (the entry loop above), which is why
-        // that path binds its own persisted IL first (BindPersistedIlForEntry at
-        // the top of LoadEntryFromBytecode); this loop is the idempotent
-        // whole-bundle pass (cached, first-wins) that also covers source-carrying
-        // entries, whose warm runs in the loop below.
+        // standalone and blocks the persisted delegate. An entry loaded from its
+        // code warms inside LoadEntryFromBytecode (the entry loop above), which is
+        // why that path binds its own persisted IL first (BindPersistedIlForEntry
+        // at the top of LoadEntryFromBytecode); this loop is the idempotent
+        // whole-bundle pass (cached, first-wins) that also covers the others,
+        // whose warm runs in the loop below.
         foreach (var entry in effectiveEntries)
             BindPersistedIlForEntry(entry);
 
-        // Decode each source-carrying entry's CompiledModule and feed IL warmup
+        // Decode the CompiledModule of each entry not loaded from it and feed IL warmup
         // (its PrecompiledClauseCache substitution remains active — made the
         // .shmo bytecode byte-identical to what SetupQueryFromTerm would
         // produce, so the warmed IL delegates' call sites resolve correctly).
         foreach (var entry in effectiveEntries)
         {
             if (entry.CompiledBytecode is null) continue;
-            // Source-less entries already decoded above (via LoadEntryFromBytecode).
+            // Those already decoded above (via LoadEntryFromBytecode).
             if (E._precompiledModules.ContainsKey(entry.ModuleName)
-                && string.IsNullOrEmpty(entry.Source)) continue;
+                && LoadsFromBytecode(entry)) continue;
             // Source-carrying: the source consult is the truth, so the bytecode is an
             // IL-warm / skip-compile cache only — don't register static predicates.
             // (The shared helper also remaps literals, which fixes float value-baking
@@ -474,8 +479,8 @@ internal sealed class BundleLoader
                     E._bareLibraryModules.Add(module);
 
         // The set_prolog_flag/2 calls the modules' loads made, in entry order.
-        // Nothing loaded above reads them: a source-less entry is not read,
-        // and one with source made its own calls when it was consulted.
+        // Nothing loaded above reads them: an entry loaded from its code is
+        // not read, and one consulted from its text made its own calls.
         foreach (var entry in effectiveEntries)
             foreach (var fs in entry.Flags) E.ApplyBundleFlag(fs);
 
@@ -1556,7 +1561,7 @@ internal sealed class BundleLoader
         bool followsTier = LibraryBundles.IsBakedPrelude(entry);
         bool atLoad = E.IlPromotion.PersistedThreshold <= 0 && !followsTier;
         HashSet<int>? withBytecode = null;
-        if (string.IsNullOrEmpty(entry.Source)
+        if (LoadsFromBytecode(entry)
             && E._precompiledModules.TryGetValue(entry.ModuleName, out var precompiled))
         {
             withBytecode = new HashSet<int>();
