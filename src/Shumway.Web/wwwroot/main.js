@@ -882,8 +882,9 @@ async function adoptCollection(files, { name: suggestedName, dialect = '', from,
   // bring.
   const stale = libraries.unreadable(files);
   if (stale.length > 0) {
-    emit(`% ${nameList(stale)}: in another format of compiled code than this Shumway reads.`
-       + ' Import the bundle built in this format, or the library\'s source with it.\n', 'error');
+    emit(`% ${nameList(stale)}: ${stale.length > 1 ? 'these bundles use' : 'this bundle uses'}`
+       + ' a format of compiled code that this Shumway'
+       + ' cannot read. Import a bundle in the current format, or the library\'s source with it.\n', 'error');
     return;
   }
   const compiled = files.filter(libraries.compiledAhead).length;
@@ -1839,8 +1840,8 @@ const storedLibs = await libraries.restoreSources();
 const bundlesBack = libraries.restoreBundles(storedLibs,
   (collection, library) => startup.step(`Bringing back library(${library}) of ${collection}`),
   // Came as its bundle alone, in a format this Shumway does not read.
-  (collection, library) => emit(`% library(${library}) of ${collection} is in another format`
-    + ' of compiled code than this Shumway reads: import it again, built in this format\n', 'error'));
+  (collection, library) => emit(`% library(${library}) of ${collection}: its bundle uses a format`
+    + ' of compiled code that this Shumway cannot read. Import it again in the current format.\n', 'error'));
 bundlesBack.then(() => {
   if (storedLibs.length > 0) emit(`% ${storedLibs.length} library(ies) restored\n`, 'note');
 });
