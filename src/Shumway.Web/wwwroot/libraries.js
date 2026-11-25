@@ -41,22 +41,24 @@ export const canPickFolder = () =>
   typeof window !== 'undefined' && !!window.showDirectoryPicker;
 
 /**
- * Reads every Prolog source under a folder the user picks.
+ * Reads every Prolog source under a folder the user picks, and each library
+ * compiled ahead beside its source (`x.shum` next to `x.pl`), as an archive
+ * brings them.
  *
  * Two ways in, because the good one is not everywhere: showDirectoryPicker
  * gives a real directory handle (Chromium), and an <input webkitdirectory>
  * gives the same files with their relative paths in every current browser.
  *
- * @returns {Promise<{name: string, files: {path: string, text: string}[]}|null>}
+ * @returns {Promise<{name: string, files: ({path: string, text: string}|{path: string, bytes: Uint8Array})[]}|null>}
  */
 export async function pickFolder() {
   if (canPickFolder()) {
     let handle;
     try { handle = await window.showDirectoryPicker({ mode: 'read' }); }
     catch { return null; }                       // the user cancelled
-    const collected = [];
-    await collect(handle, '', collected);
-    return { name: handle.name, files: collected };
+    const found = [];
+    await collect(handle, '', found);
+    return { name: handle.name, files: await folderFiles(found) };
   }
 
   return new Promise((resolve) => {
@@ -69,21 +71,96 @@ export async function pickFolder() {
       // webkitRelativePath is "<folder>/a/b.pl": the first segment names the
       // folder, the rest is the path inside it.
       const folder = chosen[0].webkitRelativePath.split('/')[0];
-      const collected = [];
-      for (const file of chosen) {
-        const path = file.webkitRelativePath.split('/').slice(1).join('/');
-        if (!isSource(path)) continue;
-        collected.push({ path, text: await file.text() });
-      }
-      resolve({ name: folder, files: collected });
+      const found = chosen.map((file) =>
+        ({ path: file.webkitRelativePath.split('/').slice(1).join('/'), file }));
+      resolve({ name: folder, files: await folderFiles(found) });
     }, { once: true });
     input.click();
   });
 }
 
+/** What a folder's files give a collection: the text of each Prolog source,
+ *  and the bytes of each library compiled ahead. The rest is left out.
+ *  @param {{path: string, file: Blob}[]} found */
+export async function folderFiles(found) {
+  const files = [];
+  for (const { path, file } of found) {
+    if (isSource(path)) files.push({ path, text: await file.text() });
+    else if (isBundle(path)) {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      files.push({ path, bytes, current: await engine.LibraryBundleIsCurrent(bytes.subarray(0, 16)) });
+    }
+  }
+  return files;
+}
+
 /** Only Prolog sources: a library folder in a checkout also holds tests, READMEs
  *  and whatever else, and none of it is what use_module resolves. */
 export const isSource = (path) => /\.(pl|pro|prolog)$/i.test(path);
+
+/** A library compiled ahead, which a folder or an archive may bring beside its
+ *  source. */
+export const isBundle = (path) => /\.shum$/i.test(path);
+
+/** Whether a collection's file is a library compiled ahead: one an archive
+ *  brought (held by the engine, named by `bundle`) or a folder (its `bytes`).
+ *  `current` says whether this engine reads it. */
+export const compiledAhead = (file) => file.bundle !== undefined || file.bytes !== undefined;
+
+/** The library a file of a collection is of: its path less the extension. */
+const libraryOf = (path) => path.replace(/\.(pl|pro|prolog|shum)$/i, '');
+
+/** The bundles among `files` that this engine cannot read and that come
+ *  without their library's source: nothing of those libraries could load. */
+export function unreadable(files) {
+  const sources = new Set(files.filter((f) => !compiledAhead(f)).map((f) => libraryOf(f.path)));
+  return files.filter((f) => compiledAhead(f) && f.current === false && !sources.has(libraryOf(f.path)))
+    .map((f) => f.path);
+}
+
+/**
+ * The files the user picks on this computer for a collection: a `.zip` or
+ * `.tar.gz` archive of it, or its files themselves, sources and bundles, read
+ * by collectionOfFiles. The picker opens before this returns, in the click
+ * that asked for it: a browser that wants a user's gesture for it does not
+ * see one after an await. A dismissal leaves the promise pending, as the
+ * other pickers here do: a browser may send `cancel` before the files of a
+ * pick, and the pick would be lost.
+ *
+ * @returns {Promise<File[]>}
+ */
+export function pickCollectionFiles() {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = '.zip,.tar.gz,.tgz,.tar,.shum,.pl,.pro,.prolog';
+    input.addEventListener('change', () => resolve([...(input.files ?? [])]), { once: true });
+    input.click();
+  });
+}
+
+/**
+ * The collection files picked one by one make: one archive, read as
+ * fetchCollection reads one from a URL, or the collection's own files, read
+ * as a folder's are: sources, and bundles with or without their source.
+ * Named after the first source, or the first bundle when there is none.
+ * Throws with what is wrong with the pick.
+ *
+ * @param {File[]} chosen
+ * @returns {Promise<{name: string, files: object[]}>}
+ */
+export async function collectionOfFiles(chosen) {
+  if (chosen.some((file) => ARCHIVE.test(file.name))) {
+    if (chosen.length > 1) throw new Error('pick one archive, or the files of a collection, not both');
+    return { name: stem(chosen[0].name), files: await unpack(new Uint8Array(await chosen[0].arrayBuffer())) };
+  }
+  const files = await folderFiles(chosen.map((file) => ({ path: file.name, file })));
+  if (files.length === 0)
+    throw new Error('pick Prolog sources (.pl), libraries compiled ahead (.shum), or an archive');
+  const first = files.find((file) => !compiledAhead(file)) ?? files[0];
+  return { name: stem(first.path), files };
+}
 
 // --- importing from a URL -------------------------------------------------
 // The point is not having to clone a whole Prolog system to get one library.
@@ -173,7 +250,7 @@ export async function fetchGitHubTree(where, report = () => {}) {
 const ARCHIVE = /\.(zip|tar\.gz|tgz|tar)$/i;
 
 /** A collection's name from the file it came in: `lib-1.0.tar.gz` is `lib-1.0`. */
-const stem = (file) => file.replace(/\.(tar\.gz|tgz|zip|tar|pl|pro|prolog)$/i, '') || file;
+const stem = (file) => file.replace(/\.(tar\.gz|tgz|zip|tar|pl|pro|prolog|shum)$/i, '') || file;
 
 /**
  * The name a URL's collection takes, known before anything is fetched: the
@@ -232,7 +309,7 @@ async function collect(dir, prefix, into) {
   for await (const [name, handle] of dir.entries()) {
     const path = prefix + name;
     if (handle.kind === 'directory') await collect(handle, path + '/', into);
-    else if (isSource(path)) into.push({ path, text: await (await handle.getFile()).text() });
+    else if (isSource(path) || isBundle(path)) into.push({ path, file: await handle.getFile() });
   }
 }
 
@@ -261,7 +338,8 @@ export const diagnostic = (name, library) => engine.LibraryDiagnostic(name, libr
  * What a collection provides: `[{name, state, note}]`, one per importable
  * library. Scryer's lib/ is one folder and forty-six of these.
  *
- * `state` is 'compiled', 'source', 'failed' or 'native' (the engine has its
+ * `state` is 'compiled', 'bundle' (compiled, and it came without its
+ * source), 'source', 'failed' or 'native' (the engine has its
  * own version, so there is nothing to build), and `note` is the headline of
  * the last compile's diagnostic when there was one — a library that failed, or
  * one that compiled while every one of its directives raised, which comes to
@@ -272,7 +350,8 @@ export async function entries(name) {
   const text = await engine.LibraryEntries(name);
   return lines(text).map((line) => {
     const [entry, state, note] = line.split('\t');
-    return { name: entry, state, note: note ?? null, compiled: state === 'compiled' };
+    return { name: entry, state, note: note ?? null,
+             compiled: state === 'compiled' || state === 'bundle', source: state !== 'bundle' };
   });
 }
 
@@ -295,15 +374,23 @@ export async function importFolder(name, dial, picked, report = () => {}, source
     if (failed) return failed;
   }
   for (const file of picked) {
-    if (file.bundle !== undefined) continue;
+    if (compiledAhead(file)) continue;
     const failed = await write(name, file.path, file.text);
     if (failed) return failed;
   }
-  // The libraries the archive carried compiled. One the engine does not
-  // take, written with another format of compiled code, is left out: its
-  // library compiles from its source the first time it is used.
+  // The libraries the archive or the folder carried compiled. One the engine
+  // does not take, written with another format of compiled code, is left out:
+  // its library compiles from its source the first time it is used.
+  const sources = new Set(picked.filter((f) => !compiledAhead(f)).map((f) => libraryOf(f.path)));
   for (const file of picked) {
-    if (file.bundle !== undefined) await engine.LibraryTakeBundle(name, file.path, file.bundle);
+    const library = libraryOf(file.path);
+    let failed = null;
+    if (file.bundle !== undefined) failed = await engine.LibraryTakeBundle(name, file.path, file.bundle);
+    else if (file.bytes !== undefined) failed = await engine.LibraryPutBundle(name, library, file.bytes);
+    else continue;
+    // A library that came as its bundle alone gets the source the bundle
+    // carries of it, when it carries one, where it can be read.
+    if (!failed && !sources.has(library)) await engine.LibraryWriteBundleSource(name, library);
   }
   report('storing');
   await persist(name);
@@ -551,7 +638,7 @@ export async function importFor({ dialect: dial, location }) {
 /** Puts the stored bundles of `names` back, which is what library(X) resolves
  *  to, without holding the caller up: restored() says when they are back.
  *  `say(collection, library)` is told of each one as its turn comes. */
-export function restoreBundles(names, say = () => { }) {
+export function restoreBundles(names, say = () => { }, lost = () => { }) {
   bundlesPending = (async () => {
     for (const name of names) {
       let stored;
@@ -570,7 +657,12 @@ export function restoreBundles(names, say = () => { }) {
           if (await engine.LibraryPutBundle(name, library, bytes)) broken.push(library);
         } catch { /* that library compiles again when it is used */ }
       }
-      for (const library of broken) await stored.removeEntry(library).catch(() => {});
+      for (const library of broken) {
+        await stored.removeEntry(library).catch(() => {});
+        // One with its source compiles again when it is used; one that came
+        // alone is gone, and has to be imported again.
+        if ((await read(name, library + '.pl')) === null) lost(name, library);
+      }
     }
   })().finally(() => { bundlesPending = null; });
   return bundlesPending;

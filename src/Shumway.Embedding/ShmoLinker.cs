@@ -822,31 +822,22 @@ public static class ShmoLinker
             foreach (var obj in objects)
             {
                 if (!reachedModules.Contains(obj.ModuleName)) continue;
-                // when StripSource is requested, also strip
-                // the per-clause source positions and the in-bytecode
-                // Meta/DbgInfo opcodes. If obj.Source is still present
-                // (Debug compile), recompile under Release through
-                // ShmoCompiler — that's the canonical strip path and
-                // covers both pieces. If obj.Source is already empty
-                // (Release compile), the bytecode is already stripped
-                // and we pass it through. Net result: a --strip'd
-                // .shum has the same artifact shape regardless of
-                // whether its sources were compiled in Debug or
-                // Release upstream.
-                string entrySource;
-                byte[]? entryBytecode;
-                if (config.StripSource && !string.IsNullOrEmpty(obj.Source))
+                // --strip drops the text and the clause terms. A debug build's code
+                // carries source positions as well, so it is compiled again as
+                // release, from the text it was compiled from; a release object's
+                // code, with text or not, is already that. A release object's
+                // text is carried as it was written; a debuggable one's gets, at
+                // its end, the declarations a load outside a debug session needs
+                // when it consults the text (BundleLoader), which move no line.
+                string entrySource = config.StripSource ? "" : obj.Source;
+                byte[]? entryBytecode = obj.Bytecode.Length > 0 ? obj.Bytecode : null;
+                if (config.StripSource && !string.IsNullOrEmpty(obj.Source)
+                    && obj.BuildMode != ShmoBuildMode.Release)
                 {
                     var restripped = ShmoCompiler.CompileSource(
                         obj.Source, obj.ModuleName, ShmoBuildMode.Release);
-                    entrySource = "";
                     entryBytecode = restripped.Bytecode.Length > 0
                         ? restripped.Bytecode : null;
-                }
-                else
-                {
-                    entrySource = config.StripSource ? "" : obj.Source;
-                    entryBytecode = obj.Bytecode.Length > 0 ? obj.Bytecode : null;
                 }
 
                 // apply entry-point promotions for this module.
@@ -856,8 +847,13 @@ public static class ShmoLinker
                 // CompileEntryToBytes path uses bare ModuleCompiler and
                 // would NotSupportedException on any DCG rule.
                 HashSet<PredicateRef>? promotedToPublic = null;
+                // A debug build recompiles from its text, which holds the source
+                // positions its code carries (the clause terms do not); a release
+                // one from its clause terms below, text or not, since a module a
+                // consult compiled need not compile from its text alone.
                 if (promotionsByModule.TryGetValue(obj.ModuleName, out var promoted)
-                    && !string.IsNullOrEmpty(entrySource))
+                    && !string.IsNullOrEmpty(obj.Source)
+                    && obj.BuildMode != ShmoBuildMode.Release)
                 {
                     // ADR-035 — append the `:- public` declarations after the source,
                     // never prepend. ShmoCompiler collects visibility directives in a
@@ -867,29 +863,25 @@ public static class ShmoLinker
                     // debug build would slide the stop sites off the source the debugger
                     // opens. The appended directive lines carry no stop sites of their own.
                     var sb = new System.Text.StringBuilder();
-                    sb.Append(entrySource);
-                    if (entrySource.Length > 0 && entrySource[^1] != '\n') sb.Append('\n');
+                    sb.Append(obj.Source);
+                    if (obj.Source[^1] != '\n') sb.Append('\n');
                     foreach (var pr in promoted)
                         sb.Append(":- public ").Append(pr.Name).Append('/')
                           .Append(pr.Arity).Append(".\n");
-                    string augmented = sb.ToString();
-                    // Recompile augmented source so the bundled bytecode matches what
-                    // LoadBundle's ConsultString would produce on it. Without this the
-                    // precompiled-cache substitution at SetupQueryFromTerm would slot in
-                    // bytecode that still has the entry mangled. Recompile in the object's
-                    // own build mode so a Debuggable object keeps its debug-shape WAM (a
-                    // hardcoded Debug here would silently drop the debug codegen).
+                    // Recompile in the object's own build mode so a Debuggable object
+                    // keeps its debug-shape WAM (release under --strip, as above).
                     var recompiled = ShmoCompiler.CompileSource(
-                        augmented, obj.ModuleName,
+                        sb.ToString(), obj.ModuleName,
                         config.StripSource ? ShmoBuildMode.Release : obj.BuildMode);
-                    entrySource = config.StripSource ? "" : augmented;
                     entryBytecode = recompiled.Bytecode.Length > 0
                         ? recompiled.Bytecode : null;
+                    promotedToPublic = new HashSet<PredicateRef>(promoted);
+                    if (obj.BuildMode == ShmoBuildMode.Debuggable && !config.StripSource)
+                        entrySource = sb.ToString();
                 }
                 else if (promoted is not null && obj.ClauseTerms.Count > 0)
                 {
-                    // Source-STRIPPED (release) object: no source to augment,
-                    // but the ClauseTerms carry the raw static
+                    // Release object: its ClauseTerms carry the raw static
                     // clauses. Recompile from them with the local entry points
                     // added to the public set, so each promoted predicate gets
                     // a bare (un-mangled) head — callable by its plain name (a
@@ -953,11 +945,9 @@ public static class ShmoLinker
                 // dynamic functor with an empty clause list, and query
                 // setup emits the fail-only stub trampoline. A clauseless
                 // dynamic declaration adds no bytecode, so the entry's
-                // CompiledBytecode is untouched; source-carrying entries
-                // get the directive prepended so the ConsultString load
-                // path registers the same declaration.
+                // CompiledBytecode is untouched.
                 IReadOnlyList<ShmoDefinedPredicate> entryDefined = obj.Defined;
-                // Source-stripped entry-point promotion (above): mark the
+                // Entry-point promotion (above): mark the
                 // promoted predicates Public so LoadEntryFromBytecode registers
                 // them un-mangled, consistent with the recompiled bare-head
                 // bytecode.
@@ -978,13 +968,15 @@ public static class ShmoLinker
                         augmentedDefined.Add(new ShmoDefinedPredicate(
                             p, PredicateVisibility.Dynamic));
                     entryDefined = augmentedDefined;
-                    if (!string.IsNullOrEmpty(entrySource))
+                    // Appended, as the `:- public` lines are: a prepend would move
+                    // every clause off the lines its stop sites name.
+                    if (obj.BuildMode == ShmoBuildMode.Debuggable && entrySource.Length > 0)
                     {
-                        var dsb = new System.Text.StringBuilder();
+                        var dsb = new System.Text.StringBuilder(entrySource);
+                        if (entrySource[^1] != '\n') dsb.Append('\n');
                         foreach (var p in implicits)
                             dsb.Append(":- dynamic ").Append(p.Name).Append('/')
                                .Append(p.Arity).Append(".\n");
-                        dsb.Append(entrySource);
                         entrySource = dsb.ToString();
                     }
                 }
@@ -1006,10 +998,9 @@ public static class ShmoLinker
                     exports: obj.Exports,
                     imports: obj.Imports,
                     dialect: obj.Dialect,
-                    // Only a source-less entry needs its raw clauses (a
-                    // source-carrying one is re-consulted); --strip drops them.
-                    clauseTerms: config.StripSource || entrySource.Length > 0
-                        ? null : obj.ClauseTerms));
+                    // What clause/2 and listing/1 read of a module loaded from
+                    // its code, which every entry with code is; --strip drops them.
+                    clauseTerms: config.StripSource ? null : obj.ClauseTerms));
             }
             // Bake the precompiled prelude so a bare-loaded engine
             // (PrologEngine.FromBundle / the generated --exe) gets it without
@@ -1391,6 +1382,7 @@ public static class ShmoLinker
                 obj.ModuleName, obj.Source, rawAll, publicSet, dynamicSet,
                 new List<PredicateRef>(obj.EnsureLinked),
                 new List<QualifiedPredicateRef>(), obj.BuildMode, errors,
+                keepSource: !string.IsNullOrEmpty(obj.Source),
                 arityCompat: obj.ArityCompat,
                 operatorDefs: obj.Operators,   // preserve op/3 defs
                 flagSettings: obj.Flags,
@@ -1519,6 +1511,7 @@ public static class ShmoLinker
                 obj.ModuleName, obj.Source, rawAll, publicSet, dynamicSet,
                 new List<PredicateRef>(obj.EnsureLinked),
                 new List<QualifiedPredicateRef>(), obj.BuildMode, errors,
+                keepSource: !string.IsNullOrEmpty(obj.Source),
                 arityCompat: obj.ArityCompat,
                 operatorDefs: obj.Operators,
                 flagSettings: obj.Flags,
@@ -2007,6 +2000,7 @@ public static class ShmoLinker
             obj.ModuleName, obj.Source, rawAll, publicSet, dynamicSet,
             new List<PredicateRef>(obj.EnsureLinked),
             new List<QualifiedPredicateRef>(), obj.BuildMode, errors,
+                keepSource: !string.IsNullOrEmpty(obj.Source),
             arityCompat: obj.ArityCompat,
             operatorDefs: obj.Operators,
             flagSettings: obj.Flags,

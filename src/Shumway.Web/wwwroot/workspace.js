@@ -256,10 +256,13 @@ export async function openFiles(confirmReplace = async () => true) {
 /**
  * Reads the files the user picks. Falls back to an <input type=file> where the
  * picker does not exist, which every browser has — the difference is only that
- * saving cannot write back to the same file.
+ * saving cannot write back to the same file. The picker opens before this
+ * returns its promise, so a caller in a click handler calls it before any
+ * await of its own: a browser that wants a user's gesture to open a picker
+ * does not see one after an await.
  * @returns {Promise<Array<{name: string, text: string}>>} empty if dismissed
  */
-async function pickFiles() {
+export async function pickFiles() {
   const picked = [];
   if (canPickFiles()) {
     let handles;

@@ -487,3 +487,53 @@ Three ports the tracer lacked:
   an error nobody caught leaves nothing in the trace of the next one.
 
 Tests: `Adr035TracerTests`.
+
+## Amendment (2026-11-24): keeping the source does not make a module debuggable
+
+Until now only a debug build (`shumway-compile --debug`) kept a module's
+source in the bundle, and the loader recompiled that source whenever it was
+there:
+
+- outside a debug session, it recompiled a debug build, so the module ran as
+  normal code that can be promoted to Tier-1;
+- in a debug session, it recompiled a release build, so the debugger could
+  stop in it.
+
+Keeping the source and debugging were the same option. They are now
+separate. `shumway-compile --with-source` keeps the source with release code,
+and the loader decides by the kind of code in the bundle, not by whether the
+source is there:
+
+| Code in the bundle | In a debug session | Outside a debug session |
+|---|---|---|
+| Release, with or without source | loaded as is | loaded as is |
+| Debug, with source | loaded as is | recompiled from the source |
+| Debug, without source | loaded as is | loaded as is |
+
+Release code is never recompiled, so the debugger cannot stop in it; to debug
+a bundle, compile it with `--debug`. Debug code outside a debug session
+cannot be debugged and runs slower, so it is recompiled when its source is in
+the bundle. That source is the file the debug build compiled, so the result
+is the same program. A bundle that has only source and no compiled code is
+still loaded from the source.
+
+The linker changes accordingly:
+
+- The source of a release object is stored exactly as written.
+- The source of a debug object may be recompiled when the bundle loads, so
+  the linker appends what that recompile needs: `:- public` for the local
+  entry points it makes public, and `:- dynamic` for the empty dynamic
+  predicates of an Arity module. Both go at the end, so no line moves and the
+  debugger's stop sites still match the source. (The `:- dynamic` lines used
+  to go at the start.)
+- The local entry points of a release object are made public from its stored
+  clauses, not by recompiling its source: a module compiled with `--consult`
+  may not compile on its own.
+- A bundle entry that has its source now also keeps its clauses, which
+  `clause/2` and `listing/1` read.
+- `--strip` still turns a debug build into release code, so a bundle without
+  source has no source positions either.
+- `shumway-link --exe --debug` needs at least one module with debug code and
+  its source.
+
+Tests: `WithSourceBundleTests`.

@@ -106,7 +106,7 @@ internal static class CompileCli
     {
         Console.Error.WriteLine(
             $"shumway-compile: compiling {inputs.Count} file(s) via consult "
-            + $"[{opts.BuildMode.ToString().ToLowerInvariant()}]");
+            + $"[{ModeLabel(opts)}]");
         var errors = new List<ShmoCompileError>();
         List<(string ModuleName, ShmoObject Object, DateTime SourceTimeUtc, bool IsRoot)> objects;
         // Output is a directory: each module is named by its module name (a
@@ -117,7 +117,8 @@ internal static class CompileCli
             : System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(inputs[0])) ?? ".";
         try
         {
-            objects = ShmoViaConsult.CompileMany(inputs, opts.LibraryDirs, opts.BuildMode, errors);
+            objects = ShmoViaConsult.CompileMany(inputs, opts.LibraryDirs, opts.BuildMode, errors,
+                withSource: opts.WithSource);
         }
         catch (Exception ex)
         {
@@ -139,7 +140,7 @@ internal static class CompileCli
         foreach (var (moduleName, obj, srcTime, isRoot) in objects)
         {
             string path = System.IO.Path.Combine(dir, SanitizeFileName(moduleName) + ".shmo");
-            if (!isRoot && ShmoUpToDate(path, srcTime, opts.BuildMode))
+            if (!isRoot && ShmoUpToDate(path, srcTime, opts.BuildMode, opts.WithSource))
             {
                 Console.Error.WriteLine($"shumway-compile:   {moduleName}.shmo up to date, skipped");
                 continue;
@@ -154,18 +155,30 @@ internal static class CompileCli
     /// exists, is at least as new as the module's source, and was built in the
     /// same mode — never reuse a release object for a debug build (or vice
     /// versa). An unreadable / stale-format object regenerates.</summary>
-    private static bool ShmoUpToDate(string path, DateTime sourceTimeUtc, ShmoBuildMode mode)
+    private static bool ShmoUpToDate(string path, DateTime sourceTimeUtc, ShmoBuildMode mode,
+        bool withSource)
     {
         try
         {
             if (!System.IO.File.Exists(path)) return false;
             if (System.IO.File.GetLastWriteTimeUtc(path) < sourceTimeUtc) return false;
-            try { if (ShmoReader.ReadFromFile(path).BuildMode != mode) return false; }
+            try
+            {
+                var old = ShmoReader.ReadFromFile(path);
+                if (old.BuildMode != mode) return false;
+                // A release object made with or without its text is another build.
+                if (mode == ShmoBuildMode.Release && withSource == string.IsNullOrEmpty(old.Source))
+                    return false;
+            }
             catch { return false; }
             return true;
         }
         catch { return false; }
     }
+
+    private static string ModeLabel(Options opts)
+        => opts.BuildMode.ToString().ToLowerInvariant()
+           + (opts.WithSource && opts.BuildMode == ShmoBuildMode.Release ? ", with source" : "");
 
     private static string SanitizeFileName(string name)
     {
@@ -221,7 +234,7 @@ internal static class CompileCli
         ShmoBuildMode buildMode = opts.BuildMode;
         Console.Error.WriteLine(
             $"shumway-compile: compiling {input} -> {output} "
-            + $"[{buildMode.ToString().ToLowerInvariant()}]");
+            + $"[{ModeLabel(opts)}]");
         // Register-allocator design survey (ADR-021). Classifies every permanent
         // allocated while compiling this file (Class B = live only across inline
         // goals; Class A = crosses a real call, irreducible). Diagnostic.
@@ -231,7 +244,7 @@ internal static class CompileCli
         try
         {
             var result = ShmoCompiler.TryCompileFile(input, buildMode, maxErrors: 100,
-                arityCompat: opts.ArityCompat);
+                arityCompat: opts.ArityCompat, withSource: opts.WithSource);
             // Warnings (e.g. unknown directives under --arity) are
             // reported but never fail the compile.
             foreach (var warn in result.Warnings)
@@ -617,6 +630,7 @@ internal static class CompileCli
         public string OutputPath { get; set; } = "";
         public bool Verbose { get; set; }
         public ShmoBuildMode BuildMode { get; set; } = ShmoBuildMode.Release;
+        public bool WithSource { get; set; }
         public bool DumpWam { get; set; }
         public bool DumpIl { get; set; }
         public bool Regions { get; set; }
@@ -669,6 +683,10 @@ internal static class CompileCli
                 case "--release":
                 case "-r":
                     opts.BuildMode = ShmoBuildMode.Release;
+                    break;
+
+                case "--with-source":
+                    opts.WithSource = true;
                     break;
 
                 case "--dump-wam":
@@ -788,7 +806,10 @@ internal static class CompileCli
             + "                       directory (multiple inputs). Default: alongside each\n"
             + "                       input with the extension replaced.\n"
             + "  -r, --release        Build in release mode (default). The source text is\n"
-            + "                       not embedded in the .shmo.\n"
+            + "                       not embedded in the .shmo (but see --with-source).\n"
+            + "      --with-source    Keep the source in a release object. A bundle linked\n"
+            + "                       from it (without --strip) includes the source, but\n"
+            + "                       still runs the compiled code, like any release bundle.\n"
             + "  -d, --debug          Build a source-level DEBUGGABLE object: keeps the\n"
             + "                       source text AND bakes the debug-shape WAM (stop sites,\n"
             + "                       variable maps) so a bundle/exe built from it can be\n"
