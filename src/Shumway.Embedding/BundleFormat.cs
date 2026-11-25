@@ -138,7 +138,7 @@ public static class BundleFormat
         // what they hold (CompiledModuleCodec, TermCodec). By hand: a change
         // to any of them raises this, which BundleStampTests asks for when
         // the image of a fixed bundle changes.
-        Mix("wire form", 1);
+        Mix("wire form", 2);
         return h;
     }
 

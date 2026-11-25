@@ -131,6 +131,65 @@ public sealed partial class PrologEngine
         AttachBundle(bundle, System.IO.Path.GetDirectoryName(path), name);
     }
 
+    /// <summary>ADR-075, decision 6: attaches a library a bundle was linked
+    /// against, found next to the bundle or on the library search path. Each
+    /// predicate the bundle uses of it has to be offered; a dynamic one is
+    /// declared by the attach, and a static one's module is brought in.</summary>
+    internal void AttachLinkedLibrary(BundleDynamicLibrary library, string? bundleDir)
+    {
+        string? path = null;
+        if (bundleDir is not null)
+        {
+            string beside = System.IO.Path.Combine(bundleDir, library.Name + ".shum");
+            if (System.IO.File.Exists(beside)) path = System.IO.Path.GetFullPath(beside);
+        }
+        if (path is null && !TryResolveBundle(library.Name, out path))
+            throw new PrologRuntimeException(
+                "existence_error", "source_sink",
+                (object)new CompoundTerm("bundle", new Term[] { new AtomTerm(library.Name) }));
+        if (_attachedLibraryPaths.Add(path))
+            AttachBundle(BundleReader.ReadFromFile(path), System.IO.Path.GetDirectoryName(path), library.Name);
+        foreach (var use in library.Uses)
+        {
+            int bare = FunctorTable.Intern(AtomTable.Intern(use.Name, permanent: true).Id, use.Arity);
+            if (_dynStore.IsDynamic(use.Module.Length == 0 ? bare : MangleFunctor(use.Module, bare)))
+                continue;
+            if (AttachedDefinerOf(use) is not { } am)
+                throw new PrologRuntimeException(
+                    "existence_error", "procedure", (object)LibraryUseTerm(library.Name, use));
+            if (!am.CodeLoaded) BringInModule(am, null);
+        }
+    }
+
+    // The attached module that defines what a linked bundle uses: by its
+    // name, or in the module the use names.
+    private AttachedModule? AttachedDefinerOf(QualifiedPredicateRef use)
+    {
+        if (_attachedModules is null) return null;
+        if (use.Module.Length == 0)
+            return AttachedOwnerOf(FunctorTable.Intern(
+                AtomTable.Intern(use.Name, permanent: true).Id, use.Arity));
+        if (!_attachedModules.TryGetValue(use.Module, out var am)) return null;
+        foreach (var d in am.Entry.Defined)
+            if (d.Visibility != PredicateVisibility.Dynamic
+                && d.Indicator.Name == use.Name && d.Indicator.Arity == use.Arity)
+                return am;
+        return null;
+    }
+
+    // bundle(Library):Name/Arity, or bundle(Library):(Module:Name)/Arity.
+    private static Term LibraryUseTerm(string library, QualifiedPredicateRef use)
+    {
+        Term name = use.Module.Length == 0
+            ? new AtomTerm(use.Name)
+            : new CompoundTerm(":", new Term[] { new AtomTerm(use.Module), new AtomTerm(use.Name) });
+        return new CompoundTerm(":", new Term[]
+        {
+            new CompoundTerm("bundle", new Term[] { new AtomTerm(library) }),
+            new CompoundTerm("/", new Term[] { name, new IntTerm(use.Arity) }),
+        });
+    }
+
     /// <summary>Attaches a library: declares its modules, and brings in the
     /// ones with initialization goals, whose goals then run in the library's
     /// order (ADR-075, decision 10).</summary>

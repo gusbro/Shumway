@@ -4,9 +4,10 @@
 
 Proposed (2026-11-23). In implementation: attaching with
 `ensure_loaded(bundle(x))`, the modules brought in on demand (decisions 2,
-4, 7, 8 and 10), the clauses of a dynamic predicate (decision 9) and the
-reflection of decision 11 are in. The linker option and the record in the
-bundle (decisions 5 and 6) are not. Extends section 4
+4, 7, 8 and 10), the clauses of a dynamic predicate (decision 9), the
+reflection of decision 11, and the linker option with the record in the
+bundle (decisions 5 and 6) are in. The directive of decision 3 is not yet
+read by the linker: `--dynlib` is the way to link against a library. Extends section 4
 of [ADR-038](038-library-loading.md), which loads the dependencies a
 librarian archive leaves out, and builds on the amendment of 2026-11-23 to
 [ADR-056](056-private-predicates-stay-private.md).

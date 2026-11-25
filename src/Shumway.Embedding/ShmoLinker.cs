@@ -91,6 +91,12 @@ public static class ShmoLinker
         }
         AddEngineLibraries(config.Objects);
 
+        // ----- 0-dynlib. ADR-075, decision 5: what the dynamic libraries the
+        // inputs are linked against offer. Their modules count as provided,
+        // a call the inputs leave undefined is resolved against them, and
+        // what was used of each is recorded in the bundle.
+        var dynlib = new DynlibRegistry(config.DynamicLibraries);
+
         // ----- 0a. Library resolution (C-archive semantics) -----
         // Explicit .shmo objects always link; .shum library members are pulled
         // in on demand, FIFO, to satisfy otherwise-unresolved references
@@ -109,11 +115,12 @@ public static class ShmoLinker
         // libraries left unprovided, transitively (C-linker order: already-provided
         // inputs win, source compilation last).
         if (config.LibraryDirs.Count > 0)
-            linkInput = PullLibraryDirDeps(linkInput, config.LibraryDirs, Emit);
+            linkInput = PullLibraryDirDeps(linkInput, config.LibraryDirs, dynlib.Modules, Emit);
         var archived = new HashSet<string>();
         foreach (var lib in config.Libraries)
             foreach (var m in lib.Members)
                 archived.Add(m.ModuleName);
+        archived.UnionWith(dynlib.Modules);
         linkInput = PullShimDeps(linkInput, archived, out var shimsWithoutCode, Emit);
         AddEngineLibraries(linkInput);
 
@@ -147,7 +154,7 @@ public static class ShmoLinker
         // it builds each importer's full import table and recompiles it so the
         // bare calls mangle to Source$pred. Two-arg filtered imports were already
         // resolved from source at compile time and pass through untouched.
-        linkInput = ResolveImportAllDeps(linkInput, Emit);
+        linkInput = ResolveImportAllDeps(linkInput, dynlib.ExportsByModule, Emit);
 
         // ----- 0. cross-module meta-wrapper unfold (the LTO pass) -----
         // V4 .shmo objects carry their raw static clauses (ClauseTerms). Detect
@@ -487,6 +494,16 @@ public static class ShmoLinker
                     var target = new PredicateRef(qr.Name, qr.Arity);
                     if (!byModule.TryGetValue(qr.Module, out var qmod))
                     {
+                        if (dynlib.TryQualified(qr.Module, target)) continue;
+                        if (dynlib.Modules.Contains(qr.Module))
+                        {
+                            Emit(config.AllowUndefined ? LinkSeverity.Warning : LinkSeverity.Error,
+                                "missing_predicate",
+                                $"Qualified call {qr} from '{curMod}': '{qr.Module}' of a library "
+                                + $"linked against does not define {target}.", curMod);
+                            missing.Add(target);
+                            continue;
+                        }
                         Emit(config.AllowUndefined ? LinkSeverity.Warning : LinkSeverity.Error,
                             "missing_predicate",
                             $"Qualified call {qr} from '{curMod}' references a module "
@@ -541,6 +558,8 @@ public static class ShmoLinker
                         && foreignIndicators.Contains(
                             new PredicateRef(importSrc + "$" + edge.Name, edge.Arity)))
                         continue;
+                    // Imported from a module of a library linked against.
+                    if (dynlib.TryImport(importSrc, edge)) continue;
                 }
                 // 2) Global public namespace.
                 if (globalPublic.TryGetValue(edge, out var defMod))
@@ -562,6 +581,8 @@ public static class ShmoLinker
                 // 5) Prelude public? Always resolves. record the
                 //    indicator so --prune-prelude can bake only the reached set.
                 if (preludePublics.Contains(edge)) { preludeUsed.Add(edge); continue; }
+                // 5.5) Offered by a library linked against (ADR-075).
+                if (dynlib.TryGlobal(edge)) continue;
                 // 6) a META-marked edge from an Arity-
                 //    compiled module: defer the decision. If by the end
                 //    of the walk the target collected only such
@@ -1087,7 +1108,8 @@ public static class ShmoLinker
                 // any Arity module makes the whole program expect
                 // Arity call semantics at runtime (unknown=fail).
                 arityCompat: objects.Any(o => o.ArityCompat),
-                engineLibraries: engineLibraries);
+                engineLibraries: engineLibraries,
+                dynamicLibraries: dynlib.Record());
             // --with-compiled-il routes the bundle through
             // BundleWriter.ToBytes, which (under includeCompiledIl=true)
             // runs PersistedIlBuilder per entry to materialise IL for
@@ -1817,13 +1839,112 @@ public static class ShmoLinker
     /// search dirs and added, transitively. Convention: the library name is the
     /// module name. An unresolved dep is left for the reachability walk to report
     /// as a missing predicate.</summary>
+    /// <summary>ADR-075, decision 5: what the dynamic libraries a link is
+    /// made against offer, the library given first answering, and what the
+    /// link used of each, for the record in the bundle.</summary>
+    private sealed class DynlibRegistry
+    {
+        // A call by name: a public, and every predicate of a module without a
+        // module directive, its compiler helpers aside (ADR-056, amendment).
+        private readonly Dictionary<PredicateRef, string> _global = new();
+        // A call to Module:p reaches any predicate the module defines (ADR-056).
+        private readonly Dictionary<(string Module, PredicateRef Pred), string> _qualified = new();
+        // An import from a module with module/2 reaches its exports.
+        private readonly Dictionary<string, (string Library, HashSet<PredicateRef> Exports)> _exports =
+            new(StringComparer.Ordinal);
+        private readonly List<(string Name, HashSet<QualifiedPredicateRef> Uses)> _libraries = new();
+        private readonly Dictionary<string, HashSet<QualifiedPredicateRef>> _usesOf = new(StringComparer.Ordinal);
+
+        public readonly HashSet<string> Modules = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, IReadOnlyList<PredicateRef>> ExportsByModule = new(StringComparer.Ordinal);
+
+        public DynlibRegistry(IReadOnlyList<LinkDynamicLibrary> libraries)
+        {
+            foreach (var lib in libraries)
+            {
+                if (_usesOf.ContainsKey(lib.Name)) continue;
+                var uses = new HashSet<QualifiedPredicateRef>();
+                _libraries.Add((lib.Name, uses));
+                _usesOf[lib.Name] = uses;
+                foreach (var (module, qualified, defined, exports) in ModulesOf(lib.Library))
+                {
+                    if (!Modules.Add(module)) continue;
+                    if (qualified)
+                    {
+                        _exports[module] = (lib.Name, new HashSet<PredicateRef>(exports));
+                        ExportsByModule[module] = exports;
+                    }
+                    foreach (var d in defined)
+                    {
+                        _qualified.TryAdd((module, d.Indicator), lib.Name);
+                        if (d.Visibility == PredicateVisibility.Public
+                            || (!qualified && !IsCompilerHelper(d.Indicator)))
+                            _global.TryAdd(d.Indicator, lib.Name);
+                    }
+                }
+            }
+        }
+
+        private static IEnumerable<(string Module, bool Qualified, IReadOnlyList<ShmoDefinedPredicate> Defined,
+            IReadOnlyList<PredicateRef> Exports)> ModulesOf(Bundle library)
+        {
+            foreach (var e in library.Entries)
+                if (e.ModuleName != Prelude.ModuleName)
+                    yield return (e.ModuleName, e.IsExportQualified, e.Defined, e.Exports);
+            foreach (var member in library.ArchiveMembers)
+            {
+                var o = ShmoReader.FromBytes(member.ShmoBytes);
+                yield return (o.ModuleName, o.IsExportQualified, o.Defined, o.Exports);
+            }
+        }
+
+        private static bool IsCompilerHelper(PredicateRef p)
+            => PrologEngine.IsMetaHelperFunctorName(Shumway.Core.FunctorTable.Intern(
+                Shumway.Core.AtomTable.Intern(p.Name, permanent: true).Id, p.Arity));
+
+        private bool Use(string library, string module, PredicateRef p)
+        {
+            _usesOf[library].Add(new QualifiedPredicateRef(module, p.Name, p.Arity));
+            return true;
+        }
+
+        public bool TryGlobal(PredicateRef p)
+            => _global.TryGetValue(p, out var lib) && Use(lib, "", p);
+
+        public bool TryQualified(string module, PredicateRef p)
+            => _qualified.TryGetValue((module, p), out var lib) && Use(lib, module, p);
+
+        public bool TryImport(string module, PredicateRef p)
+            => _exports.TryGetValue(module, out var e) && e.Exports.Contains(p) && Use(e.Library, module, p);
+
+        /// <summary>Each library with what was used of it, in a stable order.</summary>
+        public IReadOnlyList<BundleDynamicLibrary> Record()
+        {
+            var record = new List<BundleDynamicLibrary>(_libraries.Count);
+            foreach (var (name, uses) in _libraries)
+            {
+                var sorted = new List<QualifiedPredicateRef>(uses);
+                sorted.Sort((a, b) =>
+                {
+                    int c = string.CompareOrdinal(a.Module, b.Module);
+                    if (c == 0) c = string.CompareOrdinal(a.Name, b.Name);
+                    return c != 0 ? c : a.Arity.CompareTo(b.Arity);
+                });
+                record.Add(new BundleDynamicLibrary(name, sorted));
+            }
+            return record;
+        }
+    }
+
     private static IReadOnlyList<ShmoObject> PullLibraryDirDeps(
         IReadOnlyList<ShmoObject> input,
         IReadOnlyList<string> libraryDirs,
+        IEnumerable<string> provided,
         Action<LinkSeverity, string, string, string?> emit)
     {
         var result = new List<ShmoObject>(input);
         var have = new HashSet<string>(result.Select(o => o.ModuleName));
+        have.UnionWith(provided);
         var queue = new Queue<ShmoObject>(result);
         while (queue.Count > 0)
         {
@@ -1920,12 +2041,16 @@ public static class ShmoLinker
     /// bare imported calls mangle to <c>Source$pred</c>.</summary>
     private static IReadOnlyList<ShmoObject> ResolveImportAllDeps(
         IReadOnlyList<ShmoObject> input,
+        IReadOnlyDictionary<string, IReadOnlyList<PredicateRef>> libraryExports,
         Action<LinkSeverity, string, string, string?> emit)
     {
         var exportsByModule = new Dictionary<string, IReadOnlyList<PredicateRef>>();
         foreach (var o in input)
             if (o.IsExportQualified)
                 exportsByModule[o.ModuleName] = o.Exports;
+        // A module of a dynamic library linked against (ADR-075).
+        foreach (var (module, exports) in libraryExports)
+            exportsByModule.TryAdd(module, exports);
         // An engine library that is an export-qualified module (ADR-038, second
         // amendment) has its surface in its baked bundle; a legacy one offers
         // bare publics and nothing to import.
@@ -2318,6 +2443,19 @@ public static class ShmoLinker
         bw.Write((uint)bundle.EngineLibraries.Count);
         foreach (var name in bundle.EngineLibraries)
             WriteString(bw, name);
+        // Dynamic-libraries trailer. Mirrors BundleWriter.ToBytes exactly.
+        bw.Write((uint)bundle.DynamicLibraries.Count);
+        foreach (var lib in bundle.DynamicLibraries)
+        {
+            WriteString(bw, lib.Name);
+            bw.Write((uint)lib.Uses.Count);
+            foreach (var use in lib.Uses)
+            {
+                WriteString(bw, use.Module);
+                WriteString(bw, use.Name);
+                bw.Write((uint)use.Arity);
+            }
+        }
         bw.Flush();
         // compress the body (everything after magic+version).
         return BundleFormat.FinalizeImage(ms.ToArray());

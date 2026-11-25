@@ -181,9 +181,35 @@ internal static class LinkCli
             }
         }
 
+        var dynamicLibraries = new List<LinkDynamicLibrary>();
+        foreach (string spec in opts.DynamicLibraries)
+        {
+            string? path = ResolveDynamicLibrary(spec, CollectLibraryDirs(opts.LibraryDirs));
+            if (path is null)
+            {
+                Console.Error.WriteLine(
+                    $"shumway-link: dynamic library '{spec}' not found: give its .shum, or its name "
+                    + "with the directory that holds it in -L.");
+                RemoveStaleOutputs(opts);
+                return ExitLinkError;
+            }
+            try
+            {
+                dynamicLibraries.Add(new LinkDynamicLibrary(
+                    System.IO.Path.GetFileNameWithoutExtension(path), BundleReader.ReadFromFile(path)));
+            }
+            catch (Exception ex) when (ex is System.IO.InvalidDataException or System.IO.IOException)
+            {
+                Console.Error.WriteLine($"shumway-link: dynamic library {path}: {ex.Message}");
+                RemoveStaleOutputs(opts);
+                return ExitLinkError;
+            }
+        }
+
         var config = new LinkConfig
         {
             Objects = objects,
+            DynamicLibraries = dynamicLibraries,
             EntryPoints = opts.EntryPoints,
             GoalCallRefs = goalCallRefs,
             GoalTermRefs = goalTermRefs,
@@ -433,6 +459,8 @@ internal static class LinkCli
         // ADR-038 --library-dir: directories searched to resolve a
         // use_module(library(X)) dependency not passed explicitly.
         public List<string> LibraryDirs { get; } = new();
+        // ADR-075 --dynlib: dynamic libraries to link against, files or names.
+        public List<string> DynamicLibraries { get; } = new();
     }
 
     private static Options? ParseArgs(string[] args)
@@ -483,6 +511,12 @@ internal static class LinkCli
                 case "-L":
                     if (++i >= args.Length) { ReportMissing(arg); return null; }
                     opts.LibraryDirs.Add(NormalizeLibDirArg(args[i]));
+                    break;
+
+                case "--dynlib":
+                case "-dl":
+                    if (++i >= args.Length) { ReportMissing(arg); return null; }
+                    opts.DynamicLibraries.Add(args[i]);
                     break;
 
                 case "--strip":
@@ -837,6 +871,20 @@ internal static class LinkCli
     // sitting next to the executables, so a program the REPL runs and
     // shumway-compile compiles must also link without being told where the
     // libraries are. Lowest precedence, so an explicit -L still wins.
+    // A --dynlib argument: a file, or a name found as name.shum in a library
+    // directory.
+    private static string? ResolveDynamicLibrary(string spec, List<string> libraryDirs)
+    {
+        if (System.IO.File.Exists(spec)) return System.IO.Path.GetFullPath(spec);
+        string file = spec.EndsWith(".shum", StringComparison.OrdinalIgnoreCase) ? spec : spec + ".shum";
+        foreach (string dir in libraryDirs)
+        {
+            string candidate = System.IO.Path.Combine(dir, file);
+            if (System.IO.File.Exists(candidate)) return System.IO.Path.GetFullPath(candidate);
+        }
+        return null;
+    }
+
     private static List<string> CollectLibraryDirs(List<string> flagged)
     {
         var dirs = new List<string>(flagged);
@@ -922,6 +970,11 @@ internal static class LinkCli
             + "                           use_module(library(X)) dependency not passed\n"
             + "                           explicitly (X.pl / X.shmo). Repeatable; also reads\n"
             + "                           SHUMWAY_LIBRARY_PATH.\n"
+            + "  -dl, --dynlib <lib>      Link against a library bundle without linking it in:\n"
+            + "                           calls the inputs leave undefined are looked up in it,\n"
+            + "                           and the bundle attaches it when it loads. A .shum\n"
+            + "                           file, or a name found as <lib>.shum in the -L\n"
+            + "                           directories. Repeatable.\n"
             + "      --consult            Compile .pl inputs THROUGH the consult pipeline\n"
             + "                           (directives + term/goal_expansion hooks run,\n"
             + "                           use_module dependencies load) instead of\n"

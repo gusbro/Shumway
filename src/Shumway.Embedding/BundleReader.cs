@@ -320,8 +320,25 @@ public static class BundleReader
         var engineLibraries = new List<string>((int)engineLibraryCount);
         for (uint i = 0; i < engineLibraryCount; i++)
             engineLibraries.Add(ReadLengthPrefixedUtf8(br));
+        // Dynamic-libraries trailer (ADR-075, decision 5).
+        uint dynamicLibraryCount = br.ReadUInt32();
+        var dynamicLibraries = new List<BundleDynamicLibrary>((int)dynamicLibraryCount);
+        for (uint i = 0; i < dynamicLibraryCount; i++)
+        {
+            string libName = ReadLengthPrefixedUtf8(br);
+            uint useCount = br.ReadUInt32();
+            var uses = new List<QualifiedPredicateRef>((int)useCount);
+            for (uint j = 0; j < useCount; j++)
+            {
+                string module = ReadLengthPrefixedUtf8(br);
+                string name = ReadLengthPrefixedUtf8(br);
+                uses.Add(new QualifiedPredicateRef(module, name, (int)br.ReadUInt32()));
+            }
+            dynamicLibraries.Add(new BundleDynamicLibrary(libName, uses));
+        }
         return new Bundle(entries, foreignAssemblies, snapshot, archiveMembers,
-            nativeLibraries, generatorVersion, arityCompat, wasmModules, engineLibraries);
+            nativeLibraries, generatorVersion, arityCompat, wasmModules, engineLibraries,
+            dynamicLibraries);
     }
 
     /// <summary>The section <see cref="BundleWriter.WriteInitializationGoals"/> writes.</summary>

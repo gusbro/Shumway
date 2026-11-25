@@ -220,6 +220,12 @@ public sealed class LinkConfig
     /// resort.</summary>
     public IReadOnlyList<string> LibraryDirs { get; init; } = Array.Empty<string>();
 
+    /// <summary>ADR-075, decision 5: the dynamic libraries the inputs are
+    /// linked against (<c>--dynlib</c>). A call the inputs leave undefined
+    /// is resolved against what each offers, in this order, and recorded in
+    /// the bundle; their code is not linked in.</summary>
+    public IReadOnlyList<LinkDynamicLibrary> DynamicLibraries { get; init; } = Array.Empty<LinkDynamicLibrary>();
+
     /// <summary>When <c>true</c>, bake the precompiled internal prelude into
     /// the bundle as a source-stripped <c>$prelude</c> entry (its WAM bytecode,
     /// and — under <see cref="IncludeCompiledIl"/> — its Tier-1 IL). A
@@ -250,6 +256,21 @@ public sealed class LinkConfig
     /// A library's predicates are reached by runtime-built goals the walk
     /// cannot see (suspended propagators, hooks), so nothing is dropped.</summary>
     public bool Library { get; init; }
+}
+
+/// <summary>A dynamic library to link against: the name the linked bundle
+/// finds it by when it loads, and the library bundle itself, whose entries
+/// (or archive members) say what each of its modules offers.</summary>
+public sealed class LinkDynamicLibrary
+{
+    public LinkDynamicLibrary(string name, Bundle library)
+    {
+        Name = name;
+        Library = library;
+    }
+
+    public string Name { get; }
+    public Bundle Library { get; }
 }
 
 /// <summary>One library input to <see cref="ShmoLinker.Link"/>: a

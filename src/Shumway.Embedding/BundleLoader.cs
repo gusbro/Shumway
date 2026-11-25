@@ -276,6 +276,11 @@ internal sealed class BundleLoader
         // bundle, before this bundle's code.
         foreach (var libName in bundle.EngineLibraries)
             E.UseEngineLibrary(libName);
+        // ADR-075, decision 6: the libraries the bundle was linked against are
+        // attached, what it uses of each is checked, and the modules that
+        // define it are brought in, before this bundle's code.
+        foreach (var library in bundle.DynamicLibraries)
+            E.AttachLinkedLibrary(library, bundleDir);
         // A shumway-lib librarian archive stores its modules as verbatim
         // .shmo objects (bundle.ArchiveMembers) rather than post-link
         // Entries. Derive a runnable entry from each — exactly the fields a

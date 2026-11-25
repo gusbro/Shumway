@@ -108,8 +108,8 @@ public sealed class BundleStampTests
     // it: a change to it changes the image, and the stamp has to be raised
     // by hand (BundleFormat.ComputeStamp, "wire form") before the two are
     // pinned again here.
-    private const ulong PinnedStamp = 0xF51E4568E8678861;
-    private const ulong PinnedImage = 0x69FE27EB4667F38C;
+    private const ulong PinnedStamp = 0xF51E4268E8678348;
+    private const ulong PinnedImage = 0xD13B8FADABB7C24C;
 
     // A bundle with one source-only entry and nothing compiled: every
     // section of the container, none of the compiler's output.

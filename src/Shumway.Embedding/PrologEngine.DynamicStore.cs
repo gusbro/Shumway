@@ -2826,7 +2826,7 @@ public sealed partial class PrologEngine
     /// <summary>Whether a functor names a MetaTransform helper
     /// (<c>[mod$]$disj_N</c> family) — the registry filter for
     /// <see cref="RegisterLateHelpers"/>.</summary>
-    private static bool IsMetaHelperFunctorName(int fid)
+    internal static bool IsMetaHelperFunctorName(int fid)
     {
         var (atomId, _) = Shumway.Core.FunctorTable.Lookup(fid);
         string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
