@@ -48,7 +48,7 @@ public sealed class BundleStampTests
         var whole = Assert.Throws<InvalidDataException>(() => BundleReader.FromBytes(bundle));
         var cut = Assert.Throws<InvalidDataException>(() => BundleReader.FromBytes(headerOnly));
         Assert.Contains("another format of compiled code", whole.Message);
-        Assert.Contains("Build it again", whole.Message);
+        Assert.Contains("Compile its source, or link it, again.", whole.Message);
         Assert.Equal(whole.Message, cut.Message);
     }
 

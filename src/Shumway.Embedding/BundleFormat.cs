@@ -150,7 +150,7 @@ public static class BundleFormat
         if (header.ReadUInt64() != Stamp)
             throw new InvalidDataException(
                 $"{what}: written with another format of compiled code than this runtime "
-                + "reads. Build it again: compile its source, or link it, with this version.");
+                + "reads. Compile its source, or link it, again.");
     }
 
     // ---- whole-body compression ------------------------------

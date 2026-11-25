@@ -592,9 +592,8 @@ fed by all of:
   `engine.AddDefaultLibraryDirectories()` for the shipped `lib/`).
 
 The first directory with either file answers. With both `X.pl` and `X.shum`
-in it, the bundle is the library when it was built by a version of Shumway
-with the same format of compiled code and is not older than the source; else
-the source is. Editing the source therefore loads the source until the
+in it, the bundle is the library when it is in the format of compiled code
+this Shumway reads and is not older than the source; else the source is. Editing the source therefore loads the source until the
 bundle is built again.
 
 A library without `:- module/2` defines predicates of `user`, whether it

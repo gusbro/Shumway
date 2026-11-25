@@ -294,9 +294,9 @@ the first bytes of the bundle. When the page cannot read a bundle:
 - if `x.pl` was not imported with it, the library cannot be used. The page
   says so, and you need to import a bundle in the current format.
 
-The same applies to the bundles stored in the page, if a later version of the
-page uses a different format: a library with its `.pl` file is compiled
-again once, and a library imported only as a bundle has to be imported again.
+The same applies to the bundles stored in the page when the page changes to
+another format: a library with its `.pl` file is compiled again once, and a
+library imported only as a bundle has to be imported again.
 
 ### Sources are sources
 
