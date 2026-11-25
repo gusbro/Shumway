@@ -111,8 +111,13 @@ from one that is busy.
 **Open** brings files from your computer into the workspace. It is also how you
 pick up an edit you made to one of them elsewhere: open it again and the newer
 text comes in. If the copy here differs, you are asked which of the two to
-keep. Whatever you were editing is saved before the picker opens, so choosing
-either one costs you nothing.
+keep. The file you were editing is saved before the opened files are added,
+so you lose nothing whichever copy you keep.
+
+**Consult** loads the file on screen. It only works for Prolog files: `.pl`,
+`.pro`, `.prolog`, or a name without an extension. A workspace can also hold
+other files, such as data that a program reads or code in another language.
+For those files the button is disabled, and you load them from a query.
 
 The `examples` workspace comes back whenever it is missing, so deleting it and
 reloading the page is how you ask for a fresh copy. On later visits the
@@ -130,9 +135,12 @@ over.
 
 ### Importing
 
-Two ways in:
+There are three ways to import:
 
 - **Import folder…**: a folder from your computer.
+- **Import files…**: files from your computer. Either an archive of a
+  collection (`.zip`, `.tar.gz`, `.tgz` or `.tar`), or the files of a
+  collection (`.pl`, `.pro`, `.prolog`, `.shum`), selected together.
 - **Import from URL…**: one of these.
   - A GitHub directory address, the one you get by navigating there and
     copying the bar. Scryer's, SWI's and Trealla's are offered, so borrowing
@@ -142,8 +150,10 @@ Two ways in:
     from anywhere else it is a file. The site must let pages of other sites
     read its files (CORS); a site that does not is named in the error. A
     directory that holds the whole archive, as a release's does, is not part
-    of the libraries' names. An archive may bring a library compiled ahead,
-    beside its source (below).
+    of the libraries' names.
+
+Any of them can include libraries that are already compiled (see
+[Collections with compiled libraries](#collections-with-compiled-libraries)).
 
 What you import is a **collection**, not a library. Scryer's `lib/` is one
 folder and about sixty libraries: every `x.pl` in it is `library(x)`. A
@@ -236,17 +246,18 @@ The mark and its reason survive a reload, which is when it matters: the batch
 that found out runs once, at import. A library recompiled cleanly loses the
 mark, since the record describes the *last* compile.
 
-### An archive that brings its libraries compiled
+### Collections with compiled libraries
 
-Whoever publishes a collection can compile a library ahead and put the bundle
-in the archive beside its source, `x.shum` next to `x.pl`. The import puts it
-where the page's own compile of the library would go, so the library loads
-from it the first time it is used and nothing is compiled. This is what a
-large library wants: one that takes half a minute to compile in the browser
-loads in a few seconds.
+If you publish a collection, you can compile a library in advance and include
+the compiled file, `x.shum`, in the collection. It can sit next to the
+library's source `x.pl`, or be there without it. The page uses that file the
+first time the library is loaded, so nothing is compiled in the browser. This
+matters for large libraries: one that takes half a minute to compile in the
+browser loads in a few seconds.
 
-The bundle is made with the linker, with the WebAssembly modules and without
-the bundle's own compression, which the browser's runtime cannot read:
+Build the bundle with the linker. It needs the WebAssembly modules (`--wasm`)
+and must not be compressed (`--no-compress`), because the browser's runtime
+cannot read the bundle's own compression:
 
 ```
 shumway-link --library --wasm --no-compress -o x.shum x.pl
@@ -259,14 +270,33 @@ the way the page compiles it. Its initialization goals then run once, when it
 is linked, and the bundle holds what they leave: a value they take from the
 machine, such as a temporary directory, is that machine's.
 
-The archive's compression does the work: a bundle of 93 MB is 8 MB in a
-`.tar.gz`. The source has to be there too. A bundle is good for every version
-of Shumway with the same format of compiled code, and says which in its first
-bytes. One of another format is left out at the import, and the library
-compiles from its source the first time it is used, as any library of the
-collection does. The same happens later, when the page is updated to a
-version with another format: the stored bundle is dropped and the library
-compiles once.
+**A bundle without its `.pl` file.** If you import `x.shum` without `x.pl`,
+the library is listed as compiled, with no source file. If the bundle itself
+contains the library's source, the page saves that source as `x.pl` next to
+the bundle, and you can open it like any other library source. To put the
+source in the bundle, compile the library with `--with-source` first and link
+the result without `--strip`:
+
+```
+shumway-compile --with-source x.pl
+shumway-link --library --wasm --no-compress -o x.shum x.shmo
+```
+
+For a library compiled with `--consult`, add `--with-source` to that compile
+and link the `.shmo` files it writes.
+
+**A bundle in another format.** A bundle works with every version of
+Shumway that uses the same format of compiled code. The format is written in
+the first bytes of the bundle. When the page cannot read a bundle:
+
+- if `x.pl` was imported with it, the page ignores the bundle and compiles
+  the library from `x.pl` the first time it is used;
+- if `x.pl` was not imported with it, the library cannot be used. The page
+  says so, and you need to import a bundle in the current format.
+
+The same applies to the bundles stored in the page, if a later version of the
+page uses a different format: a library with its `.pl` file is compiled
+again once, and a library imported only as a bundle has to be imported again.
 
 ### Sources are sources
 

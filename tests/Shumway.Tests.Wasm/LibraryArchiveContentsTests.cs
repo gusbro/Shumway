@@ -88,12 +88,13 @@ public class LibraryArchiveContentsTests
     }
 
     [Fact]
-    public void AnArchiveOfBundlesAlone_HasNoCollectionToImport()
+    public void AnArchiveOfBundlesAlone_IsACollection()
     {
         byte[] archive = Zip(new[] { ("carried.shum", Compiled()) });
 
-        var refused = Assert.Throws<InvalidDataException>(() => LibraryArchive.Read(archive));
+        var contents = LibraryArchive.Read(archive);
 
-        Assert.Contains("no Prolog sources", refused.Message);
+        Assert.Empty(contents.Sources);
+        Assert.Equal("carried.shum", Assert.Single(contents.Bundles).Path);
     }
 }

@@ -215,6 +215,7 @@ internal static partial class WebShumwayApp
                         json.WriteStartObject();
                         json.WriteString("path", path);
                         json.WriteString("bundle", id);
+                        json.WriteBoolean("current", BundleReader.IsCurrent(bytes));
                         json.WriteEndObject();
                     }
                     json.WriteEndArray();
@@ -261,6 +262,36 @@ internal static partial class WebShumwayApp
                 return (string?)null;
             }
             catch (Exception ex) { return ex.Message; }
+        });
+
+    /// <summary>Whether the first bytes of a bundle say this engine reads it:
+    /// a bundle of another format of compiled code is one an earlier or a
+    /// later version of Shumway wrote.</summary>
+    [JSExport]
+    internal static Task<bool> LibraryBundleIsCurrent(
+        [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] head)
+        => Task.FromResult(BundleReader.IsCurrent(head));
+
+    /// <summary>Writes beside a library that came as its bundle alone the
+    /// source the bundle carries of it (<see cref="Shumway.WebHost.LibraryArchive.SourceOfBundle"/>),
+    /// where it can be read as any library's source, and where the library
+    /// compiles from when the bundle cannot be read any more. True when it
+    /// wrote one; never over a source that is there.</summary>
+    [JSExport]
+    internal static Task<bool> LibraryWriteBundleSource(string name, string library)
+        => OnLibraries(() =>
+        {
+            string root = ResolveLibrary(name);
+            string bundle = Path.Combine(root, library + ".shum");
+            string source = Path.Combine(root, SourceDir, library + ".pl");
+            if (!File.Exists(bundle) || File.Exists(source)) return false;
+            if (Shumway.WebHost.LibraryArchive.SourceOfBundle(File.ReadAllBytes(bundle), library) is not { } text)
+                return false;
+            Directory.CreateDirectory(Path.GetDirectoryName(source)!);
+            File.WriteAllText(source, text);
+            // Older than the bundle, which stays what library(X) loads.
+            File.SetLastWriteTimeUtc(source, File.GetLastWriteTimeUtc(bundle).AddSeconds(-1));
+            return true;
         });
 
     /// <summary>A file the engine sees, base64-encoded: an archive or a source
@@ -723,12 +754,24 @@ internal static partial class WebShumwayApp
         {
             string root = ResolveLibrary(name);
             string sources = Path.Combine(root, SourceDir);
-            if (!Directory.Exists(sources)) return "";
-            var entries = Directory.GetFiles(sources, "*.pl", SearchOption.TopDirectoryOnly)
-                .Select(Path.GetFileNameWithoutExtension)
-                .Where(n => !string.IsNullOrEmpty(n))
-                .OrderBy(n => n, StringComparer.Ordinal)
-                .Select(n => DescribeEntry(root, n!));
+            var withSource = Directory.Exists(sources)
+                ? Directory.GetFiles(sources, "*.pl", SearchOption.TopDirectoryOnly)
+                    .Select(Path.GetFileNameWithoutExtension)
+                    .Where(n => !string.IsNullOrEmpty(n))
+                    .Select(n => n!)
+                    .ToHashSet(StringComparer.Ordinal)
+                : new HashSet<string>(StringComparer.Ordinal);
+            // A library that came as its bundle alone: what it loads from is
+            // there, and nothing to compile it from.
+            var alone = Directory.Exists(root)
+                ? Directory.GetFiles(root, "*.shum", SearchOption.TopDirectoryOnly)
+                    .Select(Path.GetFileNameWithoutExtension)
+                    .Where(n => !string.IsNullOrEmpty(n) && !withSource.Contains(n!))
+                    .Select(n => n!)
+                : Enumerable.Empty<string>();
+            var entries = withSource.Select(n => DescribeEntry(root, n))
+                .Concat(alone.Select(n => $"{n}\tbundle"))
+                .OrderBy(line => line, StringComparer.Ordinal);
             return string.Join('\n', entries);
         });
 
@@ -835,7 +878,9 @@ internal static partial class WebShumwayApp
     /// The page drops from its storage what is not put back, and the library
     /// compiles again when it is used. Bytes, not base64: every page load
     /// restores every stored bundle, and decoding strings of tens of
-    /// megabytes held the page up.</summary>
+    /// megabytes held the page up. Also how a folder or files picked on this
+    /// computer bring a library compiled ahead: <paramref name="library"/> is
+    /// then its path in the collection, which may name a directory.</summary>
     [JSExport]
     internal static Task<string?> LibraryPutBundle(
         string name, string library, [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] bundle)
@@ -844,11 +889,13 @@ internal static partial class WebShumwayApp
             try
             {
                 if (!BundleReader.IsCurrent(bundle)) return "not a bundle of this format";
+                foreach (string segment in library.Split('/'))
+                    if (segment.Length == 0 || segment == "..") return "not a path inside the collection";
                 string root = ResolveLibrary(name);
-                Directory.CreateDirectory(root);
                 // Moved into place, as a compile's is: a query may be
                 // looking for library(X) while this writes.
                 string target = Path.Combine(root, library + ".shum");
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                 string partial = target + ".partial";
                 File.WriteAllBytes(partial, bundle);
                 File.Move(partial, target, overwrite: true);

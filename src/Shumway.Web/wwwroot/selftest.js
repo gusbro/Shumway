@@ -592,6 +592,82 @@ export async function run(session, emit, out, editor, workspace) {
     await libraries.remove(collection);
   }
 
+  // A folder from this computer brings each library compiled ahead beside its
+  // source, as an archive does: the library is compiled the moment it lands,
+  // and loads from its bundle. One of another format is left out, and its
+  // library compiles from its source when it is used.
+  {
+    const made = 'selftest_ahead_src';
+    const collection = 'selftest_ahead';
+    for (const c of [made, collection]) { await libraries.remove(c); await libraries.forget(c); }
+    const text = ':- module(lib_ahead, [ahead/1]).\nahead(42).\n';
+    await libraries.create(made, '');
+    await libraries.write(made, 'lib_ahead.pl', text);
+    check('a library to bring is compiled', await libraries.compile(made, 'lib_ahead'), null);
+    const base64 = await session.exports().LibraryBundle(made, 'lib_ahead');
+    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+    await libraries.remove(made);
+    await libraries.forget(made);
+
+    const files = await libraries.folderFiles([
+      { path: 'lib_ahead.pl', file: new Blob([text]) },
+      { path: 'lib_ahead.shum', file: new Blob([bytes]) },
+      { path: 'lib_stale.pl', file: new Blob([':- module(lib_stale, [stale/1]).\nstale(7).\n']) },
+      { path: 'lib_stale.shum', file: new Blob([new Uint8Array([1, 2, 3, 4])]) },
+      { path: 'README.md', file: new Blob(['not a library']) },
+    ]);
+    check('the folder gives its sources and its bundles',
+          files.map((f) => `${f.path}:${libraries.compiledAhead(f)}`).join(' '),
+          'lib_ahead.pl:false lib_ahead.shum:true lib_stale.pl:false lib_stale.shum:true');
+    check('and it imports', await libraries.importFolder(collection, '', files), null);
+    const listed = Object.fromEntries(
+      (await libraries.entries(collection)).map((e) => [e.name, e.state]));
+    check('the library it brought compiled is compiled', listed.lib_ahead, 'compiled');
+    check('one of another format is left out', listed.lib_stale, 'source');
+    check('and the first loads from its bundle',
+          await solutions('use_module(library(lib_ahead)), ahead(X).'), 'X = 42');
+    check('and the other from its source',
+          await solutions('use_module(library(lib_stale)), stale(X).'), 'X = 7');
+    await libraries.remove(collection);
+    await libraries.forget(collection);
+
+    // Picked file by file, the same files make the same collection, named
+    // after its source.
+    const loose = await libraries.collectionOfFiles([
+      new File([text], 'lib_ahead.pl'), new File([bytes], 'lib_ahead.shum')]);
+    check('files picked together make a collection',
+          `${loose.name}: ${loose.files.map((f) => `${f.path}:${libraries.compiledAhead(f)}`).join(' ')}`,
+          'lib_ahead: lib_ahead.pl:false lib_ahead.shum:true');
+    const refused = async (chosen) => {
+      try { await libraries.collectionOfFiles(chosen); return 'taken'; }
+      catch (ex) { return ex.message; }
+    };
+    check('an archive with other files is refused',
+          await refused([new File([bytes], 'a.tar.gz'), new File([text], 'lib_ahead.pl')]),
+          'pick one archive, or the files of a collection, not both');
+
+    // A bundle may come alone. It is listed as compiled with no source, and
+    // it loads; one of another format alone could not, and is refused.
+    const alone = await libraries.collectionOfFiles([new File([bytes], 'lib_ahead.shum')]);
+    check('a bundle alone makes a collection', `${alone.name}: ${alone.files.length}`, 'lib_ahead: 1');
+    check('and this engine reads it', libraries.unreadable(alone.files).join(' '), '');
+    check('and it imports', await libraries.importFolder(collection, '', alone.files), null);
+    check('it is listed as compiled, with no source',
+          (await libraries.entries(collection)).map((e) => `${e.name} ${e.state} ${e.compiled} ${e.source}`).join(' | '),
+          'lib_ahead bundle true false');
+    check('no source is made up for it', await libraries.read(collection, 'lib_ahead.pl'), null);
+    check('and it loads',
+          await solutions('use_module(library(lib_ahead)), ahead(X).'), 'X = 42');
+    await libraries.remove(collection);
+    await libraries.forget(collection);
+    const staleAlone = await libraries.collectionOfFiles([new File([new Uint8Array(32)], 'lib_old.shum')]);
+    check('one this engine cannot read, alone, is named',
+          libraries.unreadable(staleAlone.files).join(' '), 'lib_old.shum');
+    check('but not with its source',
+          libraries.unreadable((await libraries.collectionOfFiles([
+            new File([new Uint8Array(32)], 'lib_old.shum'), new File([text], 'lib_old.pl')])).files).join(' '), '');
+  }
+
   // --- the file bar ---------------------------------------------------------
   // It is ONE row however many files there are. A wrapping list of forty chips
   // pushes the editor off the screen, and the editor is what you came for.
@@ -660,6 +736,25 @@ export async function run(session, emit, out, editor, workspace) {
           await until(async () => !(await workspace.list()).includes('selftest_doomed.pl')), true);
     check('leaving another file open',
           await until(async () => (await workspace.list()).includes(open())), true);
+
+    // A file that is not a Prolog source is in the workspace like any other,
+    // and Consult is off while it is on screen: a query loads it its own way.
+    const consultButton = document.getElementById('consult');
+    check('Consult is on for a Prolog source', consultButton.disabled, false);
+    document.getElementById('new-file').click();
+    document.getElementById('prompt-input').value = 'selftest_other.lgt';
+    press(promptDialog, 'Create');
+    await closed(promptDialog);
+    check('a file of another language opens',
+          await until(() => open() === 'selftest_other.lgt'), true);
+    check('and Consult is off for it', await until(() => consultButton.disabled), true);
+    document.getElementById('delete-file').click();
+    await until(() => confirmDialog.open);
+    press(document.getElementById('confirm-actions'), 'Delete');
+    await closed(confirmDialog);
+    check('and on again for the file after it',
+          await until(async () => !(await workspace.list()).includes('selftest_other.lgt')
+                                  && !consultButton.disabled), true);
 
     // A library source opens beside the workspace's files and stays there: a
     // chip to come back to, several at once, and the button closes it instead
