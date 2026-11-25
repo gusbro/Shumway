@@ -283,8 +283,8 @@ compiled code, and says which in its first bytes. One of another format that
 comes with its library's source is left out at the import, and the library
 compiles from its source the first time it is used, as any library of the
 collection does. One that comes alone cannot be used, and the import says so:
-bring the bundle built for this version. The same holds later, when the page
-is updated to a version with another format: a stored bundle with its source
+bring the bundle built in this format. The same holds later, if the page is
+updated to a version with another format: a stored bundle with its source
 is dropped and the library compiles once; one without is dropped, and the
 page says that the library has to be imported again.
 

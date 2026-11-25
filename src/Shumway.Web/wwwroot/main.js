@@ -878,12 +878,12 @@ document.getElementById('libraries').addEventListener('click', async () => {
  *  by both ways in — where the files came from stops mattering here. */
 async function adoptCollection(files, { name: suggestedName, dialect = '', from, source = '' }) {
   // A bundle this engine cannot read, with no source to compile its library
-  // from, is a library that could not load: the one for this version is
-  // what to bring.
+  // from, is a library that could not load: one in this format is what to
+  // bring.
   const stale = libraries.unreadable(files);
   if (stale.length > 0) {
-    emit(`% ${nameList(stale)}: written by another version of Shumway, which this one cannot read.`
-       + ' Import the bundle built for this version, or the library\'s source with it.\n', 'error');
+    emit(`% ${nameList(stale)}: in another format of compiled code than this Shumway reads.`
+       + ' Import the bundle built in this format, or the library\'s source with it.\n', 'error');
     return;
   }
   const compiled = files.filter(libraries.compiledAhead).length;
@@ -1838,9 +1838,9 @@ const restored = await workspace.restoreAll();
 const storedLibs = await libraries.restoreSources();
 const bundlesBack = libraries.restoreBundles(storedLibs,
   (collection, library) => startup.step(`Bringing back library(${library}) of ${collection}`),
-  // Came as its bundle alone, and this version of Shumway cannot read it.
-  (collection, library) => emit(`% library(${library}) of ${collection} was compiled by another`
-    + ' version of Shumway, which this one cannot read: import it again\n', 'error'));
+  // Came as its bundle alone, in a format this Shumway does not read.
+  (collection, library) => emit(`% library(${library}) of ${collection} is in another format`
+    + ' of compiled code than this Shumway reads: import it again, built in this format\n', 'error'));
 bundlesBack.then(() => {
   if (storedLibs.length > 0) emit(`% ${storedLibs.length} library(ies) restored\n`, 'note');
 });
