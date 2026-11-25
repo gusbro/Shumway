@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Shumway.Compiler.Il;
 using Shumway.Compiler.Wam;
 using Shumway.Core;
 using Shumway.Embedding;
@@ -155,7 +156,17 @@ public static class WasmBundleTier
         var member = module.Members[0];
         int fid = FunctorTable.Intern(AtomTable.Intern(member.Name, permanent: true).Id, member.Arity);
         var portable = new WasmPortableNames(engine);
-        wasm.HoldBakedSnapshot(fid, module.SnapshotDigest, (snapshot, address) =>
+        wasm.HoldBakedSnapshot(fid, module.SnapshotDigest, SnapshotInstaller(wasm, world, module, fid, portable));
+        return (Array.Empty<int>(), $"the snapshot of {member.Name}/{member.Arity} is held");
+    }
+
+    // Installs a snapshot's module over the shadow region an engine gave the
+    // predicate: given the snapshot's bytecode and that address, the delegate,
+    // or null when the module does not fit that code.
+    private static Func<CompiledPredicate, int, PredicateDelegate?> SnapshotInstaller(
+        WasmPromotionStore wasm, IWasmExecutionWorld world, WasmRelocatableModule module, int fid,
+        WasmPortableNames portable)
+        => (snapshot, address) =>
         {
             if (!module.TryResolve(new EngineWasmCompileEnv(),
                     f => f == fid ? address : -1,
@@ -173,8 +184,51 @@ public static class WasmBundleTier
                 return null;
             }
             return new WasmTierDelegate(fid, world).Invoke;
+        };
+
+    /// <summary>Compiles the snapshot of a dynamic predicate away from the
+    /// engine's thread (ADR-054, amendment): the shape of
+    /// <see cref="WasmPromotionStore.SnapshotCompiler"/>. Called on the
+    /// engine's thread with the snapshot the predicate has now;
+    /// <paramref name="run"/> takes the compile to wherever the host compiles
+    /// aside, and <paramref name="done"/> is called from there with what
+    /// installs the module (as a bundle's snapshot is installed), or with
+    /// why there is none. The module is compiled from the snapshot's own
+    /// bytecode, which is linked nowhere: it names no address and no module
+    /// id, so it fits whatever shadow region the predicate has when the
+    /// module is installed, and the next one after the code space is built
+    /// again.</summary>
+    public static void CompileSnapshotAside(PrologEngine engine, IWasmExecutionWorld world,
+        CompiledPredicate snapshot, string digest,
+        Action<Func<CompiledPredicate, int, PredicateDelegate?>?, string?> done, Action<Action> run)
+    {
+        var store = engine.IlPromotion;
+        var wasm = store.Wasm
+            ?? throw new InvalidOperationException("the engine has no wasm store");
+        int fid = snapshot.FunctorId;
+        var portable = new WasmPortableNames(engine).Loaded();
+        // The literals by value, taken with the snapshot on this thread: the
+        // pools may be swept while the module compiles.
+        var member = new WasmGroupMember(snapshot, SnapshotBakeBase,
+            snapshot.LiteralView is { } floats ? floats.FloatView : store.FloatPoolProvider?.Invoke(fid),
+            snapshot.LiteralView is { } images ? images.ImageView : store.ImagePoolProvider?.Invoke(fid));
+        run(() =>
+        {
+            try
+            {
+                string? refusal = null;
+                var module = WasmRelocatableModule.BakeCompilable(new[] { member },
+                    new EngineWasmCompileEnv(), (_, why) => refusal = why, null, portable.ToPortable);
+                if (module.Members.Count == 0)
+                    done(null, refusal ?? "the compiler refused it");
+                else
+                    done(SnapshotInstaller(wasm, world, module.AsSnapshot(digest), fid, portable), null);
+            }
+            catch (Exception e)
+            {
+                done(null, e.Message);
+            }
         });
-        return (Array.Empty<int>(), $"the snapshot of {member.Name}/{member.Arity} is held");
     }
 
     // No IL promotion in the baking engine: its work would be wasted, and

@@ -194,3 +194,34 @@ baked; it is installed at the first call with a promoter that would throw; a
 mutation retires it and the bake is not used again; a consult between two
 goals has it installed again; an engine whose clauses are others does not
 use it; bundles off and on. `BakedDynamicHelpersTests` covers the helpers.
+
+## Amendment (2026-11-25): a snapshot is compiled in the background
+
+When a dynamic predicate became hot, its snapshot was compiled to
+WebAssembly on the engine's thread, inside the goal that called it. For a
+table of hundreds of clauses that stopped the goal for seconds.
+
+A host can now give the store a compiler that runs elsewhere
+(`WasmPromotionStore.SnapshotCompiler`). The page runs it on a pool thread.
+With one:
+
+- the snapshot is taken on the engine's thread and handed to the compiler,
+  and the predicate keeps running its bytecode;
+- when the module is ready it is held as a bundle's snapshot is, and
+  installed at the predicate's next call, over the same bytecode it was
+  compiled from;
+- if the predicate changes while the module compiles, the module is
+  dropped;
+- the module does not depend on any address, so after the code space is
+  built again it is installed again with no new compile;
+- while its snapshot is compiling or waiting, the predicate is not laid out
+  again for being hot: its calls are about to leave the bytecode, and under
+  the wasm tier a new layout is a layout of the whole program.
+
+Without a compiler (the desktop, the tests) the snapshot is compiled where
+the predicate is called, as before.
+
+On the page, with Logtalk attached and the goals paced, the query that made
+a snapshot of a large table went from 2.4 s to 0.5 s.
+
+Tests: `SnapshotCompiledAsideTests`.

@@ -183,6 +183,13 @@ public sealed partial class PrologEngine
     internal readonly HashSet<int> _snapshotStaleFids = new();
 
     internal DynamicShadow BuildShadowSnapshot(Activation engine, int fid)
+        => BuildShadowSnapshot(engine, fid, null);
+
+    /// <summary>The same over <paramref name="taken"/>, a snapshot of the
+    /// predicate already built from the clauses it still has: a module
+    /// compiled from it aside is installed over this very bytecode.</summary>
+    internal DynamicShadow BuildShadowSnapshot(Activation engine, int fid,
+        Shumway.Compiler.Wam.CompiledPredicate? taken)
     {
         // Its float literals would be read from the bundle's pool, and the
         // snapshot is compiled against the engine's.
@@ -192,7 +199,7 @@ public sealed partial class PrologEngine
             || engine.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap
             || engine.SwitchTables is not { } switchTables)
             return new DynamicShadow(null, 0);
-        var snap = BuildDynamicSnapshot(fid);
+        var snap = taken ?? BuildDynamicSnapshot(fid);
         if (snap is null) return new DynamicShadow(null, 0);
 
         var (atomId, arity) = FunctorTable.Lookup(fid);

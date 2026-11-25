@@ -878,6 +878,11 @@ public sealed partial class IlPromotionStore
     /// code space for the wasm tier (<see cref="WasmPromotionStore"/>).</summary>
     internal Func<Activation, int, DynamicShadow>? ShadowSnapshotProvider { get; set; }
 
+    /// <summary>The shadow region of a snapshot already taken
+    /// (<see cref="DynamicSnapshotProvider"/>), while the predicate has the
+    /// clauses it was taken from.</summary>
+    internal Func<Activation, int, CompiledPredicate, DynamicShadow>? ShadowOfSnapshotProvider { get; set; }
+
     /// <summary>The digest of a dynamic predicate's clauses
     /// (<see cref="PrologEngine.DynamicClauseDigest"/>), for a baked snapshot
     /// the wasm tier holds.</summary>

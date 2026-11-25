@@ -1285,6 +1285,13 @@ internal static class BrowserWasmTier
                     $"% compiling {n} predicates to WebAssembly...\n");
             },
         };
+        // A dynamic predicate's snapshot compiles on a pool thread, and the
+        // predicate runs its bytecode until the module is there: compiled
+        // where it is called, a table of hundreds of clauses stopped the
+        // goal for seconds (ADR-054, amendment).
+        store.Wasm.SnapshotCompiler = (snapshot, digest, done) =>
+            WasmBundleTier.CompileSnapshotAside(engine, world, snapshot, digest, done,
+                work => Task.Run(work));
         // A relink moved predicates out from under their modules: their rows
         // go to zero (a marker of theirs falls back to bytecode) and the
         // baked callers of each go with it. The modules stay: a re-promotion
@@ -2236,6 +2243,12 @@ internal static partial class WebShumwayApp
                           + (w.BakedSnapshotsHeld > 0
                               ? $", {w.BakedSnapshotsHeld} of a bundle not called yet" : "")
                           + "\n"
+                        : "")
+                    + (w.SnapshotCompilesRequested > 0
+                        ? $"%   snapshots compiled aside: {w.SnapshotCompilesRequested} asked for "
+                          + $"({w.SnapshotTakeTicks * 1000.0 / Stopwatch.Frequency:F0} ms to take them), "
+                          + $"{w.CompiledSnapshotInstalls} installed "
+                          + $"({w.SnapshotInstallTicks * 1000.0 / Stopwatch.Frequency:F0} ms)\n"
                         : "")
                     + $"%   promoted ({promoted.Count}"
                     + (folded.Count > 0 ? " + " + string.Join(" + ", folded) : "")

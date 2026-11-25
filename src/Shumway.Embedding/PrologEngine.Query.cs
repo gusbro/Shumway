@@ -903,7 +903,13 @@ public sealed partial class PrologEngine
         {
             if (!hotnessSeen.Add(fid)) return;
             if (!_jitIndexProfile.IsHot(fid)) unindexedFunctors.Add(fid);
-            if (_jitIndexProfile.HotnessChangedSinceCompile(fid)) (hotnessFlipped ??= new()).Add(fid);
+            // One whose calls go to a snapshot is not laid out again for
+            // them: while its snapshot compiles aside it runs its bytecode
+            // past the threshold, and under a wasm tier a new layout is one
+            // of the whole program.
+            if (_jitIndexProfile.HotnessChangedSinceCompile(fid)
+                && IlPromotion.Wasm?.RunsAsSnapshot(fid) != true)
+                (hotnessFlipped ??= new()).Add(fid);
         }
         if (hotnessFlipped is not null && TryFlipHotnessInPlace(hotnessFlipped) is { } whyNotInPlace)
         {

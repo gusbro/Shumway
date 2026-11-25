@@ -611,8 +611,10 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         if (shadow && ilStore.DynamicChurnPinned(functorId)) return null;
         // A snapshot the bundle brought runs from the first call, as the IL
         // tier's does (ADR-023 priming).
-        if (shadow && InstallBundles && !predicate.IsDebuggable
+        if (shadow && _pendingSnapshots.Count > 0 && !_compiledSnapshots.IsEmpty) TakeCompiledSnapshots();
+        if (shadow && !predicate.IsDebuggable
             && _bakedSnapshots.TryGetValue(functorId, out var baked)
+            && (InstallBundles || baked.CompiledHere)
             && InstallBakedSnapshot(functorId, engine!, baked) is { } bakedDelegate)
             return bakedDelegate;
         _counters.TryGetValue(functorId, out int count);
@@ -623,7 +625,10 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         // IlPromotionStore.CompileAtThreshold).
         if (predicate.IsDebuggable) { settled = true; return null; }
         // A snapshot is a module of its own, so it never waits for a batch.
-        if (shadow) return PromoteShadow(functorId, engine!, out settled);
+        if (shadow)
+            return SnapshotCompiler is null
+                ? PromoteShadow(functorId, engine!, out settled)
+                : RequestSnapshot(functorId, out settled);
 
         // Under the batch, a straggler must not build on its own. The group is
         // one module: promoting a single predicate re-emits all of it, and
@@ -713,12 +718,116 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         public readonly string Digest = digest;
         public readonly System.Func<CompiledPredicate, int, PredicateDelegate?> Install = install;
         public bool Verified;
+        // Compiled by this engine (SnapshotCompiler), not brought by a bundle.
+        public bool CompiledHere;
+        // The snapshot it was compiled from, while the predicate has those
+        // clauses and the derivation is the one it was taken under: its
+        // shadow is built from it, with no second compile of the clauses.
+        public CompiledPredicate? Taken;
     }
 
-    /// <summary>Snapshots held and not running, and installs of one so far,
-    /// for the status report.</summary>
-    public int BakedSnapshotsHeld => _bakedSnapshots.Count - _bakedShadows.Count;
+    /// <summary>Snapshots a bundle brought that are held and not running, and
+    /// installs of one so far, for the status report.</summary>
+    public int BakedSnapshotsHeld
+    {
+        get
+        {
+            int held = 0;
+            foreach (var (fid, baked) in _bakedSnapshots)
+                if (!baked.CompiledHere && !_bakedShadows.Contains(fid)) held++;
+            return held;
+        }
+    }
     public int BakedSnapshotInstalls { get; private set; }
+
+    // ----- a snapshot compiled away from the engine's thread (ADR-054, amendment) -----
+
+    /// <summary>Compiles a dynamic predicate's snapshot away from the engine's
+    /// thread: given the snapshot and the digest of the clauses it was taken
+    /// from, it calls back, from any thread, with what installs the module
+    /// over a shadow region, or with null and why. With none, the snapshot
+    /// is compiled where the predicate is called, and the goal waits for it.
+    /// With one, the predicate goes on running its bytecode until the module
+    /// is there, and the module is installed as a bundle's snapshot is: at
+    /// the predicate's next call, and again after the code space is built
+    /// again, with no second compile.</summary>
+    public System.Action<CompiledPredicate, string,
+        System.Action<System.Func<CompiledPredicate, int, PredicateDelegate?>?, string?>>? SnapshotCompiler { get; set; }
+
+    // A token per snapshot being compiled: a mutation takes it away, and the
+    // module that comes back for it is dropped.
+    private readonly Dictionary<int, object> _pendingSnapshots = new();
+    private readonly System.Collections.Concurrent.ConcurrentQueue<
+        (int Fid, object Token, string Digest, CompiledPredicate Snapshot,
+         System.Func<CompiledPredicate, int, PredicateDelegate?>? Install, string? Refusal)>
+        _compiledSnapshots = new();
+
+    /// <summary>What taking the snapshots handed to the compiler cost the
+    /// goals that asked, and what installing the compiled ones cost the
+    /// goals that called them, in stopwatch ticks.</summary>
+    public long SnapshotTakeTicks { get; private set; }
+    public long SnapshotInstallTicks { get; private set; }
+
+    /// <summary>Snapshots handed to <see cref="SnapshotCompiler"/>, and those
+    /// installed from what it gave back.</summary>
+    public int SnapshotCompilesRequested { get; private set; }
+    public int CompiledSnapshotInstalls { get; private set; }
+
+    /// <summary>Whether a snapshot of the predicate is being compiled.</summary>
+    public bool SnapshotPending(int functorId) => _pendingSnapshots.ContainsKey(functorId);
+
+    /// <summary>Whether the predicate runs as a snapshot, or will once the
+    /// snapshot being compiled or held for it is installed. Its calls then do
+    /// not run its bytecode, so laying that bytecode out again is wasted work.</summary>
+    public bool RunsAsSnapshot(int functorId)
+        => _shadows.ContainsKey(functorId) || _pendingSnapshots.ContainsKey(functorId)
+           || (_bakedSnapshots.TryGetValue(functorId, out var held) && held.CompiledHere);
+
+    private PredicateDelegate? RequestSnapshot(int functorId, out bool settled)
+    {
+        settled = false;
+        if (_pendingSnapshots.ContainsKey(functorId)) return null;
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        var snapshot = ilStore.DynamicSnapshotProvider?.Invoke(functorId);
+        string? digest = snapshot is null ? null : ilStore.DynamicDigestProvider?.Invoke(functorId);
+        if (snapshot is null || digest is null)
+        {
+            // No visible clause this query (none, or a mutation since the
+            // setup): a later query asks again.
+            settled = true;
+            return null;
+        }
+        object token = new();
+        _pendingSnapshots[functorId] = token;
+        SnapshotCompilesRequested++;
+        SnapshotCompiler!(snapshot, digest,
+            (install, refusal) => _compiledSnapshots.Enqueue((functorId, token, digest, snapshot, install, refusal)));
+        SnapshotTakeTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+        return null;
+    }
+
+    /// <summary>Takes the snapshots compiled since the last call, on the
+    /// engine's thread: each is held for its predicate's next call, unless
+    /// the predicate changed while it compiled.</summary>
+    public void TakeCompiledSnapshots()
+    {
+        while (_compiledSnapshots.TryDequeue(out var c))
+        {
+            if (!_pendingSnapshots.TryGetValue(c.Fid, out var token) || !ReferenceEquals(token, c.Token))
+                continue;
+            _pendingSnapshots.Remove(c.Fid);
+            if (c.Install is null)
+            {
+                MarkUnpromotable(c.Fid, c.Refusal);
+                continue;
+            }
+            // The token is still the one handed out, so the predicate has not
+            // changed since the snapshot was taken: no need to check the digest
+            // again at its next call.
+            _bakedSnapshots[c.Fid] = new BakedSnapshot(c.Digest, c.Install)
+                { CompiledHere = true, Verified = true, Taken = c.Snapshot };
+        }
+    }
 
     /// <summary>Takes a snapshot of a dynamic predicate a bundle brought,
     /// compiled from the clauses of <paramref name="digest"/>
@@ -750,13 +859,17 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
             }
             baked.Verified = true;
         }
-        var shadow = ilStore.ShadowSnapshotProvider!(engine, functorId);
+        long t0 = baked.CompiledHere ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        var shadow = baked.Taken is { } taken && ilStore.ShadowOfSnapshotProvider is { } shadowOf
+            ? shadowOf(engine, functorId, taken)
+            : ilStore.ShadowSnapshotProvider!(engine, functorId);
         if (shadow.Snapshot is null)
         {
             if (shadow.Refusal is not null) _bakedSnapshots.Remove(functorId);
             return null;
         }
         var del = baked.Install(shadow.Snapshot, shadow.Address);
+        if (baked.CompiledHere) SnapshotInstallTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
         if (del is null)
         {
             _bakedSnapshots.Remove(functorId);
@@ -766,7 +879,8 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         _shadows[functorId] = shadow.Address;
         _bakedShadows.Add(functorId);
         ShadowPromotions++;
-        BakedSnapshotInstalls++;
+        if (baked.CompiledHere) CompiledSnapshotInstalls++;
+        else BakedSnapshotInstalls++;
         return del;
     }
 
@@ -778,6 +892,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     public void OnMutated(int functorId)
     {
         _bakedSnapshots.Remove(functorId);
+        _pendingSnapshots.Remove(functorId);
         Retire(functorId);
     }
 
@@ -813,7 +928,11 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     {
         // A consult may have given a predicate other source clauses: each
         // held snapshot is checked against its predicate again.
-        foreach (var baked in _bakedSnapshots.Values) baked.Verified = false;
+        foreach (var baked in _bakedSnapshots.Values)
+        {
+            baked.Verified = false;
+            baked.Taken = null;
+        }
         _bakedShadows.Clear();
         if (_shadows.Count == 0 && _retiredShadows.Count == 0) return;
         var all = new List<int>(_shadows.Keys);
