@@ -116,21 +116,44 @@ public sealed partial class PrologEngine
         List<(Term Goal, string Module)>? initialization = null;
         var outer = _deferredBundleInitialization;
         if (before is not null) _deferredBundleInitialization = initialization = new();
+        var staleBefore = before is not null ? new HashSet<int>(_productStaleDynamicFids) : null;
+        var pendingBefore = before is not null ? PendingClauseFunctors() : null;
         try { load(); }
         finally { _deferredBundleInitialization = outer; }
+        // An attach that only declared modules left the layout to the goal it
+        // runs in (ADR-075): the goal adopts what it declared, or the program
+        // is laid out again.
+        bool declaredOnly = _attachDeclaredOnly;
+        _attachDeclaredOnly = false;
         if (_liveConsultEngine is { } live && before is not null)
         {
-            EnsureLiveDynamicTrampolines(live);
+            var declared = declaredOnly
+                ? new Dictionary<int, (int Addr, Shumway.Compiler.Wam.CompiledPredicate Pred)>() : null;
+            EnsureLiveDynamicTrampolines(live, declared);
+            if (declaredOnly) PlaceAttachStubsFirst(live, pendingBefore!);
             // A bundle's clauses for a dynamic the goal already dispatches
             // (another bundle's, or the program's) went to the store only; the
             // goal's view takes them here, as at the end of a source consult.
             ReconcileEngineDynamicView(live);
+            if (declaredOnly)
+            {
+                if (AdoptDeclaredDynamics(live, declared!, staleBefore!, pendingBefore!) is { } why)
+                {
+                    if (LoadProfEnabled) ProfProductDrop("attach not kept: " + why);
+                }
+                else declaredOnly = false;
+            }
             var linked = LinkLoadedPredicatesLive(live, _precompiledStaticPredicates
                 .Where(kv => !before.Contains(kv.Key)).Select(kv => kv.Value).ToList());
             // The bundle's wasm module binds to where its predicates are
             // linked: here, for the goal that loaded it.
             if (linked is not null && IlPromotion.PendingWasmModules.Count > 0)
                 IlPromotion.Wasm?.InstallPendingBundlesLive(this, linked);
+        }
+        if (declaredOnly)
+        {
+            _staticLink = null;
+            InvalidatePersistent();
         }
         if (initialization is not null)
             foreach (var (goal, module) in initialization)

@@ -59,11 +59,17 @@ public sealed partial class PrologEngine
             }
             if (_staticRewriteHeadFids?.Contains(fid) == true)
                 return "source clauses in a module: " + FunctorDisplayName(fid);
-            if (_dynamicSeedModule.ContainsKey(fid)) return "seed module: " + FunctorDisplayName(fid);
+            // A seed module's context changes only how a rule's body is
+            // rewritten: a predicate of facts rewrites the same in user's.
             if (!_dynStore.HoldsOnlyFacts(fid)) return "rules: " + FunctorDisplayName(fid);
             int index = product.DynamicFunctors.Contains(fid)
                 ? product.DynamicPreds.FindIndex(p => p.FunctorId == fid) : -1;
-            if (index < 0 || !_dynamicLink.Addresses.TryGetValue(fid, out int oldAddr))
+            // One an attach declared is in the buffer and not in the product
+            // (AdoptDeclaredDynamics): its version joins the product.
+            bool declared = index < 0 && _liveDeclaredDynamics.Contains(fid);
+            int oldAddr = -1;
+            if ((index < 0 && !declared)
+                || !_persistentAddressesCache.TryGetValue(fid, out oldAddr))
                 return "not in the product: " + FunctorDisplayName(fid);
             if (oldAddr + 6 > prog.Length
                 || prog[oldAddr] != (byte)Opcode.EnterDynamic
@@ -156,7 +162,13 @@ public sealed partial class PrologEngine
                     BytecodeIO.WriteInt32(prog, _persistentPrefixLength + offset + 1, at);
             // The product holds what the buffer runs, so does the cache the next
             // build compiles from.
-            product.DynamicPreds[index] = pred;
+            if (index >= 0) product.DynamicPreds[index] = pred;
+            else
+            {
+                product.DynamicPreds.Add(pred);
+                product.DynamicFunctors.Add(fid);
+                _liveDeclaredDynamics.Remove(fid);
+            }
             _productStaleDynamicFids.Remove(fid);
             CacheDynamicCompile(fid, pred);
             if (_skipCompileMergedCache is { } merged) merged[fid] = pred;

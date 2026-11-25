@@ -398,9 +398,9 @@ internal sealed class BundleLoader
                 }
                 // ADR-075: a module of a library being attached is declared,
                 // and its code waits for the first call into it. One with
-                // initialization goals is loaded now (decision 10).
-                if (E._attachingLibrary is not null && entry.InitializationGoals.Count == 0
-                    && entry.ModuleName != Prelude.ModuleName)
+                // initialization goals comes in before its goals run
+                // (decision 10), as a module a call brings in.
+                if (E._attachingLibrary is not null && entry.ModuleName != Prelude.ModuleName)
                 {
                     var declare = PrologEngine.ProfMark.Now();
                     E.NoteAttachedModule(entry, LoadEntryFromBytecode(entry, deferCode: true));
@@ -472,8 +472,18 @@ internal sealed class BundleLoader
         }
         // A bundle's predicates join the static program — drop the
         // ADR-015 cached static linked region so the next query rebuilds it.
-        E._staticLink = null;
-        E.InvalidatePersistent();
+        // An attach that only declared modules adds no static code: the goal
+        // it runs in keeps the layout and adopts the dynamic predicates it
+        // declared (ADR-075), or lays the program out again
+        // (PrologEngine.LoadBundleLinkingLive).
+        if (E._attachingLibrary is not null && E._liveConsultEngine is not null
+            && bundle.WasmModules.Count == 0 && OnlyDeclared(effectiveEntries))
+            E._attachDeclaredOnly = true;
+        else
+        {
+            E._staticLink = null;
+            E.InvalidatePersistent();
+        }
         // The bundle's wasm modules wait for that link: a wasm tier installs
         // them when the next query setup links (or on its own tick). Queued
         // whether or not a tier is attached yet -- the web boot attaches its
@@ -2000,6 +2010,16 @@ internal sealed class BundleLoader
 
         if (!deferCode) LoadEntryCode(entry, shippedClausesRead: true);
         return readClauses;
+    }
+
+    // Every entry was declared and its code waits: no static predicate and no
+    // hook clause joined the program.
+    private bool OnlyDeclared(IEnumerable<BundleEntry> entries)
+    {
+        foreach (var entry in entries)
+            if (!LoadsFromBytecode(entry) || !E.IsCodePending(entry.ModuleName) || DefinesGlobalHook(entry))
+                return false;
+        return true;
     }
 
     private static bool DefinesGlobalHook(BundleEntry entry)

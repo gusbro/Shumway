@@ -751,6 +751,12 @@ public sealed partial class IlPromotionStore
     /// currently-visible clauses. Null when it has no visible clauses yet.</summary>
     public Func<int, CompiledPredicate?>? DynamicSnapshotProvider { get; set; }
 
+    /// <summary>The fewest instructions a snapshot of the dynamic predicate
+    /// would have, from the code its clauses have now: what refuses one over
+    /// <see cref="WasmPromotionStore.MaxSnapshotInstructions"/> without taking
+    /// it.</summary>
+    public Func<int, int>? SnapshotInstructionsAtLeastProvider { get; set; }
+
     // ADR-023 churn pinning: a dynamic snapshot evicted EvictionChurnLimit times is
     // mutation-hot and stays on Tier 0; the pin re-arms after ChurnRearmCalls
     // mutation-free invocations (load-then-read predicates must not be banished by

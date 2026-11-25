@@ -164,8 +164,9 @@ public sealed partial class PrologEngine
     /// PC into it fails loudly.</summary>
     internal int _persistentLength;
 
-    /// <summary><see cref="_persistentLength"/> as the last link left it: the
-    /// auto-compaction compares the buffer's growth since with it.</summary>
+    /// <summary><see cref="_persistentLength"/> as the last link or adoption
+    /// left it: the auto-compaction compares the buffer's growth since with
+    /// it. Adopted code is linked code, not growth to reclaim.</summary>
     internal int _persistentLengthAtLink;
 
     /// <summary>The launcher prefix's length: the static region's sites are at
@@ -392,15 +393,19 @@ public sealed partial class PrologEngine
     /// host's buffer part of the linked program. False, and nothing changed,
     /// when it cannot be: the caller lays the program out again.</summary>
     internal bool AdoptLiveLink(Activation engine, LivePublish published)
+        => AdoptLiveLinks(engine, new[] { published });
+
+    /// <summary>The same for several links at once, with one copy of the maps.</summary>
+    internal bool AdoptLiveLinks(Activation engine, IReadOnlyList<LivePublish> publishes)
     {
         if (_persistentProgram is null || _staticLink is null || _dynamicLink is null
             || _programProduct is null
             || _persistentAddressesCache is null || _persistentAddressBaseCache is null
             || _persistentPredsByAddressCache is null)
             return false;
-        if (!ReferenceEquals(published.Engine, engine) || published.Retargeted
-            || !EngineOwnsHostBuffer(engine))
-            return false;
+        if (!EngineOwnsHostBuffer(engine)) return false;
+        foreach (var published in publishes)
+            if (!ReferenceEquals(published.Engine, engine) || published.Retargeted) return false;
         // A debug session keeps a record per buffer of what is linked in it.
         if (_debugEvalDepth > 0 || DebugSession is not null || _flags.EmitDebugInfo || _flags.DebugCodegen)
             return false;
@@ -410,24 +415,30 @@ public sealed partial class PrologEngine
         // a reason to see a predicate appear under it.
         var addresses = new Dictionary<int, int>(_persistentAddressesCache);
         var baseMap = new Dictionary<int, int>(_persistentAddressBaseCache);
-        foreach (var (fid, at) in published.Entries)
-        {
-            addresses[fid] = at;
-            baseMap[fid] = at;
-            _adoptedAddresses[fid] = at;
-        }
-        AddBareLocalAliases(baseMap, published.Entries);
         var byAddress = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(_persistentPredsByAddressCache);
-        foreach (var (at, pred) in published.Link.PredicatesByAddress)
+        AdoptionMapCopies++;
+        var entries = publishes.Count == 1 ? publishes[0].Entries : new Dictionary<int, int>();
+        foreach (var published in publishes)
         {
-            byAddress[at] = pred;
-            _adoptedStatics[at] = pred;
+            foreach (var (fid, at) in published.Entries)
+            {
+                addresses[fid] = at;
+                baseMap[fid] = at;
+                _adoptedAddresses[fid] = at;
+                if (publishes.Count > 1) entries[fid] = at;
+            }
+            AddBareLocalAliases(baseMap, published.Entries);
+            foreach (var (at, pred) in published.Link.PredicatesByAddress)
+            {
+                byAddress[at] = pred;
+                _adoptedStatics[at] = pred;
+            }
+            for (int i = 0; i < published.Link.SwitchTables.Count; i++)
+                _adoptedTables.Add((published.TableBase + i, published.Link.SwitchTables[i]));
         }
         _persistentAddressesCache = addresses;
         _persistentAddressBaseCache = baseMap;
         _persistentPredsByAddressCache = byAddress;
-        for (int i = 0; i < published.Link.SwitchTables.Count; i++)
-            _adoptedTables.Add((published.TableBase + i, published.Link.SwitchTables[i]));
 
         // The static region's calls to these predicates were linked before
         // there was anything to call: they name them now, as a link of the
@@ -436,16 +447,20 @@ public sealed partial class PrologEngine
         byte[] program = _persistentProgram;
         foreach (var (offset, callee) in _staticLink.UnresolvedSites)
         {
-            if (!published.Entries.TryGetValue(callee, out int target)
+            if (!entries.TryGetValue(callee, out int target)
                 && !(aliases is not null && aliases.TryGetValue(callee, out int named)
-                     && published.Entries.TryGetValue(named, out target)))
+                     && entries.TryGetValue(named, out target)))
                 continue;
             Shumway.Core.BytecodeIO.WriteInt32(program, _persistentPrefixLength + offset + 1, target);
         }
         StaticProgramVersion++;
-        AdoptedLinks++;
+        AdoptedLinks += publishes.Count;
+        _persistentLengthAtLink = _persistentLength;
         return true;
     }
+
+    /// <summary>Copies of the address maps made to adopt links. For tests.</summary>
+    internal long AdoptionMapCopies;
 
     /// <summary>What a live link published, for <see cref="AdoptLiveLink"/>:
     /// the link, where its switch tables went, and each predicate's entry.</summary>
@@ -490,7 +505,7 @@ public sealed partial class PrologEngine
     /// <summary>How many dynamic-store mutations the engine accumulates
     /// between checks of the persistent buffer's growth, at a query's setup:
     /// the buffer is compacted once it has grown to twice its length at the
-    /// last link. Default 1000; <c>long.MaxValue</c> disables the checks.
+    /// last link or adoption. Default 1000; <c>long.MaxValue</c> disables the checks.
     /// Compaction itself stays callable via <c>compact_dynamic_buffer/0,1</c>.</summary>
     public long CompactWatermark { get; set; } =
         long.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_COMPACT_WATERMARK"), out long w) ? w : 1000;
@@ -531,6 +546,7 @@ public sealed partial class PrologEngine
         _dbGeneration.Value++;
         _persistentMutationsSinceCompact++;
         _snapshotStaleFids.Add(functorId);
+        _snapshotWaitsForBuild.Remove(functorId);
         // The persistent buffer holds the mutation (ADR-015): the next setup
         // keeps the program product for a predicate of facts.
         DropDynamicCompiled(functorId);

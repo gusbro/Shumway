@@ -236,9 +236,14 @@ compiled the whole table. Compiling the module when it is installed only
 moves that wait to the install.
 
 - A snapshot with more instructions than
-  `WasmPredicateCompiler.MaxSnapshotInstructions` (3000) is refused, and the
+  `WasmPromotionStore.MaxSnapshotInstructions` (3000) is refused, and the
   predicate runs its bytecode. A bundle does not carry one either.
   `jit_compile(status)` lists it with the reason.
+- When the code the predicate's clauses already have in the buffer puts its
+  snapshot over the limit, it is refused before the snapshot is taken. Each
+  clause's code there, less the link and the visibility check the chain adds
+  to it, is in the snapshot too. Taking the snapshot of a large table cost a
+  query 0.3 to 0.8 s in a page only to see it refused.
 - When the calls of such a predicate cross the JIT indexing threshold, it is
   laid out indexed in place of its chain, as under the IL tier. The wasm
   tier used to refuse this, so the whole program was laid out again, and

@@ -394,28 +394,43 @@ public sealed partial class Activation
         if (chunk.Length > CodeRoom)
             throw new PrologRuntimeException("resource_error", "code_space") { Origin = ErrorOrigin.Engine };
         if (needed > program.Length)
-        {
-            byte[] grown;
-            try
-            {
-                grown = new byte[(int)Math.Max(needed, Math.Min(program.Length * 2L, CodeLimit))];
-            }
-            catch (OutOfMemoryException)
-            {
-                throw new PrologRuntimeException("resource_error", "code_space") { Origin = ErrorOrigin.Engine };
-            }
-            Array.Copy(program, grown, offset);
-            CurrentProgram = program = grown;
-            // bumping the generation tells the interpreter's
-            // dispatch loop to refresh its cached ProgramView. Plain
-            // (in-place) byte writes don't change the array reference,
-            // so they don't need a bump; only a reallocation does.
-            _programGeneration++;
-            ProgramMoved?.Invoke(this, offset);
-        }
+            program = MoveProgram((int)Math.Max(needed, Math.Min(program.Length * 2L, CodeLimit)));
         Array.Copy(chunk, 0, program, offset, chunk.Length);
         _programLength = needed;
         return offset;
+    }
+
+    /// <summary>Moves the program to an array of <paramref name="capacity"/>
+    /// bytes now, when it has fewer, so that what <see cref="AppendCode"/>
+    /// adds up to there does not move it. Kept under <see cref="CodeLimit"/>.</summary>
+    public void ReserveCode(int capacity)
+    {
+        capacity = Math.Min(capacity, CodeLimit);
+        if (CurrentProgram is { } program && capacity > program.Length && capacity >= ProgramLength)
+            MoveProgram(capacity);
+    }
+
+    private byte[] MoveProgram(int capacity)
+    {
+        byte[] grown;
+        try
+        {
+            grown = new byte[capacity];
+        }
+        catch (OutOfMemoryException)
+        {
+            throw new PrologRuntimeException("resource_error", "code_space") { Origin = ErrorOrigin.Engine };
+        }
+        int copied = ProgramLength;
+        Array.Copy(CurrentProgram ?? Array.Empty<byte>(), grown, copied);
+        CurrentProgram = grown;
+        // bumping the generation tells the interpreter's
+        // dispatch loop to refresh its cached ProgramView. Plain
+        // (in-place) byte writes don't change the array reference,
+        // so they don't need a bump; only a reallocation does.
+        _programGeneration++;
+        ProgramMoved?.Invoke(this, copied);
+        return grown;
     }
 
     /// <summary>Monotonic counter bumped whenever the bytecode

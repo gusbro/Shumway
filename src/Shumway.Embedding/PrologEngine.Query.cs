@@ -740,20 +740,24 @@ public sealed partial class PrologEngine
     /// generation), and a snapshot has the predicate rewritten when it asks
     /// (<see cref="BuildDynamicSnapshot"/>). Compiling it here cost the
     /// predicate's size per query after a mutation, and built the term of
-    /// every fact kept as an image (ADR-063). Only for a predicate of facts,
-    /// or an empty one, that the product already holds, with no source
-    /// clauses in a module and the user context: a rule's rewrite can mint
-    /// helpers the query link has to carry. False leaves the setup to a full
-    /// build.</summary>
+    /// every fact kept as an image (ADR-063). Only for a predicate the
+    /// product already holds, with no source clauses in a module, or one a
+    /// goal made or declared in the buffer this setup keeps
+    /// (<see cref="_liveDeclaredDynamics"/>). A rule asserted with helpers
+    /// took a new product then (LinkRuntimeAssertHelpers), and a snapshot
+    /// whose rewrite needs helpers waits for the next build
+    /// (<see cref="RewriteDeferredDynamicPredicate"/>). False leaves the
+    /// setup to a full build.</summary>
     private bool DeferStaleDynamicPredicates(CompiledProgramProduct product)
     {
         foreach (int fid in _productStaleDynamicFids)
         {
+            // Declared by an attach and kept in the buffer: not in the product
+            // yet, whatever its clauses are.
+            if (_liveDeclaredDynamics.Contains(fid)) continue;
             string? why =
                 _staticRewriteHeadFids?.Contains(fid) == true ? "source clauses in a module"
-                : _dynamicSeedModule.ContainsKey(fid) ? "seed module"
                 : !_dynStore.IsDynamic(fid) ? "not dynamic"
-                : !_dynStore.HoldsOnlyFacts(fid) ? "rules"
                 : !product.DynamicFunctors.Contains(fid) ? "not in the product"
                 : null;
             if (why is null) continue;
@@ -768,18 +772,41 @@ public sealed partial class PrologEngine
     /// <summary>The rewrite of a predicate the setup left as it was
     /// (<see cref="DeferStaleDynamicPredicates"/>), for the snapshot that asks
     /// for it: under the user context, as the full build does it. False for
-    /// an empty predicate, which has no snapshot.</summary>
+    /// an empty predicate, which has no snapshot, and for one whose snapshot
+    /// waits for the next build.</summary>
     private bool RewriteDeferredDynamicPredicate(int fid)
     {
         if (!_dynStore.TryGetClauses(fid, out var clauses) || clauses.Count == 0) return false;
+        if (_snapshotWaitsForBuild.Contains(fid)) return false;
+        // A rule of a legacy module's seed is rewritten under that module's
+        // locals, which only a full build has.
+        if (_dynamicSeedModule.ContainsKey(fid) && OwnedDynamicContextFor(fid) is null
+            && !_dynStore.HoldsOnlyFacts(fid))
+        {
+            _snapshotWaitsForBuild.Add(fid);
+            return false;
+        }
         var ctx = OwnedDynamicContextFor(fid) ?? new ModuleRewrite.Context(
             DefaultModuleName, _staticRewriteUserLocals ?? EmptyLocalsSentinel,
             _dynStore.Functors, ImportsOf(DefaultModuleName));
-        RewriteDynamicPredicate(fid, clauses, ctx, Modes);
+        var entry = RewriteDynamicPredicate(fid, clauses, ctx, Modes);
+        // The helpers its rewrite made are linked by a full build, and the
+        // snapshot would call them.
+        foreach (int head in entry.HeadFids)
+            if (head != fid)
+            {
+                _snapshotWaitsForBuild.Add(fid);
+                return false;
+            }
         _snapshotStaleFids.Remove(fid);
         DeferredDynamicRewrites++;
         return true;
     }
+
+    /// <summary>Predicates left for the next build whose snapshot waits for it
+    /// (<see cref="RewriteDeferredDynamicPredicate"/>): asked again after a
+    /// change of their clauses or that build.</summary>
+    internal readonly HashSet<int> _snapshotWaitsForBuild = new();
 
     /// <summary>Rewrites done for a snapshot of a predicate the setup left as
     /// it was (<see cref="RewriteDeferredDynamicPredicate"/>).</summary>
@@ -837,6 +864,9 @@ public sealed partial class PrologEngine
         // bounds the rest, and this tidies up whatever is left at a point
         // where nothing holds a position.
         if (_debugEvalDepth == 0) CompactClauseSlots();
+        // The dynamic predicates a goal made in this buffer join the layout;
+        // those that cannot take a new product.
+        if (_debugEvalDepth == 0) AdoptGoalTrampolines();
 
         // live-linked-consult forward-reference sites now live on
         // the per-buffer chain table, so they follow their buffer's lifetime
@@ -1596,6 +1626,8 @@ public sealed partial class PrologEngine
         OrderStaticRegion(pStatic);
 
         ProgramProductBuilds++;
+        _liveDeclaredDynamics.Clear();
+        _snapshotWaitsForBuild.Clear();
         var dynamicFunctors = new HashSet<int>();
         foreach (var p in pDynamic) dynamicFunctors.Add(p.FunctorId);
         product = _programProduct = new CompiledProgramProduct

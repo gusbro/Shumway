@@ -2,8 +2,9 @@
 
 ## Status
 
-Shipped ([Phase 8](../../history/phase-8-closure.md)). Amended 2026-10-31:
-the query's code lives in the one buffer (see the end).
+Shipped ([Phase 8](../../history/phase-8-closure.md)). Amended 2026-10-31,
+2026-11-24 and 2026-11-25: the code a query links lives in the one buffer
+(see the end).
 
 Implemented in chunks 114–128 (the closure doc maps them):
 
@@ -667,6 +668,57 @@ in went from 2.3 to 3.2 s to 0.15 to 0.27 s.
 
 A consult made by a running goal is not adopted: it changes the clauses of a
 module, which the next setup transforms and compiles.
+
+## Amendment (2026-11-25): the dynamic predicates a goal declares or makes stay
+
+The amendment above keeps the code of a module a goal brings in. The goal
+that attaches a library still left the next query a layout of the whole
+program. Declaring the library's modules marked the buffer stale, a module
+with initialization goals was loaded as a consult loads one, and from then on
+every assert of that goal went to a buffer the host no longer had. With a
+runtime and a library of 967 modules attached, the query after the attach
+took 0.32 to 0.45 s on the desktop, and about 1.2 s in a page.
+
+- An attach from a running goal that only declares modules leaves the layout
+  to that goal. The goal links an entry for each dynamic predicate the library
+  declares, as it does for one a consult declares while it runs, and those
+  entries join the linked program as the code of a module brought in does. A
+  predicate the program had that takes clauses from the library gets the stub
+  that installs them first in the goal's chain, where the store has it.
+- A module with initialization goals comes in before its goals run, as a call
+  brings a module in. The links of those modules join the program together,
+  with one copy of its maps.
+- At the end of the attach, the buffer gets the room a layout gives one, twice
+  its length: what the attach added filled the room it had, and the next
+  module a goal brought in moved the whole buffer to a larger array.
+- Code a goal adopted is linked code. The auto-compaction measures the
+  buffer's growth from the last adoption as from the last layout: counted as
+  growth, the adopted code laid the program out again two queries later.
+- A dynamic predicate a goal makes with assert, in the buffer the next setup
+  keeps, joins the linked program at that setup. It took a new product before.
+- A chain a goal builds again (a predicate the program had, with no clause of
+  its own, that takes the library's stub) leaves an execute at its old entry.
+  The next setup takes the goal's new trampoline for the entry: a module
+  brought in later took the execute for a missing entry, and made one more
+  trampoline and linked every clause of the predicate again, each time.
+- The program product holds these predicates from its next build. Until then
+  the setup leaves them out, as it leaves the compile of a mutated predicate
+  of facts. A mutated rule is left out too: a rule whose assert needed helpers
+  takes a new product, which links them, and a snapshot of a rule whose
+  rewrite needs helpers waits for the next build.
+- A clause a goal added has no predicate linked for it. An error's stack trace
+  names it after the predicate whose chain holds it.
+
+The program is laid out again, as before, when the goal runs on a buffer the
+host has replaced, when no goal is running, when a debug session is attached,
+when the library adds static code or hook clauses, and when a module's text
+defines a name the library makes dynamic: its callers are rewritten.
+
+Measured with the same runtime and library, CPU capped, the query after the
+attach takes 0.016 s on the desktop, against 0.32 to 0.45 s. In a page it
+takes 0.15 s, against 1.2 to 1.4 s; the first message to an object of a
+library takes what it took, and the attach 0.4 s more. The steps measured
+add up to about 1 s less.
 
 ## Quick reference
 

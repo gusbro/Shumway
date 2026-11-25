@@ -108,12 +108,6 @@ public static class WasmPredicateCompiler
     /// too large is found when its function is written.</summary>
     public static int MaxMemberInstructions { get; set; } = 20_000;
 
-    /// <summary>A dynamic predicate's snapshot (ADR-054) with more instructions
-    /// than this is refused, and the predicate runs its bytecode. A browser
-    /// compiles a function the first time it is called, so a large snapshot
-    /// costs the query that first calls it more than the snapshot saves.</summary>
-    public static int MaxSnapshotInstructions { get; set; } = 3_000;
-
     /// <summary>Diagnostic: emit a dispatch counter + loop breaker into the
     /// dispatcher (see the guard at the loop top). Off in production.</summary>
     public static bool DebugLoopGuard;
@@ -492,9 +486,11 @@ public static class WasmPredicateCompiler
                 if (instructions[sec] > MaxMemberInstructions)
                     throw Oversize(sec, $"{instructions[sec]} instructions -- its function "
                         + "would be larger than a browser takes");
-                if (_members[sec].Predicate.IsDynamicSnapshot && instructions[sec] > MaxSnapshotInstructions)
+                if (_members[sec].Predicate.IsDynamicSnapshot
+                    && instructions[sec] > Shumway.Embedding.WasmPromotionStore.MaxSnapshotInstructions)
                     throw Oversize(sec, $"a snapshot of {instructions[sec]} instructions, over "
-                        + $"{MaxSnapshotInstructions} -- the browser would compile it in the query that first calls it");
+                        + $"{Shumway.Embedding.WasmPromotionStore.MaxSnapshotInstructions} -- the browser would compile it "
+                        + "in the query that first calls it");
             }
         }
 

@@ -31,8 +31,7 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>The library whose entries <c>LoadBundleCore</c> is declaring,
-    /// or null: a source-less entry with no initialization goals defers its
-    /// code while this is set.</summary>
+    /// or null: a source-less entry defers its code while this is set.</summary>
     internal string? _attachingLibrary;
 
     // The static predicates of every attached module by the bare functor a
@@ -229,9 +228,31 @@ public sealed partial class PrologEngine
             }
         nonDebuggable.AddTo(ref ProfAttachNonDebugTicks, ref ProfAttachNonDebugBytes);
         var init = ProfMark.Now();
+        // Decision 10: a module with initialization goals is brought in before
+        // they run, into the goal that attaches, as a call would bring it in.
+        // Their links join the program together, with one copy of its maps.
+        var links = _adoptionBatch = new List<LivePublish>();
+        try
+        {
+            foreach (var (_, module) in initialization)
+                if (_attachedModules is { } attached && attached.TryGetValue(module, out var withGoals)
+                    && !withGoals.CodeLoaded)
+                    BringInModule(withGoals, _liveConsultEngine);
+        }
+        finally { _adoptionBatch = null; }
+        if (links.Count > 0 && (_liveConsultEngine is not { } attaching || !AdoptLiveLinks(attaching, links)))
+            InvalidateLayout(statics: true);
         foreach (var (goal, module) in initialization)
             RunInitializationGoal(goal, module);
         init.AddTo(ref ProfAttachInitTicks, ref ProfAttachInitBytes);
+        // The goal kept the layout and the attach filled its buffer: the buffer
+        // gets the room a layout gives one now, so that the code the next goals
+        // link does not move it.
+        if (_liveConsultEngine is { } live && EngineOwnsHostBuffer(live))
+        {
+            live.ReserveCode(2 * live.ProgramLength);
+            SyncOrInvalidateAfterMutation(live, ownedHostBuffer: true);
+        }
         if (LoadProfEnabled)
         {
             ProfAttachCalls++;
@@ -239,6 +260,114 @@ public sealed partial class PrologEngine
             ProfAttachGcs += System.GC.CollectionCount(0) - gcs;
         }
     }
+
+    /// <summary>Set by an attach that only declared modules: the layout stays
+    /// for the goal the attach runs in, which adopts what it declared
+    /// (<see cref="AdoptDeclaredDynamics"/>).</summary>
+    internal bool _attachDeclaredOnly;
+
+    /// <summary>Dynamic predicates a goal declared and kept in the persistent
+    /// buffer: the buffer runs them, and the program product holds them from
+    /// its next build.</summary>
+    internal readonly HashSet<int> _liveDeclaredDynamics = new();
+
+    /// <summary>Makes the dynamic predicates an attach declared, which
+    /// <paramref name="engine"/> linked into the host's buffer, part of the
+    /// linked program, as <see cref="AdoptLiveLink"/> does for code: the next
+    /// query finds the program as it is. False, and nothing changed, when it
+    /// cannot be: the caller lays the program out again.</summary>
+    internal string? AdoptDeclaredDynamics(Activation engine,
+        Dictionary<int, (int Addr, Shumway.Compiler.Wam.CompiledPredicate Pred)> declared,
+        HashSet<int> staleBefore, HashSet<int> pendingBefore)
+    {
+        if (_persistentProgram is null || _staticLink is null || _dynamicLink is null
+            || _programProduct is not { } product
+            || _persistentAddressesCache is null || _persistentAddressBaseCache is null
+            || _persistentPredsByAddressCache is null)
+            return "no layout";
+        if (!EngineOwnsHostBuffer(engine)) return "the goal does not own the buffer";
+        if (_debugEvalDepth > 0 || DebugSession is not null || _flags.EmitDebugInfo || _flags.DebugCodegen)
+            return "debugging";
+        // A predicate the program had took the attach's stub: kept when the
+        // stub is all it has, or goes first in the goal's chain, where the
+        // store has it (PlaceAttachStubsFirst).
+        var stubbed = new List<int>();
+        foreach (int fid in _productStaleDynamicFids)
+        {
+            if (!product.DynamicFunctors.Contains(fid)) continue;
+            bool newStub = HasPendingClauses(fid) && !pendingBefore.Contains(fid);
+            if (!newStub)
+            {
+                if (staleBefore.Contains(fid)) continue;
+                return "clauses for " + FunctorDisplayName(fid);
+            }
+            if (!_dynStore.TryGetClauses(fid, out var clauses) || clauses.Count == 0
+                || (clauses.Count > 1 && !ChainStartsWith(engine, fid, _pendingClauses![fid].Stub)))
+                return "the stub is not first: " + FunctorDisplayName(fid);
+            stubbed.Add(fid);
+        }
+        // A name a module's text defines: its callers are rewritten again now
+        // that the name is dynamic.
+        foreach (int fid in declared.Keys)
+        {
+            if (_staticRewriteUserLocals?.Contains(fid) == true) return "a local of user: " + FunctorDisplayName(fid);
+            if (_staticRewriteModuleLocals is { } modules)
+                foreach (var locals in modules.Values)
+                    if (locals.Contains(fid)) return "a local of a module: " + FunctorDisplayName(fid);
+        }
+        // New maps, not the ones in use: an activation suspended on this
+        // buffer reads them (AdoptLiveLink).
+        var addresses = new Dictionary<int, int>(_persistentAddressesCache);
+        var baseMap = new Dictionary<int, int>(_persistentAddressBaseCache);
+        var byAddress = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(_persistentPredsByAddressCache);
+        foreach (var (fid, (at, pred)) in declared)
+        {
+            addresses[fid] = at;
+            baseMap[fid] = at;
+            byAddress[at] = pred;
+            _liveDeclaredDynamics.Add(fid);
+            // Its chain is the plain one of a cold compile: the setup lays it
+            // out indexed when its calls cross the threshold.
+            _jitIndexProfile.RecordCompileDecision(fid, false);
+        }
+        foreach (int fid in stubbed) _liveDeclaredDynamics.Add(fid);
+        _persistentAddressesCache = addresses;
+        _persistentAddressBaseCache = baseMap;
+        _persistentPredsByAddressCache = byAddress;
+        AdoptedDeclarations++;
+        _persistentLengthAtLink = _persistentLength;
+        return null;
+    }
+
+    /// <summary>Puts the stub an attach gave a predicate with clauses, which
+    /// <paramref name="engine"/> already runs, first in its chain, where the
+    /// store has it: at the end, the clauses before it would answer, and then
+    /// again after it installs.</summary>
+    internal void PlaceAttachStubsFirst(Activation engine, HashSet<int> pendingBefore)
+    {
+        if (_pendingClauses is null || GetChainTable(engine) is not { } table) return;
+        foreach (var (fid, pending) in _pendingClauses)
+            if (!pendingBefore.Contains(fid) && table.Chains.ContainsKey(fid)
+                && _dynStore.TryGetClauses(fid, out var clauses) && clauses.Count > 1)
+                PrependDynamicClauseIncremental(engine, fid, pending.Stub);
+    }
+
+    // Whether the goal's chain for fid runs clause first: its trampoline
+    // leads to that clause's chunk.
+    private bool ChainStartsWith(Activation engine, int fid, Clause clause)
+    {
+        if (GetChainTable(engine) is not { } table || !table.Chains.TryGetValue(fid, out var chain)
+            || chain.TrampolineExecuteOperandAddr <= 0 || engine.CurrentProgram is not { } program)
+            return false;
+        int head = Shumway.Core.BytecodeIO.ReadInt32(program, chain.TrampolineExecuteOperandAddr);
+        foreach (var entry in chain.Entries)
+            if (!entry.Retired && ReferenceEquals(entry.Clause, clause)) return entry.ChunkAddr == head;
+        return false;
+    }
+
+    /// <summary>Attaches whose declarations the goal kept
+    /// (<see cref="AdoptDeclaredDynamics"/>). For tests.</summary>
+    internal long AdoptedDeclarations;
 
     /// <summary>Brings a module's code in. From a running goal, the code is
     /// linked into that goal.</summary>
@@ -280,11 +409,21 @@ public sealed partial class PrologEngine
         _lastLivePublish = null;
         if (statics == 0) return;
         if (engine is not null && published is not null
-            && published.Link.PredicatesByAddress.Count == statics
-            && AdoptLiveLink(engine, published))
-            return;
+            && published.Link.PredicatesByAddress.Count == statics)
+        {
+            if (_adoptionBatch is { } batch)
+            {
+                batch.Add(published);
+                return;
+            }
+            if (AdoptLiveLink(engine, published)) return;
+        }
         InvalidateLayout(statics: true);
     }
+
+    // The links of modules brought in together, adopted at once by whoever
+    // set it (AttachBundle).
+    private List<LivePublish>? _adoptionBatch;
 
     /// <summary>ADR-075, decision 11: the static predicates of an attached
     /// module are defined before its code is in. Their bare functors, the
@@ -390,6 +529,10 @@ public sealed partial class PrologEngine
     /// installed.</summary>
     internal bool HasPendingClauses(int fid)
         => _pendingClauses is { } pending && pending.ContainsKey(fid);
+
+    /// <summary>The store keys of the predicates with clauses pending.</summary>
+    internal HashSet<int> PendingClauseFunctors()
+        => _pendingClauses is { } pending ? new HashSet<int>(pending.Keys) : new HashSet<int>();
 
     /// <summary>The same by name; <paramref name="owner"/> is the module that
     /// owns the predicate, when one does.</summary>

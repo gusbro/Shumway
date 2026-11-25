@@ -631,9 +631,21 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         if (predicate.IsDebuggable) { settled = true; return null; }
         // A snapshot is a module of its own, so it never waits for a batch.
         if (shadow)
+        {
+            if (ilStore.SnapshotInstructionsAtLeastProvider?.Invoke(functorId) is int least
+                && least > MaxSnapshotInstructions)
+            {
+                var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(functorId);
+                MarkUnpromotable(functorId, $"{Shumway.Core.AtomTable.GetById(atomId)?.Name}/{arity}: "
+                    + $"a snapshot of at least {least} instructions, over {MaxSnapshotInstructions} -- "
+                    + "the browser would compile it in the query that first calls it");
+                settled = true;
+                return null;
+            }
             return SnapshotCompiler is null
                 ? PromoteShadow(functorId, engine!, out settled)
                 : RequestSnapshot(functorId, out settled);
+        }
 
         // Under the batch, a straggler must not build on its own. The group is
         // one module: promoting a single predicate re-emits all of it, and
@@ -758,6 +770,14 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// again, with no second compile.</summary>
     public System.Action<CompiledPredicate, string,
         System.Action<System.Func<CompiledPredicate, int, PredicateDelegate?>?, string?>>? SnapshotCompiler { get; set; }
+
+    /// <summary>A dynamic predicate's snapshot (ADR-054) with more instructions
+    /// than this is refused, and the predicate runs its bytecode. A browser
+    /// compiles a function the first time it is called, so a large snapshot
+    /// costs the query that first calls it more than the snapshot saves. One
+    /// its compiled clauses already put over the limit is refused before it
+    /// is taken (<see cref="IlPromotionStore.SnapshotInstructionsAtLeastProvider"/>).</summary>
+    public static int MaxSnapshotInstructions { get; set; } = 3_000;
 
     // A token per snapshot being compiled: a mutation takes it away, and the
     // module that comes back for it is dropped.

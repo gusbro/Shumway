@@ -352,8 +352,8 @@ public sealed class DynamicLibraryBundleTests : IDisposable
         int tbl = Shumway.Core.FunctorTable.Intern(Shumway.Core.AtomTable.Intern("tbl", permanent: true).Id, 2);
         int ruled = Shumway.Core.FunctorTable.Intern(Shumway.Core.AtomTable.Intern("ruled", permanent: true).Id, 1);
         Assert.True(e.Query("true.").Success);
-        var facts = e.DynamicPredicateCache[tbl];
-        var rule = e.DynamicPredicateCache[ruled];
+        e.DynamicPredicateCache.TryGetValue(tbl, out var facts);
+        e.DynamicPredicateCache.TryGetValue(ruled, out var rule);
         int derivation = e._derivationGen;
         long layouts = e.PersistentInvalidations;
         long compiles = e.DynamicPredicateCompiles;
@@ -366,8 +366,10 @@ public sealed class DynamicLibraryBundleTests : IDisposable
         Assert.Equal(layouts, e.PersistentInvalidations);
         Assert.Equal(derivation, e._derivationGen);
         Assert.Equal(compiles, e.DynamicPredicateCompiles);
-        Assert.Same(facts, e.DynamicPredicateCache[tbl]);
-        Assert.Same(rule, e.DynamicPredicateCache[ruled]);
+        e.DynamicPredicateCache.TryGetValue(tbl, out var factsAfter);
+        e.DynamicPredicateCache.TryGetValue(ruled, out var ruleAfter);
+        Assert.Same(facts, factsAfter);
+        Assert.Same(rule, ruleAfter);
     }
 
     // ---- the module's code stays linked (ADR-015, amendment) ----
@@ -489,15 +491,196 @@ public sealed class DynamicLibraryBundleTests : IDisposable
         Assert.True(e.Query("assertz(hot(k7, 7)), hot(k7, V), V == 7, sw2(p, 11).").Success);
     }
 
+    // The query that attached keeps the program it was set up with, so the
+    // module it brings in stays linked too.
     [Fact]
-    public void BroughtInByTheQueryThatAttached_TheProgramIsLaidOutAgain()
+    public void BroughtInByTheQueryThatAttached_TheModuleStaysLinked()
     {
         Indexed();
         var e = Engine();
+        Assert.True(e.Query("true.").Success);
         long adopted = e.AdoptedLinks;
         Assert.True(e.Query("ensure_loaded(bundle(indexed)), sw1(c, V), V == 3.").Success);
-        Assert.Equal(adopted, e.AdoptedLinks);
+        Assert.Equal(adopted + 1, e.AdoptedLinks);
+        long layouts = e.PersistentInvalidations;
         Assert.True(e.Query("sw1(f, V), V == 6, via2(q, W), W == 12.").Success);
+        Assert.Equal(layouts, e.PersistentInvalidations);
+    }
+
+    // ---- the query that attaches keeps the program laid out ----
+
+    // The attach declares the library's modules into the layout the query
+    // runs on: what the next queries do lays nothing out again.
+    [Fact]
+    public void AttachingFromAQuery_KeepsTheProgramLaidOut()
+    {
+        Tables();
+        var e = Engine();
+        e.ConsultString(@"
+            :- dynamic(tbl/2).
+            tbl(z, 0).
+            ");
+        Assert.True(e.Query("true.").Success);
+        long layouts = e.PersistentInvalidations, builds = e.ProgramProductBuilds, kept = e.AdoptedDeclarations;
+        Assert.True(e.Query("ensure_loaded(bundle(tables)).").Success);
+        Assert.Equal(kept + 1, e.AdoptedDeclarations);
+        Assert.True(e.Query("findall(K-V, tbl(K, V), L), L == [z-0, a-1, b-2, c-3].").Success);
+        Assert.True(e.Query("other(1), own:states([1, 2]), read_tbl(L), L == [z-0, a-1, b-2, c-3].").Success);
+        Assert.True(e.Query("assertz(tbl(q, 9)), retract(tbl(a, _)), findall(K, tbl(K, _), [z, b, c, q]).").Success);
+        Assert.Equal(layouts, e.PersistentInvalidations);
+        Assert.Equal(builds, e.ProgramProductBuilds);
+    }
+
+    // A module with initialization goals comes in as a call brings a module
+    // in, and its goals run once.
+    [Fact]
+    public void AModuleWithInitializationGoals_ComesInWithNoNewLayout()
+    {
+        ThreeKinds();
+        var e = Engine();
+        Assert.True(e.Query("true.").Success);
+        long layouts = e.PersistentInvalidations, adopted = e.AdoptedLinks;
+        Assert.True(e.Query("ensure_loaded(bundle(kinds)), findall(S, started(S), [yes]).").Success);
+        Assert.True(e.AdoptedLinks > adopted, "the module's code was not adopted");
+        Assert.True(e.Query("sp(1), lp(7), mq:q(42), findall(S, started(S), [yes]).").Success);
+        Assert.Equal(layouts, e.PersistentInvalidations);
+    }
+
+    // Two modules with initialization goals come in together: one copy of the
+    // program's maps adopts both.
+    [Fact]
+    public void ModulesWithInitializationGoals_AreAdoptedTogether()
+    {
+        BuildLibrary("inits",
+            ("i1", @"
+                :- dynamic(s1/1).
+                :- initialization(assertz(s1(yes))).
+                p1(1).
+                "),
+            ("i2", @"
+                :- dynamic(s2/1).
+                :- initialization(assertz(s2(yes))).
+                p2(2).
+                "));
+        var e = Engine();
+        Assert.True(e.Query("true.").Success);
+        long adopted = e.AdoptedLinks, copies = e.AdoptionMapCopies, layouts = e.PersistentInvalidations;
+        Assert.True(e.Query("ensure_loaded(bundle(inits)), s1(yes), s2(yes).").Success);
+        Assert.Equal(adopted + 2, e.AdoptedLinks);
+        Assert.Equal(copies + 1, e.AdoptionMapCopies);
+        Assert.True(e.Query("p1(1), p2(2), findall(S, (s1(S) ; s2(S)), [yes, yes]).").Success);
+        Assert.Equal(layouts, e.PersistentInvalidations);
+    }
+
+    // The attach filled the buffer of the layout the query kept: it leaves it
+    // the room a layout gives one, so the next code linked does not move it.
+    [Fact]
+    public void AfterTheAttach_TheBufferHasRoomForTwiceItsLength()
+    {
+        Tables();
+        var e = Engine();
+        Assert.True(e.Query("true.").Success);
+        Assert.True(e.Query("ensure_loaded(bundle(tables)).").Success);
+        Assert.True(e._persistentProgram!.Length >= 2 * e._persistentLength,
+            $"{e._persistentProgram.Length} bytes for {e._persistentLength}");
+    }
+
+    // Code a goal adopted is linked code: the compaction measures the buffer's
+    // growth from it, not from the layout before it.
+    [Fact]
+    public void AdoptedCode_IsNotGrowthTheCompactionReclaims()
+    {
+        ManyLocals(20000);
+        var e = Engine();
+        e.CompactWatermark = 1;
+        Assert.True(e.Query("true.").Success);
+        int linked = e._persistentLengthAtLink;
+        long layouts = e.PersistentInvalidations;
+        Assert.True(e.Query("ensure_loaded(bundle(many)), ml:front(X), X == 0.").Success);
+        Assert.True(e._persistentLength >= 2 * linked, "the library did not double the buffer");
+        Assert.True(e.Query("assertz(ml:note(1)).").Success);
+        Assert.True(e.Query("ml:note(1), ml:front(0).").Success);
+        Assert.Equal(layouts, e.PersistentInvalidations);
+    }
+
+    // A predicate the program declared with no clause takes the library's:
+    // the goal that attaches builds its chain again and leaves an execute at
+    // its old entry. The next query takes the new chain for the entry, and
+    // the modules it brings in later find it there.
+    [Fact]
+    public void AChainTheAttachBuiltAgain_IsTheEntryOfTheNextQueries()
+    {
+        BuildLibrary("seeds",
+            ("s1", @"
+                :- dynamic(sd/1).
+                sd(1).
+                sd(2).
+                more(1).
+                "),
+            ("s2", @"
+                again(2).
+                "));
+        var e = Engine();
+        e.ConsultString(":- dynamic(sd/1).\n");
+        Assert.True(e.Query("true.").Success);
+        int sd = Fid("sd", 1);
+        long rebuilds = e.ChainViewRebuilds, layouts = e.PersistentInvalidations;
+        Assert.True(e.Query("ensure_loaded(bundle(seeds)).").Success);
+        Assert.True(e.ChainViewRebuilds > rebuilds, "the attach did not build sd/1's chain again");
+        Assert.True(e.Query("findall(X, sd(X), [1, 2]).").Success);
+        int entry = e._persistentAddressesCache![sd];
+        Assert.Equal(Shumway.Core.Opcode.EnterDynamic, (Shumway.Core.Opcode)e._persistentProgram![entry]);
+        long made = e.LiveTrampolinesMade;
+        Assert.True(e.Query("more(1).").Success);
+        Assert.True(e.Query("again(2), findall(X, sd(X), [1, 2]).").Success);
+        Assert.Equal(made, e.LiveTrampolinesMade);
+        Assert.Equal(layouts, e.PersistentInvalidations);
+    }
+
+    // A table the program made hot, and so laid out indexed, takes the
+    // library's clauses: the stub that installs them cuts, and each clause
+    // answers once.
+    [Fact]
+    public void AnIndexedTableThatTakesTheLibrarysClauses_AnswersEachOnce()
+    {
+        Tables();
+        var e = Engine();
+        e.JitIndexing.Threshold = 2;
+        e.ConsultString(@"
+            :- dynamic(tbl/2).
+            tbl(z, 0).
+            tbl(y, 1).
+            ");
+        for (int i = 0; i < 3; i++) Assert.True(e.Query("tbl(y, V), V == 1.").Success);
+        Assert.True(e.Query("true.").Success);
+        int at = e._persistentAddressesCache![Fid("tbl", 2)];
+        Assert.Equal(Shumway.Core.Opcode.SwitchOnTerm, (Shumway.Core.Opcode)e._persistentProgram![at + 1]);
+        Assert.True(e.Query("ensure_loaded(bundle(tables)).").Success);
+        Assert.True(e.Query("findall(K-V, tbl(K, V), L), L == [z-0, y-1, a-1, b-2, c-3].").Success);
+    }
+
+    // A table only the library declares turns hot: it is laid out indexed in
+    // place, and the product holds it from then on.
+    [Fact]
+    public void ATableTheAttachDeclared_TurnsHot_AndIsIndexedInPlace()
+    {
+        BuildLibrary("fresh", ("f1", @"
+            :- dynamic(fr/2).
+            fr(a, 1).
+            fr(b, 2).
+            fr(c, 3).
+            fr(d, 4).
+            "));
+        var e = Engine();
+        e.JitIndexing.Threshold = 2;
+        Assert.True(e.Query("true.").Success);
+        Assert.True(e.Query("ensure_loaded(bundle(fresh)).").Success);
+        long layouts = e.PersistentInvalidations, flips = e.HotnessFlipsInPlace;
+        for (int i = 0; i < 4; i++)
+            Assert.True(e.Query("fr(c, V), V == 3.").Success);
+        Assert.Equal(flips + 1, e.HotnessFlipsInPlace);
+        Assert.Equal(layouts, e.PersistentInvalidations);
+        Assert.True(e.Query(@"findall(K, fr(K, _), [a, b, c, d]), \+ fr(z, _), assertz(fr(e, 5)), fr(e, 5).").Success);
     }
 
     // ---- from code promoted to Tier-1 ----

@@ -106,6 +106,35 @@ public sealed partial class PrologEngine
             : Array.Empty<Clause>();
     }
 
+    /// <summary>The fewest instructions a snapshot of <paramref name="fid"/>
+    /// would have: each clause's code in the buffer's chain, less the two
+    /// the chain adds to it (its link and its visibility check), and two a
+    /// clause for one the chain does not hold.</summary>
+    internal int SnapshotInstructionsAtLeast(int fid)
+    {
+        if (!_dynStore.TryGetClauses(fid, out var clauses)) return 0;
+        if (_persistentProgram is not { } program
+            || !DynChains.Chains.TryGetValue(fid, out var chain) || chain.Entries.Count == 0)
+            return 2 * clauses.Count;
+        long least = 0;
+        foreach (var entry in chain.Entries)
+        {
+            if (entry.Retired || entry.ChunkAddr < 0 || entry.ChunkLength <= 0
+                || entry.ChunkAddr + entry.ChunkLength > program.Length)
+                continue;
+            int instructions = 0;
+            for (int pc = entry.ChunkAddr, end = entry.ChunkAddr + entry.ChunkLength; pc < end;)
+            {
+                int size = Shumway.Core.OpcodeTable.Get((Shumway.Core.Opcode)program[pc]).Size;
+                if (size <= 0) break;
+                pc += size;
+                instructions++;
+            }
+            least += System.Math.Max(0, instructions - 2);
+        }
+        return (int)System.Math.Min(least, int.MaxValue);
+    }
+
     /// <summary>ADR-023 — compiles a STATIC-style snapshot of dynamic predicate
     /// <paramref name="fid"/>'s currently-visible clauses (a plain
     /// <c>try_me_else</c> chain, no <c>enter_dynamic</c> / <c>check_visible</c>),
@@ -1558,11 +1587,11 @@ public sealed partial class PrologEngine
             // _dynStore.Functors set anyway). A derivation bump here cleared
             // the whole-program transform + compiled-predicate caches per
             // promotion — during a hook-heavy library load that recompiled
-            // every predicate dozens of times. The assert that triggered the
-            // promotion bumps _programStamp (DropDynamicPredicateCacheEntry),
-            // which is exactly the invalidation the compiled-program product
-            // needs to re-link with the new trampoline.
-            _programStamp++;
+            // every predicate dozens of times. The product needs the new
+            // predicate: the next setup takes a new one, unless the goal made
+            // its trampoline in the buffer the setup keeps
+            // (AdoptGoalTrampolines).
+            _autoPromotedSinceSetup.Add(fid);
             return;
         }
 
@@ -1615,7 +1644,7 @@ public sealed partial class PrologEngine
     ///   extensions work just like declared-dynamic
     ///   predicates.</item>
     /// </list></summary>
-    internal void MaterializeDynamicTrampoline(Activation engine, int fid)
+    internal Shumway.Compiler.Wam.CompiledPredicate MaterializeDynamicTrampoline(Activation engine, int fid)
     {
         // Root fix: never append at a stale owner position (see
         // ResyncOwnerAppendPosition).
@@ -1738,6 +1767,90 @@ public sealed partial class PrologEngine
         // engine's trampoline exists only in its own buffer, so force the
         // next setup to rebuild from _dynStore.Functors/_dynamicClauses.
         SyncOrInvalidateAfterMutation(engine, ownsHost);
+        if (ownsHost)
+            (_goalTrampolines ??= new()).Add((fid, trampolineAddr, predicate, PersistentInvalidations));
+        return predicate;
+    }
+
+    /// <summary>Trampolines made for dynamic predicates a running goal had no
+    /// entry for, and chains of a goal built again. For tests.</summary>
+    internal long LiveTrampolinesMade, ChainViewRebuilds;
+
+    // Trampolines a goal made in the host's buffer, with the count of
+    // invalidations when it did: the next setup adopts those whose buffer it
+    // keeps. And the predicates assert made dynamic since the last setup.
+    private List<(int Fid, int Addr, Shumway.Compiler.Wam.CompiledPredicate Pred, long Layout)>? _goalTrampolines;
+    private readonly HashSet<int> _autoPromotedSinceSetup = new();
+
+    /// <summary>At a query's setup: the dynamic predicates a goal made in the
+    /// buffer this setup keeps join its layout, as <see cref="AdoptDeclaredDynamics"/>
+    /// does for an attach, and the product holds them from its next build.
+    /// A predicate assert made dynamic that has no trampoline there takes a
+    /// new product, which links it.</summary>
+    private void AdoptGoalTrampolines()
+    {
+        var made = _goalTrampolines;
+        _goalTrampolines = null;
+        var promoted = _autoPromotedSinceSetup.Count > 0 ? new HashSet<int>(_autoPromotedSinceSetup) : null;
+        _autoPromotedSinceSetup.Clear();
+        bool keep = made is not null && _persistentProgram is not null && _programProduct is not null
+            && _persistentAddressesCache is not null && _persistentAddressBaseCache is not null
+            && _persistentPredsByAddressCache is not null
+            && DebugSession is null && !_flags.EmitDebugInfo && !_flags.DebugCodegen;
+        if (keep)
+        {
+            Dictionary<int, int>? addresses = null, baseMap = null;
+            Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? byAddress = null;
+            foreach (var (fid, at, pred, layout) in made!)
+            {
+                // One the layout has keeps its entry, unless a rebuild of its
+                // chain left an execute there: the goal's newest trampoline
+                // is the entry then.
+                if (layout != PersistentInvalidations || !_dynStore.IsDynamic(fid) || IsSourceLocal(fid))
+                    continue;
+                if (_persistentAddressesCache!.TryGetValue(fid, out int entry)
+                    && (Opcode)_persistentProgram![entry] == Opcode.EnterDynamic)
+                    continue;
+                addresses ??= new Dictionary<int, int>(_persistentAddressesCache);
+                baseMap ??= new Dictionary<int, int>(_persistentAddressBaseCache!);
+                byAddress ??= new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(_persistentPredsByAddressCache!);
+                addresses[fid] = at;
+                baseMap[fid] = at;
+                byAddress[at] = pred;
+                _liveDeclaredDynamics.Add(fid);
+                // Its chain is the plain one of a cold compile.
+                if (_jitIndexProfile.CompileDecision(fid) is null) _jitIndexProfile.RecordCompileDecision(fid, false);
+            }
+            if (addresses is not null)
+            {
+                _persistentAddressesCache = addresses;
+                _persistentAddressBaseCache = baseMap;
+                _persistentPredsByAddressCache = byAddress;
+                GoalTrampolinesAdopted++;
+                _persistentLengthAtLink = _persistentLength;
+            }
+        }
+        if (promoted is null) return;
+        foreach (int fid in promoted)
+            if (!_liveDeclaredDynamics.Contains(fid))
+            {
+                _programStamp++;
+                return;
+            }
+    }
+
+    /// <summary>Setups that adopted trampolines a goal made. For tests.</summary>
+    internal long GoalTrampolinesAdopted;
+
+    // A name a module's text defines: its callers are rewritten again once it
+    // is dynamic, which a new product does.
+    private bool IsSourceLocal(int fid)
+    {
+        if (_staticRewriteUserLocals?.Contains(fid) == true) return true;
+        if (_staticRewriteModuleLocals is { } modules)
+            foreach (var locals in modules.Values)
+                if (locals.Contains(fid)) return true;
+        return false;
     }
 
     /// <summary>
@@ -2178,8 +2291,11 @@ public sealed partial class PrologEngine
     /// <c>enter_dynamic</c>, which the dispatcher's
     /// <c>ResolveTargetMaybeAutoPromoted</c> already resolves through — so
     /// no separate visibility set is needed for dynamics.
+    /// <paramref name="materializedOut"/>, when given, receives the address
+    /// and the compile of each trampoline this made.
     /// </summary>
-    internal void EnsureLiveDynamicTrampolines(Activation engine)
+    internal void EnsureLiveDynamicTrampolines(Activation engine,
+        Dictionary<int, (int Addr, Shumway.Compiler.Wam.CompiledPredicate Pred)>? materializedOut = null)
     {
         if (engine.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap)
             return;
@@ -2198,8 +2314,11 @@ public sealed partial class PrologEngine
                 && addr >= 0 && addr < engine.ProgramLength
                 && (Opcode)engine.CurrentProgram![addr] == Opcode.EnterDynamic;
             if (hasTrampoline) continue;
-            MaterializeDynamicTrampoline(engine, fid);
+            LiveTrampolinesMade++;
+            var trampoline = MaterializeDynamicTrampoline(engine, fid);
             (materialized ??= new List<int>()).Add(fid);
+            if (materializedOut is not null && addrMap.TryGetValue(fid, out int at))
+                materializedOut[fid] = (at, trampoline);
         }
 
         // The freshly-materialised trampolines are empty (a fail stub). Any
@@ -3119,6 +3238,7 @@ public sealed partial class PrologEngine
     internal void RebuildEngineFidChainView(Activation target, int functorId)
     {
         if (_inFidViewRebuild) return;
+        ChainViewRebuilds++;
         if (target.CurrentProgram is null
             || target.DynamicFailStubAddr <= 0
             || target.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap

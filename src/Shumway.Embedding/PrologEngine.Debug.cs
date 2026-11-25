@@ -1076,9 +1076,9 @@ public sealed partial class PrologEngine
         => pc >= predicateAddress && pc < predicateAddress + pred.Bytecode.Length;
 
     /// <summary>The name of a frame in code added to an activation's array while queries
-    /// ran: an asserted clause, a dynamic clause a consult in the query added, and the chain
-    /// code that holds them. No predicate is linked there, so which one it is goes unsaid
-    /// rather than wrong; arity -1 says the frame is not a Name/Arity.</summary>
+    /// ran that no chain names (<see cref="DynamicChunkOwner"/>): the chain code that holds
+    /// the clauses. No predicate is linked there, so which one it is goes unsaid rather
+    /// than wrong; arity -1 says the frame is not a Name/Arity.</summary>
     internal const string DynamicClauseFrame = "<dynamic clause>";
 
     /// <summary>Whether <paramref name="pc"/> lies past the code of
@@ -2138,7 +2138,22 @@ public sealed partial class PrologEngine
         addresses.Add(engine.P);
         foreach (int retAddr in engine.EnumerateCallReturnAddresses())
             addresses.Add(retAddr);
-        return ResolveAddressesWithPositions(addresses, PredicatesByAddressOf(engine));
+        return ResolveAddressesWithPositions(addresses, PredicatesByAddressOf(engine),
+            addr => DynamicChunkOwner(engine, addr));
+    }
+
+    /// <summary>The dynamic predicate whose clause chunk in
+    /// <paramref name="engine"/>'s buffer holds <paramref name="pc"/>: a
+    /// clause asserted, or linked by a consult, while queries ran. -1 when no
+    /// chain of its table has the address.</summary>
+    internal int DynamicChunkOwner(Activation engine, int pc)
+    {
+        if (GetChainTable(engine) is not { } table) return -1;
+        foreach (var (fid, chain) in table.Chains)
+            foreach (var entry in chain.Entries)
+                if (entry.ChunkAddr >= 0 && pc >= entry.ChunkAddr && pc < entry.ChunkAddr + entry.ChunkLength)
+                    return fid;
+        return -1;
     }
 
     /// <summary>Translates each address to the predicate that contains it (the
@@ -2149,7 +2164,8 @@ public sealed partial class PrologEngine
     private (IReadOnlyList<(string Name, int Arity)> Plain,
              IReadOnlyList<StackFrame> WithPositions)
         ResolveAddressesWithPositions(IEnumerable<int> addresses,
-            IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? map)
+            IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? map,
+            Func<int, int>? chunkOwner = null)
     {
         if (map is null)
             return (Array.Empty<(string, int)>(), Array.Empty<StackFrame>());
@@ -2191,6 +2207,16 @@ public sealed partial class PrologEngine
             var pred = map[entryAddr];
             if (PastPredicate(pred, entryAddr, addr))
             {
+                // A clause chunk its predicate's chain holds is that predicate's.
+                if (chunkOwner?.Invoke(addr) is int owner and >= 0)
+                {
+                    if (!seen.Add(-(owner + 1))) continue;
+                    var (ownerAtom, ownerArity) = FunctorTable.Lookup(owner);
+                    var (ownerName, ownerInternal) = FrameNameOf(ownerAtom, owner);
+                    plain.Add((ownerName, ownerArity));
+                    frames.Add(new StackFrame(ownerName, ownerArity, SourcePosition.Start, ownerInternal));
+                    continue;
+                }
                 // One frame for a run of them: which clauses they are is not known.
                 if (plain.Count == 0 || plain[^1].Item1 != DynamicClauseFrame)
                 {
