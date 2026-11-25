@@ -60,8 +60,8 @@ public class Chunk155gTests
             "arg 1 indexed via switch_on_arg");
         Assert.True(HasOpcode(cached.Bytecode, Opcode.TryMeElse),
             "chunk-156 layout uses TryMeElse (not Try)");
-        Assert.True(HasOpcode(cached.Bytecode, Opcode.Execute),
-            "shared bodies are reached via execute");
+        Assert.True(HasOpcode(cached.Bytecode, Opcode.Jump),
+            "shared bodies are reached by a jump");
         Assert.False(HasOpcode(cached.Bytecode, Opcode.Try),
             "chunk-156 removes the contiguous Try opcode");
     }

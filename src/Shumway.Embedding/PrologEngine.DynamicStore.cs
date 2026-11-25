@@ -454,7 +454,7 @@ public sealed partial class PrologEngine
         if (isIndexed)
         {
             // The clause's entry in the chain of every clause is on record,
-            // and its execute names the body. The walk by index is the
+            // and its jump names the body. The walk by index is the
             // fallback for a clause the record lacks: it skips the entries
             // retracted before it, O(retracted) per retract until a sweep.
             byte[] prog = engine.CurrentProgram!;
@@ -464,7 +464,7 @@ public sealed partial class PrologEngine
                 && chainState.IndexedVarEntries.Remove(clause, out int knownDied)
                 && knownDied + 13 <= prog.Length
                 && Shumway.Core.BytecodeIO.ReadInt64(prog, knownDied) == long.MaxValue
-                && prog[knownDied + 8] == (byte)Shumway.Core.Opcode.Execute)
+                && prog[knownDied + 8] == (byte)Shumway.Core.Opcode.Jump)
             {
                 retiredVarEntryDied = knownDied;
                 retiredBodyAddr = Shumway.Core.BytecodeIO.ReadInt32(prog, knownDied + 9);

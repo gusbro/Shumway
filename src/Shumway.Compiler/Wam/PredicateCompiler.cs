@@ -1464,10 +1464,12 @@ public sealed class PredicateCompiler
     ///   buffer and patching the previous tail's operand.</item>
     /// <item>Each chain entry is <c>try_me_else &lt;next&gt; arity</c> /
     ///   <c>retry_me_else &lt;next&gt;</c> + <c>check_visible &lt;born&gt; &lt;died&gt;</c>
-    ///   + <c>execute &lt;body_addr&gt;</c>; bodies live once and are
-    ///   reached via execute so a clause that's in multiple chains
+    ///   + <c>jump &lt;body_addr&gt;</c>; bodies live once and are
+    ///   reached by a jump so a clause that's in multiple chains
     ///   (its specific bucket + the var-fallthrough chain) shares
-    ///   one body.</item>
+    ///   one body. Not an <c>execute</c>: that sets the cut barrier past
+    ///   the entry's choice point, and a cut in the body would keep the
+    ///   call's other clauses.</item>
     /// <item><c>enter_dynamic</c> at the predicate entry samples
     ///   <c>DbGeneration</c> into <c>CurrentViewGen</c> so each entry's
     ///   <c>check_visible</c> filters against a stable view.</item>
@@ -1758,7 +1760,7 @@ public sealed class PredicateCompiler
                 }
                 emitter.EmitCheckVisible(born: 0L, died: long.MaxValue);
                 int execOpPos = emitter.Position;
-                emitter.EmitExecute(bodyAddr[idx]);
+                emitter.EmitJump(bodyAddr[idx]);
                 dispatchSites.Add(execOpPos + 1);
             }
         }
