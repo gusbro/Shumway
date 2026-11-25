@@ -22,6 +22,10 @@ public sealed partial class PrologEngine
         public readonly BundleEntry Entry;
         public readonly bool ShippedClausesRead;
 
+        /// <summary>Its static predicates that are not public, by bare functor:
+        /// what a call to <c>Module$p</c> finds in it.</summary>
+        public readonly HashSet<int> Locals = new();
+
         /// <summary>Whether the module's code has been brought in.</summary>
         public bool CodeLoaded;
     }
@@ -31,10 +35,13 @@ public sealed partial class PrologEngine
     /// code while this is set.</summary>
     internal string? _attachingLibrary;
 
-    // The static predicates of every attached module, by the functor a call
-    // names: the module's own (Module$p) always, and the bare one for a public
-    // and for a predicate of a module without a module directive, which is
-    // user's (ADR-056, amendment). The library attached first answers.
+    // The static predicates of every attached module by the bare functor a
+    // call names: a public, and a predicate of a module without a module
+    // directive, which is user's (ADR-056, amendment). The library attached
+    // first answers. A call to Module$p is not indexed here: its name says
+    // which module to ask (AttachedOwnerOf), and interning that name for
+    // every predicate of every module made the attach of a large library
+    // slow.
     private Dictionary<int, AttachedModule>? _attachedByFid;
     private Dictionary<string, AttachedModule>? _attachedModules;
 
@@ -67,9 +74,26 @@ public sealed partial class PrologEngine
                 _attachedByFid.TryAdd(fid, am);
                 continue;
             }
-            _attachedByFid.TryAdd(MangleFunctor(entry.ModuleName, fid), am);
+            am.Locals.Add(fid);
             if (ownsUser && !IsMetaHelperFunctorName(fid)) _attachedByFid.TryAdd(fid, am);
         }
+    }
+
+    /// <summary>Entries of the index of attached predicates by bare functor.
+    /// For tests.</summary>
+    internal int AttachedIndexCount => _attachedByFid?.Count ?? 0;
+
+    /// <summary>The attached module a call to <paramref name="fid"/> is for:
+    /// by its bare functor, or, for <c>Module$p</c>, the module of that name
+    /// when it defines <c>p</c> and does not make it public.</summary>
+    private AttachedModule? AttachedOwnerOf(int fid)
+    {
+        if (_attachedByFid!.TryGetValue(fid, out var am)) return am;
+        if (ModuleQualify.TryDemangle(fid, out int moduleAtom, out int bare)
+            && AtomTable.GetById(moduleAtom)?.Name is { } module
+            && _attachedModules!.TryGetValue(module, out am) && am.Locals.Contains(bare))
+            return am;
+        return null;
     }
 
     /// <summary>Finds <c>Name.shum</c> on the library search path.</summary>
@@ -101,7 +125,10 @@ public sealed partial class PrologEngine
                 "existence_error", "source_sink",
                 (object)new CompoundTerm("bundle", new Term[] { new AtomTerm(name) }));
         if (!_attachedLibraryPaths.Add(path)) return;
-        AttachBundle(BundleReader.ReadFromFile(path), System.IO.Path.GetDirectoryName(path), name);
+        var read = ProfMark.Now();
+        var bundle = BundleReader.ReadFromFile(path);
+        read.AddTo(ref ProfAttachReadTicks, ref ProfAttachReadBytes);
+        AttachBundle(bundle, System.IO.Path.GetDirectoryName(path), name);
     }
 
     /// <summary>Attaches a library: declares its modules, and brings in the
@@ -110,6 +137,9 @@ public sealed partial class PrologEngine
     internal void AttachBundle(Bundle bundle, string? bundleDir, string name)
     {
         var initialization = new List<(Term Goal, string Module)>();
+        var link = ProfMark.Now();
+        var gcPause = LoadProfEnabled ? ProfGcPauseSoFar() : default;
+        int gcs = LoadProfEnabled ? System.GC.CollectionCount(0) : 0;
         _libraryBundleLoadDepth++;
         try
         {
@@ -117,16 +147,38 @@ public sealed partial class PrologEngine
             {
                 string? outer = _attachingLibrary;
                 _attachingLibrary = name;
+                var load = ProfMark.Now();
                 try { LoadBundleCore(bundle, bundleDir, initialization); }
-                finally { _attachingLibrary = outer; }
+                finally
+                {
+                    _attachingLibrary = outer;
+                    load.AddTo(ref ProfAttachLoadTicks, ref ProfAttachLoadBytes);
+                }
             });
         }
         finally { _libraryBundleLoadDepth--; }
-        // ADR-035: a library is code the user did not write.
+        link.AddTo(ref ProfAttachLinkTicks, ref ProfAttachLinkBytes);
+        // ADR-035: a library is code the user did not write. A module whose
+        // code waits is marked with its dynamic predicates, the code it can
+        // run now; its other predicates are marked when its code comes in.
+        var nonDebuggable = ProfMark.Now();
         foreach (string module in Bundles.LastLoadedModules)
-            if (module != DefaultModuleName) MarkModuleNonDebuggable(module);
+            if (module != DefaultModuleName)
+            {
+                if (IsCodePending(module)) Consults.MarkModuleNonDebuggable(module, dynamicsOnly: true);
+                else MarkModuleNonDebuggable(module);
+            }
+        nonDebuggable.AddTo(ref ProfAttachNonDebugTicks, ref ProfAttachNonDebugBytes);
+        var init = ProfMark.Now();
         foreach (var (goal, module) in initialization)
             RunInitializationGoal(goal, module);
+        init.AddTo(ref ProfAttachInitTicks, ref ProfAttachInitBytes);
+        if (LoadProfEnabled)
+        {
+            ProfAttachCalls++;
+            ProfAttachGcPause += ProfGcPauseSoFar() - gcPause;
+            ProfAttachGcs += System.GC.CollectionCount(0) - gcs;
+        }
     }
 
     /// <summary>Brings a module's code in. From a running goal, the code is
@@ -148,6 +200,8 @@ public sealed partial class PrologEngine
             LoadBundleLinkingLive(() =>
             {
                 Bundles.LoadEntryCode(am.Entry, am.ShippedClausesRead, broughtIn: true);
+                if (_nonDebuggableModules.Contains(am.Entry.ModuleName))
+                    MarkModuleNonDebuggable(am.Entry.ModuleName);
                 if (_precompiledModules.TryGetValue(am.Entry.ModuleName, out var compiled))
                     foreach (var pred in compiled.Predicates)
                         if (!_dynStore.IsDynamic(pred.FunctorId)) statics++;
@@ -196,14 +250,15 @@ public sealed partial class PrologEngine
     {
         if (_attachedByFid is null) return -1;
         AttachedLibraryLookups++;
-        if (!_attachedByFid.TryGetValue(fid, out var am))
+        if (AttachedOwnerOf(fid) is not { } am)
         {
             // A name user imported from a module with module/2 after this goal
             // was compiled: the import names the module, which is no autoload.
             if (!_modules.TryGetValue(DefaultModuleName, out var user)
                 || !user.Imports.TryGetValue(fid, out string? source)
-                || !_attachedByFid.TryGetValue(fid = MangleFunctor(source, fid), out am))
+                || AttachedOwnerOf(fid = MangleFunctor(source, fid)) is not { } imported)
                 return -1;
+            am = imported;
         }
         if (!am.CodeLoaded) BringInModule(am, engine);
         int address = LiveAddressOf(engine, fid);
@@ -306,6 +361,9 @@ public sealed partial class PrologEngine
         else RemoveStubFromStore(fid, pending.Stub);
         // Each clause as RestoreDb re-installs one: the store, the funnel of
         // every mutation, and the running goal's chain.
+        var install = ProfMark.Now();
+        try
+        {
         foreach (var seed in pending.Seeds)
             foreach (var encoded in seed.EncodedClauses)
             {
@@ -313,7 +371,10 @@ public sealed partial class PrologEngine
                 _dynStore.AppendClause(fid, clause);
                 InvalidateDynamicCache(fid);
                 if (engine is not null) AppendDynamicClauseIncremental(engine, fid, clause);
+                if (LoadProfEnabled) ProfPendingInstallClauses++;
             }
+        }
+        finally { install.AddTo(ref ProfPendingInstallTicks, ref ProfPendingInstallBytes); }
         if (engine is not null) return;
         // No goal named: the next query links the predicate from the store,
         // and each open activation's view of it is built again.

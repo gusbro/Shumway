@@ -437,11 +437,49 @@ public sealed partial class PrologEngine
     internal static long ProfPbRewriteTicks, ProfPbCompileTicks, ProfPbPartitionTicks;
     internal static long ProfPbElideTicks, ProfPbModCompileTicks, ProfPbLateHelpersTicks;
     internal static long ProfPbCompiledPreds;
+    // ADR-075: attaching a library, by phase: time and bytes allocated.
+    internal static long ProfAttachCalls, ProfAttachReadTicks, ProfAttachReadBytes;
+    internal static long ProfAttachLinkTicks, ProfAttachLinkBytes, ProfAttachLoadTicks, ProfAttachLoadBytes;
+    internal static long ProfAttachDeclareTicks, ProfAttachDeclareBytes;
+    internal static long ProfAttachNonDebugTicks, ProfAttachNonDebugBytes, ProfAttachInitTicks, ProfAttachInitBytes;
+    internal static long ProfPendingInstallClauses, ProfPendingInstallTicks, ProfPendingInstallBytes;
+    internal static int ProfAttachGcs;
+    internal static System.TimeSpan ProfAttachGcPause;
+
+    /// <summary>The load profile's clock and allocation counter at a point,
+    /// to add what a phase took since then to its counters.</summary>
+    internal readonly struct ProfMark
+    {
+        private readonly long _ticks, _bytes;
+        private ProfMark(long ticks, long bytes) { _ticks = ticks; _bytes = bytes; }
+
+        internal static ProfMark Now() => LoadProfEnabled
+            ? new(System.Diagnostics.Stopwatch.GetTimestamp(), System.GC.GetAllocatedBytesForCurrentThread())
+            : default;
+
+        internal void AddTo(ref long ticks, ref long bytes)
+        {
+            if (!LoadProfEnabled) return;
+            ticks += System.Diagnostics.Stopwatch.GetTimestamp() - _ticks;
+            bytes += System.GC.GetAllocatedBytesForCurrentThread() - _bytes;
+        }
+    }
+
+    /// <summary>The time the process spent paused for garbage collection so
+    /// far; none on .NET Framework, which does not count it.</summary>
+    internal static System.TimeSpan ProfGcPauseSoFar()
+#if NETFRAMEWORK
+        => System.TimeSpan.Zero;
+#else
+        => System.GC.GetTotalPauseDuration();
+#endif
+    internal static long ProfAttachAllocRead, ProfAttachAllocCore, ProfAttachAllocDeclare, ProfAttachAllocLink, ProfAttachAllocNonDebug, ProfAttachAllocInit;
 
     internal static void PrintLoadProfile()
     {
         if (!LoadProfEnabled) return;
         static double Ms(long t) => t * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        static string Mb(long b) => $"({b / 1048576.0:F0} MB)";
         System.Console.Error.WriteLine(
             $"[PROF] te-QueryAll: {ProfTeCalls} calls, {Ms(ProfTeTicks):F0} ms\n" +
             $"[PROF] ge-QueryAll: {ProfGeCalls} calls, {Ms(ProfGeTicks):F0} ms\n" +
@@ -453,7 +491,9 @@ public sealed partial class PrologEngine
             $"[PROF]   elide-cuts (all Compile calls): {Ms(Shumway.Compiler.Wam.ModuleCompiler.ProfElideTicks):F0} ms | pred-compile: {Shumway.Compiler.Wam.ModuleCompiler.ProfCompiledPreds} compiled / {Shumway.Compiler.Wam.ModuleCompiler.ProfSkippedPreds} skipped, {Ms(Shumway.Compiler.Wam.ModuleCompiler.ProfPredTicks):F0} ms\n" +
             $"[PROF]   pb-elide: {Ms(ProfPbElideTicks):F0} ms | pb-modcompile: {Ms(ProfPbModCompileTicks):F0} ms | pb-latehelpers: {Ms(ProfPbLateHelpersTicks):F0} ms\n" +
             $"[PROF]   product-compiled: {ProfPbCompiledPreds} | compile-calls: {Shumway.Compiler.Wam.ModuleCompiler.ProfCompileCalls} | grouping: {Ms(Shumway.Compiler.Wam.ModuleCompiler.ProfGroupTicks):F0} ms | pool-snapshots: {Ms(Shumway.Compiler.Wam.ModuleCompiler.ProfSnapshotTicks):F0} ms\n" +
-            $"[PROF] re-expand passes: {ProfReExpandCalls}, {Ms(ProfReExpandTicks):F0} ms");
+            $"[PROF] re-expand passes: {ProfReExpandCalls}, {Ms(ProfReExpandTicks):F0} ms\n" +
+            $"[PROF] attach: {ProfAttachCalls} | read {Ms(ProfAttachReadTicks):F0} ms {Mb(ProfAttachReadBytes)} | load and link {Ms(ProfAttachLinkTicks):F0} ms {Mb(ProfAttachLinkBytes)}, of which load {Ms(ProfAttachLoadTicks):F0} ms {Mb(ProfAttachLoadBytes)} and declaring modules {Ms(ProfAttachDeclareTicks):F0} ms {Mb(ProfAttachDeclareBytes)}\n" +
+            $"[PROF]   non-debuggable {Ms(ProfAttachNonDebugTicks):F0} ms {Mb(ProfAttachNonDebugBytes)} | initialization {Ms(ProfAttachInitTicks):F0} ms {Mb(ProfAttachInitBytes)} | pending clauses installed: {ProfPendingInstallClauses} in {Ms(ProfPendingInstallTicks):F0} ms {Mb(ProfPendingInstallBytes)} | GC during attach: {ProfAttachGcs} collections, {ProfAttachGcPause.TotalMilliseconds:F0} ms paused");
         if (ProfProductDrops is { } drops)
         {
             var ordered = new List<KeyValuePair<string, int>>(drops);

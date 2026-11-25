@@ -1078,11 +1078,19 @@ internal sealed class ConsultPipeline
     /// engine's <c>compile_mode</c> is whatever the user's program set — so without this
     /// the library would silently become debuggable, take stop sites, and attribute them
     /// to the user's file.</para></summary>
-    internal void MarkModuleNonDebuggable(string moduleName)
+    /// <param name="dynamicsOnly">Only the module's dynamic predicates: those
+    /// of a module of an attached library whose code is not in yet.</param>
+    internal void MarkModuleNonDebuggable(string moduleName, bool dynamicsOnly = false)
     {
         E._nonDebuggableModules.Add(moduleName);
         if (!E._modules.TryGetValue(moduleName, out var module)) return;
         var specs = new HashSet<(string Name, int Arity)>();
+        if (dynamicsOnly)
+        {
+            foreach (int fid in module.DynamicFunctors) AddSpecOf(specs, fid);
+            E._nonDebuggableFunctors.UnionWith(ResolveNonDebuggableFids(specs, moduleName));
+            return;
+        }
         foreach (var clause in module.Clauses)
             if (TryReadClauseHead(clause, out var spec))
                 specs.Add(spec);

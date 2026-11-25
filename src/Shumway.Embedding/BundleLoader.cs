@@ -396,7 +396,11 @@ internal sealed class BundleLoader
                 // initialization goals is loaded now (decision 10).
                 if (E._attachingLibrary is not null && entry.InitializationGoals.Count == 0
                     && entry.ModuleName != Prelude.ModuleName)
+                {
+                    var declare = PrologEngine.ProfMark.Now();
                     E.NoteAttachedModule(entry, LoadEntryFromBytecode(entry, deferCode: true));
+                    declare.AddTo(ref PrologEngine.ProfAttachDeclareTicks, ref PrologEngine.ProfAttachDeclareBytes);
+                }
                 else
                     LoadEntryFromBytecode(entry);
                 continue;

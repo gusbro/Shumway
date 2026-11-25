@@ -537,4 +537,44 @@ public sealed class DynamicLibraryBundleTests : IDisposable
         Assert.False(e.IsCodePending("t2"));
         Assert.True(e.Query("probe(code, K, _), K == 1.").Success, "the next query");
     }
+
+    // A module with module/2 and many predicates it does not export.
+    private void ManyLocals(int n)
+    {
+        var src = new System.Text.StringBuilder(":- module(ml, [front/1]).\n:- dynamic(note/1).\nfront(X) :- local_0(X).\n");
+        for (int i = 0; i < n; i++) src.Append("local_").Append(i).Append("(").Append(i).Append(").\n");
+        BuildLibrary("many", ("ml", src.ToString()));
+    }
+
+    private static int Fid(string name, int arity)
+        => Shumway.Core.FunctorTable.Intern(Shumway.Core.AtomTable.Intern(name).Id, arity);
+
+    [Fact]
+    public void Attaching_IndexesNoModuleQualifiedName()
+    {
+        // A call to ml$local_i names its module: the attach does not build
+        // that name for each of the module's predicates.
+        ManyLocals(300);
+        var e = Engine();
+        Assert.True(e.Query("ensure_loaded(bundle(many)).").Success);
+        Assert.True(e.IsCodePending("ml"));
+        Assert.True(e.AttachedIndexCount < 10, $"{e.AttachedIndexCount} entries");
+        Assert.True(e.Query("ml:local_299(X), X == 299.").Success);
+        Assert.False(e.IsCodePending("ml"));
+    }
+
+    [Fact]
+    public void AModuleWhoseCodeWaits_IsMarkedNonDebuggable_AsItsCodeComesIn()
+    {
+        ManyLocals(3);
+        var e = Engine();
+        Assert.True(e.Query("ensure_loaded(bundle(many)).").Success);
+        // Its dynamic predicates can run before its code is in.
+        Assert.Contains(Fid("ml$note", 1), e._nonDebuggableFunctors);
+        Assert.DoesNotContain(Fid("ml$local_1", 1), e._nonDebuggableFunctors);
+
+        Assert.True(e.Query("ml:front(X), X == 0.").Success);
+        Assert.Contains(Fid("ml$local_1", 1), e._nonDebuggableFunctors);
+        Assert.Contains(Fid("ml$front", 1), e._nonDebuggableFunctors);
+    }
 }
