@@ -66,14 +66,20 @@ internal sealed class BundleLoader
     /// <summary>ADR-038 §4: loads each library a member of an archive imports
     /// that the archive does not hold and the engine has not loaded, through
     /// use_module(library(X)), before the archive's code. The archive holds a
-    /// library when a member module is named like it.</summary>
-    private void LoadMissingLibraries(IReadOnlyList<ShmoObject> members)
+    /// library when a member module is named like it. A library bundle a
+    /// member attaches is attached first, found next to the archive or on the
+    /// library search path (ADR-075, decision 3).</summary>
+    private void LoadMissingLibraries(IReadOnlyList<ShmoObject> members, string? bundleDir = null)
     {
         var held = new List<string>();
         foreach (var member in members)
             if (_archiveModulesLoading.Add(member.ModuleName)) held.Add(member.ModuleName);
         try
         {
+            foreach (var member in members)
+                foreach (string library in member.DynamicLibraries)
+                    E.AttachLinkedLibrary(
+                        new BundleDynamicLibrary(library, Array.Empty<QualifiedPredicateRef>()), bundleDir);
             foreach (var member in members)
                 foreach (var dep in member.LibraryDeps)
                 {
@@ -320,7 +326,7 @@ internal sealed class BundleLoader
                     dialect: shmo.Dialect,
                     clauseTerms: shmo.ClauseTerms));
             }
-            LoadMissingLibraries(members);
+            LoadMissingLibraries(members, bundleDir);
             effectiveEntries = combined;
         }
         // A bundle may bake a precompiled `$prelude` entry (shumway-link

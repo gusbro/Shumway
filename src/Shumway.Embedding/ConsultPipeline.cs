@@ -1551,6 +1551,7 @@ internal sealed class ConsultPipeline
         var exports = new HashSet<int>();
         Dictionary<int, string>? pendingImports = null;
         List<string>? pendingImportedModules = null;
+        List<string>? pendingAttachedLibraries = null;
         var clauses = new List<Clause>();
         // ADR-055: the clauses this source defines for another module
         // (`M:Head :- Body`), static ones, by target. They join M's manifest
@@ -2044,8 +2045,11 @@ internal sealed class ConsultPipeline
                          Args: [CompoundTerm { Functor: "bundle", Args: [AtomTerm elBundle] }] })
             {
                 // ADR-075: attaches the library, so that this file's calls
-                // into it resolve when they run.
+                // into it resolve when they run. Recorded on the module for
+                // the linker (decision 3).
                 E.AttachBundleByName(elBundle.Name);
+                if (!(pendingAttachedLibraries ??= new()).Contains(elBundle.Name))
+                    pendingAttachedLibraries.Add(elBundle.Name);
             }
             else
             {
@@ -2496,6 +2500,8 @@ internal sealed class ConsultPipeline
                 foreach (var (fid, src) in pendingImports) manifest.Imports[fid] = src;
             if (pendingImportedModules is not null)
                 manifest.ImportedModules.AddRange(pendingImportedModules);
+            if (pendingAttachedLibraries is not null)
+                manifest.AttachedLibraries.AddRange(pendingAttachedLibraries);
             CommitDeclarations(manifest, moduleName, ownsDynamics, pendingDiscontiguous, pendingMultifileKeys);
             if (pendingModes is not null)
                 foreach (var (fid, modes) in pendingModes) manifest.ModeDeclarations[fid] = modes;
@@ -2558,6 +2564,9 @@ internal sealed class ConsultPipeline
             if (pendingImportedModules is not null)
                 foreach (string m in pendingImportedModules)
                     if (!existing.ImportedModules.Contains(m)) existing.ImportedModules.Add(m);
+            if (pendingAttachedLibraries is not null)
+                foreach (string lib in pendingAttachedLibraries)
+                    if (!existing.AttachedLibraries.Contains(lib)) existing.AttachedLibraries.Add(lib);
             CommitDeclarations(existing, moduleName, ownsDynamics, pendingDiscontiguous, pendingMultifileKeys);
             if (pendingModes is not null)
                 foreach (var (fid, modes) in pendingModes)

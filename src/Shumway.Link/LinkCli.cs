@@ -93,6 +93,10 @@ internal static class LinkCli
             }
         }
 
+        // ADR-075, decision 3: the file the consult attached for each
+        // ensure_loaded(bundle(Name)) of the sources, linked against as a
+        // --dynlib is.
+        var consultAttached = new Dictionary<string, string>(StringComparer.Ordinal);
         if (sourceInputs.Count > 0)
         {
             var libraryDirs = CollectLibraryDirs(opts.LibraryDirs);
@@ -106,7 +110,8 @@ internal static class LinkCli
                 try
                 {
                     compiled = ShmoViaConsult.CompileMany(
-                        sourceInputs, libraryDirs, ShmoBuildMode.Release, errors);
+                        sourceInputs, libraryDirs, ShmoBuildMode.Release, errors,
+                        attachedLibraries: consultAttached);
                 }
                 catch (Exception ex)
                 {
@@ -184,7 +189,7 @@ internal static class LinkCli
         var dynamicLibraries = new List<LinkDynamicLibrary>();
         foreach (string spec in opts.DynamicLibraries)
         {
-            string? path = ResolveDynamicLibrary(spec, CollectLibraryDirs(opts.LibraryDirs));
+            string? path = LinkDynamicLibrary.Find(spec, CollectLibraryDirs(opts.LibraryDirs));
             if (path is null)
             {
                 Console.Error.WriteLine(
@@ -197,6 +202,20 @@ internal static class LinkCli
             {
                 dynamicLibraries.Add(new LinkDynamicLibrary(
                     System.IO.Path.GetFileNameWithoutExtension(path), BundleReader.ReadFromFile(path)));
+            }
+            catch (Exception ex) when (ex is System.IO.InvalidDataException or System.IO.IOException)
+            {
+                Console.Error.WriteLine($"shumway-link: dynamic library {path}: {ex.Message}");
+                RemoveStaleOutputs(opts);
+                return ExitLinkError;
+            }
+        }
+        foreach (var (name, path) in consultAttached)
+        {
+            if (dynamicLibraries.Exists(l => l.Name == name)) continue;
+            try
+            {
+                dynamicLibraries.Add(new LinkDynamicLibrary(name, BundleReader.ReadFromFile(path)));
             }
             catch (Exception ex) when (ex is System.IO.InvalidDataException or System.IO.IOException)
             {
@@ -871,20 +890,6 @@ internal static class LinkCli
     // sitting next to the executables, so a program the REPL runs and
     // shumway-compile compiles must also link without being told where the
     // libraries are. Lowest precedence, so an explicit -L still wins.
-    // A --dynlib argument: a file, or a name found as name.shum in a library
-    // directory.
-    private static string? ResolveDynamicLibrary(string spec, List<string> libraryDirs)
-    {
-        if (System.IO.File.Exists(spec)) return System.IO.Path.GetFullPath(spec);
-        string file = spec.EndsWith(".shum", StringComparison.OrdinalIgnoreCase) ? spec : spec + ".shum";
-        foreach (string dir in libraryDirs)
-        {
-            string candidate = System.IO.Path.Combine(dir, file);
-            if (System.IO.File.Exists(candidate)) return System.IO.Path.GetFullPath(candidate);
-        }
-        return null;
-    }
-
     private static List<string> CollectLibraryDirs(List<string> flagged)
     {
         var dirs = new List<string>(flagged);

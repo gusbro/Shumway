@@ -62,7 +62,13 @@ public static class ShmoViaConsult
     /// load (a host sets its <see cref="PrologEngine.LibrarySourceResolver"/>
     /// there). A module a bundle brought in is that bundle's and gets no
     /// object; the objects that import it record it as a library dependency
-    /// (ADR-038 §4).</para></summary>
+    /// (ADR-038 §4).</para>
+    ///
+    /// <para>A library bundle a module attaches with
+    /// <c>:- ensure_loaded(bundle(Name))</c> is recorded in that module's
+    /// object (ADR-075, decision 3). <paramref name="attachedLibraries"/>, when
+    /// given, takes the file the consult attached for each name, which a link
+    /// of these objects links against.</para></summary>
     public static List<(string ModuleName, ShmoObject Object, System.DateTime SourceTimeUtc, bool IsRoot)> CompileMany(
         IReadOnlyList<string> rootPaths,
         IReadOnlyList<string> libraryDirs,
@@ -71,7 +77,8 @@ public static class ShmoViaConsult
         string? dialect = null,
         System.IO.TextWriter? warnings = null,
         System.Action<PrologEngine>? configure = null,
-        bool withSource = false)
+        bool withSource = false,
+        IDictionary<string, string>? attachedLibraries = null)
     {
         // Strict: consult mode is how the toolchain compiles sources, so a
         // clause that does not parse fails the build (the object it would
@@ -284,6 +291,7 @@ public static class ShmoViaConsult
                 exports: exports,
                 imports: imports,
                 libraryDeps: libraryDeps,
+                dynamicLibraries: manifest.AttachedLibraries,
                 dialect: manifest.Dialect,
                 metaArgSpec: e.MetaArgSpec,
                 // A Module:Goal resolves as the consult that loaded this module
@@ -306,6 +314,8 @@ public static class ShmoViaConsult
             var entry = (name, res.Object, srcTime, isRoot);
             if (name == primaryRoot) results.Insert(0, entry); else results.Add(entry);
         }
+        if (attachedLibraries is not null)
+            foreach (var (name, path) in e._bundlesAttachedByName) attachedLibraries[name] = path;
         return results;
     }
 

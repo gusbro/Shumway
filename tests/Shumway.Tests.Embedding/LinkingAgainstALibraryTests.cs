@@ -183,4 +183,188 @@ counter(0).
         Assert.Equal("source_sink", ex.Detail);
         Assert.Equal("bundle(lib)", ex.Value?.ToString());
     }
+
+    // ADR-075, decision 3: `:- ensure_loaded(bundle(x))` in an input means to
+    // the linker what --dynlib x means.
+
+    private const string Attaching = ":- ensure_loaded(bundle(lib)).\n" + Program;
+
+    [Fact]
+    public void TheDirective_IsRecordedInTheObject_AndReadBack()
+    {
+        var res = ShmoCompiler.TryCompileSource(Attaching, "prog");
+        Assert.NotNull(res.Object);
+        Assert.DoesNotContain(res.Warnings, w => w.Message.Contains("ensure_loaded"));
+        Assert.Equal(new[] { "lib" }, res.Object!.DynamicLibraries);
+        Assert.Equal(new[] { "lib" }, ShmoReader.FromBytes(ShmoWriter.ToBytes(res.Object)).DynamicLibraries);
+    }
+
+    [Fact]
+    public void AnObjectThatAttachesALibrary_LinksAgainstIt_FoundOnTheSearchPath()
+    {
+        FullLibrary();
+        var link = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { ShmoCompiler.CompileSource(Attaching, "prog") },
+            EntryPoints = new[] { new PredicateRef("main", 2) },
+            LibraryDirs = new[] { _dir },
+        });
+        string prog = WriteProgram(link);
+        Assert.Equal("lib:[:pa/1,mq:hidden/1]", Uses(link.Bundle!));
+
+        var e = Engine();
+        e.LoadBundle(prog);
+        Assert.True(e.Query("main(X, Y), X == 1, Y == 42.").Success);
+    }
+
+    [Fact]
+    public void AModuleTheAttachedLibraryHas_IsNotLinkedInFromTheSearchPath()
+    {
+        FullLibrary();
+        string src = Path.Combine(_dir, "src");
+        Directory.CreateDirectory(src);
+        File.WriteAllText(Path.Combine(src, "mq.pl"), Mq);
+        var link = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { ShmoCompiler.CompileSource(
+                ":- ensure_loaded(bundle(lib)).\n:- use_module(library(mq)).\nr(X) :- q(X).\n", "prog") },
+            EntryPoints = new[] { new PredicateRef("r", 1) },
+            LibraryDirs = new[] { src, _dir },
+        });
+        Assert.True(link.Success, string.Join("; ", link.Diagnostics.Select(d => d.Message)));
+        Assert.DoesNotContain(link.Bundle!.Entries, en => en.ModuleName == "mq");
+        Assert.Equal("lib:[mq:q/1]", Uses(link.Bundle!));
+    }
+
+    [Fact]
+    public void ADependencyFromTheSearchPathThatAttachesALibrary_LinksAgainstIt()
+    {
+        FullLibrary();
+        string src = Path.Combine(_dir, "src");
+        Directory.CreateDirectory(src);
+        File.WriteAllText(Path.Combine(src, "helper.pl"),
+            ":- module(helper, [first/1]).\n:- ensure_loaded(bundle(lib)).\nfirst(X) :- pa(X), !.\n");
+        var link = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { ShmoCompiler.CompileSource(
+                ":- use_module(library(helper)).\nr(X) :- first(X).\n", "prog") },
+            EntryPoints = new[] { new PredicateRef("r", 1) },
+            LibraryDirs = new[] { src, _dir },
+        });
+        string prog = WriteProgram(link);
+        Assert.Contains(link.Bundle!.Entries, en => en.ModuleName == "helper");
+        Assert.Equal("lib:[:pa/1]", Uses(link.Bundle!));
+        var e = Engine();
+        e.LoadBundle(prog);
+        Assert.True(e.Query("r(X), X == 1.").Success);
+    }
+
+    // A member an archive gives the link is read before the search path is,
+    // as an input is: what its library has is not linked in from a source.
+    [Fact]
+    public void AMemberOfAnArchiveThatAttachesALibrary_LinksAgainstIt_BeforeTheSearchPath()
+    {
+        FullLibrary();
+        string src = Path.Combine(_dir, "src");
+        Directory.CreateDirectory(src);
+        File.WriteAllText(Path.Combine(src, "mq.pl"), Mq);
+        var member = ShmoCompiler.CompileSource(
+            ":- public(first/1).\n:- ensure_loaded(bundle(lib)).\n:- use_module(library(mq)).\nfirst(X) :- q(X).\n",
+            "helper");
+        var link = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { ShmoCompiler.CompileSource("r(X) :- first(X).\n", "prog") },
+            Libraries = new[] { new LinkLibrary("helpers.shum", new[] { member }) },
+            EntryPoints = new[] { new PredicateRef("r", 1) },
+            LibraryDirs = new[] { src, _dir },
+        });
+        string prog = WriteProgram(link);
+        Assert.Contains(link.Bundle!.Entries, en => en.ModuleName == "helper");
+        Assert.DoesNotContain(link.Bundle!.Entries, en => en.ModuleName == "mq");
+        Assert.Equal("lib:[mq:q/1]", Uses(link.Bundle!));
+        var e = Engine();
+        e.LoadBundle(prog);
+        Assert.True(e.Query("r(X), X == 42.").Success);
+    }
+
+    [Fact]
+    public void TheDirectiveAndTheOption_NameTheLibraryOnce()
+    {
+        string lib = FullLibrary();
+        var link = LinkProgram(":- ensure_loaded(bundle(lib)).\n" + Program, lib, new PredicateRef("main", 2));
+        Assert.True(link.Success, string.Join("; ", link.Diagnostics.Select(d => d.Message)));
+        Assert.Equal("lib:[:pa/1,mq:hidden/1]", Uses(link.Bundle!));
+    }
+
+    [Fact]
+    public void ALibraryTheLinkDoesNotFind_FailsIt_OrIsAttachedAtLoadUnderAllowUndefined()
+    {
+        LinkConfig Config(bool allowUndefined) => new()
+        {
+            Objects = new[] { ShmoCompiler.CompileSource(Attaching, "prog") },
+            EntryPoints = new[] { new PredicateRef("main", 2) },
+            AllowUndefined = allowUndefined,
+        };
+        var failed = ShmoLinker.Link(Config(false));
+        Assert.False(failed.Success);
+        Assert.Contains(failed.Diagnostics, d => d.Code == "unresolved_dynamic_library"
+            && d.Severity == LinkSeverity.Error && d.Message.Contains("'lib'"));
+
+        var link = ShmoLinker.Link(Config(true));
+        string prog = WriteProgram(link);
+        Assert.Contains(link.Diagnostics, d => d.Code == "unresolved_dynamic_library"
+            && d.Severity == LinkSeverity.Warning);
+        Assert.Equal("lib:[]", Uses(link.Bundle!));
+
+        FullLibrary();
+        var e = Engine();
+        e.LoadBundle(prog);
+        Assert.True(e.IsCodePending("ma"));
+        Assert.True(e.Query("main(X, Y), X == 1, Y == 42.").Success);
+    }
+
+    [Fact]
+    public void ConsultedForTheLink_TheModuleThatAttaches_RecordsIt_AndTheLibraryGivesNoObject()
+    {
+        string lib = FullLibrary();
+        string src = Path.Combine(_dir, "src");
+        Directory.CreateDirectory(src);
+        string root = Path.Combine(src, "prog.pl");
+        File.WriteAllText(root, Attaching);
+        var errors = new List<ShmoCompileError>();
+        var attached = new Dictionary<string, string>();
+        var compiled = ShmoViaConsult.CompileMany(new[] { root }, new[] { _dir }, ShmoBuildMode.Release,
+            errors, warnings: new StringWriter(), attachedLibraries: attached);
+        Assert.Empty(errors);
+        Assert.Equal(new[] { "prog" }, compiled.Select(c => c.ModuleName));
+        Assert.Equal(new[] { "lib" }, compiled[0].Object.DynamicLibraries);
+        Assert.Equal(Path.GetFullPath(lib), attached["lib"], ignoreCase: true);
+
+        var link = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = compiled.Select(c => c.Object).ToArray(),
+            EntryPoints = new[] { new PredicateRef("main", 2) },
+            LibraryDirs = new[] { _dir },
+        });
+        string prog = WriteProgram(link);
+        Assert.Equal("lib:[:pa/1,mq:hidden/1]", Uses(link.Bundle!));
+        var e = Engine();
+        e.LoadBundle(prog);
+        Assert.True(e.Query("main(X, Y), X == 1, Y == 42.").Success);
+    }
+
+    [Fact]
+    public void AnArchiveWhoseMemberAttachesALibrary_AttachesItWhenItLoads()
+    {
+        FullLibrary();
+        string archive = Path.Combine(_dir, "progs.shum");
+        File.WriteAllBytes(archive, Librarian.CreateArchive(new[]
+        {
+            new BundleArchiveMember("prog.shmo", ShmoWriter.ToBytes(ShmoCompiler.CompileSource(Attaching, "prog"))),
+        }));
+        var e = Engine();
+        e.LoadBundle(archive);
+        Assert.True(e.IsCodePending("mz"));
+        Assert.True(e.Query("prog:main(X, Y), X == 1, Y == 42.").Success);
+    }
 }

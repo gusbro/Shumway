@@ -96,6 +96,44 @@ public static class ShmoLinker
         // a call the inputs leave undefined is resolved against them, and
         // what was used of each is recorded in the bundle.
         var dynlib = new DynlibRegistry(config.DynamicLibraries);
+        // Decision 3: a library an input attaches with
+        // `:- ensure_loaded(bundle(x))` is linked against as a --dynlib is,
+        // found on the library search path, and before a dependency is
+        // looked for there: a module the library has is not linked in. One
+        // the link cannot find is still recorded under --allow-undefined:
+        // the bundle attaches it when it loads, as the source does when it
+        // is consulted.
+        void AddAttachedLibraries(IEnumerable<ShmoObject> objs)
+        {
+            foreach (var obj in objs)
+                foreach (string name in obj.DynamicLibraries)
+                {
+                    if (dynlib.Has(name)) continue;
+                    string? path = LinkDynamicLibrary.FindByName(name, config.LibraryDirs);
+                    if (path is null)
+                    {
+                        Emit(config.AllowUndefined ? LinkSeverity.Warning : LinkSeverity.Error,
+                            "unresolved_dynamic_library",
+                            $"library bundle '{name}' (attached by '{obj.ModuleName}') was not found: "
+                            + $"there is no {name}.shum on the library search path (pass "
+                            + "--library-dir <dir>, or give the file with --dynlib).",
+                            obj.ModuleName);
+                        if (config.AllowUndefined) dynlib.AddUnread(name);
+                        continue;
+                    }
+                    try
+                    {
+                        dynlib.Add(new LinkDynamicLibrary(name, BundleReader.ReadFromFile(path)));
+                    }
+                    catch (Exception ex) when (ex is InvalidDataException or IOException)
+                    {
+                        Emit(LinkSeverity.Error, "unreadable_dynamic_library",
+                            $"library bundle {path} (attached by '{obj.ModuleName}'): {ex.Message}",
+                            obj.ModuleName);
+                        dynlib.AddUnread(name);
+                    }
+                }
+        }
 
         // ----- 0a. Library resolution (C-archive semantics) -----
         // Explicit .shmo objects always link; .shum library members are pulled
@@ -109,13 +147,17 @@ public static class ShmoLinker
             ? config.Objects
             : PullLibraryMembers(config.Objects, config.Libraries,
                 config.EntryPoints, foreignIndicators, Emit);
+        AddAttachedLibraries(linkInput);
 
         // ADR-038 — resolve use_module(library(X)) deps from the search path:
         // compile and link X.pl for any dependency the explicit objects / .shum
         // libraries left unprovided, transitively (C-linker order: already-provided
         // inputs win, source compilation last).
         if (config.LibraryDirs.Count > 0)
+        {
             linkInput = PullLibraryDirDeps(linkInput, config.LibraryDirs, dynlib.Modules, Emit);
+            AddAttachedLibraries(linkInput);
+        }
         var archived = new HashSet<string>();
         foreach (var lib in config.Libraries)
             foreach (var m in lib.Members)
@@ -942,7 +984,8 @@ public static class ShmoLinker
                         // ADR-038 — carry the resolved import table (preserve mangling).
                         isExportQualified: obj.IsExportQualified,
                         exports: obj.Exports, imports: obj.Imports,
-                        libraryDeps: obj.LibraryDeps);
+                        libraryDeps: obj.LibraryDeps,
+                        dynamicLibraries: obj.DynamicLibraries);
                     if (recompiled.Success && recompiled.Object is { } robj
                         && robj.Bytecode.Length > 0)
                     {
@@ -1414,7 +1457,8 @@ public static class ShmoLinker
                 // does not lose the import mangling.
                 isExportQualified: obj.IsExportQualified,
                 exports: obj.Exports, imports: obj.Imports,
-                libraryDeps: obj.LibraryDeps);
+                libraryDeps: obj.LibraryDeps,
+                dynamicLibraries: obj.DynamicLibraries);
             if (!res.Success || res.Object is null)
             {
                 emit(LinkSeverity.Warning, "lto_unfold_recompile_failed",
@@ -1542,7 +1586,8 @@ public static class ShmoLinker
                 // ADR-038 — carry the resolved import table (preserve mangling).
                 isExportQualified: obj.IsExportQualified,
                 exports: obj.Exports, imports: obj.Imports,
-                libraryDeps: obj.LibraryDeps);
+                libraryDeps: obj.LibraryDeps,
+                dynamicLibraries: obj.DynamicLibraries);
             if (!res.Success || res.Object is null)
             {
                 emit(LinkSeverity.Warning, "lto_cut_elision_recompile_failed",
@@ -1860,29 +1905,43 @@ public static class ShmoLinker
 
         public DynlibRegistry(IReadOnlyList<LinkDynamicLibrary> libraries)
         {
-            foreach (var lib in libraries)
+            foreach (var lib in libraries) Add(lib);
+        }
+
+        public bool Has(string name) => _usesOf.ContainsKey(name);
+
+        /// <summary>A library after those already here: what it offers that an
+        /// earlier one does not.</summary>
+        public void Add(LinkDynamicLibrary lib)
+        {
+            if (!AddUnread(lib.Name)) return;
+            foreach (var (module, qualified, defined, exports) in ModulesOf(lib.Library))
             {
-                if (_usesOf.ContainsKey(lib.Name)) continue;
-                var uses = new HashSet<QualifiedPredicateRef>();
-                _libraries.Add((lib.Name, uses));
-                _usesOf[lib.Name] = uses;
-                foreach (var (module, qualified, defined, exports) in ModulesOf(lib.Library))
+                if (!Modules.Add(module)) continue;
+                if (qualified)
                 {
-                    if (!Modules.Add(module)) continue;
-                    if (qualified)
-                    {
-                        _exports[module] = (lib.Name, new HashSet<PredicateRef>(exports));
-                        ExportsByModule[module] = exports;
-                    }
-                    foreach (var d in defined)
-                    {
-                        _qualified.TryAdd((module, d.Indicator), lib.Name);
-                        if (d.Visibility == PredicateVisibility.Public
-                            || (!qualified && !IsCompilerHelper(d.Indicator)))
-                            _global.TryAdd(d.Indicator, lib.Name);
-                    }
+                    _exports[module] = (lib.Name, new HashSet<PredicateRef>(exports));
+                    ExportsByModule[module] = exports;
+                }
+                foreach (var d in defined)
+                {
+                    _qualified.TryAdd((module, d.Indicator), lib.Name);
+                    if (d.Visibility == PredicateVisibility.Public
+                        || (!qualified && !IsCompilerHelper(d.Indicator)))
+                        _global.TryAdd(d.Indicator, lib.Name);
                 }
             }
+        }
+
+        /// <summary>A library recorded with nothing it offers: the bundle
+        /// attaches it, and uses none of it. False when it is here.</summary>
+        public bool AddUnread(string name)
+        {
+            if (_usesOf.ContainsKey(name)) return false;
+            var uses = new HashSet<QualifiedPredicateRef>();
+            _libraries.Add((name, uses));
+            _usesOf[name] = uses;
+            return true;
         }
 
         private static IEnumerable<(string Module, bool Qualified, IReadOnlyList<ShmoDefinedPredicate> Defined,
@@ -2134,7 +2193,8 @@ public static class ShmoLinker
             isExportQualified: obj.IsExportQualified,
             exports: obj.Exports,
             imports: imports,
-            libraryDeps: obj.LibraryDeps);
+            libraryDeps: obj.LibraryDeps,
+            dynamicLibraries: obj.DynamicLibraries);
         if (!res.Success || res.Object is null)
         {
             emit(LinkSeverity.Warning, "import_resolve_recompile_failed",

@@ -264,6 +264,11 @@ public static class ShmoReader
         // ADR-040 — the source dialect (null = Shumway/ISO).
         string? dialect = br.ReadBoolean() ? ReadLengthPrefixedUtf8(br) : null;
 
+        // ADR-075, decision 3 — the library bundles the module attaches.
+        uint dynlibCount = br.ReadUInt32();
+        var dynamicLibraries = new string[dynlibCount];
+        for (uint i = 0; i < dynlibCount; i++) dynamicLibraries[i] = ReadLengthPrefixedUtf8(br);
+
         return new ShmoObject(moduleName, source, bytecode,
             defined, ensureLinked, callGraph, qrefs, buildMode, dynamicSeeds,
             clauseTerms, arityCompat, nativeBlocks, nativeFunctions, nativeDecls,
@@ -271,7 +276,8 @@ public static class ShmoReader
             isExportQualified: isExportQualified, exports: exports,
             imports: imports, libraryDeps: libraryDeps, dialect: dialect,
             generatorVersion: generatorVersion, flags: flags,
-            initializationGoals: initializationGoals);
+            initializationGoals: initializationGoals,
+            dynamicLibraries: dynamicLibraries);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

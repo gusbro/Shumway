@@ -5,9 +5,9 @@
 Proposed (2026-11-23). In implementation: attaching with
 `ensure_loaded(bundle(x))`, the modules brought in on demand (decisions 2,
 4, 7, 8 and 10), the clauses of a dynamic predicate (decision 9), the
-reflection of decision 11, and the linker option with the record in the
-bundle (decisions 5 and 6) are in. The directive of decision 3 is not yet
-read by the linker: `--dynlib` is the way to link against a library. Extends section 4
+reflection of decision 11, the linker option with the record in the bundle
+(decisions 5 and 6), and the directive read by the linker (decision 3) are
+in. Extends section 4
 of [ADR-038](038-library-loading.md), which loads the dependencies a
 librarian archive leaves out, and builds on the amendment of 2026-11-23 to
 [ADR-056](056-private-predicates-stay-private.md).
@@ -90,6 +90,16 @@ from the start.
    file or a name found in the `-L` directories. A directive
    `:- ensure_loaded(bundle(x))` in an input means the same to the linker.
    `library(x)` keeps its meaning: it loads `x`.
+
+   The compiler records the directive in the module's `.shmo`, by name. The
+   link finds `x.shum` on the library search path, before it looks there for
+   the inputs' dependencies, so a module the library has is not linked in
+   from a source. A link through the consult (`--consult`) takes the file
+   the consult attached. A library the link does not find fails it; under
+   `--allow-undefined` it is recorded with no uses, and the bundle attaches
+   it when it loads, as the source does when it is consulted. A librarian
+   archive whose member records it attaches it when it loads, found next to
+   the archive or on the search path.
 4. **The module is the unit of code that is brought in.** Bringing a module
    in loads the code of all its predicates and its Tier-1 code. When a
    running goal brings it in, the code is linked into that goal, as a
@@ -215,8 +225,9 @@ page.
   it while it still offers what they call. A predicate that keeps its name
   and changes its meaning is not detected; a version a library declares
   could cover it later.
-- The bundle format gains the registry and the record of decision 5, which
-  moves its stamp (ADR-009, amendment): every bundle is built again.
+- The bundle format gains the registry and the record of decision 5, and
+  the object format the record of decision 3, which moves their stamp
+  (ADR-009, amendment): every bundle and every object is built again.
 
 ## Open questions
 

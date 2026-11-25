@@ -49,6 +49,10 @@ public sealed partial class PrologEngine
     private readonly HashSet<int> _pendingModuleAtoms = new();
     private readonly HashSet<string> _attachedLibraryPaths = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>The file each <c>ensure_loaded(bundle(Name))</c> attached, by
+    /// the name it gave, the first time it gave it.</summary>
+    internal readonly Dictionary<string, string> _bundlesAttachedByName = new(StringComparer.Ordinal);
+
     /// <summary>Whether <paramref name="module"/> is declared by an attached
     /// library and its code is not in yet.</summary>
     internal bool IsCodePending(string module)
@@ -123,6 +127,7 @@ public sealed partial class PrologEngine
             throw new PrologRuntimeException(
                 "existence_error", "source_sink",
                 (object)new CompoundTerm("bundle", new Term[] { new AtomTerm(name) }));
+        _bundlesAttachedByName.TryAdd(name, path);
         if (!_attachedLibraryPaths.Add(path)) return;
         var read = ProfMark.Now();
         var bundle = BundleReader.ReadFromFile(path);
@@ -643,6 +648,7 @@ public sealed partial class PrologEngine
         _attachedModules = null;
         _pendingModuleAtoms.Clear();
         _attachedLibraryPaths.Clear();
+        _bundlesAttachedByName.Clear();
     }
 
     /// <summary>Forgets the clauses pending for a predicate that is losing
