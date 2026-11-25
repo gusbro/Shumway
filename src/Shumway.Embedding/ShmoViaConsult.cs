@@ -70,7 +70,8 @@ public static class ShmoViaConsult
         List<ShmoCompileError> errors,
         string? dialect = null,
         System.IO.TextWriter? warnings = null,
-        System.Action<PrologEngine>? configure = null)
+        System.Action<PrologEngine>? configure = null,
+        bool withSource = false)
     {
         // Strict: consult mode is how the toolchain compiles sources, so a
         // clause that does not parse fails the build (the object it would
@@ -257,9 +258,19 @@ public static class ShmoViaConsult
             }
 
             var localErrors = new List<ShmoCompileError>();
+            // The module's file as it is on disk, when it was asked for and
+            // the load came from one. Only in a release build: the link
+            // promotes a debug build's local entry points by compiling its text,
+            // and the text of a module this consult built need not compile
+            // alone (its hooks and operators may come from others).
+            string kept = "";
+            if (withSource && buildMode == ShmoBuildMode.Release
+                && e._moduleSourceFile.TryGetValue(name, out string? file)
+                && file is not null && System.IO.File.Exists(file))
+                kept = Shumway.Core.TextFile.ReadAllText(file);
             var res = ShmoCompiler.CompileFromParts(
                 name,
-                source: "",
+                source: kept,
                 rawClauses: raw,
                 publicSet: publicSet,
                 dynamicSet: dynamicSet,
@@ -281,7 +292,8 @@ public static class ShmoViaConsult
                 // (atts generates one per clause of a module's get_atts).
                 qualifiedResolver: e.ResolveQualifiedStatic,
                 isVisibleGlobal: e.IsVisibleGlobalFunctor,
-                sourceOwnsDynamics: e.ModuleOwnsDynamics);
+                sourceOwnsDynamics: e.ModuleOwnsDynamics,
+                keepSource: withSource);
             if (res.Object is null)
             {
                 foreach (var err in localErrors)

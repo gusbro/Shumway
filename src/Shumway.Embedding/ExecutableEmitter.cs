@@ -114,20 +114,32 @@ public static partial class ExecutableEmitter
                     "cannot inspect the bundle for --debug: " + ex.Message));
                 return new ExecutableEmitResult(false, null, diagnostics);
             }
-            bool anySource = false;
+            // Debuggable code is what a debugger stops in, and the text is what it
+            // shows: a module with only one of them cannot be debugged.
+            bool anyDebuggable = false;
             foreach (var e in inspected.Entries)
             {
                 if (e.ModuleName == Prelude.ModuleName) continue;
-                if (!string.IsNullOrEmpty(e.Source)) { anySource = true; break; }
+                if (string.IsNullOrEmpty(e.Source) || e.CompiledBytecode is not { Length: > 0 } code)
+                    continue;
+                bool debuggable = false;
+                try
+                {
+                    foreach (var pred in CompiledModuleCodec.Decode(code).Predicates)
+                        if (pred.IsDebuggable) { debuggable = true; break; }
+                }
+                catch (Exception) { /* undecodable: not debuggable code */ }
+                if (debuggable) { anyDebuggable = true; break; }
             }
-            if (!anySource)
+            if (!anyDebuggable)
             {
                 diagnostics.Add(new LinkDiagnostic(LinkSeverity.Error,
                     "debug_no_source",
-                    "--debug requires the bundle to carry module source, but every module in "
-                    + "it is source-stripped. Compile the inputs with `shumway-compile --debug` "
-                    + "(release .shmo objects are source-stripped) and link without --strip, so "
-                    + "the executable can materialise the source the debugger opens."));
+                    "--debug requires a module compiled debuggable that carries its source, "
+                    + "and the bundle has none. Compile the inputs with `shumway-compile --debug` "
+                    + "(a release object, with or without --with-source, has no code to stop in) "
+                    + "and link without --strip, so the executable can materialise the source "
+                    + "the debugger opens."));
                 return new ExecutableEmitResult(false, null, diagnostics);
             }
         }
