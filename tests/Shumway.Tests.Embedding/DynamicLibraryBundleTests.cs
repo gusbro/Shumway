@@ -659,6 +659,42 @@ public sealed class DynamicLibraryBundleTests : IDisposable
         Assert.True(e.Query("findall(K-V, tbl(K, V), L), L == [z-0, y-1, a-1, b-2, c-3].").Success);
     }
 
+    // Two modules without a module directive define dup/1, and the second
+    // comes in first: the aliases the links use, kept up as modules come in,
+    // are the ones built whole from the modules that are in, the first
+    // module answering for dup/1.
+    [Fact]
+    public void TheAliasesOfBareModules_AreTheOnesBuiltWhole_WhicheverComesInFirst()
+    {
+        BuildLibrary("dups",
+            ("d1", @"
+                dup(one).
+                only1(1).
+                "),
+            ("d2", @"
+                dup(two).
+                only2(2).
+                "));
+        var e = Engine();
+        Assert.True(e.Query("true.").Success);
+        Assert.True(e.Query("ensure_loaded(bundle(dups)).").Success);
+        Assert.True(e.Query("only2(2).").Success);
+        Assert.True(e.IsCodePending("d1"));
+        Assert.Equal(PrologEngine.MangleFunctor("d2", Fid("dup", 1)), e.BareLibraryAliases()![Fid("dup", 1)]);
+        Assert.True(e.Query("only1(1).").Success);
+        var whole = new Dictionary<int, int>();
+        foreach (string module in e._bareLibraryModules)
+            if (!e.IsCodePending(module) && e._precompiledModuleLocals.TryGetValue(module, out var set))
+                foreach (int fid in set)
+                    if (!PrologEngine.IsMetaHelperFunctorName(fid))
+                        whole.TryAdd(fid, PrologEngine.MangleFunctor(module, fid));
+        var kept = e.BareLibraryAliases()!;
+        Assert.Equal(whole.Count, kept.Count);
+        foreach (var (fid, to) in whole) Assert.Equal(to, kept[fid]);
+        Assert.Equal(PrologEngine.MangleFunctor("d1", Fid("dup", 1)), kept[Fid("dup", 1)]);
+        Assert.True(e.Query("dup(X), X == one.").Success);
+    }
+
     // A table only the library declares turns hot: it is laid out indexed in
     // place, and the product holds it from then on.
     [Fact]

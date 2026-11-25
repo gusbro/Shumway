@@ -473,7 +473,6 @@ public sealed partial class PrologEngine
 #else
         => System.GC.GetTotalPauseDuration();
 #endif
-    internal static long ProfAttachAllocRead, ProfAttachAllocCore, ProfAttachAllocDeclare, ProfAttachAllocLink, ProfAttachAllocNonDebug, ProfAttachAllocInit;
 
     internal static void PrintLoadProfile()
     {
