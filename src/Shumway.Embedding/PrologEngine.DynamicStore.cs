@@ -1365,6 +1365,13 @@ public sealed partial class PrologEngine
         // failure for every loaded predicate (its own program included).
         set.UnionWith(_precompiledStaticPredicates.Keys);
         global.UnionWith(_precompiledStaticPredicates.Keys);
+        // ADR-075, decision 11: a module of an attached library defines its
+        // predicates before its code is in.
+        foreach (int fid in PendingAttachedFunctors())
+        {
+            set.Add(fid);
+            global.Add(fid);
+        }
         _nonTerminalFunctorsCache = nonTerminals;
         _globalStaticHeadFunctorsCache = global;
         _staticHeadFunctorsCache = set;

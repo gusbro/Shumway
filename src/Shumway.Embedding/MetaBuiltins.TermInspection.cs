@@ -921,6 +921,7 @@ public static partial class MetaBuiltins
 
         var candidates = new List<Clause>();
         host.InstallPendingClauses(engine, fid);
+        host.BringInOwnerOf(engine, fid);
         candidates.AddRange(host.DynamicClausesFor(fid));
         candidates.AddRange(host.StaticClausesFor(fid));
 
@@ -970,6 +971,7 @@ public static partial class MetaBuiltins
         Term headPattern = MaterializeRegister(engine, 0);
         int fid = ExtractCallableFunctorId(headPattern, "clause/2");
 
+        host.BringInOwnerOf(engine, fid);
         IReadOnlyList<Clause> statics = host.StaticClausesFor(fid);
         // ISO §8.8.1.3: clause/2 reads public procedures only — dynamic, or
         // static and declared `:- public` (the ISO public-procedure notion);
@@ -1271,6 +1273,7 @@ public static partial class MetaBuiltins
         // the global one in the legacy world, M's own or its import's
         // source otherwise.
         IEnumerable<Clause> source;
+        host.EnsureModuleCode(engine, mod.Name);
         int key = host.DatabaseFunctorFor(mod.Name, fid, create: false);
         if (host.IsDynamic(key))
         {

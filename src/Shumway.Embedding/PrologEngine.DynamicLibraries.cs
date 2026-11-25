@@ -227,6 +227,45 @@ public sealed partial class PrologEngine
         InvalidateLayout(statics: true);
     }
 
+    /// <summary>ADR-075, decision 11: the static predicates of an attached
+    /// module are defined before its code is in. Their bare functors, the
+    /// ones its code gives the program when it comes in: for the set of
+    /// defined predicates.</summary>
+    internal IEnumerable<int> PendingAttachedFunctors()
+    {
+        if (_attachedByFid is null) yield break;
+        foreach (var (fid, am) in _attachedByFid)
+            if (!am.CodeLoaded) yield return fid;
+    }
+
+    /// <summary>Decision 11: <c>clause/2</c> of a static predicate brings its
+    /// module in, so its clauses are there to read.</summary>
+    internal void BringInOwnerOf(Activation engine, int fid)
+    {
+        if (_attachedByFid is not null && AttachedOwnerOf(fid) is { CodeLoaded: false } am)
+            BringInModule(am, engine);
+    }
+
+    /// <summary><c>listing/1</c> names a predicate by its name, and its arity
+    /// or not (<paramref name="arity"/> -1): every attached module whose
+    /// code is not in and that defines a static predicate of that name comes
+    /// in, so the listing finds its clauses.</summary>
+    internal void BringInDefinersOf(Activation engine, string name, int arity)
+    {
+        if (_attachedModules is null) return;
+        foreach (var am in new List<AttachedModule>(_attachedModules.Values))
+        {
+            if (am.CodeLoaded) continue;
+            foreach (var d in am.Entry.Defined)
+                if (d.Visibility != PredicateVisibility.Dynamic && d.Indicator.Name == name
+                    && (arity < 0 || d.Indicator.Arity == arity))
+                {
+                    BringInModule(am, engine);
+                    break;
+                }
+        }
+    }
+
     /// <summary>Brings in the module <paramref name="module"/> names, when an
     /// attached library declares it and its code is not in: a qualified call
     /// <c>m:Goal</c> made at run time knows its module before it looks the

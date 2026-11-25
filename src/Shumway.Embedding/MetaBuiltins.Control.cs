@@ -919,6 +919,27 @@ public static partial class MetaBuiltins
         return true;
     }
 
+    /// <summary><c>'$dynlib_bring_in'(+Module, +Name, ?Arity)</c>: before a
+    /// listing, brings in the attached modules whose code it would read
+    /// (ADR-075, decision 11): <paramref name="Module"/> when it is one, else
+    /// (<c>[]</c>) the ones that define <c>Name</c>, of <c>Arity</c> when it
+    /// is bound. Always succeeds.</summary>
+    public static bool DynlibBringIn(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException("$dynlib_bring_in/3: PrologEngine host required.");
+        Term module = MaterializeRegister(engine, 0);
+        if (module is AtomTerm { Name: not "[]" } m)
+        {
+            host.EnsureModuleCode(engine, m.Name);
+            return true;
+        }
+        if (MaterializeRegister(engine, 1) is not AtomTerm name) return true;
+        int arity = MaterializeRegister(engine, 2) is IntTerm a ? (int)a.Value : -1;
+        host.BringInDefinersOf(engine, name.Name, arity);
+        return true;
+    }
+
     /// <summary><c>'$clause_ref_fetch'(+Ref, ?Head, ?Body)</c> — unifies
     /// Head/Body with the clause the reference designates; fails when the
     /// clause was erased/retracted. A bound non-reference is

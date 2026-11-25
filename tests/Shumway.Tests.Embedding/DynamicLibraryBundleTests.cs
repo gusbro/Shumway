@@ -577,4 +577,69 @@ public sealed class DynamicLibraryBundleTests : IDisposable
         Assert.Contains(Fid("ml$local_1", 1), e._nonDebuggableFunctors);
         Assert.Contains(Fid("ml$front", 1), e._nonDebuggableFunctors);
     }
+
+    // Decision 11: what a program observes does not depend on which modules
+    // have been brought in.
+    [Theory]
+    [InlineData("current_predicate(pa/1)")]
+    [InlineData("current_predicate(twice/A), A == 2")]
+    [InlineData("predicate_property(pa(_), static), predicate_property(pa(_), defined)")]
+    [InlineData("predicate_property(only_b(_), defined)")]
+    [InlineData("findall(N/A, (current_predicate(N/A), memberchk(N, [pa, pb, only_b, twice])), L), msort(L, [only_b/1, pa/1, pb/1, twice/2])")]
+    public void TheStaticPredicatesOfAnAttachedModule_AreDefined_AndNothingComesIn(string goal)
+    {
+        TwoModules();
+        var e = Engine();
+        Assert.True(e.Query("ensure_loaded(bundle(two)).").Success);
+        Assert.True(e.Query(goal + ".").Success);
+        Assert.True(e.IsCodePending("ma"));
+        Assert.True(e.IsCodePending("mb"));
+    }
+
+    [Fact]
+    public void APredicateAModuleDoesNotExport_IsDefinedByItsQualifiedName()
+    {
+        ThreeKinds();
+        var e = Engine();
+        Assert.True(e.Query("ensure_loaded(bundle(kinds)), predicate_property(mq:hidden(_), defined).").Success);
+        Assert.True(e.IsCodePending("mq"));
+    }
+
+    // clause/2 and listing/1 of a static predicate bring its module in, and
+    // answer as they do for a module that is loaded.
+    [Theory]
+    [InlineData("catch(clause(pa(_), true), error(permission_error(access, private_procedure, pa/1), _), true)", "ma")]
+    [InlineData("clause(open_a(X), true), X == 7", "ma2")]
+    [InlineData("with_output_to(string(S), listing(pa/1)), sub_string(S, _, _, _, \"pa(2)\")", "ma")]
+    public void ClauseAndListing_OfAStaticPredicate_BringItsModuleIn(string goal, string module)
+    {
+        BuildLibrary("open",
+            ("ma", "pa(1).\npa(2).\n"),
+            ("ma2", ":- public(open_a/1).\nopen_a(7).\n"));
+        var e = Engine();
+        Assert.True(e.Query("ensure_loaded(bundle(open)).").Success);
+        Assert.True(e.IsCodePending(module));
+        Assert.True(e.Query(goal + ".").Success);
+        Assert.False(e.IsCodePending(module));
+    }
+
+    [Theory]
+    [InlineData("clause(mq:hidden(X), true), X == 42")]
+    [InlineData("with_output_to(string(S), listing(mq:hidden/1)), sub_string(S, _, _, _, \"42\")")]
+    public void AQualifiedClauseOrListing_BringsTheModuleIn(string goal)
+    {
+        ThreeKinds();
+        var e = Engine();
+        Assert.True(e.Query($"ensure_loaded(bundle(kinds)), {goal}.").Success);
+        Assert.False(e.IsCodePending("mq"));
+    }
+
+    [Fact]
+    public void WhatWasDefinedBeforeTheAttach_IsAskedAgainAfterIt()
+    {
+        TwoModules();
+        var e = Engine();
+        Assert.True(e.Query("\\+ current_predicate(pa/1).").Success);
+        Assert.True(e.Query("ensure_loaded(bundle(two)), current_predicate(pa/1).").Success);
+    }
 }
