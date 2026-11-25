@@ -108,6 +108,12 @@ public static class WasmPredicateCompiler
     /// too large is found when its function is written.</summary>
     public static int MaxMemberInstructions { get; set; } = 20_000;
 
+    /// <summary>A dynamic predicate's snapshot (ADR-054) with more instructions
+    /// than this is refused, and the predicate runs its bytecode. A browser
+    /// compiles a function the first time it is called, so a large snapshot
+    /// costs the query that first calls it more than the snapshot saves.</summary>
+    public static int MaxSnapshotInstructions { get; set; } = 3_000;
+
     /// <summary>Diagnostic: emit a dispatch counter + loop breaker into the
     /// dispatcher (see the guard at the loop top). Off in production.</summary>
     public static bool DebugLoopGuard;
@@ -482,17 +488,22 @@ public static class WasmPredicateCompiler
             var instructions = new int[_members.Count];
             foreach (var ins in _instrs) instructions[ins.Section]++;
             for (int sec = 0; sec < _members.Count; sec++)
+            {
                 if (instructions[sec] > MaxMemberInstructions)
-                    throw Oversize(sec, $"{instructions[sec]} instructions");
+                    throw Oversize(sec, $"{instructions[sec]} instructions -- its function "
+                        + "would be larger than a browser takes");
+                if (_members[sec].Predicate.IsDynamicSnapshot && instructions[sec] > MaxSnapshotInstructions)
+                    throw Oversize(sec, $"a snapshot of {instructions[sec]} instructions, over "
+                        + $"{MaxSnapshotInstructions} -- the browser would compile it in the query that first calls it");
+            }
         }
 
-        private WasmOversizeException Oversize(int section, string size)
+        private WasmOversizeException Oversize(int section, string why)
         {
             int fid = _members[section].Predicate.FunctorId;
             var (aid, ar) = Shumway.Core.FunctorTable.Lookup(fid);
             return new WasmOversizeException(fid,
-                $"{Shumway.Core.AtomTable.GetById(aid)?.Name}/{ar}: {size} -- its function "
-                + "would be larger than a browser takes");
+                $"{Shumway.Core.AtomTable.GetById(aid)?.Name}/{ar}: {why}");
         }
 
         public void RejectIfCrossingsDominate()
@@ -1387,7 +1398,8 @@ public static class WasmPredicateCompiler
             {
                 byte[] function = Written(BuildPartitionBody(part, addrsInOrder));
                 if (function.Length > MaxFunctionBytes)
-                    throw Oversize(LargestMemberOf(part, addrsInOrder), $"{function.Length} bytes");
+                    throw Oversize(LargestMemberOf(part, addrsInOrder), $"{function.Length} bytes -- its function "
+                        + "would be larger than a browser takes");
                 bodies.Add(function);
             }
             bodies.Add(Written(BuildResolverBody()));

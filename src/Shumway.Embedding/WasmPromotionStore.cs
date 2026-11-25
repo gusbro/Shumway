@@ -611,7 +611,12 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         if (shadow && ilStore.DynamicChurnPinned(functorId)) return null;
         // A snapshot the bundle brought runs from the first call, as the IL
         // tier's does (ADR-023 priming).
-        if (shadow && _pendingSnapshots.Count > 0 && !_compiledSnapshots.IsEmpty) TakeCompiledSnapshots();
+        if (shadow && _pendingSnapshots.Count > 0 && !_compiledSnapshots.IsEmpty)
+        {
+            TakeCompiledSnapshots();
+            // Refused while it compiled: not taken again.
+            if (_unpromotable.Contains(functorId)) { settled = true; return null; }
+        }
         if (shadow && !predicate.IsDebuggable
             && _bakedSnapshots.TryGetValue(functorId, out var baked)
             && (InstallBundles || baked.CompiledHere)

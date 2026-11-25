@@ -20,8 +20,10 @@ public sealed partial class PrologEngine
     /// Returns the reason when any of them cannot be, and the setup lays the
     /// program out again as it did: a predicate with rules (its helpers would
     /// have to be linked with it), one with source clauses in a module, a
-    /// flip back to cold, a debug session, an activation on the buffer, the
-    /// wasm tier. A predicate with nothing to index, no argument or no clause,
+    /// flip back to cold, a debug session, an activation on the buffer. Under
+    /// the wasm tier the chain's chunks are not reused: a module may hold pcs
+    /// of code dropped from the buffer (ChainPatcher.ReleaseUnreached). A
+    /// predicate with nothing to index, no argument or no clause,
     /// keeps the chain it has, which is what its indexed compile would be.</summary>
     private string? TryFlipHotnessInPlace(List<int> fids)
     {
@@ -33,7 +35,6 @@ public sealed partial class PrologEngine
         if (_debugEvalDepth > 0 || DebugSession is not null || _flags.EmitDebugInfo || _flags.DebugCodegen)
             return "debugging";
         if (DynChains.Attached > 0) return "an activation on the buffer";
-        if (IlPromotion.Wasm is not null) return "wasm tier";
         if (_dynamicLink.SwitchTables is not List<SwitchTable> dynTables) return "switch tables";
 
         // Every predicate is checked before any is compiled, and every version
