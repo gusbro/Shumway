@@ -661,6 +661,17 @@ function showBuildStatus(text, onStop) {
   buildStatusEl.hidden = false;
 }
 
+/** Stops the build of `name`, if it is running, once the library it is
+ *  compiling lands. A removal waits for this: a build left running stores into
+ *  the collection again, and refuses to build the next import of it. */
+async function stopBuilding(name) {
+  const run = buildRun;
+  if (!run || run.name !== name) return;
+  run.cancel = true;
+  showBuildStatus('finishing the current library…');
+  while (buildRun === run) await idle(100);
+}
+
 async function buildCollection(name) {
   if (buildRun) { emit(`% already building ${buildRun.name}\n`, 'note'); return; }
   const run = { name, cancel: false };
@@ -782,6 +793,7 @@ async function refreshLibraries() {
       if (!await ask(`Remove library “${name}”?`,
                      'Its files are deleted from this browser. Programs that '
                      + 'import it will stop finding it.', 'Remove')) return;
+      await stopBuilding(name);
       await libraries.remove(name);
       await libraries.forget(name);
       await dropLibraryFiles(name);
