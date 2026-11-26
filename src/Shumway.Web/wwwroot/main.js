@@ -905,9 +905,13 @@ async function adoptCollection(files, { name: suggestedName, dialect = '', from,
     + [sources > 0 ? `${sources} source file(s)` : '',
        compiled > 0 ? `${compiled} librar${compiled === 1 ? 'y' : 'ies'} compiled ahead` : '']
       .filter(Boolean).join(', ') + '.';
-  document.getElementById('import-name').value = suggestedName;
+  const nameInput = document.getElementById('import-name');
+  nameInput.value = suggestedName;
   document.getElementById('import-dialect').value = dialect;
   importDialog.showModal();
+  // Selected, as askFor does: a name typed replaces the suggested one.
+  nameInput.focus();
+  nameInput.select();
   const answer = await new Promise((resolve) =>
     importDialog.addEventListener('close', () => resolve(importDialog.returnValue), { once: true }));
   if (answer !== 'ok') return;
