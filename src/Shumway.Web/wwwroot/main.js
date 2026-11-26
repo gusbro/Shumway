@@ -371,6 +371,37 @@ document.getElementById('clear').addEventListener('click', () => {
   queryInput.focus();
 });
 
+/** The transcript as text: what the pane shows, without the start-up line. */
+function transcriptText() {
+  let text = '';
+  for (const node of out.childNodes) if (node !== startupEl) text += node.textContent;
+  return text;
+}
+
+const copyButton = document.getElementById('copy');
+let copyLabelTimer = 0;
+function sayOnCopyButton(label) {
+  copyButton.textContent = label;
+  clearTimeout(copyLabelTimer);
+  copyLabelTimer = setTimeout(() => { copyButton.textContent = 'Copy'; }, 1500);
+}
+copyButton.addEventListener('click', () => {
+  // The write is asked for in the click itself: Safari allows one only while
+  // the gesture lasts, so nothing is awaited before it.
+  const written = navigator.clipboard
+    ? navigator.clipboard.writeText(transcriptText())
+    : Promise.reject(new Error('no clipboard'));
+  written.then(() => sayOnCopyButton('Copied'), () => {
+    // Refused: the transcript is selected, for the keyboard to copy it.
+    const range = document.createRange();
+    range.selectNodeContents(out);
+    const selection = getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    sayOnCopyButton('Selected');
+  });
+});
+
 // --- query entry ---------------------------------------------------------
 
 // The query history. NOT `history`: that name is the browser's own, and
