@@ -1002,7 +1002,7 @@ public sealed partial class PrologEngine
             if (_modules.ContainsKey(fileAtom.Name))
                 return ExportQualifiedNameOrNull(fileAtom.Name);
             string path = fileAtom.Name;
-            if (_consultBaseDir is not null && !System.IO.Path.IsPathRooted(path))
+            if (_consultBaseDir is not null && !PrologPath.IsRooted(path))
                 path = System.IO.Path.Combine(_consultBaseDir, path);
             path = _directory.Resolve(path);
             if (!System.IO.Path.HasExtension(path) && System.IO.File.Exists(path + ".pl"))
