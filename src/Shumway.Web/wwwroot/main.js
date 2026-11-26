@@ -371,6 +371,37 @@ document.getElementById('clear').addEventListener('click', () => {
   queryInput.focus();
 });
 
+/** The transcript as text: what the pane shows, without the start-up line. */
+function transcriptText() {
+  let text = '';
+  for (const node of out.childNodes) if (node !== startupEl) text += node.textContent;
+  return text;
+}
+
+const copyButton = document.getElementById('copy');
+let copyLabelTimer = 0;
+function sayOnCopyButton(label) {
+  copyButton.textContent = label;
+  clearTimeout(copyLabelTimer);
+  copyLabelTimer = setTimeout(() => { copyButton.textContent = 'Copy'; }, 1500);
+}
+copyButton.addEventListener('click', () => {
+  // The write is asked for in the click itself: Safari allows one only while
+  // the gesture lasts, so nothing is awaited before it.
+  const written = navigator.clipboard
+    ? navigator.clipboard.writeText(transcriptText())
+    : Promise.reject(new Error('no clipboard'));
+  written.then(() => sayOnCopyButton('Copied'), () => {
+    // Refused: the transcript is selected, for the keyboard to copy it.
+    const range = document.createRange();
+    range.selectNodeContents(out);
+    const selection = getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    sayOnCopyButton('Selected');
+  });
+});
+
 // --- query entry ---------------------------------------------------------
 
 // The query history. NOT `history`: that name is the browser's own, and
@@ -661,6 +692,17 @@ function showBuildStatus(text, onStop) {
   buildStatusEl.hidden = false;
 }
 
+/** Stops the build of `name`, if it is running, once the library it is
+ *  compiling lands. A removal waits for this: a build left running stores into
+ *  the collection again, and refuses to build the next import of it. */
+async function stopBuilding(name) {
+  const run = buildRun;
+  if (!run || run.name !== name) return;
+  run.cancel = true;
+  showBuildStatus('finishing the current library…');
+  while (buildRun === run) await idle(100);
+}
+
 async function buildCollection(name) {
   if (buildRun) { emit(`% already building ${buildRun.name}\n`, 'note'); return; }
   const run = { name, cancel: false };
@@ -782,6 +824,7 @@ async function refreshLibraries() {
       if (!await ask(`Remove library “${name}”?`,
                      'Its files are deleted from this browser. Programs that '
                      + 'import it will stop finding it.', 'Remove')) return;
+      await stopBuilding(name);
       await libraries.remove(name);
       await libraries.forget(name);
       await dropLibraryFiles(name);
@@ -893,9 +936,13 @@ async function adoptCollection(files, { name: suggestedName, dialect = '', from,
     + [sources > 0 ? `${sources} source file(s)` : '',
        compiled > 0 ? `${compiled} librar${compiled === 1 ? 'y' : 'ies'} compiled ahead` : '']
       .filter(Boolean).join(', ') + '.';
-  document.getElementById('import-name').value = suggestedName;
+  const nameInput = document.getElementById('import-name');
+  nameInput.value = suggestedName;
   document.getElementById('import-dialect').value = dialect;
   importDialog.showModal();
+  // Selected, as askFor does: a name typed replaces the suggested one.
+  nameInput.focus();
+  nameInput.select();
   const answer = await new Promise((resolve) =>
     importDialog.addEventListener('close', () => resolve(importDialog.returnValue), { once: true }));
   if (answer !== 'ok') return;
