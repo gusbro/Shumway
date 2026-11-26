@@ -14,6 +14,8 @@ Amended 2026-11-23: a library without a module directive defines
 predicates of `user` loaded from its bundle as it does loaded from its
 source (the amendment at the end).
 
+Amended 2026-11-26: an entry point names an export (the second amendment).
+
 ## Context
 
 A predicate that a `:- module` file does not export is private to that
@@ -175,3 +177,18 @@ through `call/1`, in the query that loads them and in the next ones; a
 clause asserted later; and `consult/1` of the bundle, which keeps them its
 module's. Red counter-proof: without point 1, every call but the
 `consult/1` case fails.
+
+## Amendment (2026-11-26): an entry point names an export
+
+### Decision
+
+1. An entry point of a link (`--entry`) and a predicate the startup goal
+   calls (`--goal`) name what a module with `:- module/2` exports. The
+   linker refuses a private one.
+2. A library link (`--library`) takes no entry point. Its `--goal` is the
+   last initialization goal of the last input: the bundle runs it in that
+   module when it loads.
+
+### Tests
+
+`PrivateEntryTests`, `LibraryLoadGoalTests`, `LibraryGoalCliTests`.

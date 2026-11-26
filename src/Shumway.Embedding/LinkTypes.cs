@@ -250,6 +250,16 @@ public sealed class LinkConfig
     /// A library's predicates are reached by runtime-built goals the walk
     /// cannot see (suspended propagators, hooks), so nothing is dropped.</summary>
     public bool Library { get; init; }
+
+    /// <summary>With <see cref="Library"/>: a goal the bundle runs when it
+    /// loads (the <c>--goal</c> option of a library link), as the last
+    /// <c>initialization/1</c> goal of the module <see cref="LoadGoalModule"/>
+    /// names, or of the last of <see cref="Objects"/> when null. Read with the
+    /// standard operators; the trailing <c>.</c> is optional.</summary>
+    public string? LoadGoal { get; init; }
+
+    /// <summary>The module <see cref="LoadGoal"/> runs in.</summary>
+    public string? LoadGoalModule { get; init; }
 }
 
 /// <summary>One library input to <see cref="ShmoLinker.Link"/>: a
