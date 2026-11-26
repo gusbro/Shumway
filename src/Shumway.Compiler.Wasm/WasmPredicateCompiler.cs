@@ -5629,6 +5629,19 @@ public static class WasmPredicateCompiler
                     case Opcode.Retry:
                     case Opcode.Trust:
                         return false;
+                    // The end of the clause laid out before: an indexed
+                    // predicate keeps its try/retry/trust in the index block,
+                    // so past this the scan reads that clause's Allocate.
+                    case Opcode.Proceed:
+                    case Opcode.DeallocateProceed:
+                    case Opcode.CutProceed:
+                    case Opcode.CutDeallocateProceed:
+                    case Opcode.Execute:
+                    case Opcode.DeallocateExecute:
+                    case Opcode.ExecuteBuiltin:
+                    case Opcode.ExecuteIl:
+                    case Opcode.ExecuteBytecode:
+                        return false;
                 }
             }
             return false;
