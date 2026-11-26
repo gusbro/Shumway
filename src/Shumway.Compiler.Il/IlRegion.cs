@@ -29,18 +29,28 @@ internal sealed class IlRegion
 
     private readonly HashSet<int> _memberFids;
 
+    // A call site's functor that names another predicate's code: the bare
+    // name of a library predicate, which the callee map resolves (ADR-056,
+    // amendment).
+    private readonly IReadOnlyDictionary<int, int>? _targets;
+
     internal IlRegion(CompiledPredicate root, IReadOnlyList<CompiledPredicate> members,
-        HashSet<int> memberFids)
+        HashSet<int> memberFids, IReadOnlyDictionary<int, int>? targets = null)
     {
         Root = root;
         Members = members;
         _memberFids = memberFids;
+        _targets = targets;
     }
+
+    /// <summary>The functor of the predicate a call site's functor reaches.</summary>
+    public int CallTarget(int siteFunctorId)
+        => _targets is not null && _targets.TryGetValue(siteFunctorId, out int target) ? target : siteFunctorId;
 
     /// <summary>True iff a call to <paramref name="calleeFunctorId"/> stays inside
     /// the region — the emit makes it a <c>br</c> to the member's block; otherwise
     /// it is a cross-region trampoline / builtin call.</summary>
-    public bool IsIntraRegion(int calleeFunctorId) => _memberFids.Contains(calleeFunctorId);
+    public bool IsIntraRegion(int calleeFunctorId) => _memberFids.Contains(CallTarget(calleeFunctorId));
 
     public int MemberCount => Members.Count;
 
@@ -116,6 +126,7 @@ internal static class IlRegionBuilder
         int costSum = memberCost?.Invoke(root) ?? 0;
         int localsSum = memberLocals?.Invoke(root) ?? 0;
         CompiledPredicate? firstRefused = null;   // by the locals budget, with the root alone
+        Dictionary<int, int>? targets = null;
         var queue = new Queue<CompiledPredicate>();
         List<CompiledPredicate>? deferred = null;   // with code of their own, not yet owned
         HashSet<int>? deferredFids = null;
@@ -127,9 +138,14 @@ internal static class IlRegionBuilder
                 var pred = queue.Dequeue();
                 foreach (var cs in pred.CallSites)
                 {
-                    int fid = cs.CalleeFunctorId;
-                    if (memberFids.Contains(fid)) continue;          // cycle / shared → br to existing block
-                    if (!calleeMap.TryGetValue(fid, out var callee)) continue;   // builtin / external / uncompiled
+                    int siteFid = cs.CalleeFunctorId;
+                    if (memberFids.Contains(siteFid)) continue;      // cycle / shared → br to existing block
+                    if (!calleeMap.TryGetValue(siteFid, out var callee)) continue;   // builtin / external / uncompiled
+                    // ADR-056, amendment: a bare name resolves to a library
+                    // predicate, which the region reaches under its own name.
+                    int fid = callee.FunctorId;
+                    if (fid != siteFid) (targets ??= new Dictionary<int, int>()).TryAdd(siteFid, fid);
+                    if (memberFids.Contains(fid)) continue;
                     if (!IsStructurallyEligible(callee)) continue;   // dynamic / empty
                     if (extraEligible is not null && !extraEligible(callee)) continue;  // caller filter
                     if (callUnlessOwned is not null && callUnlessOwned(callee))
@@ -203,7 +219,7 @@ internal static class IlRegionBuilder
             members.Add(firstRefused);
             memberFids.Add(firstRefused.FunctorId);
         }
-        return new IlRegion(root, members, memberFids);
+        return new IlRegion(root, members, memberFids, targets);
     }
 
     /// <summary>A region member must be a static IL body: non-empty and not a

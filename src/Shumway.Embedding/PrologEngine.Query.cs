@@ -2240,6 +2240,7 @@ public sealed partial class PrologEngine
             IlPromotion, linkResult.PredicatesByAddress, _jitIndexProfile, engine)
         {
             WasmSuspended = _debugEvalDepth > 0,
+            BareAliases = BareLibraryAliases(),
         };
 
         // PGO phase-2 pass. Once per query setup, off the

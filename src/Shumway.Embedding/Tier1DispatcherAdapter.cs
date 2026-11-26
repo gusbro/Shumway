@@ -57,6 +57,13 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
     /// out.</summary>
     public bool WasmSuspended { get; init; }
 
+    /// <summary>ADR-056, amendment: the bare name of each predicate of a
+    /// library without a module directive, to its module's functor. The link
+    /// resolves a call by that name through it, and so does the compiler's
+    /// view of the callees: without it a caller is refused as calling an
+    /// undefined predicate.</summary>
+    public IReadOnlyDictionary<int, int>? BareAliases { get; init; }
+
     private bool SuspendsWasm(int functorId)
         => WasmSuspended && _store.Wasm is { } wasm && wasm.Covers(functorId);
 
@@ -79,6 +86,9 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
                 _calleeMap = new Dictionary<int, CompiledPredicate>(_predicatesByAddress.Count);
                 foreach (var (_, pred) in _predicatesByAddress)
                     _calleeMap[pred.FunctorId] = pred;
+                if (BareAliases is { } aliases)
+                    foreach (var (bare, target) in aliases)
+                        if (_calleeMap.TryGetValue(target, out var pred)) _calleeMap.TryAdd(bare, pred);
             }
             return _calleeMap;
         }
