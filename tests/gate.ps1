@@ -2,7 +2,7 @@
 #
 #   powershell -File tests/gate.ps1                 # level from the changed files
 #   powershell -File tests/gate.ps1 -Level step     # Core, Interpreter, Compiler, ISO, Embedding
-#   powershell -File tests/gate.ps1 -Level engine   # + the wasm tests and the net48 build
+#   powershell -File tests/gate.ps1 -Level engine   # + the wasm tests (Release, diagnostics) and the net48 build
 #   powershell -File tests/gate.ps1 -Level full     # + the web build: before a push or a merge
 #
 # Without -Level the gate compares the working tree and -Base (default HEAD)
@@ -46,7 +46,10 @@ Step 'compiler' { dotnet test tests/Shumway.Tests.Compiler/ --nologo -v q --no-b
 Step 'iso' { dotnet test tests/Shumway.Tests.IsoConformance/ --nologo -v q --no-build }
 Step 'embedding (parallel)' { powershell -NoProfile -File tests/test-embedding-parallel.ps1 }
 if ($Level -in 'engine', 'full') {
-    Step 'wasm (parallel)' { powershell -NoProfile -File tests/test-wasm-parallel.ps1 }
+    # As CI's wasm lane runs them: in Release, with the diagnostic counters,
+    # so the [DiagFact] tests run. A Debug run skips them, and the lane ran
+    # them again afterwards.
+    Step 'wasm (parallel)' { powershell -NoProfile -File tests/test-wasm-parallel.ps1 -Configuration Release -Diag }
     Step 'net48 build' { dotnet build -p:ShumwayNetFx=true --nologo -v q }
 }
 if ($Level -eq 'full') {
