@@ -148,6 +148,25 @@ counter(0).
         Assert.True(e.Query("main(X, Y), X == 1, Y == 42.").Success);
     }
 
+    // Decision 10: the library's initialization goals run at the attach,
+    // before the program's, which see what they did. Once.
+    [Fact]
+    public void TheLibrarysInitializationGoals_RunBeforeTheProgramsOnce()
+    {
+        string lib = BuildLibrary(("ma", Ma), ("mi", @":- dynamic(started/1).
+:- initialization(assertz(started(lib))).
+"));
+        var link = LinkProgram(@":- dynamic(saw/1).
+:- initialization((findall(S, started(S), L), assertz(saw(L)))).
+main(X) :- pa(X).
+", lib, new PredicateRef("main", 1));
+        string prog = WriteProgram(link);
+        var e = Engine();
+        e.LoadBundle(prog);
+        Assert.True(e.Query("saw(L), L == [lib].").Success);
+        Assert.True(e.Query("findall(S, started(S), [lib]), main(X), X == 1.").Success);
+    }
+
     [Fact]
     public void ADynamicPredicateOfTheLibrary_IsDeclaredByTheAttach()
     {

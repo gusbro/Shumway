@@ -58,11 +58,34 @@ public sealed partial class PrologEngine
     internal bool IsCodePending(string module)
         => _attachedModules is { } modules && modules.TryGetValue(module, out var am) && !am.CodeLoaded;
 
+    // The modules of each attached library whose code is not in, and the
+    // library's baked wasm modules: one binds every predicate it holds, so it
+    // waits for the last of them (ADR-075, decision 12).
+    private readonly Dictionary<string, int> _pendingModulesOfLibrary = new(StringComparer.Ordinal);
+    private Dictionary<string, List<byte[]>>? _wasmAwaitingLibrary;
+
+    /// <summary>Queues <paramref name="modules"/>, baked for the library being
+    /// attached, for when its modules are all in; at once when they are.</summary>
+    internal void QueueLibraryWasm(string library, IReadOnlyList<byte[]> modules)
+    {
+        if (modules.Count == 0) return;
+        if (_pendingModulesOfLibrary.GetValueOrDefault(library) == 0)
+        {
+            IlPromotion.PendingWasmModules.AddRange(modules);
+            return;
+        }
+        _wasmAwaitingLibrary ??= new(StringComparer.Ordinal);
+        if (!_wasmAwaitingLibrary.TryGetValue(library, out var waiting))
+            _wasmAwaitingLibrary[library] = waiting = new List<byte[]>();
+        waiting.AddRange(modules);
+    }
+
     /// <summary>Records a module whose code <c>LoadBundleCore</c> deferred.</summary>
     internal void NoteAttachedModule(BundleEntry entry, bool shippedClausesRead)
     {
         var am = new AttachedModule(_attachingLibrary!, entry, shippedClausesRead);
         (_attachedModules ??= new(StringComparer.Ordinal))[entry.ModuleName] = am;
+        _pendingModulesOfLibrary[am.Library] = _pendingModulesOfLibrary.GetValueOrDefault(am.Library) + 1;
         _pendingModuleAtoms.Add(AtomTable.Intern(entry.ModuleName, permanent: true).Id);
         _attachedByFid ??= new();
         bool ownsUser = !entry.IsExportQualified;
@@ -405,6 +428,12 @@ public sealed partial class PrologEngine
             _liveConsultEngine = prevLive;
             _captureLivePublish = false;
         }
+        // The last module of the library is in: its baked wasm installs at the
+        // next query setup, against the link that has them all.
+        int left = _pendingModulesOfLibrary[am.Library] - 1;
+        _pendingModulesOfLibrary[am.Library] = left;
+        if (left == 0 && _wasmAwaitingLibrary is { } awaiting && awaiting.Remove(am.Library, out var wasm))
+            IlPromotion.PendingWasmModules.AddRange(wasm);
         // The goal linked the module's code into the buffer it runs on. When
         // that is the host's buffer and the link has every predicate, it
         // stays: the next query finds the program as it is (ADR-015,

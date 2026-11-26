@@ -165,6 +165,18 @@ public sealed class DynamicLibraryBundleTests : IDisposable
         Assert.True(e.Query("ensure_loaded(bundle(kinds)), sp(1), findall(S, started(S), [yes]).").Success);
     }
 
+    // Decision 11: a module of the library exists from the attach, and asking
+    // brings nothing in.
+    [Fact]
+    public void AnAttachedModule_IsACurrentModule_AndAskingBringsNothingIn()
+    {
+        ThreeKinds();
+        var e = Engine();
+        Assert.True(e.Query("ensure_loaded(bundle(kinds)), current_module(mq).").Success);
+        Assert.True(e.Query("findall(M, current_module(M), Ms), memberchk(mq, Ms).").Success);
+        Assert.True(e.IsCodePending("mq"));
+    }
+
     [Fact]
     public void APredicateNoModuleDefines_IsStillAnExistenceError()
     {

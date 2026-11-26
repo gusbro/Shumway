@@ -493,9 +493,13 @@ internal sealed class BundleLoader
         // The bundle's wasm modules wait for that link: a wasm tier installs
         // them when the next query setup links (or on its own tick). Queued
         // whether or not a tier is attached yet -- the web boot attaches its
-        // tier after loading the stdlib bundle.
-        foreach (var module in bundle.WasmModules)
-            E.IlPromotion.PendingWasmModules.Add(module);
+        // tier after loading the stdlib bundle. An attached library's wait for
+        // its modules (ADR-075).
+        if (E._attachingLibrary is { } attaching)
+            E.QueueLibraryWasm(attaching, bundle.WasmModules);
+        else
+            foreach (var module in bundle.WasmModules)
+                E.IlPromotion.PendingWasmModules.Add(module);
         LastLoadedModules = effectiveEntries
             .Select(e => string.IsNullOrEmpty(e.ModuleName) ? PrologEngine.DefaultModuleName : e.ModuleName)
             .Distinct().ToList();

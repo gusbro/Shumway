@@ -347,7 +347,7 @@ When proposing changes:
 | A ground term of a clause body is copied from an image | ADR-063 |
 | Big integers live on the heap (blocks of 60-bit limbs) | ADR-064 |
 | Reclaiming the helpers of runtime-asserted rules (proposed) | ADR-065 |
-| Dynamic library bundles: attached, their modules brought in on demand (proposed) | ADR-075 |
+| Dynamic library bundles: attached, their modules brought in on demand | ADR-075 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | WAM instruction set | docs/design/wam-instruction-set.md |
