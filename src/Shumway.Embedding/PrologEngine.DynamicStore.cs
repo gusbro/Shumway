@@ -1828,6 +1828,13 @@ public sealed partial class PrologEngine
                 _persistentPredsByAddressCache = byAddress;
                 GoalTrampolinesAdopted++;
                 _persistentLengthAtLink = _persistentLength;
+                // The static region's calls to them were linked before they
+                // existed: they name them now, as the link of a new product
+                // would (TryFlipHotnessInPlace does the same).
+                if (_staticLink is { } link)
+                    foreach (var (offset, callee) in link.UnresolvedSites)
+                        if (_liveDeclaredDynamics.Contains(callee) && addresses.TryGetValue(callee, out int target))
+                            BytecodeIO.WriteInt32(_persistentProgram!, _persistentPrefixLength + offset + 1, target);
             }
         }
         if (promoted is null) return;

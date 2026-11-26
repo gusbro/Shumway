@@ -77,6 +77,38 @@ public sealed class ModuleDynamicsCostTests
         Assert.Equal(0, Activation.DiagModuleFallbackResolutions);
     }
 
+    // The same in the global module, from a static rule and from a dynamic
+    // one. After the static rule's query the layout is kept (ADR-015,
+    // amendment) and the adoption names the call; the dynamic rule's takes a
+    // new product, whose link names it. Either way nothing is resolved at run
+    // time.
+    [DiagTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ACallToAPredicateAQueryMade_IsLinkedByTheNextQuery(bool fromADynamicRule)
+    {
+        var e = new PrologEngine();
+        e.ConsultString(fromADynamicRule
+            ? """
+              :- dynamic loop_w/1.
+              loop_w(0) :- !.
+              loop_w(N) :- ( dyn_w(_) -> true ; true ), N1 is N - 1, loop_w(N1).
+              """
+            : """
+              loop_w(0) :- !.
+              loop_w(N) :- ( dyn_w(_) -> true ; true ), N1 is N - 1, loop_w(N1).
+              """);
+        Succeeds(e, "jit_compile(0).");
+        Succeeds(e, "assertz(dyn_w(0)), loop_w(1000).");
+        long builds = e.ProgramProductBuilds;
+
+        Reset();
+        Succeeds(e, "loop_w(1000).");
+        if (!fromADynamicRule) Assert.Equal(builds, e.ProgramProductBuilds);
+        Assert.Equal(0, Activation.DiagUnresolvedSiteDispatches);
+        Assert.Equal(0, Activation.DiagModuleFallbackResolutions);
+    }
+
     /// <summary>The Tier-1 side, after the setup linked the site. A loop
     /// promoted in the query whose assert created its callee keeps one
     /// interpreter dispatch per call for the rest of the process, while a

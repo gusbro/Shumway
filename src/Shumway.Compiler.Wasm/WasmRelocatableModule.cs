@@ -183,7 +183,8 @@ public sealed class WasmRelocatableModule
 
     /// <summary><see cref="Bake"/>, less each member whose function comes out
     /// larger than a browser takes: found one at a time, when its function is
-    /// written, and the rest compiled again without it.</summary>
+    /// written, and the rest compiled again without it. With none left the
+    /// module has no members, and nothing is compiled.</summary>
     private static WasmRelocatableModule BakeLessOversize(ref IReadOnlyList<WasmGroupMember> members,
         IWasmCompileEnv liveEnv, Action<WasmGroupMember, string>? onRefused,
         Func<string, string>? rename)
@@ -204,6 +205,7 @@ public sealed class WasmRelocatableModule
                 }
                 if (rest.Count == members.Count) throw;
                 members = rest;
+                if (rest.Count == 0) return new WasmRelocatableModule();
             }
         }
     }
