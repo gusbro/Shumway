@@ -18,6 +18,20 @@ public static class PrologPath
     private static bool HasSpecialPrefix(string path) =>
         path.Length >= 2 && path[0] == '\\' && path[1] == '\\';
 
+    /// <summary>True for a path that starts with a drive: <c>C:/</c> or
+    /// <c>C:\</c>.</summary>
+    public static bool HasDrive(string path) =>
+        path.Length >= 3 && path[1] == ':' && (path[2] == '/' || path[2] == '\\')
+        && (uint)((path[0] | 0x20) - 'a') <= 'z' - 'a';
+
+    /// <summary>Whether <paramref name="path"/> is not relative: as
+    /// <see cref="Path.IsPathRooted(string)"/>, and in a browser a path with a
+    /// drive as well (amendment of 2026-11-26). A bundle built on Windows names
+    /// its files that way, and a file system with no drives would take them as
+    /// names under the current directory.</summary>
+    public static bool IsRooted(string path) =>
+        Path.IsPathRooted(path) || (OperatingSystem.IsBrowser() && HasDrive(path));
+
     /// <summary>Converts a host path to the canonical Prolog form. On Unix
     /// this is the identity.</summary>
     public static string ToCanonical(string path)
