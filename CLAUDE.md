@@ -348,6 +348,7 @@ When proposing changes:
 | Big integers live on the heap (blocks of 60-bit limbs) | ADR-064 |
 | Reclaiming the helpers of runtime-asserted rules (proposed) | ADR-065 |
 | Dynamic library bundles: attached, their modules brought in on demand | ADR-075 |
+| A bundle says how it was built, and is rebuilt from that (proposed) | ADR-076 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | WAM instruction set | docs/design/wam-instruction-set.md |
