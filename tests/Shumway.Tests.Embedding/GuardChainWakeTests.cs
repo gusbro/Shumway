@@ -39,6 +39,10 @@ lines(N, N) --> [].
         try { Directory.Delete(_dir, recursive: true); } catch (IOException) { }
     }
 
+    // The time_out bound on a loop that never sees the wake: not a speed
+    // check, so it is wide enough for a loaded CI runner.
+    private const int Window = 15000;
+
     // Compiled: every predicate is queued at its first call, and the queries
     // after the first run the chain. Not a synchronous compile: it waits behind
     // everything the process has queued on the shared worker, inside the
@@ -72,7 +76,7 @@ lines(N, N) --> [].
             var e = Engine(compiled);
             for (int i = 0; i < 3; i++)
             {
-                var s = e.Query($"{hook}, time_out((phrase(g, L) -> A = yes ; A = no), 3000, R).");
+                var s = e.Query($"{hook}, time_out((phrase(g, L) -> A = yes ; A = no), {Window}, R).");
                 Assert.True(s.Success, $"compiled: {compiled}, run {i}");
                 Assert.Equal("success", s["R"]!.ToString());
                 Assert.Equal("no", s["A"]!.ToString());
@@ -97,7 +101,7 @@ lines(N, N) --> [].
             for (int i = 0; i < 2; i++)
             {
                 var s = e.Query(
-                    $"time_out(phrase_from_file(lines(0, N), '{data}'), 3000, R).");
+                    $"time_out(phrase_from_file(lines(0, N), '{data}'), {Window}, R).");
                 Assert.True(s.Success, $"compiled: {compiled}, run {i}");
                 Assert.Equal("success", s["R"]!.ToString());
                 Assert.Equal("50", s["N"]!.ToString());
