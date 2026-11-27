@@ -53,6 +53,10 @@ internal static class LinkCli
         var objects = new List<ShmoObject>();
         var libraries = new List<LinkLibrary>();
         var sourceInputs = new List<string>();
+        // The last input that is a module (an object or a source, not an
+        // archive): a library's --goal runs in it.
+        string? lastInputModule = null;
+        bool lastInputIsSource = false;
         foreach (var path in opts.InputPaths)
         {
             try
@@ -79,10 +83,14 @@ internal static class LinkCli
                     // Source input: collected and compiled below (all sources
                     // together under --consult; one at a time otherwise).
                     sourceInputs.Add(path);
+                    lastInputIsSource = true;
                 }
                 else
                 {
-                    objects.Add(ShmoReader.ReadFromFile(path));
+                    var obj = ShmoReader.ReadFromFile(path);
+                    objects.Add(obj);
+                    lastInputModule = obj.ModuleName;
+                    lastInputIsSource = false;
                 }
             }
             catch (Exception ex) when (ex is InvalidDataException || ex is IOException)
@@ -106,12 +114,13 @@ internal static class LinkCli
                 // hooks run, use_module dependencies load) and link every module
                 // the load brought in — the shumway-compile --consult pipeline.
                 var errors = new List<ShmoCompileError>();
+                var roots = new List<string>();
                 List<(string ModuleName, ShmoObject Object, DateTime SourceTimeUtc, bool IsRoot)> compiled;
                 try
                 {
                     compiled = ShmoViaConsult.CompileMany(
                         sourceInputs, libraryDirs, ShmoBuildMode.Release, errors,
-                        attachedLibraries: consultAttached);
+                        attachedLibraries: consultAttached, roots: roots);
                 }
                 catch (Exception ex)
                 {
@@ -129,6 +138,7 @@ internal static class LinkCli
                     return ExitLinkError;
                 }
                 foreach (var (_, obj, _, _) in compiled) objects.Add(obj);
+                if (lastInputIsSource && roots.Count > 0) lastInputModule = roots[^1];
             }
             else
             {
@@ -166,6 +176,7 @@ internal static class LinkCli
                     }
                     MaybeHintConsult(path);
                     objects.Add(res.Object);
+                    if (lastInputIsSource) lastInputModule = res.Object.ModuleName;
                 }
             }
         }
@@ -174,6 +185,11 @@ internal static class LinkCli
         // roots. The goal is any REPL-acceptable query — its call-position
         // predicates may be user, builtin or prelude (`time(main)`), and any
         // user predicate named inside it (a meta-call argument) stays linked.
+        // A library's --goal (no --exe) is the goal the bundle runs when it
+        // loads, in the module of the last input: the linker makes it that
+        // module's last initialization goal, and it is no root.
+        bool loadGoal = opts.Library && string.IsNullOrEmpty(opts.ExePath)
+            && !string.IsNullOrEmpty(opts.Goal);
         var goalCallRefs = new List<PredicateRef>();
         var goalTermRefs = new List<PredicateRef>();
         if (!string.IsNullOrEmpty(opts.Goal))
@@ -183,6 +199,11 @@ internal static class LinkCli
             {
                 Console.Error.WriteLine($"shumway-link: --goal: {goalErr}");
                 return ExitUsageError;
+            }
+            if (loadGoal)
+            {
+                goalCallRefs.Clear();
+                goalTermRefs.Clear();
             }
         }
 
@@ -246,6 +267,8 @@ internal static class LinkCli
                 || !string.IsNullOrEmpty(opts.DllPath),
             PrunePrelude = opts.PrunePrelude,
             Library = opts.Library,
+            LoadGoal = loadGoal ? opts.Goal : null,
+            LoadGoalModule = loadGoal ? lastInputModule : null,
             VerboseOut = opts.Verbose ? Console.Error : null,
             StripSource = opts.StripSource,
             IncludeCompiledIl = opts.IncludeCompiledIl,
@@ -736,6 +759,13 @@ internal static class LinkCli
                 + "(otherwise no module would be reachable).");
             return null;
         }
+        if (opts.Library && opts.EntryPoints.Count > 0)
+        {
+            Console.Error.WriteLine(
+                "shumway-link: --entry does not go with --library: a library keeps every "
+                + "predicate of its inputs. To run a goal when the bundle loads, use --goal.");
+            return null;
+        }
         if (!string.IsNullOrEmpty(opts.ExePath) && string.IsNullOrEmpty(opts.Goal))
         {
             Console.Error.WriteLine(
@@ -1007,8 +1037,9 @@ internal static class LinkCli
             + "                           generated code; bundles are larger and typically\n"
             + "                           slower.\n"
             + "      --library            Keep every predicate of every input: the bundle\n"
-            + "                           is a library loaded whole, so no --entry is\n"
-            + "                           needed and nothing is pruned.\n"
+            + "                           is a library loaded whole, so nothing is pruned\n"
+            + "                           and --entry is refused. With --goal (and no\n"
+            + "                           --exe), the goal runs when the bundle loads.\n"
             + "      --stdlib             Embed the precompiled standard library (the\n"
             + "                           prelude) in the bundle so loading it skips\n"
             + "                           compiling the stdlib at startup (and, under\n"
@@ -1075,7 +1106,10 @@ internal static class LinkCli
             + "                           fine in call position). The trailing '.' is\n"
             + "                           optional. Checked at link time; every user\n"
             + "                           predicate the goal names counts as a reachability\n"
-            + "                           root, so it stays linked.\n"
+            + "                           root, so it stays linked. With --library and no\n"
+            + "                           --exe: the goal the bundle runs when it loads,\n"
+            + "                           after the initialization goals of the last input,\n"
+            + "                           in its module.\n"
             + "  -c, --self-contained     With --exe, bundle the .NET runtime into the\n"
             + "                           executable (~70 MB, runs on a machine with\n"
             + "                           nothing installed). Default is framework-\n"

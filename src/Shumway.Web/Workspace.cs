@@ -185,7 +185,7 @@ internal static partial class WebShumwayApp
         {
             try
             {
-                EndRun();       // as ConsultBuffer: the program is changing
+                S.StartConsult();   // as ConsultBuffer: the program is changing
                 // RE-consult, as the buffer path does: loading the same file
                 // twice must not define its predicates twice. Debug mode routes
                 // the Consult button here so breakpoints key by the file's name.

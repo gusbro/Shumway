@@ -351,6 +351,20 @@ public sealed class ShmoObject
     /// once the bundle is in, as a compiled program runs them when it starts.
     /// Compiled through the consult they ran then, and none travel.</summary>
     public IReadOnlyList<Shumway.Compiler.Ast.Term> InitializationGoals { get; }
+
+    /// <summary>This object with <paramref name="goal"/> after its
+    /// initialization goals.</summary>
+    internal ShmoObject WithInitializationGoal(Shumway.Compiler.Ast.Term goal)
+    {
+        var goals = new List<Shumway.Compiler.Ast.Term>(InitializationGoals) { goal };
+        return new ShmoObject(ModuleName, Source, Bytecode, Defined, EnsureLinked, CallGraph,
+            QualifiedRefs, BuildMode, DynamicSeeds, ClauseTerms, ArityCompat, NativeBlocks,
+            NativeFunctions, NativeDecls, Operators, IsExportQualified, Exports, Imports,
+            LibraryDeps, Dialect, GeneratorVersion, Flags, goals)
+        {
+            DynamicSnapshotBytecode = DynamicSnapshotBytecode,
+        };
+    }
 }
 
 /// <summary>ADR-022 — one embedded native block's marshalling data, carried

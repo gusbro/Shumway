@@ -68,7 +68,10 @@ public static class ShmoViaConsult
     /// <c>:- ensure_loaded(bundle(Name))</c> is recorded in that module's
     /// object (ADR-075, decision 3). <paramref name="attachedLibraries"/>, when
     /// given, takes the file the consult attached for each name, which a link
-    /// of these objects links against.</para></summary>
+    /// of these objects links against.</para>
+    ///
+    /// <para><paramref name="roots"/>, when given, receives the module of each
+    /// root that loaded, in the order of <paramref name="rootPaths"/>.</para></summary>
     public static List<(string ModuleName, ShmoObject Object, System.DateTime SourceTimeUtc, bool IsRoot)> CompileMany(
         IReadOnlyList<string> rootPaths,
         IReadOnlyList<string> libraryDirs,
@@ -78,7 +81,8 @@ public static class ShmoViaConsult
         System.IO.TextWriter? warnings = null,
         System.Action<PrologEngine>? configure = null,
         bool withSource = false,
-        IDictionary<string, string>? attachedLibraries = null)
+        IDictionary<string, string>? attachedLibraries = null,
+        List<string>? roots = null)
     {
         // Strict: consult mode is how the toolchain compiles sources, so a
         // clause that does not parse fails the build (the object it would
@@ -153,6 +157,7 @@ public static class ShmoViaConsult
             if (rootModuleSet.Add(name)) rootModules.Add(name);
         }
         string? primaryRoot = rootModules.Count > 0 ? rootModules[0] : null;
+        roots?.AddRange(rootModules);
 
         // Assign each dynamic functor to exactly one owning module, so its
         // clauses are seeded once across the object set. The owner is the

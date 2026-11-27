@@ -143,9 +143,13 @@ public static class ShmoLinker
         // optimization together (the resolve-then-optimize order real LTO
         // linkers use); a pulled member is optimized exactly like one passed
         // directly.
-        IReadOnlyList<ShmoObject> linkInput = config.Libraries.Count == 0
+        Shumway.Compiler.Ast.Term? loadGoal = null;
+        IReadOnlyList<ShmoObject> explicitObjects = config.LoadGoal is null
             ? config.Objects
-            : PullLibraryMembers(config.Objects, config.Libraries,
+            : WithLoadGoal(config, Emit, out loadGoal);
+        IReadOnlyList<ShmoObject> linkInput = config.Libraries.Count == 0
+            ? explicitObjects
+            : PullLibraryMembers(explicitObjects, config.Libraries,
                 config.EntryPoints, foreignIndicators, Emit);
         AddAttachedLibraries(linkInput);
 
@@ -245,6 +249,14 @@ public static class ShmoLinker
         // ----- 2. Build global public + dynamic namespaces -----
         var globalPublic = new Dictionary<PredicateRef, string>();    // pred → module
         var globalDynamic = new Dictionary<PredicateRef, List<string>>(); // pred → modules
+        // ADR-056: what a module with :- module/2 exports. The rest is
+        // private: no entry point or startup goal promotes it.
+        var exportsOf = new Dictionary<string, HashSet<PredicateRef>>();
+        foreach (var obj in objects)
+            if (obj.IsExportQualified && !obj.ArityCompat)
+                exportsOf[obj.ModuleName] = new HashSet<PredicateRef>(obj.Exports);
+        bool IsPrivate(string module, PredicateRef p)
+            => exportsOf.TryGetValue(module, out var exports) && !exports.Contains(p);
         // Index each module's locally-defined indicators for quick lookup.
         var moduleDefined = new Dictionary<string, Dictionary<PredicateRef, PredicateVisibility>>();
         foreach (var obj in objects)
@@ -361,6 +373,13 @@ public static class ShmoLinker
                     $"Entry point {ep} is not defined in any linked .shmo.", null);
                 continue;
             }
+            if (IsPrivate(mod, ep))
+            {
+                Emit(LinkSeverity.Error, "private_entry",
+                    $"Entry point {ep} is private to module '{mod}': export it from '{mod}' "
+                    + "to name it as an entry.", mod);
+                continue;
+            }
             roots.Add((mod, ep, $"entry {ep}"));
         }
         // --goal references. Call-position refs resolve like entry points but
@@ -377,6 +396,13 @@ public static class ShmoLinker
             if (ambiguityMessage is not null)
             {
                 Emit(LinkSeverity.Error, "ambiguous_entry", ambiguityMessage, null);
+                continue;
+            }
+            if (mod is not null && IsPrivate(mod, gr))
+            {
+                Emit(LinkSeverity.Error, "private_goal",
+                    $"--goal calls {gr}, which is private to module '{mod}': export it from "
+                    + $"'{mod}' to call it from the goal.", mod);
                 continue;
             }
             if (mod is not null)
@@ -458,9 +484,11 @@ public static class ShmoLinker
                         }
                         if (preludePublics.Contains(r)) { preludeUsed.Add(r); continue; }
                         if (speculative || builtinPredicates.Contains(r)) continue;
+                        string caller = ReferenceEquals(goal, loadGoal) ? "--goal"
+                            : $"An initialization goal of '{obj.ModuleName}'";
                         Emit(config.AllowUndefined ? LinkSeverity.Warning : LinkSeverity.Error,
                             "initialization_not_found",
-                            $"An initialization goal of '{obj.ModuleName}' calls {r}, which is "
+                            $"{caller} calls {r}, which is "
                             + "not defined in any linked .shmo, builtin, or prelude.", obj.ModuleName);
                     }
             }
@@ -868,6 +896,7 @@ public static class ShmoLinker
                 {
                     if (defs.ContainsKey(ep))
                     {
+                        if (IsPrivate(modName, ep)) break;   // refused above
                         if (!promotionsByModule.TryGetValue(modName, out var list))
                         {
                             list = new List<PredicateRef>();
@@ -1796,6 +1825,44 @@ public static class ShmoLinker
             + "). Mark exactly one definition :- public, or qualify the "
             + "entry as Module:Pred to disambiguate.";
         return null;
+    }
+
+    /// <summary>The objects with <see cref="LinkConfig.LoadGoal"/> after the
+    /// initialization goals of the module it runs in: from there on the link
+    /// checks it and reaches what it calls as it does any initialization goal.</summary>
+    private static IReadOnlyList<ShmoObject> WithLoadGoal(LinkConfig config,
+        Action<LinkSeverity, string, string, string?> emit, out Shumway.Compiler.Ast.Term? loadGoal)
+    {
+        loadGoal = null;
+        var objects = config.Objects;
+        if (!config.Library)
+        {
+            emit(LinkSeverity.Error, "load_goal_not_library",
+                "A goal run when the bundle loads needs a library link.", null);
+            return objects;
+        }
+        if (!ExecutableEmitter.TryReadGoal(config.LoadGoal!, out var goal, out string? error))
+        {
+            emit(LinkSeverity.Error, "load_goal_syntax", $"--goal: {error}", null);
+            return objects;
+        }
+        int at = objects.Count - 1;
+        if (config.LoadGoalModule is { } module)
+        {
+            at = -1;
+            for (int i = 0; i < objects.Count; i++)
+                if (objects[i].ModuleName == module) at = i;
+        }
+        if (at < 0)
+        {
+            emit(LinkSeverity.Error, "load_goal_module",
+                $"--goal runs in module '{config.LoadGoalModule}', which no linked object is.", null);
+            return objects;
+        }
+        var result = new List<ShmoObject>(objects);
+        result[at] = result[at].WithInitializationGoal(goal);
+        loadGoal = goal;
+        return result;
     }
 
     /// <summary>Reflects every <c>--foreign-dll</c> assembly,

@@ -67,7 +67,13 @@ internal static partial class WebShumwayApp
         public void Write(string text) => WriteToPage(text);
         public void WriteError(string text) => WriteErrorToPage(text);
         public void AskForInput() => WebShumwayApp.AskForInput();
+        public void InitializationRunning(bool running) => InitializationRunningOnPage(running);
     }
+
+    /// <summary>An initialization goal starts or ends: the page shows a
+    /// running program, not a consult.</summary>
+    [JSImport("ui.initializationRunning", "main.js")]
+    internal static partial void InitializationRunningOnPage(bool running);
 
     /// <summary>Reply prefixes from <see cref="QueryNext"/>. One character, so a
     /// search that steps solution by solution crosses to JavaScript cheaply.</summary>
@@ -226,7 +232,7 @@ internal static partial class WebShumwayApp
             // across the change would let the user ask for the next solution of
             // a search whose clauses no longer exist. The gate guarantees no
             // search is mid-step here, so ending it is safe.
-            EndRun();
+            S.StartConsult();
             try
             {
                 // A buffer opened from a library is that library's source, and
@@ -377,8 +383,6 @@ internal static partial class WebShumwayApp
     internal static Task<string> HighlightKinds()
         => Task.FromResult(
             string.Join(',', Enum.GetNames<SpanKind>().Select(n => n.ToLowerInvariant())));
-
-    private static void EndRun() => S.EndRun();
 
     /// <summary>The full diagnostic — the error plus the engine's call stack with
     /// source positions — as the REPL shows it, newline-separated for the page.</summary>

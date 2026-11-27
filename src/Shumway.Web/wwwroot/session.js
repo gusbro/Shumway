@@ -99,7 +99,8 @@ export const onSessionImportLibrary = (handler) => { sessionImportLibrary = hand
  *        boot, when the page will hold more sessions than the default allows
  *        to start at once.
  * @param {object} [options.ui] what the page's own session calls: `write`,
- *        `writeError`, `writeNote`, `askForInput`, `debugStopped`. One left
+ *        `writeError`, `writeNote`, `askForInput`, `initializationRunning`,
+ *        `debugStopped`. One left
  *        out does nothing: an undefined import would throw at its first call.
  * @param {{ patienceMs?: number, timeoutMs?: number }} [options.stops] how
  *        long a call is out before the runtime is asked whether it answers,
@@ -140,6 +141,7 @@ export async function startRuntime({ entry = './_framework/dotnet.js', threads =
       writeError: ui.writeError ?? nothing,
       writeNote: ui.writeNote ?? ui.writeError ?? nothing,
       askForInput: ui.askForInput ?? nothing,
+      initializationRunning: ui.initializationRunning ?? nothing,
       sessionAskForInput: (kernelId) => sessionAskForInput?.(kernelId),
       // A page with no one to import must still answer: the session waits.
       sessionImportLibrary: (kernelId, request) => (sessionImportLibrary
@@ -164,7 +166,8 @@ export async function startRuntime({ entry = './_framework/dotnet.js', threads =
  *        as it is written — a program that prints while it searches should be
  *        watchable while it runs.
  */
-export async function boot(onOutput, onAskForInput, onDiagnostic, onDebugStop, onNote, onStep = () => { }) {
+export async function boot(onOutput, onAskForInput, onDiagnostic, onDebugStop, onNote, onStep = () => { },
+  onInitialization = () => { }) {
   await startRuntime({
     step: onStep,
     // A hook that opens more sessions than the page's own asks for the
@@ -179,6 +182,7 @@ export async function boot(onOutput, onAskForInput, onDiagnostic, onDebugStop, o
       write: (t) => { if (typeof t === 'string' && t.startsWith('[tier]')) { try { fetch('/collect', { method: 'POST', body: t }); } catch {} } return onOutput(t); },
       writeError: onDiagnostic, writeNote: onNote ?? onDiagnostic,
       askForInput: onAskForInput,
+      initializationRunning: onInitialization,
       debugStopped: onDebugStop,
     },
   });

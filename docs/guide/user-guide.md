@@ -1066,13 +1066,15 @@ shumway-link -o app.shum \
 - **Reachability root** is either `--entry pred/N` (repeatable;
   comma-separated within a flag) or `--goal Term` (see
   [Producing a runnable executable](#step-3a-producing-a-runnable-executable)).
-  At least one is required.
+  At least one is required, except with `--library`. A predicate of a module
+  with `:- module/2` is a root only if the module exports it.
 
 | Flag | Effect |
 |---|---|
 | `-o, --output <path>` | Output `.shum` path (required). |
-| `--entry pred/N[,…]` | Entry-point predicates. Repeatable; comma-separated within a flag. |
-| `--goal Term` | Adds the goal's head as an implicit entry point. Required when `--exe` is set. |
+| `--entry pred/N[,…]` | Entry-point predicates. Repeatable; comma-separated within a flag. Refused with `--library`. |
+| `--goal Term` | Adds the goal's head as an implicit entry point. Required when `--exe` is set. With `--library` and no `--exe`, the goal the bundle runs when it loads (see `--library`). |
+| `--library` | Keep every predicate of every input: the bundle is a library loaded whole, and nothing is pruned. A `--goal` runs when the bundle loads, as the last `initialization/1` goal of the last input, in its module. |
 | `--allow-undefined` | Downgrade missing-predicate errors to warnings; still produce the bundle. The engine raises `existence_error/2` at call time if the missing predicate is actually invoked. |
 | `--warn-shadow` | Warn when a module's **local** predicate shares an indicator with another linked module's public: the C `static`-shadows-global shape. Legal either way (inside its module the local wins); the `--map` file always lists these regardless of the flag. (Two *publics* with the same indicator are always a `duplicate_public` **error**.) |
 | `-L, --library-dir <dir>` | Directory searched to resolve a `use_module(library(X))` dependency not passed explicitly: `X.pl`/`X.shmo` is compiled and linked in (transitively), C-linker style: already-provided inputs win, source is the last resort. Repeatable; also reads `SHUMWAY_LIBRARY_PATH`. |

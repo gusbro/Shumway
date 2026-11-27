@@ -36,6 +36,10 @@ public sealed class HostSessionTests : IDisposable
         public void Write(string text) { lock (_out) _out.Append(text); }
         public void WriteError(string text) { lock (_err) _err.Append(text); }
         public void AskForInput() { Interlocked.Increment(ref Asked); OnAsk?.Invoke(); }
+
+        private readonly List<bool> _initializations = new();
+        public bool[] Initializations { get { lock (_initializations) return _initializations.ToArray(); } }
+        public void InitializationRunning(bool running) { lock (_initializations) _initializations.Add(running); }
     }
 
     private (HostSession Session, Page Page) Open(string id, string? directory = null)
@@ -77,6 +81,80 @@ public sealed class HostSessionTests : IDisposable
         string path = Path.Combine(_root, name);
         Directory.CreateDirectory(path);
         return path;
+    }
+
+    // The page hears when an initialization goal of what it consults runs,
+    // and nothing for the directives around it.
+    [Fact]
+    public void ThePage_IsToldWhileAnInitializationGoalRuns()
+    {
+        var (session, page) = Open("init");
+        On(session, () =>
+        {
+            session.TopLevel!.Consult(@"
+:- initialization(write(i)).
+:- write(d).
+");
+            return true;
+        });
+        Assert.Equal("di", page.Out);
+        Assert.Equal(new[] { true, false }, page.Initializations);
+    }
+
+    // The page's asks answered in turn: null is an end of file, as Esc gives.
+    private static void Answer(HostSession session, Page page, params string?[] lines)
+    {
+        var next = new Queue<string?>(lines);
+        page.OnAsk = () =>
+        {
+            string? line = next.Count > 0 ? next.Dequeue() : null;
+            if (line is null) session.Input.SupplyEndOfFile();
+            else session.Input.Supply(line);
+        };
+    }
+
+    // Esc is a terminal's Ctrl-D: it ends one read, and the next one asks.
+    [Fact]
+    public void AReadAfterAnEndOfFile_AsksThePageAgain()
+    {
+        var (session, page) = Open("eof-twice");
+        Answer(session, page, null, "bob.");
+        string text = First(session, @"read(A), read(B).").Text;
+        Assert.Contains("A = end_of_file", text);
+        Assert.Contains("B = bob", text);
+        Assert.Equal(2, page.Asked);
+    }
+
+    // Stop lets go of a goal that waits for input, and it reads nothing more.
+    [Fact]
+    public void Stop_EndsTheInputOfAGoalThatReads()
+    {
+        var (session, page) = Open("stop-reading");
+        page.OnAsk = () => session.Cancel();
+        First(session, @"read(A), read(B).");
+        Assert.Equal(1, page.Asked);
+    }
+
+    // A consult the page starts after a Stop reads again: its initialization
+    // goal asks the page.
+    [Fact]
+    public void AConsultsInitializationGoal_ReadsAfterAStop()
+    {
+        var (session, page) = Open("eof");
+        page.OnAsk = () => session.Cancel();
+        First(session, @"read(X).");
+        int asked = page.Asked;
+        page.OnAsk = () => session.Input.Supply("bob.\n");
+        On(session, () =>
+        {
+            session.StartConsult();
+            session.TopLevel!.Consult(@"
+:- initialization((read(T), write(got(T)))).
+");
+            return true;
+        });
+        Assert.Equal(asked + 1, page.Asked);
+        Assert.Equal("got(bob)", page.Out);
     }
 
     [Fact]

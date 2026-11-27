@@ -51,8 +51,24 @@ public sealed class HostSession : IDisposable
     {
         Id = id;
         _boot = boot;
+        _pageThread = pageThread;
+        _page = page;
         Output = new PageOutput(pageThread, page);
         Input = new PageInput(pageThread, page);
+    }
+
+    private readonly SynchronizationContext? _pageThread;
+    private readonly ISessionPage _page;
+
+    // The page hears it on its own thread, as it hears output.
+    private void InitializationRunning(bool running)
+    {
+        if (_pageThread is null) _page.InitializationRunning(running);
+        else _pageThread.Post(static o =>
+        {
+            var (page, on) = ((ISessionPage, bool))o!;
+            page.InitializationRunning(on);
+        }, (_page, running));
     }
 
     /// <summary>The id the host knows this session by.</summary>
@@ -133,7 +149,7 @@ public sealed class HostSession : IDisposable
         // What was open belonged to the engine being discarded, a goal blocked
         // on input included.
         EndRun();
-        Input.SupplyEndOfFile();
+        Input.EndInput();
         PrologEngine engine = _boot(this);
         // Before the first query: query setup builds the stream registry.
         engine.Out = Output.Writer;
@@ -142,6 +158,7 @@ public sealed class HostSession : IDisposable
         engine.Warnings = Output.Writer;
         engine.Error = Output.ErrorWriter;
         engine.In = Input;
+        engine.InitializationRunning = InitializationRunning;
         Input.Reset();
         engine.SetCwdScope(CwdScope.Engine, _directory);
         TopLevel = new TopLevelSession(engine);
@@ -167,6 +184,15 @@ public sealed class HostSession : IDisposable
         Input.Reset();
         _run = (TopLevel ?? throw new InvalidOperationException(
             $"Session '{Id}' has no engine yet.")).StartQuery(queryText);
+    }
+
+    /// <summary>Before a consult the host starts. Engine thread. The open
+    /// query is over, and the consult's initialization goals read a fresh
+    /// input stream, as a query does.</summary>
+    public void StartConsult()
+    {
+        EndRun();
+        Input.Reset();
     }
 
     /// <summary>Takes the next solution of the open query. Engine thread.</summary>
@@ -225,6 +251,9 @@ public sealed class HostSession : IDisposable
     {
         bool wasOpen = CancelRun();
         Output.Drop();
+        // A goal waiting for input is not at a safe point: it is let go, and
+        // reads nothing more.
+        Input.EndInput();
         return wasOpen;
     }
 
@@ -243,7 +272,6 @@ public sealed class HostSession : IDisposable
     {
         if (Interlocked.Exchange(ref _closed, 1) == 1) return Task.CompletedTask;
         Cancel();
-        Input.SupplyEndOfFile();
         Task<bool> last = OnEngine(() =>
         {
             EndRun();

@@ -746,6 +746,11 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
 
     private System.IO.TextWriter? _warnings;
 
+    /// <summary>Told true when an <c>initialization/1</c> goal of a file or a
+    /// bundle starts and false when it ends, nested when one loads another:
+    /// a host that shows a consult shows a running program meanwhile.</summary>
+    public Action<bool>? InitializationRunning { get; set; }
+
     /// <summary>What <c>user_error</c> writes to. Defaults to standard
     /// error. A host with several engines gives each its own, so one
     /// engine's diagnostics do not come out among another's. Resolved

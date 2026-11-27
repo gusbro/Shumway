@@ -71,6 +71,7 @@
     <Compile Remove="PreludeIlBakeTests.cs" />
     <Compile Remove="TablingBundleTests.cs" />
     <Compile Remove="ToolchainStaleOutputTests.cs" />
+    <Compile Remove="LibraryGoalCliTests.cs" />
   </ItemGroup>
 
 </Project>
