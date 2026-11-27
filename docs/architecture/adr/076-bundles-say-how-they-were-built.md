@@ -115,15 +115,17 @@ way a library search path finds it.
 again what the recipe says, under the rules it names, with this engine's
 compiler and linker. A source is found by its name, beside the file, in the
 collection's `src/`, or on the library search path, and the file may carry
-it too. Of the two, the newer is compiled, as `library(X)` takes the newer of
-a source and its bundle: a source edited since the build is what the rebuild
-compiles, and the warning says so. The product is a file of this format,
-whose recipe records what was compiled.
+it too. Whether the two differ is decided by the digest. When they do, the
+newer is compiled, as `library(X)` takes the newer of a source and its
+bundle: a source edited since the build is what the rebuild compiles, and
+the warning says so. The product is a file of this format, whose recipe
+records what was compiled.
 
 A source taken out of a file, the `src/X.pl` a page writes from a bundle or
-one a tool extracts, is written with the time the recipe records for it.
-Written with the time it is taken out, it would be newer than the file it
-came from, and the file would lose to its own source.
+one a tool extracts, is written with the time the recipe records for it, or
+a second before the file's own time when the recipe records none. Written
+with the time it is taken out, it would be newer than the file it came from,
+and the file would lose to its own source.
 
 Where it is used:
 
