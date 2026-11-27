@@ -168,10 +168,28 @@ let answersShown = 0;      // answers reported for the query in progress — wha
 // program instead of being a new query.
 
 let awaitingInput = false;
+// The goal running now has read input: how long it runs is the user's time
+// too, and is not shown (time/1 says it, when asked).
+let inputThisRun = false;
+
+// Initialization goals running inside a consult, nested when one loads a file
+// with its own: the program is running then, not the consult.
+let initializing = 0;
+let initStarted = 0;
+
+/** Called by the engine when an initialization goal starts and ends. */
+function initializationRunning(on) {
+  if (on) {
+    if (initializing++ === 0) initStarted = performance.now();
+  } else if (initializing > 0) {
+    initializing--;
+  }
+}
 
 /** Called by the engine when a read has no characters left to give. */
 function askForInput() {
   awaitingInput = true;
+  inputThisRun = true;
   freshLine();
   emit('|: ', 'note');
   statusEl.textContent = 'the program is reading — type a term and press Enter  (Esc: end of file)';
@@ -193,7 +211,17 @@ async function withBusy(label, work) {
   // files is not compiling, and a wait that says which is which is a wait
   // somebody can judge.
   const text = typeof label === 'function' ? label : () => label;
+  inputThisRun = false;
   const tick = () => {
+    // As runningIndicator's: a program asking for input, or stopped at a
+    // breakpoint, owns the line, and an initialization goal is the program
+    // running.
+    if (awaitingInput || debugUi.isStopped()) return;
+    if (initializing > 0) {
+      const running = Math.round((performance.now() - initStarted) / 1000);
+      statusEl.textContent = inputThisRun || running < 2 ? '' : `running goal… ${running}s`;
+      return;
+    }
     const seconds = Math.round((performance.now() - started) / 1000);
     statusEl.textContent = seconds < 1 ? `${text()}…` : `${text()}… ${seconds}s`;
   };
@@ -238,11 +266,13 @@ async function supplyEndOfFile() {
 function runningIndicator() {
   const started = performance.now();
   let ticking = 0;
+  inputThisRun = false;
   const tick = () => {
     // The status line belongs to whoever needs it more: a program asking for
     // input has something for the user to DO, and a query STOPPED at a
-    // breakpoint is not running — the debug UI owns the line then.
-    if (awaitingInput || debugUi.isStopped()) return;
+    // breakpoint is not running — the debug UI owns the line then. Once the
+    // goal has read input, its time is not shown.
+    if (awaitingInput || debugUi.isStopped() || inputThisRun) return;
     statusEl.textContent =
       `running goal… ${((performance.now() - started) / 1000).toFixed(0)}s   (Stop to abandon)`;
   };
@@ -1650,7 +1680,6 @@ async function consultBuffer(note) {
   // whose clauses have been replaced underneath it.
   await abandonQuery();
   await saveBuffer();
-  const started = performance.now();
   // In debug mode a workspace file is consulted BY ITS FILE (it was just
   // saved), so its debug sites — and everyone's breakpoints — key by the
   // file's name instead of the anonymous buffer. A library file keeps the
@@ -1660,7 +1689,6 @@ async function consultBuffer(note) {
       debugUi.active() && currentLib === null
         ? workspace.consultFile(currentFile)
         : session.consult(program(), currentDialect)));
-  const took = Math.round(performance.now() - started);
   if (!err) {
     editor?.markError(null);
     // Operators the program declared are now in the table, so the buffer's
@@ -1671,10 +1699,8 @@ async function consultBuffer(note) {
     await debugUi.afterConsult();
     consultedSomething = true;
     wasmAllTick();
-    // How long it took, when it took long enough to have been noticed: loading
-    // a library is seconds of work and saying so is the difference between
-    // "slow" and "broken".
-    emit(took >= 1000 ? note.replace(/\n$/, ` (${(took / 1000).toFixed(1)}s)\n`) : note, 'note');
+    // No time: time/1 says how long, when asked.
+    emit(note, 'note');
     return true;
   }
   emit(err + '\n', 'error');
@@ -1798,7 +1824,8 @@ session.onRuntimeStopped(() => {
   document.body.classList.add('runtime-stopped');
 });
 
-emit(await session.boot(emitEngineOutput, askForInput, emitDiagnostic, onDebugStop, emitNote, startup.step) + '\n\n', 'note');
+emit(await session.boot(emitEngineOutput, askForInput, emitDiagnostic, onDebugStop, emitNote, startup.step,
+  initializationRunning) + '\n\n', 'note');
 setPending(false);
 startup.step('Bringing back your files');
 

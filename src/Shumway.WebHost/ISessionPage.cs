@@ -19,4 +19,9 @@ public interface ISessionPage
     /// back through <see cref="PageInput.Supply"/> or
     /// <see cref="PageInput.SupplyEndOfFile"/>.</summary>
     void AskForInput();
+
+    /// <summary>An <c>initialization/1</c> goal starts (true) or ends (false):
+    /// the program runs, whatever loaded it
+    /// (<see cref="Shumway.Embedding.PrologEngine.InitializationRunning"/>).</summary>
+    void InitializationRunning(bool running) { }
 }

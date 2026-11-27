@@ -1140,13 +1140,18 @@ public static class StreamBuiltins
     /// <summary>The pre-read gate: a read on a stream already past
     /// end-of-stream raises <c>permission_error(input, past_end_of_stream, S)</c>
     /// under <c>eof_action(error)</c>, and under <c>reset</c> tries the source
-    /// again. Public: the term readers of the embedding layer share it.</summary>
+    /// again, telling a source that waits for that (<see cref="IReopenableInput"/>).
+    /// Public: the term readers of the embedding layer share it.</summary>
     public static void CheckPastEof(Activation engine, StreamHandle h)
     {
         if (h.PastEof && h.EofAction == "error")
             throw new PrologRuntimeException("permission_error",
                 "input,past_end_of_stream", engine, MakeStreamTerm(engine, h));
-        if (h.PastEof && h.EofAction == "reset") h.PastEof = false;
+        if (h.PastEof && h.EofAction == "reset")
+        {
+            h.PastEof = false;
+            if (h.Reader?.Inner is IReopenableInput source) source.Reopen();
+        }
     }
 
     /// <summary><c>'$lazy_window'(+Stream, +Offset, +N, +Kind, -Window, -Length)</c>

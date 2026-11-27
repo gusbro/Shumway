@@ -2692,8 +2692,7 @@ internal sealed class ConsultPipeline
         // committed, in source order (SWI load-time semantics).
         if (initializationGoals is not null)
             foreach (var g in initializationGoals)
-                RunConsultGoal(QualifyGoalForModule(g, moduleName),
-                    "initialization goal", g.ToString() ?? "");
+                RunInitializationGoal(g, moduleName);
 
         // RESUME-boundary reconciliation: this consult (and any query
         // nested in it, one a goal started with the host API) may have mutated
@@ -2868,11 +2867,19 @@ internal sealed class ConsultPipeline
     /// whenever the program changed, so a load of many files with a directive
     /// each (every Logtalk entity) rebuilt it per file, quadratic in the files.
     /// A host consult has no running goal and runs each goal as a query.</para></summary>
-    /// <summary>A bundle's <c>:- initialization/1</c> goal, run in its module
-    /// as the consult runs one at the end of a file.</summary>
+    /// <summary>A file's or a bundle's <c>:- initialization/1</c> goal, run
+    /// in its module at the end of the load. The host is told while it runs
+    /// (<see cref="PrologEngine.InitializationRunning"/>).</summary>
     internal void RunInitializationGoal(Term goal, string moduleName)
-        => RunConsultGoal(QualifyGoalForModule(goal, moduleName),
-            "initialization goal", goal.ToString() ?? "");
+    {
+        E.InitializationRunning?.Invoke(true);
+        try
+        {
+            RunConsultGoal(QualifyGoalForModule(goal, moduleName),
+                "initialization goal", goal.ToString() ?? "");
+        }
+        finally { E.InitializationRunning?.Invoke(false); }
+    }
 
     private void RunConsultGoal(Term goal, string what, string described)
     {
