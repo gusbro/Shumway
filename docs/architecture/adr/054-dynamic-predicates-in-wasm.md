@@ -5,7 +5,8 @@
 Accepted (2026-09-26). Extends [ADR-023](023-dynamic-predicates-in-il.md) to
 the wasm backend of [ADR-050](050-wasm-tier1-backend.md). Amended 2026-11-22:
 a bundle carries the snapshots of its dynamic predicates, and a host installs
-one at the predicate's first call.
+one at the predicate's first call. Amended 2026-11-25: a snapshot is compiled
+in the background, and a large one is not compiled.
 
 ## Context
 
@@ -194,3 +195,67 @@ baked; it is installed at the first call with a promoter that would throw; a
 mutation retires it and the bake is not used again; a consult between two
 goals has it installed again; an engine whose clauses are others does not
 use it; bundles off and on. `BakedDynamicHelpersTests` covers the helpers.
+
+## Amendment (2026-11-25): a snapshot is compiled in the background
+
+When a dynamic predicate became hot, its snapshot was compiled to
+WebAssembly on the engine's thread, inside the goal that called it. For a
+table of hundreds of clauses that stopped the goal for seconds.
+
+A host can now give the store a compiler that runs elsewhere
+(`WasmPromotionStore.SnapshotCompiler`). The page runs it on a pool thread.
+With one:
+
+- the snapshot is taken on the engine's thread and handed to the compiler,
+  and the predicate keeps running its bytecode;
+- when the module is ready it is held as a bundle's snapshot is, and
+  installed at the predicate's next call, over the same bytecode it was
+  compiled from;
+- if the predicate changes while the module compiles, the module is
+  dropped;
+- the module does not depend on any address, so after the code space is
+  built again it is installed again with no new compile;
+- while its snapshot is compiling or waiting, the predicate is not laid out
+  again for being hot: its calls are about to leave the bytecode.
+
+Without a compiler (the desktop, the tests) the snapshot is compiled where
+the predicate is called, as before.
+
+On the page, with a runtime and its 967 library modules attached and the
+goals paced, the query that made a snapshot of a large table went from 2.4 s
+to 0.5 s.
+
+Tests: `SnapshotCompiledAsideTests`.
+
+## Amendment (2026-11-25): a large snapshot is not compiled
+
+A browser compiles a function of a WebAssembly module the first time the
+function is called, on the thread that calls it. A snapshot is one function,
+so the first query to call a large table's snapshot waited while the browser
+compiled the whole table. Compiling the module when it is installed only
+moves that wait to the install.
+
+- A snapshot with more instructions than
+  `WasmPromotionStore.MaxSnapshotInstructions` (3000) is refused, and the
+  predicate runs its bytecode. A bundle does not carry one either.
+  `jit_compile(status)` lists it with the reason.
+- When the code the predicate's clauses already have in the buffer puts its
+  snapshot over the limit, it is refused before the snapshot is taken. Each
+  clause's code there, less the link and the visibility check the chain adds
+  to it, is in the snapshot too. Taking the snapshot of a large table cost a
+  query 0.3 to 0.8 s in a page only to see it refused.
+- When the calls of such a predicate cross the JIT indexing threshold, it is
+  laid out indexed in place of its chain, as under the IL tier. The wasm
+  tier used to refuse this, so the whole program was laid out again, and
+  every snapshot running was dropped with the old layout.
+- A snapshot refused while it compiled in the background is not taken again
+  by the call that finds the refusal.
+
+Measured on the page, with a runtime and its 967 library modules attached,
+the goals paced and the processor capped at 99%. The query in which a large
+table became hot went from 1.1 s to 0.15 s. The next query went from 0.15 s
+to 0.26 s, because it lays the table out indexed. The runtime's bundle no
+longer carries its large snapshots: the `.tar.gz` of the runtime and the
+libraries went from 18.3 MB to 17.5 MB.
+
+Tests: `SnapshotSizeLimitTests`.

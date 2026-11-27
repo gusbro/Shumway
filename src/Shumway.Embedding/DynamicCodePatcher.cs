@@ -474,7 +474,7 @@ internal sealed class DynamicCodePatcher
             int header = ChainEntryHeaderSize(prog, cur);
             if (cur + header + 22 > prog.Length
                 || prog[cur + header] != (byte)Shumway.Core.Opcode.CheckVisible
-                || prog[cur + header + 17] != (byte)Shumway.Core.Opcode.Execute) return;
+                || prog[cur + header + 17] != (byte)Shumway.Core.Opcode.Jump) return;
             into[clauses[i]] = cur + header + 9;
             cur = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
         }
@@ -592,7 +592,7 @@ internal sealed class DynamicCodePatcher
     /// entry at <paramref name="entryAddr"/> sits in a 9-byte
     /// chain-instruction slot (the original try_me_else footprint,
     /// possibly demoted to retry_me_else + 4 nops by an asserta).
-    /// In that case the entry's check_visible / execute live at the
+    /// In that case the entry's check_visible / jump live at the
     /// head offsets (+9 / +26); for a native non-head 5-byte slot
     /// they live at +5 / +22. The distinguisher is the byte at
     /// entry+5: <c>Nop</c> for a demoted-head slot, anything else
@@ -830,13 +830,13 @@ internal sealed class DynamicCodePatcher
         RelocateDispatchSites(prog, compiledClause, bodyAddr + bodyContentLocalStart);
 
         // Helper: append a non-head chain entry (retry_me_else
-        // <fail_stub>; check_visible; execute <targetBody>).
+        // <fail_stub>; check_visible; jump <targetBody>).
         int AppendNonHeadEntry(int targetBody)
         {
             var em = new Shumway.Compiler.Wam.BytecodeEmitter();
             em.EmitRetryMeElse(failStub);
             em.EmitCheckVisible(born: E._dbGeneration.Value, died: long.MaxValue);
-            em.EmitExecute(targetBody);
+            em.EmitJump(targetBody);
             byte[] entry = em.ToBytes();
             int at = PlaceChunk(engine, chainTable, entry);
             NoteIndexedEntry(chainTable, functorId, at, entry.Length);
@@ -994,7 +994,7 @@ internal sealed class DynamicCodePatcher
             int chainHeaderSize = ChainEntryHeaderSize(prog, cur);
             int execOpPos = cur + chainHeaderSize + 17;
             if (execOpPos + 5 > prog.Length) return null;
-            if (prog[execOpPos] != (byte)Shumway.Core.Opcode.Execute) return null;
+            if (prog[execOpPos] != (byte)Shumway.Core.Opcode.Jump) return null;
             if (Shumway.Core.BytecodeIO.ReadInt64(prog, cur + chainHeaderSize + 9) == long.MaxValue)
             {
                 if (idx >= end) return null;
@@ -1345,11 +1345,11 @@ internal sealed class DynamicCodePatcher
             prog[oldHead + 8] = (byte)Shumway.Core.Opcode.Nop;
 
             // New head: try_me_else <oldHead> arity + check_visible
-            // + execute <bodyAddr>.
+            // + jump <bodyAddr>.
             var em = new Shumway.Compiler.Wam.BytecodeEmitter();
             em.EmitTryMeElse(oldHead, arity);
             em.EmitCheckVisible(born: E._dbGeneration.Value, died: long.MaxValue);
-            em.EmitExecute(bodyAddr);
+            em.EmitJump(bodyAddr);
             byte[] head = em.ToBytes();
             int newHead = PlaceChunk(engine, chainTable, head);
             NoteIndexedEntry(chainTable, functorId, newHead, head.Length);
@@ -1565,7 +1565,7 @@ internal sealed class DynamicCodePatcher
             int diedAddr = cur + chainHeaderSize + 9;
             int execOpPos = cur + chainHeaderSize + 17;
             if (execOpPos + 5 > prog.Length) return -1;
-            if (prog[execOpPos] != (byte)Shumway.Core.Opcode.Execute) return -1;
+            if (prog[execOpPos] != (byte)Shumway.Core.Opcode.Jump) return -1;
             long died = Shumway.Core.BytecodeIO.ReadInt64(prog, diedAddr);
             if (died == long.MaxValue)
             {
@@ -1584,7 +1584,7 @@ internal sealed class DynamicCodePatcher
     }
 
     /// <summary>Patches the died slot of every entry of the extensible-indexed
-    /// predicate whose <c>execute</c> targets <paramref name="bodyAddr"/>, the
+    /// predicate whose <c>jump</c> targets <paramref name="bodyAddr"/>, the
     /// retired clause's body. The died slot is the second 8-byte field of the
     /// entry's <c>check_visible</c>, at chain-header-size + 1 + 8 from the
     /// entry's start. A clause with a concrete first argument is in two chains,
@@ -1630,7 +1630,7 @@ internal sealed class DynamicCodePatcher
     }
 
     /// <summary>Walks one chain and patches the died slot of the entry whose
-    /// <c>execute</c> targets <paramref name="bodyAddr"/>; a chain holds a
+    /// <c>jump</c> targets <paramref name="bodyAddr"/>; a chain holds a
     /// clause at most once, so the walk ends there. False when the chain has no
     /// such entry.</summary>
     private bool PatchDiedInChain(byte[] prog, int head, int failStub, int bodyAddr, long gen)
@@ -1642,7 +1642,7 @@ internal sealed class DynamicCodePatcher
             int chainHeaderSize = ChainEntryHeaderSize(prog, cur);
             int execOpPos = cur + chainHeaderSize + 17;
             if (execOpPos + 5 > prog.Length) break;
-            if (prog[execOpPos] != (byte)Shumway.Core.Opcode.Execute) break;
+            if (prog[execOpPos] != (byte)Shumway.Core.Opcode.Jump) break;
             if (Shumway.Core.BytecodeIO.ReadInt32(prog, execOpPos + 1) == bodyAddr)
             {
                 Shumway.Core.BytecodeIO.WriteInt64(prog, cur + chainHeaderSize + 9, gen);
@@ -1733,7 +1733,7 @@ internal sealed class DynamicCodePatcher
                 int header = ChainEntryHeaderSize(prog, cur);
                 if (cur + header + 22 > prog.Length
                     || prog[cur + header] != (byte)Shumway.Core.Opcode.CheckVisible
-                    || prog[cur + header + 17] != (byte)Shumway.Core.Opcode.Execute) return false;
+                    || prog[cur + header + 17] != (byte)Shumway.Core.Opcode.Jump) return false;
                 entries.Add(cur);
                 bool dead = Shumway.Core.BytecodeIO.ReadInt64(prog, cur + header + 9) != long.MaxValue;
                 int body = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + header + 18);
@@ -1892,7 +1892,7 @@ internal sealed class DynamicCodePatcher
             if (i == 0) em.EmitTryMeElse(nextAddr, headArity);
             else em.EmitRetryMeElse(nextAddr);
             em.EmitCheckVisible(born: E._dbGeneration.Value, died: long.MaxValue);
-            em.EmitExecute(bodies[i]);
+            em.EmitJump(bodies[i]);
         }
         byte[] chunk = em.ToBytes();
         int chunkAddr;
@@ -2264,7 +2264,9 @@ internal sealed class DynamicCodePatcher
     internal void SyncOrInvalidateAfterMutation(Activation engine, bool ownedHostBuffer)
     {
         if (ownedHostBuffer) SyncPersistentFromEngine(engine);
-        else E.InvalidatePersistent("mutation by a non-owner");
+        // The host's buffer does not hold it: laid out again from the store.
+        // No clause of a module changed, so the derivation stays.
+        else E.InvalidateLayout(statics: false, "mutation by a non-owner");
     }
 
     /// <summary>synchronises <see cref="E._persistentProgram"/>

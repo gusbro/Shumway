@@ -394,28 +394,43 @@ public sealed partial class Activation
         if (chunk.Length > CodeRoom)
             throw new PrologRuntimeException("resource_error", "code_space") { Origin = ErrorOrigin.Engine };
         if (needed > program.Length)
-        {
-            byte[] grown;
-            try
-            {
-                grown = new byte[(int)Math.Max(needed, Math.Min(program.Length * 2L, CodeLimit))];
-            }
-            catch (OutOfMemoryException)
-            {
-                throw new PrologRuntimeException("resource_error", "code_space") { Origin = ErrorOrigin.Engine };
-            }
-            Array.Copy(program, grown, offset);
-            CurrentProgram = program = grown;
-            // bumping the generation tells the interpreter's
-            // dispatch loop to refresh its cached ProgramView. Plain
-            // (in-place) byte writes don't change the array reference,
-            // so they don't need a bump; only a reallocation does.
-            _programGeneration++;
-            ProgramMoved?.Invoke(this, offset);
-        }
+            program = MoveProgram((int)Math.Max(needed, Math.Min(program.Length * 2L, CodeLimit)));
         Array.Copy(chunk, 0, program, offset, chunk.Length);
         _programLength = needed;
         return offset;
+    }
+
+    /// <summary>Moves the program to an array of <paramref name="capacity"/>
+    /// bytes now, when it has fewer, so that what <see cref="AppendCode"/>
+    /// adds up to there does not move it. Kept under <see cref="CodeLimit"/>.</summary>
+    public void ReserveCode(int capacity)
+    {
+        capacity = Math.Min(capacity, CodeLimit);
+        if (CurrentProgram is { } program && capacity > program.Length && capacity >= ProgramLength)
+            MoveProgram(capacity);
+    }
+
+    private byte[] MoveProgram(int capacity)
+    {
+        byte[] grown;
+        try
+        {
+            grown = new byte[capacity];
+        }
+        catch (OutOfMemoryException)
+        {
+            throw new PrologRuntimeException("resource_error", "code_space") { Origin = ErrorOrigin.Engine };
+        }
+        int copied = ProgramLength;
+        Array.Copy(CurrentProgram ?? Array.Empty<byte>(), grown, copied);
+        CurrentProgram = grown;
+        // bumping the generation tells the interpreter's
+        // dispatch loop to refresh its cached ProgramView. Plain
+        // (in-place) byte writes don't change the array reference,
+        // so they don't need a bump; only a reallocation does.
+        _programGeneration++;
+        ProgramMoved?.Invoke(this, copied);
+        return grown;
     }
 
     /// <summary>Monotonic counter bumped whenever the bytecode
@@ -548,6 +563,13 @@ public sealed partial class Activation
     /// the linked address or resume marker, or -1. Consulted by the dispatchers
     /// before <see cref="ResolveLateHelper"/>.</summary>
     public Func<int, int>? ResolveModuleFallback { get; set; }
+
+    /// <summary>ADR-075: the modules (atom ids) an attached library declares
+    /// whose code is not in yet, owned by the host, which brings one in
+    /// through <see cref="BringInModule"/>. A qualified call made at run time
+    /// asks where it learns its module, before it looks the predicate up.</summary>
+    public HashSet<int>? PendingModules { get; set; }
+    public Action<int>? BringInModule { get; set; }
 
     /// <summary>jit_compile/1's control over Tier-1 promotion, supplied by the
     /// host because the promotion store lives above this assembly. The

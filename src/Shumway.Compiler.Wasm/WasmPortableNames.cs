@@ -22,6 +22,14 @@ public sealed class WasmPortableNames
 
     private Dictionary<string, string> PortableByLive => _portableByLive ??= _source();
 
+    /// <summary>Reads the engine's names now, on its thread: the names are then
+    /// asked for from another one.</summary>
+    public WasmPortableNames Loaded()
+    {
+        _ = PortableByLive;
+        return this;
+    }
+
     /// <summary>The name as a module carries it: a helper's portable name, any
     /// other name as it is.</summary>
     public string ToPortable(string name)

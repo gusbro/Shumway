@@ -62,21 +62,21 @@ public sealed class LiveLinkAddressMapTests : IDisposable
         return e.LastErrorStackTrace.FirstOrDefault();
     }
 
+    // The chain that holds an asserted clause names it.
     [Fact]
-    public void AnErrorInAClauseTheQueryAsserted_IsNotBlamedOnAnotherPredicate()
+    public void AnErrorInAClauseTheQueryAsserted_IsNamedAfterItsPredicate()
     {
         var e = new PrologEngine();
         e.ConsultString(":- dynamic(dp/1).\ndp(1).\n:- dynamic(ip/2).\nip(a, 1).\nip(b, 2).\nip(c, 3).\n"
             + "wrap :- ap(_), true.\n");
-        var dynamicClause = ("<dynamic clause>", -1);
         // A new dynamic predicate, called from a predicate setup linked.
-        Assert.Equal(dynamicClause,
+        Assert.Equal(("ap", 1),
             FirstFrameOf(e, "assertz((ap(X) :- atom_length(X, _))), wrap."));
         // A declared one, behind its first clause.
-        Assert.Equal(dynamicClause,
+        Assert.Equal(("dp", 1),
             FirstFrameOf(e, @"assertz((dp(X) :- atom_length(X, _))), dp(Y), Y \== 1."));
         // One whose clauses are indexed on the first argument.
-        Assert.Equal(dynamicClause,
+        Assert.Equal(("ip", 2),
             FirstFrameOf(e, "assertz((ip(k, X) :- atom_length(X, _))), ip(k, _)."));
         Assert.DoesNotContain(e.LastErrorStackTrace, f => f.Name.StartsWith("$"));
     }

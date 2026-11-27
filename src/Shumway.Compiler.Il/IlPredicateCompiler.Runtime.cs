@@ -574,6 +574,8 @@ public sealed partial class IlPredicateCompiler
                     return -1;
                 }
             }
+            if (engine.PendingModules is { Count: > 0 } pending && pending.Contains(module))
+                engine.BringInModule!(module);
             engine.SetRegister(0, goal);
             return module;
         }

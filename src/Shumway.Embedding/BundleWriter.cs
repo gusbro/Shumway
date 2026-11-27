@@ -307,6 +307,20 @@ public static class BundleWriter
         bw.Write((uint)bundle.EngineLibraries.Count);
         foreach (var name in bundle.EngineLibraries)
             WriteLengthPrefixedUtf8(bw, name);
+        // Dynamic-libraries trailer (ADR-075, decision 5). Mirrors
+        // ShmoLinker.SerialiseBundle exactly.
+        bw.Write((uint)bundle.DynamicLibraries.Count);
+        foreach (var lib in bundle.DynamicLibraries)
+        {
+            WriteLengthPrefixedUtf8(bw, lib.Name);
+            bw.Write((uint)lib.Uses.Count);
+            foreach (var use in lib.Uses)
+            {
+                WriteLengthPrefixedUtf8(bw, use.Module);
+                WriteLengthPrefixedUtf8(bw, use.Name);
+                bw.Write((uint)use.Arity);
+            }
+        }
         bw.Flush();
         // compress the body (everything after magic+version).
         return BundleFormat.FinalizeImage(ms.ToArray());

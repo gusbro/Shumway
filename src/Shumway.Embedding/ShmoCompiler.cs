@@ -282,6 +282,8 @@ public static class ShmoCompiler
         var exportSet = new HashSet<PredicateRef>();
         var libraryDeps = new List<ShmoLibraryDep>();
         var importEntries = new List<ShmoImportEntry>();
+        // ADR-075, decision 3 — the library bundles the source attaches.
+        var dynamicLibraries = new List<string>();
         var ensureLinked = new List<PredicateRef>();
         var tabledSet = new HashSet<PredicateRef>();
         var qualifiedRefs = new List<QualifiedPredicateRef>();
@@ -417,6 +419,15 @@ public static class ShmoCompiler
                     }
                     continue;
                 }
+                // ADR-075, decision 3 — `:- ensure_loaded(bundle(X))` attaches the
+                // library X.shum: recorded for the linker, which links against
+                // it as against a --dynlib.
+                if (d.Args[0] is CompoundTerm { Functor: "ensure_loaded",
+                        Args: [CompoundTerm { Functor: "bundle", Args: [AtomTerm attached] }] })
+                {
+                    if (!dynamicLibraries.Contains(attached.Name)) dynamicLibraries.Add(attached.Name);
+                    continue;
+                }
                 // ADR-038 — `:- use_module(library(X))` / `…, [Filter]`. Record the
                 // dependency for the linker; for a filtered file import, resolve the
                 // import table now (lib name = module name) so ModuleRewrite mangles
@@ -514,6 +525,7 @@ public static class ShmoCompiler
             operatorDefs, multifileSet,
             isExportQualified: isExportQualified, exports: exportSet,
             imports: importEntries, libraryDeps: libraryDeps,
+            dynamicLibraries: dynamicLibraries,
             flagSettings: flagSettings,
             initializationGoals: initializationGoals,
             keepSource: withSource,
@@ -553,6 +565,7 @@ public static class ShmoCompiler
         IReadOnlyCollection<PredicateRef>? exports = null,
         IReadOnlyList<ShmoImportEntry>? imports = null,
         IReadOnlyList<ShmoLibraryDep>? libraryDeps = null,
+        IReadOnlyList<string>? dynamicLibraries = null,
         string? dialect = null,
         Func<int, string?, int[]?>? metaArgSpec = null,
         Func<string, string, int, string?>? qualifiedResolver = null,
@@ -1047,7 +1060,8 @@ public static class ShmoCompiler
             libraryDeps: libraryDeps,
             dialect: dialect,
             flags: flagSettings,
-            initializationGoals: initializationGoals);
+            initializationGoals: initializationGoals,
+            dynamicLibraries: dynamicLibraries);
         obj.DynamicSnapshotBytecode = dynamicSnapshotBytecode;
         return new ShmoCompileResult(obj, errors, warnings);
     }

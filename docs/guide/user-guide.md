@@ -592,9 +592,8 @@ fed by all of:
   `engine.AddDefaultLibraryDirectories()` for the shipped `lib/`).
 
 The first directory with either file answers. With both `X.pl` and `X.shum`
-in it, the bundle is the library when it was built by a version of Shumway
-with the same format of compiled code and is not older than the source; else
-the source is. Editing the source therefore loads the source until the
+in it, the bundle is the library when it is in the format of compiled code
+this Shumway reads and is not older than the source; else the source is. Editing the source therefore loads the source until the
 bundle is built again.
 
 A library without `:- module/2` defines predicates of `user`, whether it
@@ -1079,6 +1078,7 @@ shumway-link -o app.shum \
 | `--allow-undefined` | Downgrade missing-predicate errors to warnings; still produce the bundle. The engine raises `existence_error/2` at call time if the missing predicate is actually invoked. |
 | `--warn-shadow` | Warn when a module's **local** predicate shares an indicator with another linked module's public: the C `static`-shadows-global shape. Legal either way (inside its module the local wins); the `--map` file always lists these regardless of the flag. (Two *publics* with the same indicator are always a `duplicate_public` **error**.) |
 | `-L, --library-dir <dir>` | Directory searched to resolve a `use_module(library(X))` dependency not passed explicitly: `X.pl`/`X.shmo` is compiled and linked in (transitively), C-linker style: already-provided inputs win, source is the last resort. Repeatable; also reads `SHUMWAY_LIBRARY_PATH`. |
+| `-dl, --dynlib <lib>` | Link against a library bundle (one linked with `--library`) without linking its code in. A call the inputs leave undefined is looked up in the library; the bundle records what it uses, and when it loads it attaches the library, checks that it still offers those predicates, and loads the modules that define them. `<lib>` is a `.shum` file, or a name found as `<lib>.shum` in the `-L` directories; at load the bundle finds it next to itself or on the library search path. Repeatable. A source with `:- ensure_loaded(bundle(<lib>))` is linked the same way without the option: the compiler records the directive in its `.shmo`, and the link finds `<lib>.shum` in the `-L` directories (under `--consult`, the file the consult attached). See [ADR-075](../architecture/adr/075-dynamic-library-bundles.md). |
 | `--consult` | Compile `.pl` inputs **through the consult pipeline** (directives and `term_expansion` / `goal_expansion` hooks run, `use_module` dependencies load) instead of file-at-a-time: the linker equivalent of `shumway-compile --consult`. Needed when a source uses a library's operators or generates clauses at load time; every module the load brings in is linked. Without it, a `.pl` that uses `library(...)` compiles file-at-a-time and the linker prints a hint pointing here; one that defines an expansion hook or a clause for another module is refused. |
 | `-s, --strip` | Remove the embedded Prolog source and the clause terms from every bundle entry. Bytecode preserved, so the program runs the same; `clause/2` and `listing/1` no longer see its static predicates. Useful for size analysis / IP-protection. Without it, a release bundle (no source) still ships each module's clause terms, so `clause/2` and `listing/1` answer exactly as they do on the consulted source. A `.shmo` always carries the clause terms: it is an *intermediate* build artifact, like an object file with embedded IR, and the linker uses them for cross-module optimization (e.g. the meta-wrapper unfold). |
 | `-m, --map <path>` | Write a C-toolchain-style audit file describing what landed in the bundle: per-module sizes, exported / dynamic predicate lists, local-shadows-public listing, dropped modules, totals. |

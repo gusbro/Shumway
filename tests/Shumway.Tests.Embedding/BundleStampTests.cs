@@ -48,7 +48,7 @@ public sealed class BundleStampTests
         var whole = Assert.Throws<InvalidDataException>(() => BundleReader.FromBytes(bundle));
         var cut = Assert.Throws<InvalidDataException>(() => BundleReader.FromBytes(headerOnly));
         Assert.Contains("another format of compiled code", whole.Message);
-        Assert.Contains("Build it again", whole.Message);
+        Assert.Contains("Compile its source, or link it, again.", whole.Message);
         Assert.Equal(whole.Message, cut.Message);
     }
 
@@ -108,8 +108,8 @@ public sealed class BundleStampTests
     // it: a change to it changes the image, and the stamp has to be raised
     // by hand (BundleFormat.ComputeStamp, "wire form") before the two are
     // pinned again here.
-    private const ulong PinnedStamp = 0xF51E4568E8678861;
-    private const ulong PinnedImage = 0x69FE27EB4667F38C;
+    private const ulong PinnedStamp = 0xF51E4368E86784FB;
+    private const ulong PinnedImage = 0xD13B8FADABB7C24C;
 
     // A bundle with one source-only entry and nothing compiled: every
     // section of the container, none of the compiler's output.

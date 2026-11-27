@@ -711,6 +711,27 @@ public sealed partial class PrologEngine
         return entry;
     }
 
+    /// <summary>A new derivation drops the compile of every dynamic predicate
+    /// but one whose clauses are all facts of the store. Do not relax this to
+    /// the rewrite entries' per-entry fingerprint: reusing a dynamic rule's
+    /// compiled bytecode across a derivation bump broke clpz's propagators at
+    /// runtime (constraints silently stopped firing) even though every unit
+    /// gate stayed green. A fact has no body, so its code names no helper and
+    /// no predicate of the derivation that ends here, and a table of facts is
+    /// where the clauses are. A predicate a module gives source clauses to,
+    /// before or now, is compiled from them too, and one that is no longer
+    /// dynamic has a static compile to give way to.</summary>
+    private void PruneDynamicCompiles(HashSet<int>? staticHeadsBefore, HashSet<int> staticHeadsNow)
+    {
+        List<int>? drop = null;
+        foreach (int fid in _dynamicPredicateCache.Keys)
+            if (!_dynStore.IsDynamic(fid) || !_dynStore.HoldsOnlyFacts(fid)
+                || staticHeadsNow.Contains(fid) || staticHeadsBefore?.Contains(fid) == true)
+                (drop ??= new()).Add(fid);
+        if (drop is not null)
+            foreach (int fid in drop) UncacheDynamicCompile(fid);
+    }
+
     /// <summary>Leaves the product's compile of each predicate a dynamic
     /// mutation left stale (<see cref="_productStaleDynamicFids"/>) as it is.
     /// Nothing reads it before the next full build: the persistent buffer
@@ -719,20 +740,24 @@ public sealed partial class PrologEngine
     /// generation), and a snapshot has the predicate rewritten when it asks
     /// (<see cref="BuildDynamicSnapshot"/>). Compiling it here cost the
     /// predicate's size per query after a mutation, and built the term of
-    /// every fact kept as an image (ADR-063). Only for a predicate of facts,
-    /// or an empty one, that the product already holds, with no source
-    /// clauses in a module and the user context: a rule's rewrite can mint
-    /// helpers the query link has to carry. False leaves the setup to a full
-    /// build.</summary>
+    /// every fact kept as an image (ADR-063). Only for a predicate the
+    /// product already holds, with no source clauses in a module, or one a
+    /// goal made or declared in the buffer this setup keeps
+    /// (<see cref="_liveDeclaredDynamics"/>). A rule asserted with helpers
+    /// took a new product then (LinkRuntimeAssertHelpers), and a snapshot
+    /// whose rewrite needs helpers waits for the next build
+    /// (<see cref="RewriteDeferredDynamicPredicate"/>). False leaves the
+    /// setup to a full build.</summary>
     private bool DeferStaleDynamicPredicates(CompiledProgramProduct product)
     {
         foreach (int fid in _productStaleDynamicFids)
         {
+            // Declared by an attach and kept in the buffer: not in the product
+            // yet, whatever its clauses are.
+            if (_liveDeclaredDynamics.Contains(fid)) continue;
             string? why =
                 _staticRewriteHeadFids?.Contains(fid) == true ? "source clauses in a module"
-                : _dynamicSeedModule.ContainsKey(fid) ? "seed module"
                 : !_dynStore.IsDynamic(fid) ? "not dynamic"
-                : !_dynStore.HoldsOnlyFacts(fid) ? "rules"
                 : !product.DynamicFunctors.Contains(fid) ? "not in the product"
                 : null;
             if (why is null) continue;
@@ -747,18 +772,41 @@ public sealed partial class PrologEngine
     /// <summary>The rewrite of a predicate the setup left as it was
     /// (<see cref="DeferStaleDynamicPredicates"/>), for the snapshot that asks
     /// for it: under the user context, as the full build does it. False for
-    /// an empty predicate, which has no snapshot.</summary>
+    /// an empty predicate, which has no snapshot, and for one whose snapshot
+    /// waits for the next build.</summary>
     private bool RewriteDeferredDynamicPredicate(int fid)
     {
         if (!_dynStore.TryGetClauses(fid, out var clauses) || clauses.Count == 0) return false;
+        if (_snapshotWaitsForBuild.Contains(fid)) return false;
+        // A rule of a legacy module's seed is rewritten under that module's
+        // locals, which only a full build has.
+        if (_dynamicSeedModule.ContainsKey(fid) && OwnedDynamicContextFor(fid) is null
+            && !_dynStore.HoldsOnlyFacts(fid))
+        {
+            _snapshotWaitsForBuild.Add(fid);
+            return false;
+        }
         var ctx = OwnedDynamicContextFor(fid) ?? new ModuleRewrite.Context(
             DefaultModuleName, _staticRewriteUserLocals ?? EmptyLocalsSentinel,
             _dynStore.Functors, ImportsOf(DefaultModuleName));
-        RewriteDynamicPredicate(fid, clauses, ctx, Modes);
+        var entry = RewriteDynamicPredicate(fid, clauses, ctx, Modes);
+        // The helpers its rewrite made are linked by a full build, and the
+        // snapshot would call them.
+        foreach (int head in entry.HeadFids)
+            if (head != fid)
+            {
+                _snapshotWaitsForBuild.Add(fid);
+                return false;
+            }
         _snapshotStaleFids.Remove(fid);
         DeferredDynamicRewrites++;
         return true;
     }
+
+    /// <summary>Predicates left for the next build whose snapshot waits for it
+    /// (<see cref="RewriteDeferredDynamicPredicate"/>): asked again after a
+    /// change of their clauses or that build.</summary>
+    internal readonly HashSet<int> _snapshotWaitsForBuild = new();
 
     /// <summary>Rewrites done for a snapshot of a predicate the setup left as
     /// it was (<see cref="RewriteDeferredDynamicPredicate"/>).</summary>
@@ -802,11 +850,23 @@ public sealed partial class PrologEngine
         // mid-flight -- so it waits for the next real query, exactly as the
         // compaction does.
         if (_debugEvalDepth == 0) IlPromotion.ApplyPendingJitChange();
+        // A change of tier asked for the static region to be linked again
+        // (InvalidateLayout). Here and not when it asked: until this setup the
+        // tiers read the link they are installed against.
+        if (_staticRelinkPending)
+        {
+            _staticRelinkPending = false;
+            _staticLink = null;
+            _skipCompileMergedCache = null;
+        }
         // Retract leaves tombstones so no clause position moves mid-query;
         // readers compact the slot they touch and the proportional trigger
         // bounds the rest, and this tidies up whatever is left at a point
         // where nothing holds a position.
         if (_debugEvalDepth == 0) CompactClauseSlots();
+        // The dynamic predicates a goal made in this buffer join the layout;
+        // those that cannot take a new product.
+        if (_debugEvalDepth == 0) AdoptGoalTrampolines();
 
         // live-linked-consult forward-reference sites now live on
         // the per-buffer chain table, so they follow their buffer's lifetime
@@ -873,7 +933,12 @@ public sealed partial class PrologEngine
         {
             if (!hotnessSeen.Add(fid)) return;
             if (!_jitIndexProfile.IsHot(fid)) unindexedFunctors.Add(fid);
-            if (_jitIndexProfile.HotnessChangedSinceCompile(fid)) (hotnessFlipped ??= new()).Add(fid);
+            // One whose calls go to a snapshot is not laid out again for
+            // them: while its snapshot compiles aside it runs its bytecode
+            // past the threshold, and its calls are about to leave it.
+            if (_jitIndexProfile.HotnessChangedSinceCompile(fid)
+                && IlPromotion.Wasm?.RunsAsSnapshot(fid) != true)
+                (hotnessFlipped ??= new()).Add(fid);
         }
         if (hotnessFlipped is not null && TryFlipHotnessInPlace(hotnessFlipped) is { } whyNotInPlace)
         {
@@ -997,15 +1062,9 @@ public sealed partial class PrologEngine
             //    dynamic clause recompiled under the new derivation calls new
             //    '$disj_N' helpers, and those helper predicates are static:
             //    they only reach the code space through a fresh static link.
-            // The dynamic compiled cache still clears wholesale. Do not relax
-            // this to the rewrite entries' per-entry fingerprint: reusing a
-            // dynamic predicate's compiled bytecode across a derivation bump
-            // broke clpz's propagators at runtime (constraints silently
-            // stopped firing) even though every unit gate stayed green — the
-            // rewrite ASTs are safely reusable, the compiled form is not.
-            // Recompiling the handful of dynamic predicates from their kept
-            // ASTs is cheap.
-            _dynamicPredicateCache.Clear();
+            // The dynamic compiled cache is pruned below, once the modules'
+            // head functors are known (PruneDynamicCompiles).
+            var staticHeadsBefore = _staticRewriteHeadFids;
             _skipCompileMergedCache = null;
             _staticLink = null;
             // The IL tier's promoted delegates are deliberately not evicted
@@ -1162,6 +1221,7 @@ public sealed partial class PrologEngine
             _staticRewriteModuleLocals = moduleLocalsCache;
             _staticRewriteHeadFids = new HashSet<int>(rewrittenHeadFids);
             _staticRewriteGen = _derivationGen;
+            PruneDynamicCompiles(staticHeadsBefore, rewrittenHeadFids);
         }
 
         // Dynamic clauses asserted at runtime (or declared
@@ -1237,7 +1297,20 @@ public sealed partial class PrologEngine
                         namedDynCtx[seedModule] = fidCtx;
                     }
                 }
-                if (!_dynamicRewriteCache.TryGetValue(fid, out var entry)
+                bool cached = _dynamicRewriteCache.TryGetValue(fid, out var entry);
+                // A predicate of facts under another locals set: its rewrite
+                // is the same when its head's name is, which one clause tells.
+                if (cached && entry.ModesVersion == modeTable.Version
+                    && !ReferenceEquals(entry.LocalsRef, fidCtx.LocalFunctors)
+                    && entry.HeadFids.Count == clauses.Count
+                    && _dynStore.HoldsOnlyFacts(fid)
+                    && HeadFunctorIdOf(ModuleRewrite.Rewrite(clauses[0], fidCtx)) == entry.HeadFids[0])
+                {
+                    entry = (entry.Clauses, entry.HeadFids, fidCtx.LocalFunctors, entry.ModesVersion);
+                    _dynamicRewriteCache[fid] = entry;
+                    _dynamicHelperContext[fid] = (entry.HeadFids, fidCtx.LocalFunctors, entry.ModesVersion);
+                }
+                if (!cached
                     || !ReferenceEquals(entry.LocalsRef, fidCtx.LocalFunctors)
                     || entry.ModesVersion != modeTable.Version)
                 {
@@ -1445,10 +1518,11 @@ public sealed partial class PrologEngine
                 _jitIndexProfile.RecordCompileDecision(
                     pred.FunctorId, _jitIndexProfile.IsHot(pred.FunctorId));
                 if (_dynamicPredicateCache.ContainsKey(pred.FunctorId)) continue;
+                DynamicPredicateCompiles++;
                 if (ReferenceEquals(pred.PoolsRef, _literalPools)
                     || Shumway.Compiler.Wam.ModuleCompiler.IsCachedPredicateReusable(pred))
                 {
-                    _dynamicPredicateCache[pred.FunctorId] = pred;
+                    CacheDynamicCompile(pred.FunctorId, pred);
                     // mirror into the merged skip-compile
                     // cache (dynamic has top precedence in the merge).
                     if (_skipCompileMergedCache is not null)
@@ -1512,7 +1586,9 @@ public sealed partial class PrologEngine
         {
             for (int i = pStatic.Count - 1; i >= 0; i--)
             {
-                if (cachedStatic.Addresses.ContainsKey(pStatic[i].FunctorId))
+                // Adopted code is linked too, after the region (ADR-015, amendment).
+                if (cachedStatic.Addresses.ContainsKey(pStatic[i].FunctorId)
+                    || _adoptedAddresses.ContainsKey(pStatic[i].FunctorId))
                     continue;
                 pExtraQuery.Add(pStatic[i]);
                 pStatic.RemoveAt(i);
@@ -1550,6 +1626,8 @@ public sealed partial class PrologEngine
         OrderStaticRegion(pStatic);
 
         ProgramProductBuilds++;
+        _liveDeclaredDynamics.Clear();
+        _snapshotWaitsForBuild.Clear();
         var dynamicFunctors = new HashSet<int>();
         foreach (var p in pDynamic) dynamicFunctors.Add(p.FunctorId);
         product = _programProduct = new CompiledProgramProduct
@@ -1668,6 +1746,7 @@ public sealed partial class PrologEngine
         if (staticLink is null)
         {
             staticLink = _staticLink = GetOrLinkStatic(staticPreds, prefix.Length);
+            StaticProgramVersion++;
             // Static code: its literals stay for the engine's life.
             _literalPools.Pin(staticLink.Bytecode);
             // A bundle's wasm modules bind to linked addresses: install them
@@ -1706,6 +1785,10 @@ public sealed partial class PrologEngine
             // The code appended after the dynamic region goes with the old
             // buffer, dynamic snapshots' shadow regions included (ADR-054).
             IlPromotion.Wasm?.OnPersistentRebuilt();
+            // And the adopted code, which this build linked with the static region.
+            _adoptedStatics.Clear();
+            _adoptedAddresses.Clear();
+            _adoptedTables.Clear();
             int dynamicLoadOffset = prefix.Length + staticLink.Bytecode.Length;
             _dynamicLink = new Linker { Aliases = BareLibraryAliases() }.Link(
                 dynamicPreds,
@@ -1753,6 +1836,7 @@ public sealed partial class PrologEngine
         {
             var pa = CollectionsCompat.Copy(staticLink.Addresses);
             foreach (var (fid, a) in _dynamicLink!.Addresses) pa[fid] = a;
+            foreach (var (fid, a) in _adoptedAddresses) pa[fid] = a;
             _persistentAddressesCache = pa;
 
             // Runtime call/1 dispatches a goal by its bare
@@ -1769,6 +1853,7 @@ public sealed partial class PrologEngine
 
             var pba = CollectionsCompat.Copy(staticLink.PredicatesByAddress);
             foreach (var (a, p) in _dynamicLink.PredicatesByAddress) pba[a] = p;
+            foreach (var (a, p) in _adoptedStatics) pba[a] = p;
             _persistentPredsByAddressCache = pba;
         }
         var persistentAddresses = _persistentAddressesCache;
@@ -1781,7 +1866,7 @@ public sealed partial class PrologEngine
                 // _dynamicLink is non-null here (built in the
                 // builtPersistentNow block above); ! matches the sibling
                 // sites at _dynamicLink!.Addresses / .SwitchTables.
-                staticLink.SwitchTables.Count + _dynamicLink!.SwitchTables.Count);
+                QueryTableBase(staticLink.SwitchTables.Count + _dynamicLink!.SwitchTables.Count));
 
         byte[] queryBytes = queryLink.Bytecode;
         PlacePersistent(queryBytes, queryStart);
@@ -1817,6 +1902,15 @@ public sealed partial class PrologEngine
         var mergedSwitchTables =
             new List<Shumway.Core.SwitchTable>(staticLink.SwitchTables);
         mergedSwitchTables.AddRange(_dynamicLink!.SwitchTables);
+        // Adopted code names its tables by the slots they had when it was
+        // linked (ADR-015, amendment): they keep them, and the query's own
+        // go after.
+        if (_adoptedTables.Count > 0)
+        {
+            int queryTables = QueryTableBase(mergedSwitchTables.Count);
+            while (mergedSwitchTables.Count < queryTables) mergedSwitchTables.Add(null!);
+            foreach (var (index, table) in _adoptedTables) mergedSwitchTables[index] = table;
+        }
         mergedSwitchTables.AddRange(queryLink.SwitchTables);
         // persistent part pre-merged at rebuild time; the query's predicates
         // layered on top (their addresses are disjoint from the program's,
@@ -2023,8 +2117,14 @@ public sealed partial class PrologEngine
         // copying it a second time.
         var mutableSwitchTables = mergedSwitchTables;
         engine.SwitchTables = mutableSwitchTables;
-        engine.ResolveLateHelper = fid => TryMaterializeAssertHelper(engine, fid);
+        engine.ResolveLateHelper = fid =>
+        {
+            int address = TryMaterializeAssertHelper(engine, fid);
+            return address != -1 ? address : ResolveFromAttachedLibraries(engine, fid);
+        };
         engine.ResolveModuleFallback = fid => ResolveModuleFallback(engine, fid);
+        engine.PendingModules = _pendingModuleAtoms;
+        engine.BringInModule = atom => EnsureModuleCode(engine, AtomTable.GetById(atom)?.Name ?? "");
         engine.MetaArgSpecOf = MetaArgSpec;
         engine.JitControl = IlPromotion.SetJitThreshold;
         engine.JitFormControl = IlPromotion.SetJitForm;
@@ -2236,6 +2336,11 @@ public sealed partial class PrologEngine
         // the per-query PredicatesByAddress map so it can translate the
         // bytecode-PC the interpreter has into the functor the store
         // wants.
+        if (_codeBroughtIn)
+        {
+            _codeBroughtIn = false;
+            IlPromotion.ForgetUnresolvedCallRefusals();
+        }
         interp.Tier1Dispatcher = new Tier1DispatcherAdapter(
             IlPromotion, linkResult.PredicatesByAddress, _jitIndexProfile, engine)
         {

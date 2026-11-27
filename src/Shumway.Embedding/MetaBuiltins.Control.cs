@@ -450,6 +450,15 @@ public static partial class MetaBuiltins
             LoadLibraryIntoUser(engine, host, unqualified);
             return true;
         }
+        // ADR-075: ensure_loaded(bundle(Name)) attaches the library Name.shum.
+        if (unqualified is CompoundTerm { Functor: "bundle", Args: [AtomTerm bundleName] })
+        {
+            var prevLive = host._liveConsultEngine;
+            host._liveConsultEngine = engine;
+            try { host.AttachBundleByName(bundleName.Name); }
+            finally { host._liveConsultEngine = prevLive; }
+            return true;
+        }
 
         string given = FileSpecAtom(engine, spec, out string? intoModule);
         string path = given;
@@ -892,6 +901,45 @@ public static partial class MetaBuiltins
         return engine.UnifyRegisterWithCell(1, c);
     }
 
+    /// <summary><c>'$dynlib_install'(+Owner, +Name/Arity)</c>: installs the
+    /// clauses attached libraries hold for a dynamic predicate (ADR-075,
+    /// decision 9). Called by the stub clause its first call runs.</summary>
+    public static bool DynlibInstall(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException("$dynlib_install/2: PrologEngine host required.");
+        if (MaterializeRegister(engine, 0) is not AtomTerm owner
+            || MaterializeRegister(engine, 1) is not CompoundTerm
+                { Functor: "/", Args: [AtomTerm name, IntTerm arity] })
+            return false;
+        int fid = FunctorTable.Intern(AtomTable.Intern(name.Name, permanent: true).Id, (int)arity.Value);
+        if (owner.Name != PrologEngine.DefaultModuleName)
+            fid = PrologEngine.MangleFunctor(owner.Name, fid);
+        host.InstallPendingClauses(engine, fid);
+        return true;
+    }
+
+    /// <summary><c>'$dynlib_bring_in'(+Module, +Name, ?Arity)</c>: before a
+    /// listing, brings in the attached modules whose code it would read
+    /// (ADR-075, decision 11): <paramref name="Module"/> when it is one, else
+    /// (<c>[]</c>) the ones that define <c>Name</c>, of <c>Arity</c> when it
+    /// is bound. Always succeeds.</summary>
+    public static bool DynlibBringIn(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException("$dynlib_bring_in/3: PrologEngine host required.");
+        Term module = MaterializeRegister(engine, 0);
+        if (module is AtomTerm { Name: not "[]" } m)
+        {
+            host.EnsureModuleCode(engine, m.Name);
+            return true;
+        }
+        if (MaterializeRegister(engine, 1) is not AtomTerm name) return true;
+        int arity = MaterializeRegister(engine, 2) is IntTerm a ? (int)a.Value : -1;
+        host.BringInDefinersOf(engine, name.Name, arity);
+        return true;
+    }
+
     /// <summary><c>'$clause_ref_fetch'(+Ref, ?Head, ?Body)</c> — unifies
     /// Head/Body with the clause the reference designates; fails when the
     /// clause was erased/retracted. A bound non-reference is
@@ -977,6 +1025,7 @@ public static partial class MetaBuiltins
         if (engine.CodeRoom < PrologEngine.AssertCodeHeadroom
             && !host.HasFreeCodeChunk(engine, PrologEngine.AssertCodeHeadroom))
             throw new Shumway.Core.PrologRuntimeException("resource_error", "code_space");
+        host.InstallPendingClauses(engine, fid);
         if (prepend) host.Asserta(clause, fid);
         else host.Assertz(clause, fid);
         // ADR-015 incremental dispatch — the canonical path:
@@ -1259,7 +1308,11 @@ public static partial class MetaBuiltins
     private static int ReadPatternHeadFunctorId(Activation engine, PrologEngine host, ref int patternHeap)
     {
         Cell head = PeelPatternQualifiers(engine, ref patternHeap, out string? module);
-        return host.DatabaseFunctorFor(module, ReadFunctorIdFromCell(engine, head));
+        int key = host.DatabaseFunctorFor(module, ReadFunctorIdFromCell(engine, head));
+        // ADR-075, decision 9: a predicate's clauses are all there before a
+        // database builtin looks at it.
+        host.InstallPendingClauses(engine, key);
+        return key;
     }
 
     /// <summary>Peels the <c>Module:</c> chain off the pattern, and off the

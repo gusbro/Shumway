@@ -92,6 +92,24 @@ public sealed class OversizePredicateTests : IDisposable
         Assert.Contains("instructions", only);
     }
 
+    /// <summary>A group whose only member is refused compiles nothing: a
+    /// module of no member, which every caller leaves out.</summary>
+    [Fact]
+    public void AGroupWhoseOnlyMemberIsTooLarge_CompilesNothing()
+    {
+        Members(out WasmGroupMember large);
+        WasmPredicateCompiler.MaxMemberInstructions = 30;
+        var refused = new List<string>();
+
+        var module = WasmRelocatableModule.BakeCompilable(new[] { large }, new EngineWasmCompileEnv(),
+            (m, why) => refused.Add($"{NameOf(m.Predicate.FunctorId)}: {why}"));
+
+        Assert.Empty(module.Members);
+        Assert.Empty(module.Bytes);
+        string only = Assert.Single(refused);
+        Assert.Contains("large", only);
+    }
+
     /// <summary>The instruction count is an estimate: what decides is the
     /// function as written.</summary>
     [Fact]

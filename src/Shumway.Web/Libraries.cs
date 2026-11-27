@@ -264,9 +264,8 @@ internal static partial class WebShumwayApp
             catch (Exception ex) { return ex.Message; }
         });
 
-    /// <summary>Whether the first bytes of a bundle say this engine reads it:
-    /// a bundle of another format of compiled code is one an earlier or a
-    /// later version of Shumway wrote.</summary>
+    /// <summary>Whether the first bytes of a bundle say it is in the format of
+    /// compiled code this engine reads.</summary>
     [JSExport]
     internal static Task<bool> LibraryBundleIsCurrent(
         [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] head)

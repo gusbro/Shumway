@@ -101,6 +101,10 @@ internal static class LinkCli
             }
         }
 
+        // ADR-075, decision 3: the file the consult attached for each
+        // ensure_loaded(bundle(Name)) of the sources, linked against as a
+        // --dynlib is.
+        var consultAttached = new Dictionary<string, string>(StringComparer.Ordinal);
         if (sourceInputs.Count > 0)
         {
             var libraryDirs = CollectLibraryDirs(opts.LibraryDirs);
@@ -115,7 +119,8 @@ internal static class LinkCli
                 try
                 {
                     compiled = ShmoViaConsult.CompileMany(
-                        sourceInputs, libraryDirs, ShmoBuildMode.Release, errors, roots: roots);
+                        sourceInputs, libraryDirs, ShmoBuildMode.Release, errors,
+                        attachedLibraries: consultAttached, roots: roots);
                 }
                 catch (Exception ex)
                 {
@@ -202,9 +207,49 @@ internal static class LinkCli
             }
         }
 
+        var dynamicLibraries = new List<LinkDynamicLibrary>();
+        foreach (string spec in opts.DynamicLibraries)
+        {
+            string? path = LinkDynamicLibrary.Find(spec, CollectLibraryDirs(opts.LibraryDirs));
+            if (path is null)
+            {
+                Console.Error.WriteLine(
+                    $"shumway-link: dynamic library '{spec}' not found: give its .shum, or its name "
+                    + "with the directory that holds it in -L.");
+                RemoveStaleOutputs(opts);
+                return ExitLinkError;
+            }
+            try
+            {
+                dynamicLibraries.Add(new LinkDynamicLibrary(
+                    System.IO.Path.GetFileNameWithoutExtension(path), BundleReader.ReadFromFile(path)));
+            }
+            catch (Exception ex) when (ex is System.IO.InvalidDataException or System.IO.IOException)
+            {
+                Console.Error.WriteLine($"shumway-link: dynamic library {path}: {ex.Message}");
+                RemoveStaleOutputs(opts);
+                return ExitLinkError;
+            }
+        }
+        foreach (var (name, path) in consultAttached)
+        {
+            if (dynamicLibraries.Exists(l => l.Name == name)) continue;
+            try
+            {
+                dynamicLibraries.Add(new LinkDynamicLibrary(name, BundleReader.ReadFromFile(path)));
+            }
+            catch (Exception ex) when (ex is System.IO.InvalidDataException or System.IO.IOException)
+            {
+                Console.Error.WriteLine($"shumway-link: dynamic library {path}: {ex.Message}");
+                RemoveStaleOutputs(opts);
+                return ExitLinkError;
+            }
+        }
+
         var config = new LinkConfig
         {
             Objects = objects,
+            DynamicLibraries = dynamicLibraries,
             EntryPoints = opts.EntryPoints,
             GoalCallRefs = goalCallRefs,
             GoalTermRefs = goalTermRefs,
@@ -237,7 +282,7 @@ internal static class LinkCli
 #if !NETFRAMEWORK
             WasmBaker = opts.Wasm
                 ? b => Shumway.Compiler.Wasm.WasmBundleTier.Bake(b, opts.BakePrelude,
-                    msg => Console.Error.WriteLine("shumway-link: " + msg))
+                    msg => Console.Error.WriteLine("shumway-link: " + msg), library: opts.Library)
                 : null,
 #endif
         };
@@ -456,6 +501,8 @@ internal static class LinkCli
         // ADR-038 --library-dir: directories searched to resolve a
         // use_module(library(X)) dependency not passed explicitly.
         public List<string> LibraryDirs { get; } = new();
+        // ADR-075 --dynlib: dynamic libraries to link against, files or names.
+        public List<string> DynamicLibraries { get; } = new();
     }
 
     private static Options? ParseArgs(string[] args)
@@ -506,6 +553,12 @@ internal static class LinkCli
                 case "-L":
                     if (++i >= args.Length) { ReportMissing(arg); return null; }
                     opts.LibraryDirs.Add(NormalizeLibDirArg(args[i]));
+                    break;
+
+                case "--dynlib":
+                case "-dl":
+                    if (++i >= args.Length) { ReportMissing(arg); return null; }
+                    opts.DynamicLibraries.Add(args[i]);
                     break;
 
                 case "--strip":
@@ -952,6 +1005,11 @@ internal static class LinkCli
             + "                           use_module(library(X)) dependency not passed\n"
             + "                           explicitly (X.pl / X.shmo). Repeatable; also reads\n"
             + "                           SHUMWAY_LIBRARY_PATH.\n"
+            + "  -dl, --dynlib <lib>      Link against a library bundle without linking it in:\n"
+            + "                           calls the inputs leave undefined are looked up in it,\n"
+            + "                           and the bundle attaches it when it loads. A .shum\n"
+            + "                           file, or a name found as <lib>.shum in the -L\n"
+            + "                           directories. Repeatable.\n"
             + "      --consult            Compile .pl inputs THROUGH the consult pipeline\n"
             + "                           (directives + term/goal_expansion hooks run,\n"
             + "                           use_module dependencies load) instead of\n"

@@ -417,12 +417,16 @@ public sealed record WasmEntry(
 /// <summary>One predicate of a group compile: its compiled form, the bias
 /// that offsets its bytecode addresses into the group's unified pc space
 /// (the linked base in the engine, so a deopt pc needs no translation), and
-/// its float-literal pool.</summary>
+/// its float-literal pool. <paramref name="Module"/>, in the bake of a
+/// library, is the module that defines it: a member of another module calls
+/// it through the table, so the module runs before this one's module comes
+/// in (ADR-075, decision 12).</summary>
 public sealed record WasmGroupMember(
     CompiledPredicate Predicate,
     int Bias,
     System.Collections.Generic.IReadOnlyList<double>? FloatLiterals,
-    System.Collections.Generic.IReadOnlyList<TermImage>? ImageLiterals = null);
+    System.Collections.Generic.IReadOnlyList<TermImage>? ImageLiterals = null,
+    string? Module = null);
 
 /// <summary>A compiled group module: one dispatcher over every member's
 /// code, global cursors, cross-member calls as internal jumps.</summary>

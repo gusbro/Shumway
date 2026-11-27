@@ -414,6 +414,8 @@ public static partial class MetaBuiltins
             "Adds Clause at the end of its predicate and unifies Ref with its clause reference.");
         BuiltinsRegistry.Register("$clause_refs_of", 2, ClauseRefsOf);
         BuiltinsRegistry.Register("$clause_ref_fetch", 3, ClauseRefFetch);
+        BuiltinsRegistry.Register(PrologEngine.InstallClausesBuiltin, 2, DynlibInstall);
+        BuiltinsRegistry.Register("$dynlib_bring_in", 3, DynlibBringIn);
         BuiltinsRegistry.Register("$op_ctx", 4, OpCtx);
         BuiltinsRegistry.Register("$current_op_ctx", 4, CurrentOpCtx);
         BuiltinsRegistry.Register("op", 3, Op,

@@ -11,8 +11,8 @@ namespace Shumway.Tests.Embedding;
 /// compile in the product as it was, for the next full build. Rebuilding the
 /// whole product after every such query cost O(program), and compiling the
 /// predicate alone cost its size per query and built the term of every fact
-/// kept as an image (ADR-063). A rule keeps the full build: its rewrite can
-/// mint helpers the next query has to link.</summary>
+/// kept as an image (ADR-063). A rule whose assert needed helpers takes a new
+/// product, which links them; one that needed none is kept as a fact is.</summary>
 public sealed class ProgramProductReuseTests
 {
     private const string Program = """
@@ -67,6 +67,39 @@ public sealed class ProgramProductReuseTests
         Assert.True(e.ProgramProductBuilds > builds, "an asserted rule kept a product that cannot link its helpers");
     }
 
+    // A rule whose assert needed no helper runs where the assert put it, as a
+    // fact does, and a snapshot of the predicate sees it.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void ARuleAssertedWithNoHelperKeepsTheProduct(int threshold)
+    {
+        var e = Engine(threshold);
+        e.IlPromotion.BackgroundCompilation = false;
+        long builds = e.ProgramProductBuilds;
+        Assert.True(e.Query("assertz(g(1, one)), assertz((g(X, big) :- X > 5)).").Success);
+        for (int i = 0; i < 3; i++)
+            Assert.True(e.Query(@"g(9, V), V == big, g(1, W), W == one, \+ g(3, _).").Success);
+        Assert.Equal(builds, e.ProgramProductBuilds);
+    }
+
+    // A predicate a query made with assert is linked where the query put it:
+    // the next query lays nothing out again.
+    [Fact]
+    public void APredicateAQueryMadeWithAssertNeedsNoNewLayout()
+    {
+        var e = Engine(0);
+        long builds = e.ProgramProductBuilds, layouts = e.PersistentInvalidations;
+        long adopted = e.GoalTrampolinesAdopted;
+        Assert.True(e.Query("assertz(made(1)).").Success);
+        Assert.True(e.Query("made(X), X == 1.").Success);
+        Assert.Equal(adopted + 1, e.GoalTrampolinesAdopted);
+        Assert.True(e.Query("assertz(made(2)), findall(X, made(X), [1, 2]).").Success);
+        Assert.True(e.Query("retract(made(1)), findall(X, made(X), [2]), predicate_property(made(_), dynamic).").Success);
+        Assert.Equal(builds, e.ProgramProductBuilds);
+        Assert.Equal(layouts, e.PersistentInvalidations);
+    }
+
     // The setup after an assert does not compile the predicate: a fact kept
     // as an image stays one, its term never built, through the queries that
     // add to the table, read it by key and retract from it. A full build
@@ -85,7 +118,8 @@ public sealed class ProgramProductReuseTests
         var clauses = e.DynamicClausesFor(Fid("g", 2));
         Assert.Equal(19, clauses.Count);
         Assert.All(clauses, c => { Assert.NotNull(c.HeadImage); Assert.False(c.HasTerm); });
-        Assert.True(e.Query("assertz((g(X, Y) :- X == rule, Y = yes)).").Success);
+        // A rule whose body needs a helper takes a new product.
+        Assert.True(e.Query("assertz((g(X, Y) :- ( X == rule -> Y = yes ; fail ))).").Success);
         Assert.True(e.Query("g(rule, A), A == yes, g(7, B), B == v(7).").Success);
         Assert.True(e.ProgramProductBuilds > builds);
         Assert.All(e.DynamicClausesFor(Fid("g", 2)), c => Assert.True(c.HasTerm));

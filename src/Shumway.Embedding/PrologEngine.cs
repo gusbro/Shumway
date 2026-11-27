@@ -1255,11 +1255,17 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         // their `$native_run` call sites. The provider returns null until a block
         // is registered, so non-native programs pay nothing.
         IlPromotion.NativeInlineProvider = GetNativeInlineContext;
-        IlPromotion.PromotabilityChanged = () => InvalidatePersistent("PromotabilityChanged");
+        IlPromotion.PromotabilityChanged = () =>
+        {
+            _staticRelinkPending = true;
+            InvalidateLayout(statics: false, "PromotabilityChanged");
+        };
         // ADR-023 — let a read-hot, mutation-cold `:- dynamic` predicate run as
         // Tier-1 IL (a snapshot of its visible clauses), evicted on any mutation.
         IlPromotion.DynamicSnapshotProvider = BuildDynamicSnapshot;
+        IlPromotion.SnapshotInstructionsAtLeastProvider = SnapshotInstructionsAtLeast;
         IlPromotion.ShadowSnapshotProvider = BuildShadowSnapshot;
+        IlPromotion.ShadowOfSnapshotProvider = BuildShadowSnapshot;
         IlPromotion.DynamicDigestProvider = DynamicClauseDigest;
         IlPromotion.FloatPoolProvider = FloatPoolForFid;
         IlPromotion.ImagePoolProvider = ImagePoolForFid;
@@ -1437,6 +1443,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// independently of the calling engine's choice-point stack.</summary>
     internal PrologEngine CreateSubEngine()
     {
+        InstallAllPendingClauses(null);
         var sub = new PrologEngine { Out = Out, _madeBy = this };
         // Replace the sub-engine's default empty module set with deep copies
         // of ours so modifications in the sub-engine never bleed back.

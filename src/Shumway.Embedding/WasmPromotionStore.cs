@@ -151,6 +151,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
             byte[] module = pending[i];
             if (!_triedLive.Add(module)) { i++; continue; }
             _held = false;
+            bool inPart = ilStore.PartialWasmModules.Contains(module);
             var (fids, note) = BundleInstaller(engine, module, linked);
             if (_held)
             {
@@ -164,6 +165,9 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
             installed += fids.Count;
             _installedBundles.Add(module);
             _triedLive.Remove(module);
+            // Installed against the goal's link: the next query setup
+            // installs it again against the program's (ADR-075, decision 12).
+            if (inPart) { i++; continue; }
             pending.RemoveAt(i);
         }
         return installed;
@@ -233,6 +237,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     // 800-odd predicates -- hashing each one's bytecode -- for nothing, which
     // reads to the user as the engine thinking for a second after each query.
     private object? _lastLink;
+    private int _lastVersion = -1;
 
     // Functors that crossed the threshold while the batch owns compilation:
     // picked up whole at the next boundary instead of each rebuilding the
@@ -261,6 +266,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// <summary>Whether the predicate's delegate is a wasm one, baked or
     /// compiled.</summary>
     public bool Covers(int functorId) => _installed.ContainsKey(functorId);
+
 
     // FNV-1a over the linked bytecode and call sites: equal hashes mean the
     // predicate merely moved; a redefinition changes them.
@@ -406,6 +412,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         // compare.
         if (engine._staticLink is not null
             && ReferenceEquals(engine._staticLink, _lastLink)
+            && engine.StaticProgramVersion == _lastVersion
             && _pendingBatch.Count == 0
             && ilStore.PendingWasmModules.Count == 0) return 0;
         bool anythingToDo = _installed.Count > 0
@@ -415,6 +422,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         if (engine._staticLink is null) engine.Query("true.");
         InstallPendingBundles(engine);
         _lastLink = engine._staticLink;
+        _lastVersion = engine.StaticProgramVersion;
         BatchTicksWorked++;
         // Evict the stale before the batch, so it recompiles them against
         // the addresses the modules will actually bake.
@@ -432,9 +440,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     public static IEnumerable<(int Addr, CompiledPredicate Pred)>
         StaticPredicatesOf(PrologEngine engine)
     {
-        var link = engine._staticLink;
-        if (link is null) yield break;
-        foreach (var (addr, pred) in link.PredicatesByAddress)
+        foreach (var (addr, pred) in engine.LinkedStatics())
             yield return (addr, pred);
     }
 
@@ -466,11 +472,10 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     public int PromoteAllStatics(PrologEngine engine)
     {
         if (BatchPromoter is null) return -1;
-        var link = engine._staticLink;
-        if (link is null) return -1;
+        if (engine._staticLink is null) return -1;
         var already = new HashSet<int>(ilStore.PromotedFunctorIds());
         var candidates = new List<(CompiledPredicate, int)>();
-        foreach (var (addr, pred) in link.PredicatesByAddress)
+        foreach (var (addr, pred) in engine.LinkedStatics())
         {
             int fid = pred.FunctorId;
             if (_unpromotable.Contains(fid)) continue;
@@ -498,11 +503,10 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     {
         if (Promoter is null) return -1;
         if (engine._staticLink is null) engine.Query("true.");
-        var link = engine._staticLink;
-        if (link is null) return -1;
+        if (engine._staticLink is null) return -1;
         var already = new HashSet<int>(ilStore.PromotedFunctorIds());
         int installed = 0;
-        foreach (var (addr, pred) in link.PredicatesByAddress)
+        foreach (var (addr, pred) in engine.LinkedStatics())
         {
             int fid = pred.FunctorId;
             if (_unpromotable.Contains(fid) || already.Contains(fid)) continue;
@@ -544,10 +548,9 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// False when there is no linked program yet, and nothing was marked.</summary>
     public bool LeaveOutLinked(PrologEngine engine, string reason)
     {
-        var link = engine._staticLink;
-        if (link is null) return false;
+        if (engine._staticLink is null) return false;
         var promoted = new HashSet<int>(ilStore.PromotedFunctorIds());
-        foreach (var (_, pred) in link.PredicatesByAddress)
+        foreach (var (_, pred) in engine.LinkedStatics())
         {
             int fid = pred.FunctorId;
             if (promoted.Contains(fid) || _unpromotable.Contains(fid)) continue;
@@ -613,8 +616,15 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         if (shadow && ilStore.DynamicChurnPinned(functorId)) return null;
         // A snapshot the bundle brought runs from the first call, as the IL
         // tier's does (ADR-023 priming).
-        if (shadow && InstallBundles && !predicate.IsDebuggable
+        if (shadow && _pendingSnapshots.Count > 0 && !_compiledSnapshots.IsEmpty)
+        {
+            TakeCompiledSnapshots();
+            // Refused while it compiled: not taken again.
+            if (_unpromotable.Contains(functorId)) { settled = true; return null; }
+        }
+        if (shadow && !predicate.IsDebuggable
             && _bakedSnapshots.TryGetValue(functorId, out var baked)
+            && (InstallBundles || baked.CompiledHere)
             && InstallBakedSnapshot(functorId, engine!, baked) is { } bakedDelegate)
             return bakedDelegate;
         _counters.TryGetValue(functorId, out int count);
@@ -625,7 +635,22 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         // IlPromotionStore.CompileAtThreshold).
         if (predicate.IsDebuggable) { settled = true; return null; }
         // A snapshot is a module of its own, so it never waits for a batch.
-        if (shadow) return PromoteShadow(functorId, engine!, out settled);
+        if (shadow)
+        {
+            if (ilStore.SnapshotInstructionsAtLeastProvider?.Invoke(functorId) is int least
+                && least > MaxSnapshotInstructions)
+            {
+                var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(functorId);
+                MarkUnpromotable(functorId, $"{Shumway.Core.AtomTable.GetById(atomId)?.Name}/{arity}: "
+                    + $"a snapshot of at least {least} instructions, over {MaxSnapshotInstructions} -- "
+                    + "the browser would compile it in the query that first calls it");
+                settled = true;
+                return null;
+            }
+            return SnapshotCompiler is null
+                ? PromoteShadow(functorId, engine!, out settled)
+                : RequestSnapshot(functorId, out settled);
+        }
 
         // Under the batch, a straggler must not build on its own. The group is
         // one module: promoting a single predicate re-emits all of it, and
@@ -715,12 +740,124 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         public readonly string Digest = digest;
         public readonly System.Func<CompiledPredicate, int, PredicateDelegate?> Install = install;
         public bool Verified;
+        // Compiled by this engine (SnapshotCompiler), not brought by a bundle.
+        public bool CompiledHere;
+        // The snapshot it was compiled from, while the predicate has those
+        // clauses and the derivation is the one it was taken under: its
+        // shadow is built from it, with no second compile of the clauses.
+        public CompiledPredicate? Taken;
     }
 
-    /// <summary>Snapshots held and not running, and installs of one so far,
-    /// for the status report.</summary>
-    public int BakedSnapshotsHeld => _bakedSnapshots.Count - _bakedShadows.Count;
+    /// <summary>Snapshots a bundle brought that are held and not running, and
+    /// installs of one so far, for the status report.</summary>
+    public int BakedSnapshotsHeld
+    {
+        get
+        {
+            int held = 0;
+            foreach (var (fid, baked) in _bakedSnapshots)
+                if (!baked.CompiledHere && !_bakedShadows.Contains(fid)) held++;
+            return held;
+        }
+    }
     public int BakedSnapshotInstalls { get; private set; }
+
+    // ----- a snapshot compiled away from the engine's thread (ADR-054, amendment) -----
+
+    /// <summary>Compiles a dynamic predicate's snapshot away from the engine's
+    /// thread: given the snapshot and the digest of the clauses it was taken
+    /// from, it calls back, from any thread, with what installs the module
+    /// over a shadow region, or with null and why. With none, the snapshot
+    /// is compiled where the predicate is called, and the goal waits for it.
+    /// With one, the predicate goes on running its bytecode until the module
+    /// is there, and the module is installed as a bundle's snapshot is: at
+    /// the predicate's next call, and again after the code space is built
+    /// again, with no second compile.</summary>
+    public System.Action<CompiledPredicate, string,
+        System.Action<System.Func<CompiledPredicate, int, PredicateDelegate?>?, string?>>? SnapshotCompiler { get; set; }
+
+    /// <summary>A dynamic predicate's snapshot (ADR-054) with more instructions
+    /// than this is refused, and the predicate runs its bytecode. A browser
+    /// compiles a function the first time it is called, so a large snapshot
+    /// costs the query that first calls it more than the snapshot saves. One
+    /// its compiled clauses already put over the limit is refused before it
+    /// is taken (<see cref="IlPromotionStore.SnapshotInstructionsAtLeastProvider"/>).</summary>
+    public static int MaxSnapshotInstructions { get; set; } = 3_000;
+
+    // A token per snapshot being compiled: a mutation takes it away, and the
+    // module that comes back for it is dropped.
+    private readonly Dictionary<int, object> _pendingSnapshots = new();
+    private readonly System.Collections.Concurrent.ConcurrentQueue<
+        (int Fid, object Token, string Digest, CompiledPredicate Snapshot,
+         System.Func<CompiledPredicate, int, PredicateDelegate?>? Install, string? Refusal)>
+        _compiledSnapshots = new();
+
+    /// <summary>What taking the snapshots handed to the compiler cost the
+    /// goals that asked, and what installing the compiled ones cost the
+    /// goals that called them, in stopwatch ticks.</summary>
+    public long SnapshotTakeTicks { get; private set; }
+    public long SnapshotInstallTicks { get; private set; }
+
+    /// <summary>Snapshots handed to <see cref="SnapshotCompiler"/>, and those
+    /// installed from what it gave back.</summary>
+    public int SnapshotCompilesRequested { get; private set; }
+    public int CompiledSnapshotInstalls { get; private set; }
+
+    /// <summary>Whether a snapshot of the predicate is being compiled.</summary>
+    public bool SnapshotPending(int functorId) => _pendingSnapshots.ContainsKey(functorId);
+
+    /// <summary>Whether the predicate runs as a snapshot, or will once the
+    /// snapshot being compiled or held for it is installed. Its calls then do
+    /// not run its bytecode, so laying that bytecode out again is wasted work.</summary>
+    public bool RunsAsSnapshot(int functorId)
+        => _shadows.ContainsKey(functorId) || _pendingSnapshots.ContainsKey(functorId)
+           || (_bakedSnapshots.TryGetValue(functorId, out var held) && held.CompiledHere);
+
+    private PredicateDelegate? RequestSnapshot(int functorId, out bool settled)
+    {
+        settled = false;
+        if (_pendingSnapshots.ContainsKey(functorId)) return null;
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        var snapshot = ilStore.DynamicSnapshotProvider?.Invoke(functorId);
+        string? digest = snapshot is null ? null : ilStore.DynamicDigestProvider?.Invoke(functorId);
+        if (snapshot is null || digest is null)
+        {
+            // No visible clause this query (none, or a mutation since the
+            // setup): a later query asks again.
+            settled = true;
+            return null;
+        }
+        object token = new();
+        _pendingSnapshots[functorId] = token;
+        SnapshotCompilesRequested++;
+        SnapshotCompiler!(snapshot, digest,
+            (install, refusal) => _compiledSnapshots.Enqueue((functorId, token, digest, snapshot, install, refusal)));
+        SnapshotTakeTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+        return null;
+    }
+
+    /// <summary>Takes the snapshots compiled since the last call, on the
+    /// engine's thread: each is held for its predicate's next call, unless
+    /// the predicate changed while it compiled.</summary>
+    public void TakeCompiledSnapshots()
+    {
+        while (_compiledSnapshots.TryDequeue(out var c))
+        {
+            if (!_pendingSnapshots.TryGetValue(c.Fid, out var token) || !ReferenceEquals(token, c.Token))
+                continue;
+            _pendingSnapshots.Remove(c.Fid);
+            if (c.Install is null)
+            {
+                MarkUnpromotable(c.Fid, c.Refusal);
+                continue;
+            }
+            // The token is still the one handed out, so the predicate has not
+            // changed since the snapshot was taken: no need to check the digest
+            // again at its next call.
+            _bakedSnapshots[c.Fid] = new BakedSnapshot(c.Digest, c.Install)
+                { CompiledHere = true, Verified = true, Taken = c.Snapshot };
+        }
+    }
 
     /// <summary>Takes a snapshot of a dynamic predicate a bundle brought,
     /// compiled from the clauses of <paramref name="digest"/>
@@ -752,13 +889,17 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
             }
             baked.Verified = true;
         }
-        var shadow = ilStore.ShadowSnapshotProvider!(engine, functorId);
+        long t0 = baked.CompiledHere ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        var shadow = baked.Taken is { } taken && ilStore.ShadowOfSnapshotProvider is { } shadowOf
+            ? shadowOf(engine, functorId, taken)
+            : ilStore.ShadowSnapshotProvider!(engine, functorId);
         if (shadow.Snapshot is null)
         {
             if (shadow.Refusal is not null) _bakedSnapshots.Remove(functorId);
             return null;
         }
         var del = baked.Install(shadow.Snapshot, shadow.Address);
+        if (baked.CompiledHere) SnapshotInstallTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
         if (del is null)
         {
             _bakedSnapshots.Remove(functorId);
@@ -768,7 +909,8 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
         _shadows[functorId] = shadow.Address;
         _bakedShadows.Add(functorId);
         ShadowPromotions++;
-        BakedSnapshotInstalls++;
+        if (baked.CompiledHere) CompiledSnapshotInstalls++;
+        else BakedSnapshotInstalls++;
         return del;
     }
 
@@ -780,6 +922,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     public void OnMutated(int functorId)
     {
         _bakedSnapshots.Remove(functorId);
+        _pendingSnapshots.Remove(functorId);
         Retire(functorId);
     }
 
@@ -815,7 +958,11 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     {
         // A consult may have given a predicate other source clauses: each
         // held snapshot is checked against its predicate again.
-        foreach (var baked in _bakedSnapshots.Values) baked.Verified = false;
+        foreach (var baked in _bakedSnapshots.Values)
+        {
+            baked.Verified = false;
+            baked.Taken = null;
+        }
         _bakedShadows.Clear();
         if (_shadows.Count == 0 && _retiredShadows.Count == 0) return;
         var all = new List<int>(_shadows.Keys);

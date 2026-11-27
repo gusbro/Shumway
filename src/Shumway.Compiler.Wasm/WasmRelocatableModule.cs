@@ -58,6 +58,20 @@ public sealed class WasmRelocatableModule
         return this;
     }
 
+    /// <summary>ADR-075, decision 12: baked for a library, whose modules call
+    /// each other through the table (<see cref="WasmGroupMember.Module"/>).
+    /// An attached library installs it with the members that are linked; a
+    /// module baked otherwise jumps between them, and installs once all of
+    /// them are.</summary>
+    public bool InstallsInPart { get; private set; }
+
+    /// <summary>This module, marked <see cref="InstallsInPart"/>.</summary>
+    public WasmRelocatableModule InPart(bool inPart)
+    {
+        InstallsInPart = inPart;
+        return this;
+    }
+
     private WasmRelocatableModule() { }
 
     /// <summary>For a module that is the snapshot of a dynamic predicate
@@ -183,7 +197,8 @@ public sealed class WasmRelocatableModule
 
     /// <summary><see cref="Bake"/>, less each member whose function comes out
     /// larger than a browser takes: found one at a time, when its function is
-    /// written, and the rest compiled again without it.</summary>
+    /// written, and the rest compiled again without it. With none left the
+    /// module has no members, and nothing is compiled.</summary>
     private static WasmRelocatableModule BakeLessOversize(ref IReadOnlyList<WasmGroupMember> members,
         IWasmCompileEnv liveEnv, Action<WasmGroupMember, string>? onRefused,
         Func<string, string>? rename)
@@ -204,6 +219,7 @@ public sealed class WasmRelocatableModule
                 }
                 if (rest.Count == members.Count) throw;
                 members = rest;
+                if (rest.Count == 0) return new WasmRelocatableModule();
             }
         }
     }
@@ -434,10 +450,14 @@ public sealed class WasmRelocatableModule
     /// <param name="localName">This process's name for a name the module
     /// carries, null when it has none (<see cref="WasmPortableNames.ToLive"/>);
     /// or null when the module carries every name as it is.</param>
+    /// <param name="partial">A member that is not linked leaves the module
+    /// without it, not refused: a library's, whose members of a module that
+    /// has not come in are reached through the table only (ADR-075, decision
+    /// 12). Its sites hold a value nothing reads.</param>
     public bool TryResolve(IWasmCompileEnv env, Func<int, int> biasOf,
         Func<int, ulong>? shapeOf, int moduleId,
         out WasmGroupEntry entry, out Dictionary<int, int> entryAddressByFid, out string reason,
-        Func<string, string?>? localName = null)
+        Func<string, string?>? localName = null, bool partial = false)
     {
         entry = null!;
         entryAddressByFid = new Dictionary<int, int>(Members.Count);
@@ -468,6 +488,7 @@ public sealed class WasmRelocatableModule
         {
             int fid = Functor(m.Name, m.Arity);
             int bias = biasOf(fid);
+            if (bias < 0 && partial) continue;
             if (bias < 0) { reason = $"member {m.Name}/{m.Arity} is not linked"; return false; }
             if (shapeOf is not null && shapeOf(fid) != m.Shape)
             { reason = $"member {m.Name}/{m.Arity} has other code than the module was compiled from"; return false; }
@@ -475,6 +496,8 @@ public sealed class WasmRelocatableModule
             fidByName[(m.Name, m.Arity)] = fid;
             entryAddressByFid[fid] = bias;
         }
+        if (entryAddressByFid.Count == 0 && Members.Count > 0)
+        { reason = "no member is linked"; return false; }
         foreach (var ev in Builtins)
         {
             int fid = Functor(ev.Name, ev.Arity);
@@ -506,14 +529,15 @@ public sealed class WasmRelocatableModule
             switch (r.Kind)
             {
                 case WasmRelocKind.Marker:
-                    value = env.EncodeBp(fidByName[(r.Name, r.Arity)],
-                                         biasByName[(r.Name, r.Arity)] + r.Offset);
+                    value = biasByName.TryGetValue((r.Name, r.Arity), out int markerBias)
+                        ? env.EncodeBp(fidByName[(r.Name, r.Arity)], markerBias + r.Offset) : 0;
                     break;
                 case WasmRelocKind.CallTarget:
                     value = env.EncodeCallTarget(Functor(r.Name, r.Arity));
                     break;
                 case WasmRelocKind.Address:
-                    value = env.EncodeAddress(biasByName[(r.Name, r.Arity)] + r.Offset);
+                    value = biasByName.TryGetValue((r.Name, r.Arity), out int addressBias)
+                        ? env.EncodeAddress(addressBias + r.Offset) : 0;
                     break;
                 case WasmRelocKind.Builtin:
                     if (!env.TryGetBuiltin(Functor(r.Name, r.Arity), out int id))
@@ -542,7 +566,7 @@ public sealed class WasmRelocatableModule
         var cursorByAddress = new Dictionary<int, int>();
         foreach (var m in Members)
         {
-            int fid = fidByName[(m.Name, m.Arity)];
+            if (!fidByName.TryGetValue((m.Name, m.Arity), out int fid)) continue;
             int bias = biasByName[(m.Name, m.Arity)];
             foreach (var (off, cursor) in m.CursorByOffset)
             {
@@ -555,7 +579,9 @@ public sealed class WasmRelocatableModule
             callSites[(Functor(cn, ca), Functor(en, ea))] = 1;
         entry = new WasmGroupEntry(bytes, entryCursors, cursorByAddress, RegisterDemand,
                                    callSites, moduleId);
-        reason = $"{Members.Count} predicates";
+        reason = entryAddressByFid.Count == Members.Count
+            ? $"{Members.Count} predicates"
+            : $"{entryAddressByFid.Count} of {Members.Count} predicates";
         return true;
     }
 
@@ -589,6 +615,7 @@ public sealed class WasmRelocatableModule
         Mix("portable helper names", 1);
         Mix("SnapshotDigest", 1);
         Mix("Refused", 1);
+        Mix("InstallsInPart", 1);
         return h;
     }
 
@@ -649,6 +676,7 @@ public sealed class WasmRelocatableModule
         w.Write(Refused.Count);
         foreach (var (name, arity, reason) in Refused)
         { w.Write(name); w.Write(arity); w.Write(reason); }
+        w.Write(InstallsInPart);
         w.Flush();
     }
 
@@ -717,6 +745,7 @@ public sealed class WasmRelocatableModule
         for (int i = 0; i < n; i++)
             refused.Add((r.ReadString(), r.ReadInt32(), r.ReadString()));
         m.Refused = refused;
+        m.InstallsInPart = r.ReadBoolean();
         return m;
     }
 }

@@ -1009,6 +1009,8 @@ public sealed partial class BytecodeInterpreter
                 return -1;
             }
         }
+        if (_engine.PendingModules is { Count: > 0 } pending && pending.Contains(module))
+            _engine.BringInModule!(module);
         _engine.SetRegister(0, goal);
         return module;
     }

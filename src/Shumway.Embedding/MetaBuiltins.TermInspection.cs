@@ -920,6 +920,8 @@ public static partial class MetaBuiltins
         int fid = ExtractCallableFunctorId(headPattern, "'$all_clauses_of'/2");
 
         var candidates = new List<Clause>();
+        host.InstallPendingClauses(engine, fid);
+        host.BringInOwnerOf(engine, fid);
         candidates.AddRange(host.DynamicClausesFor(fid));
         candidates.AddRange(host.StaticClausesFor(fid));
 
@@ -969,6 +971,7 @@ public static partial class MetaBuiltins
         Term headPattern = MaterializeRegister(engine, 0);
         int fid = ExtractCallableFunctorId(headPattern, "clause/2");
 
+        host.BringInOwnerOf(engine, fid);
         IReadOnlyList<Clause> statics = host.StaticClausesFor(fid);
         // ISO §8.8.1.3: clause/2 reads public procedures only — dynamic, or
         // static and declared `:- public` (the ISO public-procedure notion);
@@ -1014,6 +1017,7 @@ public static partial class MetaBuiltins
         // match at all: the rest of a large predicate is never looked at.
         // The index says only what cannot match, the prefilter and the
         // unification decide; a tombstone is a slot a retract emptied.
+        host.InstallPendingClauses(engine, fid);
         List<Clause> physical = host.PhysicalClausesFor(fid);
         if (physical.Count > 0)
         {
@@ -1269,9 +1273,13 @@ public static partial class MetaBuiltins
         // the global one in the legacy world, M's own or its import's
         // source otherwise.
         IEnumerable<Clause> source;
+        host.EnsureModuleCode(engine, mod.Name);
         int key = host.DatabaseFunctorFor(mod.Name, fid, create: false);
         if (host.IsDynamic(key))
+        {
+            host.InstallPendingClauses(engine, key);
             source = host.DynamicClausesFor(key);
+        }
         else if (host.ModuleDefinesFunctor(mod.Name, fid))
             // user's view is the global one: a program's predicate, in a
             // bundle's file-named module as much as consulted into user.
@@ -1475,6 +1483,7 @@ public static partial class MetaBuiltins
         int printed = 0;
         foreach (int fid in matchingFids)
         {
+            host.InstallPendingClauses(engine, fid);
             foreach (var clause in host.ClausesForListing(fid))
             {
                 PrintAstClause(output, clause);

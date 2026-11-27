@@ -96,14 +96,16 @@ q :- write(q_ran), nl.
     [InlineData("object", "b")]
     public void TheGoal_RunsInTheModuleOfTheLastInput(string inputs, string last)
     {
-        Write("a.pl", "who :- write(a), nl.\n");
-        Write("b.pl", "who :- write(b), nl.\n");
+        // Each module has its own private who/0: a library offers a name from
+        // one module only (ADR-075).
+        Write("a.pl", ModuleWho("a"));
+        Write("b.pl", ModuleWho("b"));
         string first = last == "a" ? "b" : "a";
         var args = new List<string> { "--library", "--goal", "who", "-o", "x.shum" };
         if (inputs == "consult") args.Add("--consult");
         if (inputs == "object")
         {
-            ShmoWriter.WriteToFile(ShmoCompiler.CompileSource("who :- write(b), nl.\n", "b",
+            ShmoWriter.WriteToFile(ShmoCompiler.CompileSource(ModuleWho("b"), "b",
                 ShmoBuildMode.Release), Path.Combine(_dir, "b.shmo"));
             args.AddRange(new[] { "a.pl", "b.shmo" });
         }
@@ -112,4 +114,9 @@ q :- write(q_ran), nl.
         Assert.True(Link(out string stderr, args.ToArray()) == 0, stderr);
         Assert.Equal(last + "\n", Loaded("x.shum"));
     }
+
+    private static string ModuleWho(string module) => $@"
+:- module({module}, []).
+who :- write({module}), nl.
+";
 }

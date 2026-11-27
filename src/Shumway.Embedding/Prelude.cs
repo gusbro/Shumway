@@ -2183,6 +2183,7 @@ internal static class Prelude
             ;   \+ atom(M) -> throw(error(type_error(atom, M), _))
             ;   true
             ),
+            '$dynlib_bring_in'(M, Name, Arity),
             findall(qpi(N, A),
                     ( '$module_predicate_enum'(M, N/A),
                       N = Name,
@@ -2202,6 +2203,7 @@ internal static class Prelude
             listing(Name/Arity2).
         listing(Name/Arity) :-
             !,
+            '$dynlib_bring_in'([], Name, Arity),
             '$listable_predicates'(All),
             ( member(pi(Name, Arity, Dyn), All) ->
                 '$listing_pred'(Name, Arity, Dyn)
@@ -2210,6 +2212,7 @@ internal static class Prelude
                 write(' not defined'), nl
             ).
         listing(Name) :-
+            '$dynlib_bring_in'([], Name, _),
             '$listable_predicates'(All),
             '$listing_named'(All, Name, false, Found),
             ( Found == true -> true

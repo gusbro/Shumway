@@ -70,9 +70,11 @@ public sealed class Bundle
         ShumwayVersion? generatorVersion = null,
         bool arityCompat = false,
         IReadOnlyList<byte[]>? wasmModules = null,
-        IReadOnlyList<string>? engineLibraries = null)
+        IReadOnlyList<string>? engineLibraries = null,
+        IReadOnlyList<BundleDynamicLibrary>? dynamicLibraries = null)
     {
         Entries = entries;
+        DynamicLibraries = dynamicLibraries ?? Array.Empty<BundleDynamicLibrary>();
         WasmModules = wasmModules ?? Array.Empty<byte[]>();
         EngineLibraries = engineLibraries ?? Array.Empty<string>();
         ForeignAssemblies = foreignAssemblies ?? Array.Empty<string>();
@@ -104,17 +106,40 @@ public sealed class Bundle
     /// </summary>
     public IReadOnlyList<string> EngineLibraries { get; }
 
+    /// <summary>ADR-075, decisions 5 and 6: the dynamic libraries this bundle
+    /// was linked against (<c>shumway-link --dynlib</c>), each with the
+    /// predicates the bundle calls from it. Loading the bundle attaches each
+    /// library, checks that it still offers them, and brings in the modules
+    /// that define them, before this bundle's code.</summary>
+    public IReadOnlyList<BundleDynamicLibrary> DynamicLibraries { get; }
+
     /// <summary>The same bundle carrying <paramref name="wasmModules"/>.
     /// </summary>
     public Bundle WithWasmModules(IReadOnlyList<byte[]> wasmModules)
         => new(Entries, ForeignAssemblies, Snapshot, ArchiveMembers, NativeLibraries,
-               GeneratorVersion, ArityCompat, wasmModules, EngineLibraries);
+               GeneratorVersion, ArityCompat, wasmModules, EngineLibraries, DynamicLibraries);
 
     /// <summary>The Shumway version that wrote this bundle. Every writer
     /// stamps it, so a <c>.shum</c> can always say which build produced it —
     /// what a future format change needs in order to diagnose an old file
     /// instead of only rejecting it.</summary>
     public ShumwayVersion GeneratorVersion { get; }
+}
+
+/// <summary>A dynamic library a bundle was linked against, by the name it is
+/// found by (<c>Name.shum</c> on the library search path or next to the
+/// bundle), and the predicates the bundle calls from it: by their module
+/// (<c>m:p/1</c>), or with an empty module for a call by name.</summary>
+public sealed class BundleDynamicLibrary
+{
+    public BundleDynamicLibrary(string name, IReadOnlyList<QualifiedPredicateRef> uses)
+    {
+        Name = name;
+        Uses = uses;
+    }
+
+    public string Name { get; }
+    public IReadOnlyList<QualifiedPredicateRef> Uses { get; }
 }
 
 /// <summary>One member of a <c>shumway-lib</c> librarian archive: the

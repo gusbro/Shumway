@@ -494,6 +494,24 @@ public sealed partial class IlPromotionStore
         _unpromotableReason[functorId] = reason;
     }
 
+    private const string CallUnresolved = "cannot-compile:call->unresolved";
+
+    /// <summary>ADR-075: the code of a module came in, which a predicate
+    /// refused for calling one that was not there may call. Those predicates
+    /// are tried again.</summary>
+    internal void ForgetUnresolvedCallRefusals()
+    {
+        List<int>? again = null;
+        foreach (var (fid, why) in _unpromotableReason)
+            if (why == CallUnresolved) (again ??= new List<int>()).Add(fid);
+        if (again is null) return;
+        foreach (int fid in again)
+        {
+            _unpromotable.Remove(fid);
+            _unpromotableReason.Remove(fid);
+        }
+    }
+
     // Where there is no runtime codegen (Native AOT, browser-wasm) the store stays
     // a pure Tier-0 counter and the IL compiler (reflection-heavy type init) is
     // never constructed. See RuntimeCaps for why the browser needs more than
@@ -751,6 +769,12 @@ public sealed partial class IlPromotionStore
     /// currently-visible clauses. Null when it has no visible clauses yet.</summary>
     public Func<int, CompiledPredicate?>? DynamicSnapshotProvider { get; set; }
 
+    /// <summary>The fewest instructions a snapshot of the dynamic predicate
+    /// would have, from the code its clauses have now: what refuses one over
+    /// <see cref="WasmPromotionStore.MaxSnapshotInstructions"/> without taking
+    /// it.</summary>
+    public Func<int, int>? SnapshotInstructionsAtLeastProvider { get; set; }
+
     // ADR-023 churn pinning: a dynamic snapshot evicted EvictionChurnLimit times is
     // mutation-hot and stays on Tier 0; the pin re-arms after ChurnRearmCalls
     // mutation-free invocations (load-then-read predicates must not be banished by
@@ -877,6 +901,11 @@ public sealed partial class IlPromotionStore
     /// <summary>ADR-054: links a dynamic predicate's snapshot into the running
     /// code space for the wasm tier (<see cref="WasmPromotionStore"/>).</summary>
     internal Func<Activation, int, DynamicShadow>? ShadowSnapshotProvider { get; set; }
+
+    /// <summary>The shadow region of a snapshot already taken
+    /// (<see cref="DynamicSnapshotProvider"/>), while the predicate has the
+    /// clauses it was taken from.</summary>
+    internal Func<Activation, int, CompiledPredicate, DynamicShadow>? ShadowOfSnapshotProvider { get; set; }
 
     /// <summary>The digest of a dynamic predicate's clauses
     /// (<see cref="PrologEngine.DynamicClauseDigest"/>), for a baked snapshot
@@ -1280,6 +1309,12 @@ public sealed partial class IlPromotionStore
     /// once a static link exists. Stays queued (a handful of references)
     /// while no tier is attached.</summary>
     public List<byte[]> PendingWasmModules { get; } = new();
+
+    /// <summary>ADR-075, decision 12: the baked wasm modules of an attached
+    /// library that hold members whose module has not come in. Each installs
+    /// with the members that are linked, and is queued again when a module
+    /// of the library comes in, until it holds them all.</summary>
+    public HashSet<byte[]> PartialWasmModules { get; } = new();
 
     /// <summary>The wasm store's <see cref="WasmPromotionStore.Enabled"/>
     /// flipped in place (its threshold set to or from zero).</summary>

@@ -216,6 +216,11 @@ public static partial class MetaBuiltins
 
     private static int RunShell(Activation engine, string command)
     {
+        // As library(process) says it: Process.Start throws a .NET exception
+        // there, which no catch/3 takes.
+        if (!Shumway.Core.RuntimeCaps.SupportsNetworkAndProcesses)
+            throw new Shumway.Core.PrologRuntimeException(
+                "system_error", "a browser has no sockets and cannot start programs");
         // Diagnostic dry-run: record every command instead of executing it.
         // A destructive command with a mis-resolved path (an `rmdir /S /Q`
         // aimed at the wrong directory) can only be examined safely this way.

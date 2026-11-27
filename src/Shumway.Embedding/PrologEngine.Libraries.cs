@@ -116,21 +116,44 @@ public sealed partial class PrologEngine
         List<(Term Goal, string Module)>? initialization = null;
         var outer = _deferredBundleInitialization;
         if (before is not null) _deferredBundleInitialization = initialization = new();
+        var staleBefore = before is not null ? new HashSet<int>(_productStaleDynamicFids) : null;
+        var pendingBefore = before is not null ? PendingClauseFunctors() : null;
         try { load(); }
         finally { _deferredBundleInitialization = outer; }
+        // An attach that only declared modules left the layout to the goal it
+        // runs in (ADR-075): the goal adopts what it declared, or the program
+        // is laid out again.
+        bool declaredOnly = _attachDeclaredOnly;
+        _attachDeclaredOnly = false;
         if (_liveConsultEngine is { } live && before is not null)
         {
-            EnsureLiveDynamicTrampolines(live);
+            var declared = declaredOnly
+                ? new Dictionary<int, (int Addr, Shumway.Compiler.Wam.CompiledPredicate Pred)>() : null;
+            EnsureLiveDynamicTrampolines(live, declared);
+            if (declaredOnly) PlaceAttachStubsFirst(live, pendingBefore!);
             // A bundle's clauses for a dynamic the goal already dispatches
             // (another bundle's, or the program's) went to the store only; the
             // goal's view takes them here, as at the end of a source consult.
             ReconcileEngineDynamicView(live);
+            if (declaredOnly)
+            {
+                if (AdoptDeclaredDynamics(live, declared!, staleBefore!, pendingBefore!) is { } why)
+                {
+                    if (LoadProfEnabled) ProfProductDrop("attach not kept: " + why);
+                }
+                else declaredOnly = false;
+            }
             var linked = LinkLoadedPredicatesLive(live, _precompiledStaticPredicates
                 .Where(kv => !before.Contains(kv.Key)).Select(kv => kv.Value).ToList());
             // The bundle's wasm module binds to where its predicates are
             // linked: here, for the goal that loaded it.
             if (linked is not null && IlPromotion.PendingWasmModules.Count > 0)
                 IlPromotion.Wasm?.InstallPendingBundlesLive(this, linked);
+        }
+        if (declaredOnly)
+        {
+            _staticLink = null;
+            InvalidatePersistent();
         }
         if (initialization is not null)
             foreach (var (goal, module) in initialization)
@@ -1155,8 +1178,11 @@ public sealed partial class PrologEngine
     private readonly HashSet<string> _bareModulesReportedSkipped = new(StringComparer.Ordinal);
 
     // Keyed by what it is computed from: the libraries and their locals, which
-    // change only with a load.
-    private IReadOnlyDictionary<int, int>? _bareLibraryAliases;
+    // change only with a load. With it, the module each name is from (its
+    // index in _bareLibraryModules) and the locals of each module it holds.
+    private Dictionary<int, int>? _bareLibraryAliases;
+    private Dictionary<int, int>? _bareLibraryAliasOwners;
+    private int[] _bareLibraryAliased = Array.Empty<int>();
     private (int Modules, int Locals) _bareLibraryAliasesKey = (-1, -1);
 
     /// <summary>ADR-056, amendment: the bare name of each local of a library
@@ -1167,18 +1193,46 @@ public sealed partial class PrologEngine
     internal IReadOnlyDictionary<int, int>? BareLibraryAliases()
     {
         if (_bareLibraryModules.Count == 0) return null;
+        // A module of an attached library whose code is not in has no address
+        // for an alias to lead to: a call to it stays unresolved and brings it
+        // in, and the adoption of its code then names the call (ADR-075).
+        var counts = new int[_bareLibraryModules.Count];
         int locals = 0;
-        foreach (string module in _bareLibraryModules)
-            if (_precompiledModuleLocals.TryGetValue(module, out var set)) locals += set.Count;
+        for (int i = 0; i < counts.Length; i++)
+        {
+            string module = _bareLibraryModules[i];
+            counts[i] = !IsCodePending(module) && _precompiledModuleLocals.TryGetValue(module, out var set)
+                ? set.Count : 0;
+            locals += counts[i];
+        }
         var key = (_bareLibraryModules.Count, locals);
         if (_bareLibraryAliases is not null && key == _bareLibraryAliasesKey) return _bareLibraryAliases;
-        var map = new Dictionary<int, int>();
-        foreach (string module in _bareLibraryModules)
-            if (_precompiledModuleLocals.TryGetValue(module, out var set))
-                foreach (int fid in set)
-                    if (!IsMetaHelperFunctorName(fid))
-                        map.TryAdd(fid, MangleFunctor(module, fid));
+        // Modules are only added and their locals only grow: the modules whose
+        // locals changed are added to a copy of the map (a link may hold the
+        // one it was given), and a name goes to the module that comes first,
+        // as in a map built whole. Anything that shrank builds it whole.
+        bool whole = _bareLibraryAliases is null || _bareLibraryAliasOwners is null
+            || _bareLibraryAliased.Length > counts.Length;
+        for (int i = 0; !whole && i < counts.Length && i < _bareLibraryAliased.Length; i++)
+            if (counts[i] < _bareLibraryAliased[i]) whole = true;
+        var map = whole ? new Dictionary<int, int>() : new Dictionary<int, int>(_bareLibraryAliases!);
+        var owners = whole ? new Dictionary<int, int>() : new Dictionary<int, int>(_bareLibraryAliasOwners!);
+        for (int i = 0; i < counts.Length; i++)
+        {
+            int had = whole || i >= _bareLibraryAliased.Length ? 0 : _bareLibraryAliased[i];
+            if (counts[i] == had) continue;
+            string module = _bareLibraryModules[i];
+            foreach (int fid in _precompiledModuleLocals[module])
+            {
+                if (IsMetaHelperFunctorName(fid)) continue;
+                if (owners.TryGetValue(fid, out int from) && from <= i) continue;
+                map[fid] = MangleFunctor(module, fid);
+                owners[fid] = i;
+            }
+        }
         _bareLibraryAliases = map;
+        _bareLibraryAliasOwners = owners;
+        _bareLibraryAliased = counts;
         _bareLibraryAliasesKey = key;
         return map;
     }

@@ -215,6 +215,13 @@ internal sealed class ConsultPipeline
                     case HeadRule.Drop:
                         bad = true;
                         break;
+                    case HeadRule.Attached:
+                        bad = true;
+                        if ((warned ??= new HashSet<int>()).Add(fid)
+                            && E.AttachedOffering(fid) is var (module, library))
+                            E.Warn($"error: {spec.Name}/{spec.Arity} is defined by module {module} "
+                                 + $"of bundle({library}); clause ignored");
+                        break;
                     case HeadRule.Redefine:
                         if ((warned ??= new HashSet<int>()).Add(fid)
                             && E._redefinedFunctors.Add(fid))
@@ -233,10 +240,13 @@ internal sealed class ConsultPipeline
         return kept ?? clauses;
     }
 
-    private enum HeadRule { Allow, Refuse, Drop, Redefine }
+    private enum HeadRule { Allow, Refuse, Drop, Redefine, Attached }
 
     private HeadRule HeadVerdict(int fid, HeadContext context)
     {
+        // ADR-075: a name an attached library offers is that library's.
+        if (context == HeadContext.GlobalProgram && E.AttachedOffering(fid) is not null)
+            return HeadRule.Attached;
         var kind = E.SystemKindOf(fid);
         if (kind is null) return HeadRule.Allow;
         // ISO makes control constructs and its builtins static: no module,
@@ -823,6 +833,8 @@ internal sealed class ConsultPipeline
         // §7.6.2: a source-declared clause for a dynamic predicate enters the
         // database in its converted form, exactly as an assertz'd one does.
         c = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(c);
+        // After the clauses attached libraries hold for it (ADR-075).
+        E.InstallPendingClauses(E._liveConsultEngine, fid);
         int at;
         if (insertAt < 0)
         {
@@ -1076,11 +1088,19 @@ internal sealed class ConsultPipeline
     /// engine's <c>compile_mode</c> is whatever the user's program set — so without this
     /// the library would silently become debuggable, take stop sites, and attribute them
     /// to the user's file.</para></summary>
-    internal void MarkModuleNonDebuggable(string moduleName)
+    /// <param name="dynamicsOnly">Only the module's dynamic predicates: those
+    /// of a module of an attached library whose code is not in yet.</param>
+    internal void MarkModuleNonDebuggable(string moduleName, bool dynamicsOnly = false)
     {
         E._nonDebuggableModules.Add(moduleName);
         if (!E._modules.TryGetValue(moduleName, out var module)) return;
         var specs = new HashSet<(string Name, int Arity)>();
+        if (dynamicsOnly)
+        {
+            foreach (int fid in module.DynamicFunctors) AddSpecOf(specs, fid);
+            E._nonDebuggableFunctors.UnionWith(ResolveNonDebuggableFids(specs, moduleName));
+            return;
+        }
         foreach (var clause in module.Clauses)
             if (TryReadClauseHead(clause, out var spec))
                 specs.Add(spec);
@@ -1541,6 +1561,7 @@ internal sealed class ConsultPipeline
         var exports = new HashSet<int>();
         Dictionary<int, string>? pendingImports = null;
         List<string>? pendingImportedModules = null;
+        List<string>? pendingAttachedLibraries = null;
         var clauses = new List<Clause>();
         // ADR-055: the clauses this source defines for another module
         // (`M:Head :- Body`), static ones, by target. They join M's manifest
@@ -2030,6 +2051,16 @@ internal sealed class ConsultPipeline
                 string? src = E.ExecuteUseModuleDirective(elLib);
                 RecordLibraryLoad(elLib, src, filter: null);
             }
+            else if (body is CompoundTerm { Functor: "ensure_loaded",
+                         Args: [CompoundTerm { Functor: "bundle", Args: [AtomTerm elBundle] }] })
+            {
+                // ADR-075: attaches the library, so that this file's calls
+                // into it resolve when they run. Recorded on the module for
+                // the linker (decision 3).
+                E.AttachBundleByName(elBundle.Name);
+                if (!(pendingAttachedLibraries ??= new()).Contains(elBundle.Name))
+                    pendingAttachedLibraries.Add(elBundle.Name);
+            }
             else
             {
                 // A directive that matched none of the branches above is
@@ -2479,6 +2510,8 @@ internal sealed class ConsultPipeline
                 foreach (var (fid, src) in pendingImports) manifest.Imports[fid] = src;
             if (pendingImportedModules is not null)
                 manifest.ImportedModules.AddRange(pendingImportedModules);
+            if (pendingAttachedLibraries is not null)
+                manifest.AttachedLibraries.AddRange(pendingAttachedLibraries);
             CommitDeclarations(manifest, moduleName, ownsDynamics, pendingDiscontiguous, pendingMultifileKeys);
             if (pendingModes is not null)
                 foreach (var (fid, modes) in pendingModes) manifest.ModeDeclarations[fid] = modes;
@@ -2541,6 +2574,9 @@ internal sealed class ConsultPipeline
             if (pendingImportedModules is not null)
                 foreach (string m in pendingImportedModules)
                     if (!existing.ImportedModules.Contains(m)) existing.ImportedModules.Add(m);
+            if (pendingAttachedLibraries is not null)
+                foreach (string lib in pendingAttachedLibraries)
+                    if (!existing.AttachedLibraries.Contains(lib)) existing.AttachedLibraries.Add(lib);
             CommitDeclarations(existing, moduleName, ownsDynamics, pendingDiscontiguous, pendingMultifileKeys);
             if (pendingModes is not null)
                 foreach (var (fid, modes) in pendingModes)

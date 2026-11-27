@@ -164,8 +164,9 @@ public sealed partial class PrologEngine
     /// PC into it fails loudly.</summary>
     internal int _persistentLength;
 
-    /// <summary><see cref="_persistentLength"/> as the last link left it: the
-    /// auto-compaction compares the buffer's growth since with it.</summary>
+    /// <summary><see cref="_persistentLength"/> as the last link or adoption
+    /// left it: the auto-compaction compares the buffer's growth since with
+    /// it. Adopted code is linked code, not growth to reclaim.</summary>
     internal int _persistentLengthAtLink;
 
     /// <summary>The launcher prefix's length: the static region's sites are at
@@ -299,6 +300,7 @@ public sealed partial class PrologEngine
         _persistentProgram = null;
         _persistentLength = 0;
         _dynamicLink = null;
+        if (_adoptedStatics.Count > 0) _staticRelinkPending = true;
         // every mutation that can change the per-module
         // transform derivation funnels through here (consult, bundle
         // load, abolish, restore_state, dynamic-functor-set changes);
@@ -316,6 +318,164 @@ public sealed partial class PrologEngine
         // table stands (each mutation of a query after the drop comes here).
         if (!dropped) ResetDynChains();
     }
+
+    /// <summary>Marks the linked program stale and leaves the derivation as
+    /// it is: for a change of what is linked that changes no clause a module
+    /// was consulted with, no manifest and no set of dynamic functors. The
+    /// next setup lays the program out and links it again, from the compiles
+    /// it has: nothing is transformed again, and only a dynamic predicate
+    /// that was mutated is compiled. <paramref name="statics"/> when the set
+    /// of static predicates changed, which links the static region again
+    /// too.</summary>
+    internal void InvalidateLayout(bool statics,
+        [System.Runtime.CompilerServices.CallerMemberName] string caller = "")
+    {
+        PersistentInvalidations++;
+        if (LoadProfEnabled) ProfProductDrop("setup " + ProfSetupCalls + " layout: " + caller);
+        bool dropped = _persistentProgram is null && _dynamicLink is null;
+        _persistentProgram = null;
+        _persistentLength = 0;
+        _dynamicLink = null;
+        // The product holds a mutated predicate's compile as it was, which a
+        // link of the buffer must not use (DeferStaleDynamicPredicates).
+        _programProduct = null;
+        if (statics)
+        {
+            _staticLink = null;
+            _skipCompileMergedCache = null;
+        }
+        // The adopted code goes with the buffer: the next link of the static
+        // region has it, with the rest.
+        else if (_adoptedStatics.Count > 0) _staticRelinkPending = true;
+        if (!dropped) ResetDynChains();
+    }
+
+    // ---- static code added to the linked program (ADR-015, amendment) ----
+    //
+    // The code of a module a running goal brought in is linked into the
+    // host's buffer by that goal. Kept here, it is part of the program for
+    // the queries that follow, with no link of the whole program: its
+    // predicates by address, their addresses by functor, and its switch
+    // tables at the slots its code names. All of it goes when the buffer is
+    // laid out again, which links these predicates with the static region.
+    internal readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> _adoptedStatics = new();
+    internal readonly Dictionary<int, int> _adoptedAddresses = new();
+    internal readonly List<(int Index, Shumway.Core.SwitchTable Table)> _adoptedTables = new();
+
+    /// <summary>Advances when the static predicates of the linked program
+    /// change: a link of the static region, and code adopted into the buffer.
+    /// What a tier compares to know whether there is anything new.</summary>
+    internal int StaticProgramVersion;
+
+    /// <summary>Links of the whole program a module brought in did without.</summary>
+    internal long AdoptedLinks;
+
+    /// <summary>The static predicates of the linked program, by address: the
+    /// static region's and the adopted ones.</summary>
+    internal IEnumerable<KeyValuePair<int, Shumway.Compiler.Wam.CompiledPredicate>> LinkedStatics()
+    {
+        if (_staticLink is not { } link) yield break;
+        foreach (var kv in link.PredicatesByAddress) yield return kv;
+        foreach (var kv in _adoptedStatics) yield return kv;
+    }
+
+    /// <summary>The first switch-table slot a query's own tables may take:
+    /// past the static and the dynamic regions' and past every adopted one.</summary>
+    private int QueryTableBase(int persistentTables)
+    {
+        int at = persistentTables;
+        foreach (var (index, _) in _adoptedTables)
+            if (index >= at) at = index + 1;
+        return at;
+    }
+
+    /// <summary>Makes what <paramref name="engine"/> just linked into the
+    /// host's buffer part of the linked program. False, and nothing changed,
+    /// when it cannot be: the caller lays the program out again.</summary>
+    internal bool AdoptLiveLink(Activation engine, LivePublish published)
+        => AdoptLiveLinks(engine, new[] { published });
+
+    /// <summary>The same for several links at once, with one copy of the maps.</summary>
+    internal bool AdoptLiveLinks(Activation engine, IReadOnlyList<LivePublish> publishes)
+    {
+        if (_persistentProgram is null || _staticLink is null || _dynamicLink is null
+            || _programProduct is null
+            || _persistentAddressesCache is null || _persistentAddressBaseCache is null
+            || _persistentPredsByAddressCache is null)
+            return false;
+        if (!EngineOwnsHostBuffer(engine)) return false;
+        foreach (var published in publishes)
+            if (!ReferenceEquals(published.Engine, engine) || published.Retargeted) return false;
+        // A debug session keeps a record per buffer of what is linked in it.
+        if (_debugEvalDepth > 0 || DebugSession is not null || _flags.EmitDebugInfo || _flags.DebugCodegen)
+            return false;
+
+        // New maps, not the ones in use: an activation suspended on this
+        // buffer reads them, and it has neither these tables in its list nor
+        // a reason to see a predicate appear under it.
+        var addresses = new Dictionary<int, int>(_persistentAddressesCache);
+        var baseMap = new Dictionary<int, int>(_persistentAddressBaseCache);
+        var byAddress = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(_persistentPredsByAddressCache);
+        AdoptionMapCopies++;
+        var entries = publishes.Count == 1 ? publishes[0].Entries : new Dictionary<int, int>();
+        foreach (var published in publishes)
+        {
+            foreach (var (fid, at) in published.Entries)
+            {
+                addresses[fid] = at;
+                baseMap[fid] = at;
+                _adoptedAddresses[fid] = at;
+                if (publishes.Count > 1) entries[fid] = at;
+            }
+            AddBareLocalAliases(baseMap, published.Entries);
+            foreach (var (at, pred) in published.Link.PredicatesByAddress)
+            {
+                byAddress[at] = pred;
+                _adoptedStatics[at] = pred;
+            }
+            for (int i = 0; i < published.Link.SwitchTables.Count; i++)
+                _adoptedTables.Add((published.TableBase + i, published.Link.SwitchTables[i]));
+        }
+        _persistentAddressesCache = addresses;
+        _persistentAddressBaseCache = baseMap;
+        _persistentPredsByAddressCache = byAddress;
+
+        // The static region's calls to these predicates were linked before
+        // there was anything to call: they name them now, as a link of the
+        // region would have them (TryFlipHotnessInPlace does the same).
+        var aliases = BareLibraryAliases();
+        byte[] program = _persistentProgram;
+        foreach (var (offset, callee) in _staticLink.UnresolvedSites)
+        {
+            if (!entries.TryGetValue(callee, out int target)
+                && !(aliases is not null && aliases.TryGetValue(callee, out int named)
+                     && entries.TryGetValue(named, out target)))
+                continue;
+            Shumway.Core.BytecodeIO.WriteInt32(program, _persistentPrefixLength + offset + 1, target);
+        }
+        StaticProgramVersion++;
+        AdoptedLinks += publishes.Count;
+        _persistentLengthAtLink = _persistentLength;
+        return true;
+    }
+
+    /// <summary>Copies of the address maps made to adopt links. For tests.</summary>
+    internal long AdoptionMapCopies;
+
+    /// <summary>What a live link published, for <see cref="AdoptLiveLink"/>:
+    /// the link, where its switch tables went, and each predicate's entry.</summary>
+    internal sealed record LivePublish(Activation Engine, Shumway.Compiler.Wam.Linker.LinkResult Link,
+        int TableBase, Dictionary<int, int> Entries, bool Retargeted);
+
+    internal LivePublish? _lastLivePublish;
+    internal bool _captureLivePublish;
+
+    /// <summary>Set by a change of tier, which changes the form of a call to
+    /// a static predicate: the next setup links the static region again.
+    /// Not at once, as <see cref="InvalidateLayout"/> does for new code: the
+    /// tiers read the link they are installed against until then, and the
+    /// change can come in the middle of a setup.</summary>
+    internal bool _staticRelinkPending;
 
     /// <summary>user-facing entry point for
     /// persistent-buffer compaction. Invalidates the cached dynamic-
@@ -345,7 +505,7 @@ public sealed partial class PrologEngine
     /// <summary>How many dynamic-store mutations the engine accumulates
     /// between checks of the persistent buffer's growth, at a query's setup:
     /// the buffer is compacted once it has grown to twice its length at the
-    /// last link. Default 1000; <c>long.MaxValue</c> disables the checks.
+    /// last link or adoption. Default 1000; <c>long.MaxValue</c> disables the checks.
     /// Compaction itself stays callable via <c>compact_dynamic_buffer/0,1</c>.</summary>
     public long CompactWatermark { get; set; } =
         long.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_COMPACT_WATERMARK"), out long w) ? w : 1000;
@@ -386,6 +546,7 @@ public sealed partial class PrologEngine
         _dbGeneration.Value++;
         _persistentMutationsSinceCompact++;
         _snapshotStaleFids.Add(functorId);
+        _snapshotWaitsForBuild.Remove(functorId);
         // The persistent buffer holds the mutation (ADR-015): the next setup
         // keeps the program product for a predicate of facts.
         DropDynamicCompiled(functorId);
@@ -469,9 +630,53 @@ public sealed partial class PrologEngine
     /// product after every assert cost O(program) per query.</summary>
     private readonly HashSet<int> _productStaleDynamicFids = new();
 
+    /// <summary>Dynamic predicates the query setups compiled: one that kept
+    /// its compile from an earlier setup is not counted.</summary>
+    internal long DynamicPredicateCompiles;
+
+    // A cached compile outlives the buffer it was linked into: across a
+    // change of derivation for a predicate of facts, across a new layout for
+    // every one. Linked code holds the literals and the transient atoms it
+    // names (ADR-003); code that is only in the cache has to hold them
+    // itself, or a sweep between the old buffer and the next link frees a
+    // literal, and a collection gives an atom's id to another atom.
+    private readonly Dictionary<int, (Shumway.Compiler.Wam.CompiledPredicate Pred, bool Literals, bool Atoms)>
+        _dynamicCacheHeld = new();
+
+    internal void CacheDynamicCompile(int functorId, Shumway.Compiler.Wam.CompiledPredicate pred)
+    {
+        ReleaseDynamicCompile(functorId);
+        _dynamicPredicateCache[functorId] = pred;
+        bool literals = ReferenceEquals(pred.PoolsRef, _literalPools);
+        if (literals) _literalPools.AddRefs(pred.Bytecode);
+        int[] atoms = Shumway.Compiler.Wam.CodeAtoms.Of(pred).Ids;
+        bool held = atoms.Length > 0 && HostAtoms is not null;
+        if (held) RetainCode(atoms);
+        if (literals || held) _dynamicCacheHeld[functorId] = (pred, literals, held);
+    }
+
+    private void ReleaseDynamicCompile(int functorId)
+    {
+        if (!_dynamicCacheHeld.Remove(functorId, out var held)) return;
+        if (held.Literals) _literalPools.Release(held.Pred.Bytecode);
+        if (held.Atoms) DropCode(Shumway.Compiler.Wam.CodeAtoms.Of(held.Pred).Ids);
+    }
+
+    internal void UncacheDynamicCompile(int functorId)
+    {
+        ReleaseDynamicCompile(functorId);
+        _dynamicPredicateCache.Remove(functorId);
+    }
+
+    internal void ClearDynamicCompiles()
+    {
+        foreach (int fid in new List<int>(_dynamicCacheHeld.Keys)) ReleaseDynamicCompile(fid);
+        _dynamicPredicateCache.Clear();
+    }
+
     private void DropDynamicCompiled(int functorId)
     {
-        _dynamicPredicateCache.Remove(functorId);
+        UncacheDynamicCompile(functorId);
         var merged = _skipCompileMergedCache;
         if (merged is null) return;
         if (_staticPredicateCache.TryGetValue(functorId, out var stat))
@@ -573,6 +778,16 @@ public sealed partial class PrologEngine
     /// not just the ones populated by ConsultString.</summary>
     public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>
         PrecompiledStaticPredicates => _precompiledStaticPredicates;
+
+    /// <summary>The module of each predicate a bundle entry loaded from its
+    /// compiled code: what a bake of one wasm module per entry groups them
+    /// by.</summary>
+    public IEnumerable<(string Module, int FunctorId)> PrecompiledPredicateModules()
+    {
+        foreach (var (module, compiled) in _precompiledModules)
+            foreach (var pred in compiled.Predicates)
+                yield return (module, pred.FunctorId);
+    }
 
     /// <summary>Per-engine cache of compiled dynamic predicates.
     /// The query-setup path consults this cache alongside

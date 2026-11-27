@@ -138,7 +138,7 @@ public static class BundleFormat
         // what they hold (CompiledModuleCodec, TermCodec). By hand: a change
         // to any of them raises this, which BundleStampTests asks for when
         // the image of a fixed bundle changes.
-        Mix("wire form", 1);
+        Mix("wire form", 3);
         return h;
     }
 
@@ -150,7 +150,7 @@ public static class BundleFormat
         if (header.ReadUInt64() != Stamp)
             throw new InvalidDataException(
                 $"{what}: written with another format of compiled code than this runtime "
-                + "reads. Build it again: compile its source, or link it, with this version.");
+                + "reads. Compile its source, or link it, again.");
     }
 
     // ---- whole-body compression ------------------------------

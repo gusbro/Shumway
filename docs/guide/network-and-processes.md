@@ -16,8 +16,8 @@ namespace:
 ```
 
 A browser has no sockets and cannot start programs, so in WebShumway the libraries
-load and each predicate raises `system_error`. The exception is `is_process/1`, a test
-that fails.
+load and each predicate raises `system_error`, as `shell/1,2` do. The exception is
+`is_process/1`, a test that fails.
 
 ## TCP
 

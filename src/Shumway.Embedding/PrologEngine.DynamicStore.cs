@@ -27,6 +27,7 @@ public sealed partial class PrologEngine
     /// head and is keyed by its mangled name (ADR-038, amendment).</summary>
     internal int Assertz(Clause clause, int fid)
     {
+        InstallPendingClauses(null, fid);
         clause = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(clause);
         EnsureDynamic(fid);
         _dynStore.AppendClause(fid, clause);
@@ -40,6 +41,7 @@ public sealed partial class PrologEngine
 
     internal int Asserta(Clause clause, int fid)
     {
+        InstallPendingClauses(null, fid);
         clause = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(clause);
         EnsureDynamic(fid);
         _dynStore.PrependClause(fid, clause);
@@ -57,6 +59,7 @@ public sealed partial class PrologEngine
     internal bool RemoveDynamic(Clause clause)
     {
         int fid = ExtractHeadFunctorId(clause);
+        InstallPendingClauses(null, fid);
         if (!_dynStore.TryGetClauses(fid, out var list)) return false;
         for (int i = 0; i < list.Count; i++)
         {
@@ -89,9 +92,47 @@ public sealed partial class PrologEngine
     /// before unifying with the user's pattern.</summary>
     internal IReadOnlyList<Clause> DynamicClausesFor(int functorId)
     {
+        InstallPendingClauses(null, functorId);
+        return ClausesInStore(functorId);
+    }
+
+    /// <summary>The clauses the store holds for a predicate, as they are: the
+    /// engine's own readers, which install nothing an attached library holds
+    /// (ADR-075, decision 9).</summary>
+    private IReadOnlyList<Clause> ClausesInStore(int functorId)
+    {
         return _dynStore.TryGetClauses(functorId, out var list)
             ? list
             : Array.Empty<Clause>();
+    }
+
+    /// <summary>The fewest instructions a snapshot of <paramref name="fid"/>
+    /// would have: each clause's code in the buffer's chain, less the two
+    /// the chain adds to it (its link and its visibility check), and two a
+    /// clause for one the chain does not hold.</summary>
+    internal int SnapshotInstructionsAtLeast(int fid)
+    {
+        if (!_dynStore.TryGetClauses(fid, out var clauses)) return 0;
+        if (_persistentProgram is not { } program
+            || !DynChains.Chains.TryGetValue(fid, out var chain) || chain.Entries.Count == 0)
+            return 2 * clauses.Count;
+        long least = 0;
+        foreach (var entry in chain.Entries)
+        {
+            if (entry.Retired || entry.ChunkAddr < 0 || entry.ChunkLength <= 0
+                || entry.ChunkAddr + entry.ChunkLength > program.Length)
+                continue;
+            int instructions = 0;
+            for (int pc = entry.ChunkAddr, end = entry.ChunkAddr + entry.ChunkLength; pc < end;)
+            {
+                int size = Shumway.Core.OpcodeTable.Get((Shumway.Core.Opcode)program[pc]).Size;
+                if (size <= 0) break;
+                pc += size;
+                instructions++;
+            }
+            least += System.Math.Max(0, instructions - 2);
+        }
+        return (int)System.Math.Min(least, int.MaxValue);
     }
 
     /// <summary>ADR-023 — compiles a STATIC-style snapshot of dynamic predicate
@@ -126,7 +167,7 @@ public sealed partial class PrologEngine
             for (int i = 0; i < entry.Clauses.Count; i++)
                 if (entry.HeadFids[i] == fid) own.Add(entry.Clauses[i]);
         if (own.Count == 0) return null;
-        var raw = new List<Clause>(DynamicClausesFor(fid));
+        var raw = new List<Clause>(ClausesInStore(fid));
         raw.AddRange(StaticClausesFor(fid));
         var snap = new Shumway.Compiler.Wam.PredicateCompiler { EmitDebugInfo = _flags.EmitDebugInfo }
             .Compile(own, _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts,
@@ -171,6 +212,13 @@ public sealed partial class PrologEngine
     internal readonly HashSet<int> _snapshotStaleFids = new();
 
     internal DynamicShadow BuildShadowSnapshot(Activation engine, int fid)
+        => BuildShadowSnapshot(engine, fid, null);
+
+    /// <summary>The same over <paramref name="taken"/>, a snapshot of the
+    /// predicate already built from the clauses it still has: a module
+    /// compiled from it aside is installed over this very bytecode.</summary>
+    internal DynamicShadow BuildShadowSnapshot(Activation engine, int fid,
+        Shumway.Compiler.Wam.CompiledPredicate? taken)
     {
         // Its float literals would be read from the bundle's pool, and the
         // snapshot is compiled against the engine's.
@@ -180,7 +228,7 @@ public sealed partial class PrologEngine
             || engine.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap
             || engine.SwitchTables is not { } switchTables)
             return new DynamicShadow(null, 0);
-        var snap = BuildDynamicSnapshot(fid);
+        var snap = taken ?? BuildDynamicSnapshot(fid);
         if (snap is null) return new DynamicShadow(null, 0);
 
         var (atomId, arity) = FunctorTable.Lookup(fid);
@@ -330,9 +378,12 @@ public sealed partial class PrologEngine
     /// compact first, so a tombstone cannot reach anything that shows a
     /// clause to a program.</summary>
     internal List<Clause> PhysicalClausesFor(int fid)
-        => _dynStore.HasClauses(fid)
+    {
+        InstallPendingClauses(null, fid);
+        return _dynStore.HasClauses(fid)
             ? _dynStore.PhysicalClauses(fid)
             : new List<Clause>();
+    }
 
     /// <summary>Compacts every slot holding tombstones — called at the
     /// query-setup safe point; a never-returning query compacts through the
@@ -342,11 +393,14 @@ public sealed partial class PrologEngine
     internal long ClauseSlotCompactions => _dynStore.Compactions;
 
     internal DynamicClauseIndex? ClauseIndexFor(int fid)
+    {
+        InstallPendingClauses(null, fid);
         // Over the physical list: the index's positions are slot positions,
         // and the dense accessor would compact once per retract.
-        => _dynStore.HasClauses(fid) && _dynStore.PhysicalClauses(fid).Count > 0
+        return _dynStore.HasClauses(fid) && _dynStore.PhysicalClauses(fid).Count > 0
             ? _dynStore.IndexFor(fid, _dynStore.PhysicalClauses(fid))
             : null;
+    }
 
     /// <summary>Index rebuilds forced by a clause list that had been mutated
     /// outside the store — zero unless something escaped the chokepoint.</summary>
@@ -429,7 +483,7 @@ public sealed partial class PrologEngine
         if (isIndexed)
         {
             // The clause's entry in the chain of every clause is on record,
-            // and its execute names the body. The walk by index is the
+            // and its jump names the body. The walk by index is the
             // fallback for a clause the record lacks: it skips the entries
             // retracted before it, O(retracted) per retract until a sweep.
             byte[] prog = engine.CurrentProgram!;
@@ -439,7 +493,7 @@ public sealed partial class PrologEngine
                 && chainState.IndexedVarEntries.Remove(clause, out int knownDied)
                 && knownDied + 13 <= prog.Length
                 && Shumway.Core.BytecodeIO.ReadInt64(prog, knownDied) == long.MaxValue
-                && prog[knownDied + 8] == (byte)Shumway.Core.Opcode.Execute)
+                && prog[knownDied + 8] == (byte)Shumway.Core.Opcode.Jump)
             {
                 retiredVarEntryDied = knownDied;
                 retiredBodyAddr = Shumway.Core.BytecodeIO.ReadInt32(prog, knownDied + 9);
@@ -463,7 +517,7 @@ public sealed partial class PrologEngine
         // this engine's buffer; the host's newer buffer would keep the
         // clause visible on cross-query reuse. Force a rebuild from the
         // (already-updated) store. Owner engines pay nothing.
-        if (!EngineOwnsHostBuffer(engine)) InvalidatePersistent("retract by a non-owner");
+        if (!EngineOwnsHostBuffer(engine)) InvalidateLayout(statics: false, "retract by a non-owner");
         // For the chain layout, PatchDiedFromChain walks
         // the predicate's single chain and patches entry[idx]'s
         // died slot. For the indexed layout, the chain
@@ -685,6 +739,7 @@ public sealed partial class PrologEngine
     /// <c>abolish/1</c>.</summary>
     internal void AbolishDynamic(int functorId)
     {
+        DropPendingClauses(functorId);
         _dynStore.RemoveSlot(functorId);
         _dynStore.UnmarkDynamic(functorId);
         _dynStore.Abolished.Add(functorId);
@@ -774,6 +829,7 @@ public sealed partial class PrologEngine
     /// (caches, IL eviction, the ADR-034 mutated-fids set).</summary>
     internal void ClearDynamicClauses(Activation engine, int functorId)
     {
+        DropPendingClauses(functorId);
         _dynStore.ClearClauses(functorId);
         InvalidateDynamicCache(functorId);
         InvalidatePersistent();
@@ -787,6 +843,7 @@ public sealed partial class PrologEngine
     /// lists) in memory, replacing any previous snapshot.</summary>
     internal void SaveDb()
     {
+        InstallAllPendingClauses(null);
         var snap = new Dictionary<int, List<Clause>>();
         foreach (var (fid, list) in _dynStore.Slots)
             if (list.Count > 0 && IsUserDynamicFid(fid))
@@ -802,6 +859,7 @@ public sealed partial class PrologEngine
 
     private void RestoreDbFrom(Activation engine, Dictionary<int, List<Clause>>? snapshot)
     {
+        InstallAllPendingClauses(engine);
         // Wipe first — every user dynamic that currently has clauses.
         var toClear = new List<int>();
         foreach (var (fid, list) in _dynStore.Slots)
@@ -837,6 +895,7 @@ public sealed partial class PrologEngine
     /// storage name/arity + <see cref="TermCodec"/>-encoded clauses).</summary>
     internal void SaveDbToFile(string path)
     {
+        InstallAllPendingClauses(null);
         path = _directory.Resolve(path);
         using var fs = new FileStream(path, FileMode.Create, FileAccess.Write);
         using var w = new BinaryWriter(fs, System.Text.Encoding.UTF8);
@@ -1146,6 +1205,7 @@ public sealed partial class PrologEngine
     /// synthetic <c>_GN</c> names.</summary>
     internal IEnumerable<Shumway.Compiler.Ast.Clause> ClausesForListing(int functorId)
     {
+        InstallPendingClauses(null, functorId);
         foreach (var (name, manifest) in _modules)
         {
             if (IsLibraryModule(name)) continue;
@@ -1334,6 +1394,13 @@ public sealed partial class PrologEngine
         // failure for every loaded predicate (its own program included).
         set.UnionWith(_precompiledStaticPredicates.Keys);
         global.UnionWith(_precompiledStaticPredicates.Keys);
+        // ADR-075, decision 11: a module of an attached library defines its
+        // predicates before its code is in.
+        foreach (int fid in PendingAttachedFunctors())
+        {
+            set.Add(fid);
+            global.Add(fid);
+        }
         _nonTerminalFunctorsCache = nonTerminals;
         _globalStaticHeadFunctorsCache = global;
         _staticHeadFunctorsCache = set;
@@ -1520,11 +1587,11 @@ public sealed partial class PrologEngine
             // _dynStore.Functors set anyway). A derivation bump here cleared
             // the whole-program transform + compiled-predicate caches per
             // promotion — during a hook-heavy library load that recompiled
-            // every predicate dozens of times. The assert that triggered the
-            // promotion bumps _programStamp (DropDynamicPredicateCacheEntry),
-            // which is exactly the invalidation the compiled-program product
-            // needs to re-link with the new trampoline.
-            _programStamp++;
+            // every predicate dozens of times. The product needs the new
+            // predicate: the next setup takes a new one, unless the goal made
+            // its trampoline in the buffer the setup keeps
+            // (AdoptGoalTrampolines).
+            _autoPromotedSinceSetup.Add(fid);
             return;
         }
 
@@ -1577,7 +1644,7 @@ public sealed partial class PrologEngine
     ///   extensions work just like declared-dynamic
     ///   predicates.</item>
     /// </list></summary>
-    internal void MaterializeDynamicTrampoline(Activation engine, int fid)
+    internal Shumway.Compiler.Wam.CompiledPredicate MaterializeDynamicTrampoline(Activation engine, int fid)
     {
         // Root fix: never append at a stale owner position (see
         // ResyncOwnerAppendPosition).
@@ -1700,6 +1767,97 @@ public sealed partial class PrologEngine
         // engine's trampoline exists only in its own buffer, so force the
         // next setup to rebuild from _dynStore.Functors/_dynamicClauses.
         SyncOrInvalidateAfterMutation(engine, ownsHost);
+        if (ownsHost)
+            (_goalTrampolines ??= new()).Add((fid, trampolineAddr, predicate, PersistentInvalidations));
+        return predicate;
+    }
+
+    /// <summary>Trampolines made for dynamic predicates a running goal had no
+    /// entry for, and chains of a goal built again. For tests.</summary>
+    internal long LiveTrampolinesMade, ChainViewRebuilds;
+
+    // Trampolines a goal made in the host's buffer, with the count of
+    // invalidations when it did: the next setup adopts those whose buffer it
+    // keeps. And the predicates assert made dynamic since the last setup.
+    private List<(int Fid, int Addr, Shumway.Compiler.Wam.CompiledPredicate Pred, long Layout)>? _goalTrampolines;
+    private readonly HashSet<int> _autoPromotedSinceSetup = new();
+
+    /// <summary>At a query's setup: the dynamic predicates a goal made in the
+    /// buffer this setup keeps join its layout, as <see cref="AdoptDeclaredDynamics"/>
+    /// does for an attach, and the product holds them from its next build.
+    /// A predicate assert made dynamic that has no trampoline there takes a
+    /// new product, which links it.</summary>
+    private void AdoptGoalTrampolines()
+    {
+        var made = _goalTrampolines;
+        _goalTrampolines = null;
+        var promoted = _autoPromotedSinceSetup.Count > 0 ? new HashSet<int>(_autoPromotedSinceSetup) : null;
+        _autoPromotedSinceSetup.Clear();
+        bool keep = made is not null && _persistentProgram is not null && _programProduct is not null
+            && _persistentAddressesCache is not null && _persistentAddressBaseCache is not null
+            && _persistentPredsByAddressCache is not null
+            && DebugSession is null && !_flags.EmitDebugInfo && !_flags.DebugCodegen;
+        if (keep)
+        {
+            Dictionary<int, int>? addresses = null, baseMap = null;
+            Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? byAddress = null;
+            foreach (var (fid, at, pred, layout) in made!)
+            {
+                // One the layout has keeps its entry, unless a rebuild of its
+                // chain left an execute there: the goal's newest trampoline
+                // is the entry then.
+                if (layout != PersistentInvalidations || !_dynStore.IsDynamic(fid) || IsSourceLocal(fid))
+                    continue;
+                if (_persistentAddressesCache!.TryGetValue(fid, out int entry)
+                    && (Opcode)_persistentProgram![entry] == Opcode.EnterDynamic)
+                    continue;
+                addresses ??= new Dictionary<int, int>(_persistentAddressesCache);
+                baseMap ??= new Dictionary<int, int>(_persistentAddressBaseCache!);
+                byAddress ??= new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(_persistentPredsByAddressCache!);
+                addresses[fid] = at;
+                baseMap[fid] = at;
+                byAddress[at] = pred;
+                _liveDeclaredDynamics.Add(fid);
+                // Its chain is the plain one of a cold compile.
+                if (_jitIndexProfile.CompileDecision(fid) is null) _jitIndexProfile.RecordCompileDecision(fid, false);
+            }
+            if (addresses is not null)
+            {
+                _persistentAddressesCache = addresses;
+                _persistentAddressBaseCache = baseMap;
+                _persistentPredsByAddressCache = byAddress;
+                GoalTrampolinesAdopted++;
+                _persistentLengthAtLink = _persistentLength;
+                // The static region's calls to them were linked before they
+                // existed: they name them now, as the link of a new product
+                // would (TryFlipHotnessInPlace does the same).
+                if (_staticLink is { } link)
+                    foreach (var (offset, callee) in link.UnresolvedSites)
+                        if (_liveDeclaredDynamics.Contains(callee) && addresses.TryGetValue(callee, out int target))
+                            BytecodeIO.WriteInt32(_persistentProgram!, _persistentPrefixLength + offset + 1, target);
+            }
+        }
+        if (promoted is null) return;
+        foreach (int fid in promoted)
+            if (!_liveDeclaredDynamics.Contains(fid))
+            {
+                _programStamp++;
+                return;
+            }
+    }
+
+    /// <summary>Setups that adopted trampolines a goal made. For tests.</summary>
+    internal long GoalTrampolinesAdopted;
+
+    // A name a module's text defines: its callers are rewritten again once it
+    // is dynamic, which a new product does.
+    private bool IsSourceLocal(int fid)
+    {
+        if (_staticRewriteUserLocals?.Contains(fid) == true) return true;
+        if (_staticRewriteModuleLocals is { } modules)
+            foreach (var locals in modules.Values)
+                if (locals.Contains(fid)) return true;
+        return false;
     }
 
     /// <summary>
@@ -1886,6 +2044,17 @@ public sealed partial class PrologEngine
         if (preds.Count == 0) return null;
         bool ownsHost = EngineOwnsHostBuffer(engine);
         var (loadOffset, tableBase, reserved) = PlaceLiveLink(engine, preds, switchTables);
+        // Code that may stay in the program (AdoptLiveLink) takes its tables
+        // past a gap after the dynamic region's, which grow in place when a
+        // predicate turns hot (TryFlipHotnessInPlace).
+        if (_captureLivePublish && ownsHost && _staticLink is not null && _dynamicLink is not null)
+        {
+            int tables = 0;
+            foreach (var pred in preds) tables += pred.SwitchTables.Count;
+            tableBase = FreeTableRun(switchTables, tables,
+                _staticLink.SwitchTables.Count + _dynamicLink.SwitchTables.Count + AdoptedTableGap);
+            while (switchTables.Count < tableBase) switchTables.Add(null!);
+        }
         Shumway.Compiler.Wam.Linker.LinkResult link;
         try
         {
@@ -1960,11 +2129,16 @@ public sealed partial class PrologEngine
         return (at >= 0 ? at : engine.ProgramLength, FreeTableRun(switchTables, tables), at >= 0 ? size : 0);
     }
 
-    private static int FreeTableRun(List<Shumway.Core.SwitchTable> tables, int count)
+    /// <summary>Slots left between the dynamic region's switch tables and
+    /// the adopted code's.</summary>
+    internal const int AdoptedTableGap = 1024;
+
+    private static int FreeTableRun(List<Shumway.Core.SwitchTable> tables, int count, int from = 0)
     {
+        if (from >= tables.Count) return from;
         if (count == 0) return tables.Count;
         int run = 0;
-        for (int i = 0; i < tables.Count; i++)
+        for (int i = from; i < tables.Count; i++)
         {
             run = tables[i] is null ? run + 1 : 0;
             if (run == count) return i - count + 1;
@@ -2109,6 +2283,8 @@ public sealed partial class PrologEngine
         SyncOrInvalidateAfterMutation(engine, ownsHost);
         RefreshLiteralPoolsIfChanged(engine);
         engine.BumpProgramGeneration();
+        if (_captureLivePublish)
+            _lastLivePublish = new LivePublish(engine, link, tableBase, entries, retargeted is not null);
     }
 
     /// <summary>
@@ -2122,8 +2298,11 @@ public sealed partial class PrologEngine
     /// <c>enter_dynamic</c>, which the dispatcher's
     /// <c>ResolveTargetMaybeAutoPromoted</c> already resolves through — so
     /// no separate visibility set is needed for dynamics.
+    /// <paramref name="materializedOut"/>, when given, receives the address
+    /// and the compile of each trampoline this made.
     /// </summary>
-    internal void EnsureLiveDynamicTrampolines(Activation engine)
+    internal void EnsureLiveDynamicTrampolines(Activation engine,
+        Dictionary<int, (int Addr, Shumway.Compiler.Wam.CompiledPredicate Pred)>? materializedOut = null)
     {
         if (engine.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap)
             return;
@@ -2142,8 +2321,11 @@ public sealed partial class PrologEngine
                 && addr >= 0 && addr < engine.ProgramLength
                 && (Opcode)engine.CurrentProgram![addr] == Opcode.EnterDynamic;
             if (hasTrampoline) continue;
-            MaterializeDynamicTrampoline(engine, fid);
+            LiveTrampolinesMade++;
+            var trampoline = MaterializeDynamicTrampoline(engine, fid);
             (materialized ??= new List<int>()).Add(fid);
+            if (materializedOut is not null && addrMap.TryGetValue(fid, out int at))
+                materializedOut[fid] = (at, trampoline);
         }
 
         // The freshly-materialised trampolines are empty (a fail stub). Any
@@ -2523,7 +2705,7 @@ public sealed partial class PrologEngine
         // The order a snapshot compiles them in (BuildDynamicSnapshot).
         foreach (var clause in StaticClausesFor(fid))
             if (!AddClause(clause)) return null;
-        foreach (var clause in DynamicClausesFor(fid))
+        foreach (var clause in ClausesInStore(fid))
             if (!AddClause(clause)) return null;
         return clauses == 0 ? null : hash.ToString();
 
@@ -2770,7 +2952,7 @@ public sealed partial class PrologEngine
     /// <summary>Whether a functor names a MetaTransform helper
     /// (<c>[mod$]$disj_N</c> family) — the registry filter for
     /// <see cref="RegisterLateHelpers"/>.</summary>
-    private static bool IsMetaHelperFunctorName(int fid)
+    internal static bool IsMetaHelperFunctorName(int fid)
     {
         var (atomId, _) = Shumway.Core.FunctorTable.Lookup(fid);
         string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
@@ -3063,6 +3245,7 @@ public sealed partial class PrologEngine
     internal void RebuildEngineFidChainView(Activation target, int functorId)
     {
         if (_inFidViewRebuild) return;
+        ChainViewRebuilds++;
         if (target.CurrentProgram is null
             || target.DynamicFailStubAddr <= 0
             || target.CurrentFunctorAddresses is not Shumway.Core.LayeredIntMap<int> addrMap

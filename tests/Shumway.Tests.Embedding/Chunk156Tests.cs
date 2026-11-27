@@ -59,8 +59,8 @@ public class Chunk156Tests
             "chunk-156: bucket chains use try_me_else (extensible) not Try");
         Assert.False(HasOpcode(cached.Bytecode, Opcode.Try),
             "chunk-156 replaces the contiguous Try with extensible chains");
-        Assert.True(HasOpcode(cached.Bytecode, Opcode.Execute),
-            "shared bodies are reached via execute");
+        Assert.True(HasOpcode(cached.Bytecode, Opcode.Jump),
+            "shared bodies are reached by a jump");
         Assert.True(HasOpcode(cached.Bytecode, Opcode.EnterDynamic));
         Assert.True(HasOpcode(cached.Bytecode, Opcode.CheckVisible));
     }

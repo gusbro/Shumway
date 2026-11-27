@@ -261,7 +261,8 @@ public sealed class ShmoObject
         string? dialect = null,
         ShumwayVersion? generatorVersion = null,
         IReadOnlyList<ShmoFlagSetting>? flags = null,
-        IReadOnlyList<Shumway.Compiler.Ast.Term>? initializationGoals = null)
+        IReadOnlyList<Shumway.Compiler.Ast.Term>? initializationGoals = null,
+        IReadOnlyList<string>? dynamicLibraries = null)
     {
         GeneratorVersion = generatorVersion ?? ShumwayVersion.Current;
         ModuleName = moduleName;
@@ -286,7 +287,13 @@ public sealed class ShmoObject
         Dialect = dialect;
         Flags = flags ?? System.Array.Empty<ShmoFlagSetting>();
         InitializationGoals = initializationGoals ?? System.Array.Empty<Shumway.Compiler.Ast.Term>();
+        DynamicLibraries = dynamicLibraries ?? System.Array.Empty<string>();
     }
+
+    /// <summary>ADR-075, decision 3: the library bundles this module attaches
+    /// with <c>:- ensure_loaded(bundle(Name))</c>, by name, in order. The
+    /// linker links against each as it does against a <c>--dynlib</c>.</summary>
+    public IReadOnlyList<string> DynamicLibraries { get; }
 
     /// <summary>ADR-040 — the source dialect this module was compiled under
     /// (<c>"swi"</c>, <c>"scryer"</c>, …), or <c>null</c> for Shumway/ISO. Travels

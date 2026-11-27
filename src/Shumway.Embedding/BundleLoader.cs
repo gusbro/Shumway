@@ -66,14 +66,20 @@ internal sealed class BundleLoader
     /// <summary>ADR-038 §4: loads each library a member of an archive imports
     /// that the archive does not hold and the engine has not loaded, through
     /// use_module(library(X)), before the archive's code. The archive holds a
-    /// library when a member module is named like it.</summary>
-    private void LoadMissingLibraries(IReadOnlyList<ShmoObject> members)
+    /// library when a member module is named like it. A library bundle a
+    /// member attaches is attached first, found next to the archive or on the
+    /// library search path (ADR-075, decision 3).</summary>
+    private void LoadMissingLibraries(IReadOnlyList<ShmoObject> members, string? bundleDir = null)
     {
         var held = new List<string>();
         foreach (var member in members)
             if (_archiveModulesLoading.Add(member.ModuleName)) held.Add(member.ModuleName);
         try
         {
+            foreach (var member in members)
+                foreach (string library in member.DynamicLibraries)
+                    E.AttachLinkedLibrary(
+                        new BundleDynamicLibrary(library, Array.Empty<QualifiedPredicateRef>()), bundleDir);
             foreach (var member in members)
                 foreach (var dep in member.LibraryDeps)
                 {
@@ -276,6 +282,11 @@ internal sealed class BundleLoader
         // bundle, before this bundle's code.
         foreach (var libName in bundle.EngineLibraries)
             E.UseEngineLibrary(libName);
+        // ADR-075, decision 6: the libraries the bundle was linked against are
+        // attached, what it uses of each is checked, and the modules that
+        // define it are brought in, before this bundle's code.
+        foreach (var library in bundle.DynamicLibraries)
+            E.AttachLinkedLibrary(library, bundleDir);
         // A shumway-lib librarian archive stores its modules as verbatim
         // .shmo objects (bundle.ArchiveMembers) rather than post-link
         // Entries. Derive a runnable entry from each — exactly the fields a
@@ -315,7 +326,7 @@ internal sealed class BundleLoader
                     dialect: shmo.Dialect,
                     clauseTerms: shmo.ClauseTerms));
             }
-            LoadMissingLibraries(members);
+            LoadMissingLibraries(members, bundleDir);
             effectiveEntries = combined;
         }
         // A bundle may bake a precompiled `$prelude` entry (shumway-link
@@ -391,7 +402,18 @@ internal sealed class BundleLoader
                     if (E.DebugSession is not null)
                         Debugging.ShumwayDebugHelper.NoteSourceFile(dbgFile);
                 }
-                LoadEntryFromBytecode(entry);
+                // ADR-075: a module of a library being attached is declared,
+                // and its code waits for the first call into it. One with
+                // initialization goals comes in before its goals run
+                // (decision 10), as a module a call brings in.
+                if (E._attachingLibrary is not null && entry.ModuleName != Prelude.ModuleName)
+                {
+                    var declare = PrologEngine.ProfMark.Now();
+                    E.NoteAttachedModule(entry, LoadEntryFromBytecode(entry, deferCode: true));
+                    declare.AddTo(ref PrologEngine.ProfAttachDeclareTicks, ref PrologEngine.ProfAttachDeclareBytes);
+                }
+                else
+                    LoadEntryFromBytecode(entry);
                 continue;
             }
 
@@ -435,7 +457,7 @@ internal sealed class BundleLoader
         // whole-bundle pass (cached, first-wins) that also covers the others,
         // whose warm runs in the loop below.
         foreach (var entry in effectiveEntries)
-            BindPersistedIlForEntry(entry);
+            if (!E.IsCodePending(entry.ModuleName)) BindPersistedIlForEntry(entry);
 
         // Decode the CompiledModule of each entry not loaded from it and feed IL warmup
         // (its PrecompiledClauseCache substitution remains active — made the
@@ -444,6 +466,7 @@ internal sealed class BundleLoader
         foreach (var entry in effectiveEntries)
         {
             if (entry.CompiledBytecode is null) continue;
+            if (E.IsCodePending(entry.ModuleName)) continue;   // ADR-075: with its code
             // Those already decoded above (via LoadEntryFromBytecode).
             if (E._precompiledModules.ContainsKey(entry.ModuleName)
                 && LoadsFromBytecode(entry)) continue;
@@ -455,14 +478,28 @@ internal sealed class BundleLoader
         }
         // A bundle's predicates join the static program — drop the
         // ADR-015 cached static linked region so the next query rebuilds it.
-        E._staticLink = null;
-        E.InvalidatePersistent();
+        // An attach that only declared modules adds no static code: the goal
+        // it runs in keeps the layout and adopts the dynamic predicates it
+        // declared (ADR-075), or lays the program out again
+        // (PrologEngine.LoadBundleLinkingLive).
+        if (E._attachingLibrary is not null && E._liveConsultEngine is not null
+            && bundle.WasmModules.Count == 0 && OnlyDeclared(effectiveEntries))
+            E._attachDeclaredOnly = true;
+        else
+        {
+            E._staticLink = null;
+            E.InvalidatePersistent();
+        }
         // The bundle's wasm modules wait for that link: a wasm tier installs
         // them when the next query setup links (or on its own tick). Queued
         // whether or not a tier is attached yet -- the web boot attaches its
-        // tier after loading the stdlib bundle.
-        foreach (var module in bundle.WasmModules)
-            E.IlPromotion.PendingWasmModules.Add(module);
+        // tier after loading the stdlib bundle. An attached library's wait for
+        // its modules (ADR-075).
+        if (E._attachingLibrary is { } attaching)
+            E.QueueLibraryWasm(attaching, bundle.WasmModules);
+        else
+            foreach (var module in bundle.WasmModules)
+                E.IlPromotion.PendingWasmModules.Add(module);
         LastLoadedModules = effectiveEntries
             .Select(e => string.IsNullOrEmpty(e.ModuleName) ? PrologEngine.DefaultModuleName : e.ModuleName)
             .Distinct().ToList();
@@ -1287,54 +1324,70 @@ internal sealed class BundleLoader
             foreach (var (from, to) in aliases) { AddInt(from); AddInt(to); }
         AddInt(staticPreds.Count);
         foreach (var p in staticPreds)
+            sha.AppendData(_linkDigests.GetValue(p, LinkDigest));
+        return Convert.ToHexString(sha.GetHashAndReset());
+    }
+
+    // A compiled predicate does not change, so what it gives the key is
+    // computed once: hashing every predicate's bytecode at each link of the
+    // static region cost the size of the program per consult.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
+        Shumway.Compiler.Wam.CompiledPredicate, byte[]> _linkDigests = new();
+
+    private static byte[] LinkDigest(Shumway.Compiler.Wam.CompiledPredicate p)
+    {
+        using var sha = System.Security.Cryptography.IncrementalHash.CreateHash(
+            System.Security.Cryptography.HashAlgorithmName.SHA256);
+        var word = new byte[4];
+        void AddInt(int v)
         {
-            AddInt(p.FunctorId);
-            AddInt(p.Bytecode.Length);
-            sha.AppendData(p.Bytecode);
-            AddInt(p.SwitchTables.Count);
-            foreach (var t in p.SwitchTables)
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(word, v);
+            sha.AppendData(word);
+        }
+        AddInt(p.FunctorId);
+        AddInt(p.Bytecode.Length);
+        sha.AppendData(p.Bytecode);
+        AddInt(p.SwitchTables.Count);
+        foreach (var t in p.SwitchTables)
+        {
+            AddInt(t.DefaultAddress);
+            AddInt(t.Count);
+            for (int i = 0; i < t.Count; i++) { AddInt(t.Keys[i]); AddInt(t.Values[i]); }
+        }
+        AddInt(p.CallSites.Count);
+        foreach (var c in p.CallSites)
+        {
+            AddInt(c.OpcodeOffset);
+            AddInt(c.CalleeFunctorId);
+            AddInt(c.IsExecute ? 1 : 0);
+        }
+        // ADR-035 — the debug metadata is part of the identity, even though it is
+        // not part of the bytecode. Two programs can compile to byte-identical code
+        // and be written on entirely different lines: the stop sites and the frame
+        // maps are what tell them apart. Leaving them out of the key let one
+        // program's link be handed to another, which then reported its neighbour's
+        // source positions — a debugger showing the wrong file, with no error
+        // anywhere.
+        AddInt(p.DebugStops.Count);
+        foreach (var s in p.DebugStops)
+        {
+            AddInt(s.Offset);
+            AddInt(s.SiteId);
+        }
+        AddInt(p.DebugFrames.Count);
+        foreach (var f in p.DebugFrames)
+        {
+            AddInt(f.Start);
+            AddInt(f.End);
+            AddInt(f.HasFrame ? 1 : 0);
+            AddInt(f.Variables.Count);
+            foreach (var v in f.Variables)
             {
-                AddInt(t.DefaultAddress);
-                AddInt(t.Count);
-                for (int i = 0; i < t.Count; i++) { AddInt(t.Keys[i]); AddInt(t.Values[i]); }
-            }
-            AddInt(p.CallSites.Count);
-            foreach (var c in p.CallSites)
-            {
-                AddInt(c.OpcodeOffset);
-                AddInt(c.CalleeFunctorId);
-                AddInt(c.IsExecute ? 1 : 0);
-            }
-            // ADR-035 — the debug metadata is part of the identity, even though it is
-            // not part of the bytecode. Two programs can compile to byte-identical code
-            // and be written on entirely different lines: the stop sites and the frame
-            // maps are what tell them apart. Leaving them out of the key let one
-            // program's link be handed to another, which then reported its neighbour's
-            // source positions — a debugger showing the wrong file, with no error
-            // anywhere. Debug programs are also exactly the case this cache was never
-            // for (it exists so a pool can load one bundle N times), so the extra
-            // hashing costs nothing that matters.
-            AddInt(p.DebugStops.Count);
-            foreach (var s in p.DebugStops)
-            {
-                AddInt(s.Offset);
-                AddInt(s.SiteId);
-            }
-            AddInt(p.DebugFrames.Count);
-            foreach (var f in p.DebugFrames)
-            {
-                AddInt(f.Start);
-                AddInt(f.End);
-                AddInt(f.HasFrame ? 1 : 0);
-                AddInt(f.Variables.Count);
-                foreach (var v in f.Variables)
-                {
-                    AddInt(v.Slot);
-                    sha.AppendData(System.Text.Encoding.UTF8.GetBytes(v.Name));
-                }
+                AddInt(v.Slot);
+                sha.AppendData(System.Text.Encoding.UTF8.GetBytes(v.Name));
             }
         }
-        return Convert.ToHexString(sha.GetHashAndReset());
+        return sha.GetHashAndReset();
     }
 
     /// <summary>SHUMWAY_BUNDLE_DIAG audit: recompute every patch site's
@@ -1728,7 +1781,13 @@ internal sealed class BundleLoader
         return module;
     }
 
-    private void LoadEntryFromBytecode(BundleEntry entry)
+    /// <summary>Loads a source-less entry: declares its module (exports,
+    /// imports, dynamic predicates and their clauses, hooks) and then loads
+    /// its code. With <paramref name="deferCode"/> only the first half runs
+    /// (ADR-075: a module of an attached library), and
+    /// <see cref="LoadEntryCode"/> runs the second when the module is brought
+    /// in. Answers whether the entry's shipped clauses were read.</summary>
+    private bool LoadEntryFromBytecode(BundleEntry entry, bool deferCode = false)
     {
         if (entry.CompiledBytecode is null)
             throw new InvalidOperationException(
@@ -1851,7 +1910,10 @@ internal sealed class BundleLoader
         // which expands nothing: a library that exists to install a hook
         // (Scryer's atts) did nothing for a program loaded after it.
         bool joinedHook = false;
-        if (!isPrelude)
+        // Deferred with the code, unless the module has clauses of a hook,
+        // which join the global hook now.
+        bool readClauses = !isPrelude && (!deferCode || DefinesGlobalHook(entry));
+        if (readClauses)
             foreach (var encoded in entry.ClauseTerms)
             {
                 var clause = TermCodec.DecodeClause(encoded);
@@ -1880,9 +1942,10 @@ internal sealed class BundleLoader
         // at born=current-gen / died=MAX initial clauses.
         foreach (var seed in entry.DynamicSeeds)
         {
-            int fid = Shumway.Core.FunctorTable.Intern(
+            int bareFid = Shumway.Core.FunctorTable.Intern(
                 Shumway.Core.AtomTable.Intern(seed.Indicator.Name, permanent: true).Id,
                 seed.Indicator.Arity);
+            int fid = bareFid;
             // A module that owns its dynamics keys them by its name; the seed
             // names the predicate bare (ADR-038, amendment). Its multifile
             // predicate is its own too: what other sources gave it is in the
@@ -1897,6 +1960,20 @@ internal sealed class BundleLoader
             // tabling driver reads it through.
             if (isPrelude && seed.EncodedClauses.Count > 0)
                 E._preludeFunctors.Add(fid);
+            // ADR-075, decision 9: an attached library's clauses wait for the
+            // predicate's first touch, those of a module brought in at the
+            // attach too, so the predicate gets them in the library's order.
+            if (E._attachingLibrary is not null && !isPrelude)
+            {
+                if (seed.EncodedClauses.Count > 0)
+                    E.NotePendingSeed(fid, bareFid,
+                        manifest.OwnsDynamics ? entry.ModuleName : null, seed);
+                if (entry.ModuleName != PrologEngine.DefaultModuleName && !seed.Multifile)
+                    E._dynamicSeedModule[fid] = entry.ModuleName;
+                continue;
+            }
+            // Loaded now: after the clauses attached libraries hold for it.
+            E.InstallPendingClauses(E._liveConsultEngine, fid);
             bool hadClauses = E._dynStore.TryGetClauses(fid, out var prior)
                 && prior.Count > 0;
             foreach (var encoded in seed.EncodedClauses)
@@ -1941,6 +2018,44 @@ internal sealed class BundleLoader
                 E._dynamicSeedModule[fid] = entry.ModuleName;
         }
 
+        if (!deferCode) LoadEntryCode(entry, shippedClausesRead: true);
+        return readClauses;
+    }
+
+    // Every entry was declared and its code waits: no static predicate and no
+    // hook clause joined the program.
+    private bool OnlyDeclared(IEnumerable<BundleEntry> entries)
+    {
+        foreach (var entry in entries)
+            if (!LoadsFromBytecode(entry) || !E.IsCodePending(entry.ModuleName) || DefinesGlobalHook(entry))
+                return false;
+        return true;
+    }
+
+    private static bool DefinesGlobalHook(BundleEntry entry)
+    {
+        foreach (var d in entry.Defined)
+            if (PrologEngine.IsGlobalHookFunctor(Shumway.Core.FunctorTable.Intern(
+                    Shumway.Core.AtomTable.Intern(d.Indicator.Name, permanent: true).Id,
+                    d.Indicator.Arity)))
+                return true;
+        return false;
+    }
+
+    /// <summary>The second half of <see cref="LoadEntryFromBytecode"/>: the
+    /// entry's static clauses for clause/2, its native blocks, its bytecode
+    /// and its persisted Tier-1 code.</summary>
+    internal void LoadEntryCode(BundleEntry entry, bool shippedClausesRead, bool broughtIn = false)
+    {
+        E.DropStaticClauseCaches();
+        if (!shippedClausesRead && entry.ModuleName != Prelude.ModuleName
+            && E._modules.TryGetValue(entry.ModuleName, out var manifest))
+            foreach (var encoded in entry.ClauseTerms)
+            {
+                var clause = TermCodec.DecodeClause(encoded);
+                if (!ConsultPipeline.IsHookClauseHead(clause)) manifest.ShippedClauses.Add(clause);
+            }
+
         // ADR-022 — repopulate this engine's native-block table so the baked
         // `'$native_run'('$nb$…', Vars)` dispatch (in the entry's bytecode) finds
         // its block at run time. The C statement source is re-parsed here (the C
@@ -1975,6 +2090,15 @@ internal sealed class BundleLoader
         // The static program just changed shape — drop the cached
         // static link region so the next query rebuild picks up the
         // new predicates.
+        // The module of an attached library was declared when the library
+        // was attached (ADR-075): its code changes what is linked and nothing
+        // a transform reads, so the derivation stays and so does every
+        // compile. How it gets linked is the caller's (BringInModule).
+        if (broughtIn)
+        {
+            E._skipCompileMergedCache = null;   // the precompiled cache grew
+            return;
+        }
         E._staticLink = null;
         E._staticPredicateCache.Clear();
         E._skipCompileMergedCache = null;   // static cache cleared
@@ -2013,6 +2137,7 @@ internal sealed class BundleLoader
 
     private Bundle BuildSnapshotBundle(bool dynamicOnly)
     {
+        E.InstallAllPendingClauses(null);
         var consultHistory = dynamicOnly
             ? (IReadOnlyList<string>)Array.Empty<string>()
             : E._consultHistory.ToArray();
@@ -2079,9 +2204,10 @@ internal sealed class BundleLoader
             E._modules.Clear();
             E._modules[PrologEngine.DefaultModuleName] = new ModuleManifest(PrologEngine.DefaultModuleName);
             E._dynStore.ClearAllSlots();
+            E.ForgetAttachedLibraries();
             E.ResetDynChains();
             E._staticPredicateCache.Clear();
-            E._dynamicPredicateCache.Clear();
+            E.ClearDynamicCompiles();
             E._skipCompileMergedCache = null;   // both caches cleared
             E._precompiledStaticPredicates.Clear();
             E._staticLink = null;
