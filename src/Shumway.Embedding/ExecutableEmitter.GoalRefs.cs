@@ -64,6 +64,16 @@ public static partial class ExecutableEmitter
         return true;
     }
 
+    /// <summary>The goal as a term, read as <see cref="TryValidateGoal"/>
+    /// reads it: standard operators, the trailing <c>.</c> optional.</summary>
+    public static bool TryReadGoal(string goal, out Term term, out string? error)
+    {
+        term = null!;
+        if (!TryValidateGoal(goal, out string normalised, out _, out error)) return false;
+        term = new Parser(new Lexer(normalised[..^1] + " ."), OperatorTable.Default()).ReadClauseTerm();
+        return true;
+    }
+
     /// <summary>Collects the predicate references a runtime goal makes, so the
     /// linker can treat the goal like a query typed at the REPL rather than
     /// requiring its head to be a user predicate.
