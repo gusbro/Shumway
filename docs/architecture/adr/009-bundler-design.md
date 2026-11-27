@@ -12,6 +12,9 @@ RETIRED in Phase 23, replaced by the separate-compilation toolchain —
 `shumway-compile` / `shumway-link` / `shumway-lib` (ADR-038 era, Phase 13+).
 The CLI sections stand as the record of the original tool. Amended
 2026-11-22: a bundle and an object file carry a stamp of their format.
+Amended by [ADR-076](076-bundles-say-how-they-were-built.md) (2026-11-27):
+a file says how it was built, and one of another format is rebuilt from
+that.
 
 ## Context
 
@@ -464,6 +467,10 @@ again. Three places use that answer in place of an error:
 - A page that imports a collection from an archive takes the bundle the
   archive carries of a library compiled ahead only when it is of this
   format; the library compiles from its source otherwise.
+
+[ADR-076](076-bundles-say-how-they-were-built.md) replaces these three: a
+file of another format is rebuilt from its recipe, or refused with the
+reason.
 
 A bundle's WebAssembly modules have a stamp of their own
 (`WasmRelocatableModule.FormatStamp`, ADR-050), for what the bundle's stamp

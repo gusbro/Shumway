@@ -92,6 +92,89 @@ public static class LibraryArchive
         return string.IsNullOrEmpty(text) ? null : text;
     }
 
+    /// <summary>What a page keeps of a library's bundle (<see cref="ToStore"/>):
+    /// the bytes to store, raw, or none and the reason. <see cref="Refused"/>
+    /// when the bundle could not be built again: its library is not compiled
+    /// from its source in its place. With neither bytes nor a refusal, the
+    /// library compiles from its source when it is used.</summary>
+    public readonly record struct Stored(byte[]? Bytes, string? Reason, bool Rebuilt, bool Refused);
+
+    /// <summary>ADR-076: what a page keeps of a bundle a collection brings
+    /// (<paramref name="imported"/>) or of one it kept. One of this format is
+    /// stored raw, so it is decoded once and not at every load. One of
+    /// another format is built again from its recipe, with
+    /// <paramref name="context"/>, and the product is stored. A library the
+    /// page compiled, and one it kept from before bundles said how they were
+    /// built, compiles from its source when it is used. Any other is refused,
+    /// with the reason.</summary>
+    public static Stored ToStore(byte[] bundle, string library, bool imported,
+        Shumway.Embedding.BundleRebuild.Context context)
+    {
+        ArgumentNullException.ThrowIfNull(bundle);
+        ArgumentNullException.ThrowIfNull(library);
+        ArgumentNullException.ThrowIfNull(context);
+        if (Shumway.Embedding.BundleReader.IsCurrent(bundle))
+            return new Stored(Shumway.Embedding.BundleFormat.Uncompressed(bundle), null, false, false);
+        var header = Shumway.Embedding.BundleFormat.HeaderRecipe(bundle);
+        // A kept file that is no bundle is one a page closed while storing it.
+        if (header?.Recipe is { Tool: "page" } || header is null && !imported)
+            return new Stored(null, "written with another format of compiled code", false, false);
+        try
+        {
+            byte[] rebuilt = Shumway.Embedding.BundleRebuild.Rebuild(bundle, library + ".shum", context);
+            return new Stored(Shumway.Embedding.BundleFormat.Uncompressed(rebuilt), null, true, false);
+        }
+        catch (Exception ex) when (ex is Shumway.Embedding.RebuildRefusedException
+                                      or InvalidDataException or IOException)
+        {
+            return new Stored(null, ex.Message, false, true);
+        }
+    }
+
+    /// <summary>What a rebuild in a collection's folder <paramref name="root"/>
+    /// looks things up in: its sources (<c>src/</c>), then the collection
+    /// itself.</summary>
+    public static Shumway.Embedding.BundleRebuild.Context RebuildIn(string root,
+        Func<Shumway.Embedding.Bundle, IReadOnlyList<byte[]>>? wasmBaker)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+        string sources = Path.Combine(root, "src");
+        var dirs = new List<string> { sources, root };
+        return new Shumway.Embedding.BundleRebuild.Context
+        {
+            BaseDirectory = sources,
+            FindFile = file =>
+            {
+                foreach (string dir in dirs)
+                    if (File.Exists(Path.Combine(dir, file))) return Path.Combine(dir, file);
+                return null;
+            },
+            LibraryDirs = dirs,
+            WasmBaker = wasmBaker,
+        };
+    }
+
+    /// <summary>The text of library <paramref name="library"/>'s source to
+    /// write beside its bundle, and the time to give the file (ADR-076,
+    /// decision 4). The copy the bundle's recipe carries comes first, with
+    /// the time the recipe records, in any format of compiled code; otherwise
+    /// the text its module carries (<see cref="SourceOfBundle"/>), a second
+    /// before the bundle's own time. Either way the source is not newer than
+    /// the bundle, which stays the library. Null when the bundle carries
+    /// neither.</summary>
+    public static (string Text, DateTime WrittenUtc)? SourceToWrite(
+        byte[] bundle, string library, DateTime bundleWrittenUtc)
+    {
+        ArgumentNullException.ThrowIfNull(bundle);
+        ArgumentNullException.ThrowIfNull(library);
+        string own = library.Substring(library.LastIndexOf('/') + 1);
+        if (Shumway.Embedding.BundleFormat.HeaderRecipe(bundle)?.Recipe is { } recipe
+            && (recipe.CarriedSource(library + ".pl") ?? recipe.CarriedSource(own + ".pl")) is { } carried)
+            return (System.Text.Encoding.UTF8.GetString(carried.Contents!), carried.WrittenUtc);
+        return SourceOfBundle(bundle, library) is { } text
+            ? (text, bundleWrittenUtc.AddSeconds(-1)) : null;
+    }
+
     private static bool Kept(string path) => IsSource(path) || IsBundle(path);
 
     private static void ReadZip(byte[] archive, List<(string, byte[])> found)

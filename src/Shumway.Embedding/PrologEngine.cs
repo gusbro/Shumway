@@ -36,13 +36,13 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// these three numbers, so they can never disagree.</summary>
     public const int VersionMajor = 0;
     public const int VersionMinor = 9;
-    public const int VersionPatch = 3;
+    public const int VersionPatch = 4;
 
     /// <summary>The version as <c>Major.Minor.Patch</c>.</summary>
     public static string VersionString =>
         $"{VersionMajor}.{VersionMinor}.{VersionPatch}";
 
-    /// <summary>The top-level greeting — <c>Shumway Prolog 0.9.3 (64
+    /// <summary>The top-level greeting — <c>Shumway Prolog 0.9.4 (64
     /// bits)</c>, in the shape GNU Prolog's banner uses. The bitness is the
     /// PROCESS's, not the machine's: a 32-bit .NET Framework host says
     /// <c>32 bits</c>, which is what a caller sizing a program to the address
@@ -368,6 +368,11 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// separate-compilation tool to date a module's <c>.shmo</c> against its
     /// source for incremental rebuilds.</summary>
     internal readonly Dictionary<string, string?> _moduleSourceFile = new();
+
+    /// <summary>ADR-076: the text of a source a rebuild holds in memory, by
+    /// its full path: consulting that path reads this text, and nothing is
+    /// written to disk for it.</summary>
+    internal IReadOnlyDictionary<string, string>? _sourcesInMemory;
 
     /// <summary>The source file a module was consulted from, or <c>null</c> if
     /// it came from an embedded string (baked-in library, prelude, shim).</summary>

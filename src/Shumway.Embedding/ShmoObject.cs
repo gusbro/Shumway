@@ -182,6 +182,14 @@ public sealed class ShmoObject
     /// memory with the stamp explicitly suppressed.</summary>
     public ShumwayVersion GeneratorVersion { get; }
 
+    /// <summary>ADR-076: how the object was compiled, or null when its rules
+    /// version (<see cref="RecipeRules"/>) is not one this engine reads.
+    /// A writer writes <see cref="BundleRecipe.Host"/> when it is null.</summary>
+    public BundleRecipe? Recipe { get; init; }
+
+    /// <summary>ADR-076: the rules version the object was compiled under.</summary>
+    public int RecipeRules { get; init; } = BundleRecipe.CurrentRules;
+
     /// <summary><c>true</c> when the module was compiled in
     /// Arity compatibility mode (<c>shumway-compile --arity</c>, or an
     /// in-file <c>:- set_prolog_flag(arity_compat, true)</c> at any
@@ -352,6 +360,18 @@ public sealed class ShmoObject
     /// Compiled through the consult they ran then, and none travel.</summary>
     public IReadOnlyList<Shumway.Compiler.Ast.Term> InitializationGoals { get; }
 
+    /// <summary>This object with the recipe of its build (ADR-076).</summary>
+    public ShmoObject WithRecipe(BundleRecipe recipe)
+        => new ShmoObject(ModuleName, Source, Bytecode, Defined, EnsureLinked, CallGraph,
+            QualifiedRefs, BuildMode, DynamicSeeds, ClauseTerms, ArityCompat, NativeBlocks,
+            NativeFunctions, NativeDecls, Operators, IsExportQualified, Exports, Imports,
+            LibraryDeps, Dialect, GeneratorVersion, Flags, InitializationGoals, DynamicLibraries)
+        {
+            DynamicSnapshotBytecode = DynamicSnapshotBytecode,
+            Recipe = recipe,
+            RecipeRules = BundleRecipe.CurrentRules,
+        };
+
     /// <summary>This object with <paramref name="goal"/> after its
     /// initialization goals.</summary>
     internal ShmoObject WithInitializationGoal(Shumway.Compiler.Ast.Term goal)
@@ -360,9 +380,11 @@ public sealed class ShmoObject
         return new ShmoObject(ModuleName, Source, Bytecode, Defined, EnsureLinked, CallGraph,
             QualifiedRefs, BuildMode, DynamicSeeds, ClauseTerms, ArityCompat, NativeBlocks,
             NativeFunctions, NativeDecls, Operators, IsExportQualified, Exports, Imports,
-            LibraryDeps, Dialect, GeneratorVersion, Flags, goals)
+            LibraryDeps, Dialect, GeneratorVersion, Flags, goals, DynamicLibraries)
         {
             DynamicSnapshotBytecode = DynamicSnapshotBytecode,
+            Recipe = Recipe,
+            RecipeRules = RecipeRules,
         };
     }
 }

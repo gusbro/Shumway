@@ -738,8 +738,10 @@ async function buildCollection(name) {
   const run = { name, cancel: false };
   buildRun = run;
 
+  // Nor one refused: compiling its source in its place is for whoever asks
+  // for that library (ADR-076).
   const queue = (await libraries.entries(name))
-    .filter((e) => !e.compiled && e.state !== 'native');
+    .filter((e) => !e.compiled && e.state !== 'native' && e.state !== 'refused');
   const total = queue.length;
   // A collection that came compiled has nothing to build, and the import
   // said so.
@@ -837,7 +839,7 @@ async function refreshLibraries() {
 
     // Compiling what is left, for a collection imported before this existed or
     // one whose batch was stopped.
-    if (provided.some((e) => !e.compiled)) {
+    if (provided.some((e) => !e.compiled && e.state !== 'refused')) {
       const buildRest = document.createElement('button');
       buildRest.type = 'button';
       buildRest.className = 'heading-action';
@@ -889,12 +891,14 @@ async function refreshLibraries() {
       const state = document.createElement('span');
       state.textContent = entry.state === 'native' ? 'provided by Shumway'
         : entry.state === 'failed' ? 'will not compile'
+        : entry.state === 'refused' ? 'could not be built again'
         : entry.note ? 'compiled, with warnings'
         : !entry.source ? 'compiled, no source'
         : entry.compiled ? 'compiled'
         : 'source only';
       if (entry.note) {
-        state.className = entry.state === 'failed' ? 'library-broken' : 'library-note';
+        state.className = entry.state === 'failed' || entry.state === 'refused'
+          ? 'library-broken' : 'library-note';
         state.title = entry.note;
       }
 
@@ -912,7 +916,7 @@ async function refreshLibraries() {
           const said = await libraries.diagnostic(name, entry.name);
           librariesDialog.close('');          // modal: its backdrop hides output
           emit(`% ${entry.name}:\n${said.split('\n').slice(1).join('\n')}\n`,
-               entry.state === 'failed' ? 'error' : 'note');
+               entry.state === 'failed' || entry.state === 'refused' ? 'error' : 'note');
         });
       }
 
@@ -950,14 +954,17 @@ document.getElementById('libraries').addEventListener('click', async () => {
 /** Names a set of fetched sources, writes them in, and starts building. Shared
  *  by both ways in — where the files came from stops mattering here. */
 async function adoptCollection(files, { name: suggestedName, dialect = '', from, source = '' }) {
-  // A bundle this engine cannot read, with no source to compile its library
-  // from, is a library that could not load: one in this format is what to
-  // bring.
+  // A bundle this engine cannot read nor build again, with no source of its
+  // library, is a library that could not load: one built with this
+  // Shumway's tools is what to bring.
   const stale = libraries.unreadable(files);
   if (stale.length > 0) {
-    emit(`% ${nameList(stale)}: ${stale.length > 1 ? 'these bundles use' : 'this bundle uses'}`
-       + ' a format of compiled code that this Shumway'
-       + ' cannot read. Import a bundle in the current format, or the library\'s source with it.\n', 'error');
+    const many = stale.length > 1;
+    emit(`% ${nameList(stale)}: ${many ? 'these bundles use' : 'this bundle uses'}`
+       + ' a format of compiled code that this Shumway cannot read, and'
+       + ` ${many ? 'they do' : 'it does'} not say how to build ${many ? 'them' : 'it'} again.`
+       + ` Build ${many ? 'them' : 'it'} with this Shumway's tools, or import the library's`
+       + ' source in its place.\n', 'error');
     return;
   }
   const compiled = files.filter(libraries.compiledAhead).length;

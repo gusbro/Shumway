@@ -215,7 +215,7 @@ internal static partial class WebShumwayApp
                         json.WriteStartObject();
                         json.WriteString("path", path);
                         json.WriteString("bundle", id);
-                        json.WriteBoolean("current", BundleReader.IsCurrent(bytes));
+                        json.WriteBoolean("usable", IsUsable(bytes));
                         json.WriteEndObject();
                     }
                     json.WriteEndArray();
@@ -246,16 +246,14 @@ internal static partial class WebShumwayApp
         {
             try
             {
-                if (!UnpackedBundles.TryRemove(bundle, out byte[]? bytes))
+                if (!UnpackedBundles.TryRemove(bundle, out byte[]? taken))
                     return "its bytes are not here any more";
-                if (!BundleReader.IsCurrent(bytes))
-                    return "written with another format of compiled code";
-                // Stored raw: decoded once here, not at every load.
-                bytes = BundleFormat.Uncompressed(bytes);
                 string library = path.Substring(0, path.Length - ".shum".Length);
                 foreach (string segment in library.Split('/'))
                     if (segment.Length == 0 || segment == "..") return "not a path inside the collection";
                 string root = ResolveLibrary(name);
+                if (ToStore(name, root, library, taken, imported: true, out string? why) is not { } bytes)
+                    return why;
                 string target = Path.Combine(root, library + ".shum");
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                 string partial = target + ".partial";
@@ -266,12 +264,84 @@ internal static partial class WebShumwayApp
             catch (Exception ex) { return ex.Message; }
         });
 
-    /// <summary>Whether the first bytes of a bundle say it is in the format of
-    /// compiled code this engine reads.</summary>
+    /// <summary>ADR-076: what to store of a bundle a collection brings, or one
+    /// the page kept: one of this format, raw, so it is decoded once here and
+    /// not at every load; one of another format built again from its recipe
+    /// with the collection's sources. A library the page compiled, and one it
+    /// kept from before bundles said how they were built, is compiled again
+    /// from its source when it is used. Null, with the reason, for one that
+    /// is not stored; one refused is recorded, and is not compiled from its
+    /// source in its place.</summary>
+    private static byte[]? ToStore(string name, string root, string library, byte[] bytes,
+        bool imported, out string? why)
+    {
+        string marker = Path.Combine(root, DialectMarker);
+        string? dialect = File.Exists(marker) ? File.ReadAllText(marker).Trim() : null;
+        if (string.IsNullOrEmpty(dialect)) dialect = null;
+        var stored = Shumway.WebHost.LibraryArchive.ToStore(bytes, library, imported,
+            Shumway.WebHost.LibraryArchive.RebuildIn(root,
+                RuntimeCaps.SupportsWasmCodegen && !Tier.Disabled
+                    ? b => BakeSessionFor(root, dialect).Bake(b, BakeLog)
+                    : null));
+        why = stored.Reason;
+        if (stored.Refused)
+        {
+            // Kept as it came, as a file on disk is: a load of it tries again
+            // and says why, and a source imported later lets it build.
+            RecordRefusal(root, library, stored.Reason!);
+            why = null;
+            return bytes;
+        }
+        ClearRefusal(root, library);
+        // Built again from a kept one: the page keeps the product.
+        if (stored.Rebuilt && !imported) _compiledOnDemand.Enqueue($"{name}\t{library}");
+        return stored.Bytes;
+    }
+
+    // A refused bundle reads as a failed library, and its reason is what a
+    // load of it says (CompileOnDemand). Kept with the diagnostic, which the
+    // page stores.
+    private static void RecordRefusal(string root, string library, string reason)
+    {
+        try
+        {
+            File.WriteAllText(Path.Combine(root, library + DiagnosticSuffix),
+                string.Join("\n", "refused", Flatten(reason), reason));
+        }
+        catch { /* a diagnostic that cannot be filed is not worth failing over */ }
+    }
+
+    private static string? RefusalOf(string root, string library)
+    {
+        string marker = Path.Combine(root, library + DiagnosticSuffix);
+        try
+        {
+            if (!File.Exists(marker)) return null;
+            var lines = File.ReadLines(marker).ToList();
+            return lines.Count >= 3 && lines[0] == "refused" ? string.Join("\n", lines.Skip(2)) : null;
+        }
+        catch (IOException) { return null; }
+    }
+
+    private static void ClearRefusal(string root, string library)
+    {
+        if (RefusalOf(root, library) is null) return;
+        try { File.Delete(Path.Combine(root, library + DiagnosticSuffix)); }
+        catch (IOException) { }
+    }
+
+    /// <summary>Whether this engine can use a bundle a collection brings: it is
+    /// in the format of compiled code this engine reads, or its recipe says a
+    /// tool built it, and an import builds it again (ADR-076).</summary>
     [JSExport]
-    internal static Task<bool> LibraryBundleIsCurrent(
-        [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] head)
-        => Task.FromResult(BundleReader.IsCurrent(head));
+    internal static Task<bool> LibraryBundleIsUsable(
+        [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] bundle)
+        => Task.FromResult(IsUsable(bundle));
+
+    private static bool IsUsable(byte[] bundle)
+        => BundleReader.IsCurrent(bundle)
+           || BundleFormat.HeaderRecipe(bundle)?.Recipe is
+                { Tool: "shumway-link" or "shumway-lib" or "shumway-compile" };
 
     /// <summary>Writes beside a library that came as its bundle alone the
     /// source the bundle carries of it (<see cref="Shumway.WebHost.LibraryArchive.SourceOfBundle"/>),
@@ -286,12 +356,13 @@ internal static partial class WebShumwayApp
             string bundle = Path.Combine(root, library + ".shum");
             string source = Path.Combine(root, SourceDir, library + ".pl");
             if (!File.Exists(bundle) || File.Exists(source)) return false;
-            if (Shumway.WebHost.LibraryArchive.SourceOfBundle(File.ReadAllBytes(bundle), library) is not { } text)
+            if (Shumway.WebHost.LibraryArchive.SourceToWrite(File.ReadAllBytes(bundle), library,
+                    File.GetLastWriteTimeUtc(bundle)) is not var (text, written))
                 return false;
             Directory.CreateDirectory(Path.GetDirectoryName(source)!);
             File.WriteAllText(source, text);
-            // Older than the bundle, which stays what library(X) loads.
-            File.SetLastWriteTimeUtc(source, File.GetLastWriteTimeUtc(bundle).AddSeconds(-1));
+            // Not newer than the bundle, which stays what library(X) loads.
+            File.SetLastWriteTimeUtc(source, written);
             return true;
         });
 
@@ -445,6 +516,10 @@ internal static partial class WebShumwayApp
         if (SynchronizationContext.Current == _jsThread) return null;
         string name = Path.GetFileName(root);
         string target = Path.Combine(root, library + ".shum");
+        // A bundle the collection brought that could not be rebuilt: its
+        // source is not compiled in its place (ADR-076, decision 5).
+        if (RefusalOf(root, library) is { } refused)
+            throw new InvalidDataException($"library({library}) from {name}: {refused}");
         // Its last compile failed: trying again on every consult would only
         // repeat the wait, and the list already says why.
         if (LastCompileFailed(root, library)) return null;
@@ -631,7 +706,18 @@ internal static partial class WebShumwayApp
                          }
                          finally { baked(bakeClock.Elapsed.TotalSeconds); }
                      }
-                     : null);
+                     : null,
+                // ADR-076: compiled from its entry by consult, as here.
+                new BundleRecipe
+                {
+                    Tool = "page",
+                    Inputs = new[] { new RecipeInput { Kind = RecipeInputKind.Source, Name = library + ".pl" } },
+                    Sources = new[] { RecipeSource.Of(library + ".pl", File.ReadAllBytes(entry),
+                        File.GetLastWriteTimeUtc(entry)) },
+                    Consult = true,
+                    Dialect = dialect,
+                    Wasm = wasm,
+                });
             // Written under a temporary name and moved into place, so what
             // `library(X)` can see is either the old bundle or the new one
             // and never half of one — a consult may look while this runs.
@@ -771,7 +857,8 @@ internal static partial class WebShumwayApp
                     .Select(n => n!)
                 : Enumerable.Empty<string>();
             var entries = withSource.Select(n => DescribeEntry(root, n))
-                .Concat(alone.Select(n => $"{n}\tbundle"))
+                .Concat(alone.Select(n => ReadDiagnostic(root, n) is ("refused", var headline)
+                    ? $"{n}\trefused-bundle\t{headline}" : $"{n}\tbundle"))
                 .OrderBy(line => line, StringComparer.Ordinal);
             return string.Join('\n', entries);
         });
@@ -780,7 +867,7 @@ internal static partial class WebShumwayApp
     {
         if (ProvidedNatively(root, library)) return $"{library}\tnative";
         var (kind, headline) = ReadDiagnostic(root, library);
-        string state = kind == "failed" ? "failed"
+        string state = kind is "failed" or "refused" ? kind
             : HasCurrentBundle(root, library) ? "compiled"
             : "source";
         return headline is null ? $"{library}\t{state}" : $"{library}\t{state}\t{headline}";
@@ -884,17 +971,16 @@ internal static partial class WebShumwayApp
     /// then its path in the collection, which may name a directory.</summary>
     [JSExport]
     internal static Task<string?> LibraryPutBundle(
-        string name, string library, [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] bundle)
+        string name, string library, [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] given, bool imported)
         => OnLibraries(() =>
         {
             try
             {
-                if (!BundleReader.IsCurrent(bundle)) return "not a bundle of this format";
                 foreach (string segment in library.Split('/'))
                     if (segment.Length == 0 || segment == "..") return "not a path inside the collection";
-                // Stored raw: decoded once here, not at every load.
-                bundle = BundleFormat.Uncompressed(bundle);
                 string root = ResolveLibrary(name);
+                if (ToStore(name, root, library, given, imported, out string? why) is not { } bundle)
+                    return why;
                 // Moved into place, as a compile's is: a query may be
                 // looking for library(X) while this writes.
                 string target = Path.Combine(root, library + ".shum");

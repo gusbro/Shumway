@@ -82,7 +82,8 @@ public static class ShmoViaConsult
         System.Action<PrologEngine>? configure = null,
         bool withSource = false,
         IDictionary<string, string>? attachedLibraries = null,
-        List<string>? roots = null)
+        List<string>? roots = null,
+        IReadOnlyDictionary<string, string>? rootTexts = null)
     {
         // Strict: consult mode is how the toolchain compiles sources, so a
         // clause that does not parse fails the build (the object it would
@@ -94,6 +95,10 @@ public static class ShmoViaConsult
             _clausesFromBundles = new HashSet<Clause>(ReferenceEqualityComparer.Instance),
         };
         if (warnings is not null) e.Warnings = warnings;
+        // ADR-076: a rebuild's roots in memory, by full path.
+        if (rootTexts is not null)
+            e._sourcesInMemory = rootTexts.ToDictionary(
+                kv => System.IO.Path.GetFullPath(kv.Key), kv => kv.Value);
         // ADR-040: a library collection may be a non-shumway dialect. An
         // explicit dialect applies to every dir; otherwise each dir spec may
         // carry its own `dialect:path` prefix (AddLibraryDirectorySpec parses it).
@@ -127,7 +132,9 @@ public static class ShmoViaConsult
             string? rootDialect = dialect is { Length: > 0 }
                 ? dialect
                 : e.DialectForResolvedPath(System.IO.Path.GetFullPath(rp));
-            string text = Shumway.Core.TextFile.ReadAllText(rp);
+            string text = e._sourcesInMemory is { } inMemory
+                && inMemory.TryGetValue(System.IO.Path.GetFullPath(rp), out string? held)
+                ? held : Shumway.Core.TextFile.ReadAllText(rp);
             var m = System.Text.RegularExpressions.Regex.Match(
                 text, @"^\s*:-\s*module\(\s*'?([^,)'\s]+)",
                 System.Text.RegularExpressions.RegexOptions.Multiline);

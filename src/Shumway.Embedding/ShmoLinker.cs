@@ -1182,7 +1182,10 @@ public static class ShmoLinker
                 // Arity call semantics at runtime (unknown=fail).
                 arityCompat: objects.Any(o => o.ArityCompat),
                 engineLibraries: engineLibraries,
-                dynamicLibraries: dynlib.Record());
+                dynamicLibraries: dynlib.Record())
+            {
+                Recipe = config.Recipe ?? new BundleRecipe { Tool = "shumway-link" },
+            };
             // --with-compiled-il routes the bundle through
             // BundleWriter.ToBytes, which (under includeCompiledIl=true)
             // runs PersistedIlBuilder per entry to materialise IL for
@@ -1874,6 +1877,14 @@ public static class ShmoLinker
     /// once and available to both the library pull pre-pass (which must not
     /// pull a member to satisfy a foreign-provided reference) and the
     /// builtin-set snapshot.</summary>
+    // Reached only for a link given --foreign-dll assemblies, which are loaded
+    // from disk and are outside the trimmer's view by construction. A page
+    // links when it rebuilds a bundle (ADR-076); a foreign assembly it cannot
+    // load fails that link with a message.
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Only reached for the assemblies a link is given, loaded from disk.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2075",
+        Justification = "The types of an assembly loaded from disk, which trimming never removes.")]
     private static HashSet<PredicateRef> ReflectForeignAssemblies(
         LinkConfig config,
         Action<LinkSeverity, string, string, string?> emit,
@@ -2617,7 +2628,7 @@ public static class ShmoLinker
         }
         bw.Flush();
         // compress the body (everything after magic+version).
-        return BundleFormat.FinalizeImage(ms.ToArray());
+        return BundleFormat.FinalizeImage(ms.ToArray(), bundle.Recipe);
     }
 
     private static void WriteString(BinaryWriter bw, string s)
@@ -2633,6 +2644,8 @@ public static class ShmoLinker
     /// ReflectionTypeLoadException — recover the types that did
     /// resolve and keep going. The linker only needs to see
     /// [PrologPredicate]-decorated methods on resolved types.</summary>
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Only called on an assembly a link is given, loaded from disk.")]
     private static IEnumerable<Type> SafeGetTypes(System.Reflection.Assembly asm)
     {
         try { return asm.GetTypes(); }

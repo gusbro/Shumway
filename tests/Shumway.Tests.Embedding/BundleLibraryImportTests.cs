@@ -169,12 +169,20 @@ public sealed class BundleLibraryImportTests : IDisposable
         Assert.Equal("source", WhichLoads("olderbundle"));
     }
 
+    // ADR-076: a bundle of another format is still the library. One that says
+    // nothing of how it was built (a host wrote it) is refused, and the
+    // source beside it is not loaded in its place.
     [Fact]
-    public void BesideItsSource_ABundleOfAnotherFormat_IsNot()
+    public void BesideItsSource_ABundleOfAnotherFormat_IsRefused_WhenNothingSaysHowItWasBuilt()
     {
         SourceAndBundle("stalebundle", System.TimeSpan.FromMinutes(1), otherFormat: true);
-        Assert.Equal("source", WhichLoads("stalebundle", out string warnings));
-        Assert.Equal("", warnings);
+        var said = new StringWriter();
+        var e = new PrologEngine { Out = new StringWriter(), Warnings = said };
+        e.AddLibraryDirectory(_dir);
+        var loaded = e.Query("catch(use_module(library(stalebundle)), Error, true).");
+        Assert.True(loaded.Success);
+        Assert.Contains("written by a host", said + " " + loaded["Error"]);
+        Assert.False(e.Query("catch(which(_), _, fail).").Success);
     }
 
     // Two bundles give clauses to one dynamic predicate, as an application

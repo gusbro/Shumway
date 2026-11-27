@@ -17,13 +17,15 @@ namespace Shumway.Embedding;
 /// <para>Layout (V2):</para>
 /// <code>
 ///   [0..3]    Magic 'S','H','M','O'
-///   [4..7]    Format version (uint32, = 2)
+///   [4..7]    Format version (uint32, = CurrentVersion)
 ///   [8..15]   Format stamp (uint64, = BundleFormat.Stamp)
-///   [16]      Compression flag: 0 = raw body, 1 = the whole
+///   [16..23]  Rules version and recipe length, then the recipe: as the
+///             .shum (ADR-076)
+///   then      Compression flag: 0 = raw body, 1 = the whole
 ///             body below is one Brotli stream — the same framing as the
 ///             .shum (see BundleFormat.FinalizeImage / OpenBody; bodies
 ///             &lt; 4 KB stay raw)
-///   [17..]    Body (raw or decompressed):
+///   then      Body (raw or decompressed):
 ///                 genMajor         : uint32  \
 ///                 genMinor         : uint32   > the Shumway that wrote this
 ///                 genPatch         : uint32  /  file (see ShumwayVersion)
@@ -107,7 +109,10 @@ public static class ShmoFormat
     /// <summary>The single supported format version — frozen pre-release
     /// (see the format-policy note above). Writer and reader both require
     /// exactly this value.</summary>
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
+
+    /// <summary>The first version whose files say how they were built (ADR-076).</summary>
+    public const int FirstVersionWithRecipe = 4;
 
     /// <summary>Equal to <see cref="CurrentVersion"/>: no backward
     /// compatibility before the first public release.</summary>

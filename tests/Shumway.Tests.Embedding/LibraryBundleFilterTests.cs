@@ -121,16 +121,24 @@ public sealed class LibraryBundleFilterTests : IDisposable
     }
 
     // The library's bundle, as an engine with another format of compiled
-    // code wrote it: the stamp after its version is another.
-    private void WriteABundleOfAnotherFormat()
+    // code wrote it: the stamp after its version is another. Compiled by a
+    // page from its source, unless a host wrote it (ADR-076).
+    private void WriteABundleOfAnotherFormat(bool byAPage = true)
     {
-        byte[] stale = Compiled("stale");
+        byte[] stale = byAPage
+            ? Librarian.CreateArchive(Librarian.ReadArchive(Compiled("stale")), recipe: new BundleRecipe
+            {
+                Tool = "page",
+                Inputs = new[] { new RecipeInput { Kind = RecipeInputKind.Source, Name = "verlib.pl" } },
+                Consult = true,
+            })
+            : Compiled("stale");
         stale[8] ^= 0xFF;
         File.WriteAllBytes(Bundle, stale);
     }
 
-    /// <summary>A bundle of another format is as none, when the library's
-    /// source is there: the source loads, with a warning, and the host is
+    /// <summary>A library a page compiled, of another format, is as none when
+    /// its source is there: the source loads, with a warning, and the host is
     /// not asked about a bundle the engine cannot read.</summary>
     [Fact]
     public void ABundleOfAnotherFormat_IsAsNone_TheSourceLoads()
@@ -183,7 +191,24 @@ public sealed class LibraryBundleFilterTests : IDisposable
 
         e.ConsultString(":- use_module(library(verlib)).");
 
-        Assert.Contains("another format of compiled code", warnings.ToString());
+        Assert.Contains("the page compiles it again from its source", warnings.ToString());
+        Assert.False(e.Query("catch(version(_), _, fail).").Success);
+    }
+
+    /// <summary>A bundle a host wrote says nothing of how it was built: of
+    /// another format, it is refused, and the source beside it is not loaded
+    /// in its place (ADR-076, decision 5).</summary>
+    [Fact]
+    public void AHostsBundleOfAnotherFormat_IsRefused_AndTheSourceIsNotLoaded()
+    {
+        var e = Engine();
+        var warnings = new StringWriter();
+        e.Warnings = warnings;
+        WriteABundleOfAnotherFormat(byAPage: false);
+
+        e.ConsultString(":- use_module(library(verlib)).");
+
+        Assert.Contains("written by a host", warnings.ToString());
         Assert.False(e.Query("catch(version(_), _, fail).").Success);
     }
 }

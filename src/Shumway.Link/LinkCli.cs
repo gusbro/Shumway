@@ -45,219 +45,22 @@ internal static class LinkCli
         var opts = ParseArgs(args);
         if (opts is null) return ExitUsageError;
 
-        // Inputs route by extension (C-toolchain style): .shum is a library (its
-        // members are pulled on demand, FIFO), .pl is source (compiled on the fly
-        // to an object), anything else is an object (.shmo, always linked). A .shum
-        // must be a shumway-lib librarian archive (it carries its objects); a
-        // linked bundle has none and can't serve as a library.
-        var objects = new List<ShmoObject>();
-        var libraries = new List<LinkLibrary>();
-        var sourceInputs = new List<string>();
-        // The last input that is a module (an object or a source, not an
-        // archive): a library's --goal runs in it.
-        string? lastInputModule = null;
-        bool lastInputIsSource = false;
-        foreach (var path in opts.InputPaths)
+        // The inputs in order, compiled or read, and the configuration of the
+        // link with the recipe of its bundle (ADR-076): the plan a rebuild
+        // runs again.
+        var libraryDirs = CollectLibraryDirs(opts.LibraryDirs);
+        var plan = new LinkPlan
         {
-            try
-            {
-                if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
-                {
-                    var lib = BundleReader.ReadFromFile(path);
-                    if (lib.ArchiveMembers.Count == 0)
-                    {
-                        Console.Error.WriteLine(
-                            $"shumway-link: library '{path}' is a linked bundle, not a "
-                            + "librarian archive — it has no objects to link against. "
-                            + "Build a library with shumway-lib.");
-                        RemoveStaleOutputs(opts);
-                        return ExitLinkError;
-                    }
-                    var members = new List<ShmoObject>(lib.ArchiveMembers.Count);
-                    foreach (var m in lib.ArchiveMembers)
-                        members.Add(ShmoReader.FromBytes(m.ShmoBytes));
-                    libraries.Add(new LinkLibrary(System.IO.Path.GetFileName(path), members));
-                }
-                else if (path.EndsWith(".pl", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Source input: collected and compiled below (all sources
-                    // together under --consult; one at a time otherwise).
-                    sourceInputs.Add(path);
-                    lastInputIsSource = true;
-                }
-                else
-                {
-                    var obj = ShmoReader.ReadFromFile(path);
-                    objects.Add(obj);
-                    lastInputModule = obj.ModuleName;
-                    lastInputIsSource = false;
-                }
-            }
-            catch (Exception ex) when (ex is InvalidDataException || ex is IOException)
-            {
-                Console.Error.WriteLine($"shumway-link: error reading '{path}': {ex.Message}");
-                RemoveStaleOutputs(opts);
-                return ExitLinkError;
-            }
-        }
-
-        // ADR-075, decision 3: the file the consult attached for each
-        // ensure_loaded(bundle(Name)) of the sources, linked against as a
-        // --dynlib is.
-        var consultAttached = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (sourceInputs.Count > 0)
-        {
-            var libraryDirs = CollectLibraryDirs(opts.LibraryDirs);
-            if (opts.Consult)
-            {
-                // Consult all sources into one engine (directives + expansion
-                // hooks run, use_module dependencies load) and link every module
-                // the load brought in — the shumway-compile --consult pipeline.
-                var errors = new List<ShmoCompileError>();
-                var roots = new List<string>();
-                List<(string ModuleName, ShmoObject Object, DateTime SourceTimeUtc, bool IsRoot)> compiled;
-                try
-                {
-                    compiled = ShmoViaConsult.CompileMany(
-                        sourceInputs, libraryDirs, ShmoBuildMode.Release, errors,
-                        attachedLibraries: consultAttached, roots: roots);
-                }
-                catch (Exception ex)
-                {
-                    Console.Error.WriteLine($"shumway-link: consult failed: {ex.Message}");
-                    RemoveStaleOutputs(opts);
-                    return ExitLinkError;
-                }
-                foreach (var e in errors)
-                    Console.Error.WriteLine($"error: {e.Message}");
-                if (errors.Count > 0 || compiled.Count == 0)
-                {
-                    Console.Error.WriteLine(
-                        $"shumway-link: {Math.Max(errors.Count, 1)} error(s) compiling sources (consult mode).");
-                    RemoveStaleOutputs(opts);
-                    return ExitLinkError;
-                }
-                foreach (var (_, obj, _, _) in compiled) objects.Add(obj);
-                if (lastInputIsSource && roots.Count > 0) lastInputModule = roots[^1];
-            }
-            else
-            {
-                // File-at-a-time compile of each source (no load-time hooks, no
-                // dependency pull). Convenience so a small program need not be
-                // pre-compiled to a .shmo.
-                foreach (var path in sourceInputs)
-                {
-                    var res = ShmoCompiler.TryCompileFile(path, ShmoBuildMode.Release);
-                    foreach (var w in res.Warnings)
-                        Console.Error.WriteLine(
-                            $"{w.Where(path)}: warning: {w.Message}");
-                    if (res.Object is null)
-                    {
-                        foreach (var e in res.Errors)
-                            Console.Error.WriteLine(
-                                $"{e.Where(path)}: error: {e.Message}");
-                        MaybeHintConsult(path);
-                        RemoveStaleOutputs(opts);
-                        return ExitLinkError;
-                    }
-                    // The same refusal as shumway-compile's: a hook compiled
-                    // file-at-a-time never fires, and the program linked from
-                    // it would mean something else than the consulted one.
-                    if (ShmoCompiler.WhatFileAtATimeLoses(res.Object) is { } lost)
-                    {
-                        Console.Error.WriteLine(
-                            $"shumway-link: {path} {lost} File-at-a-time compilation "
-                            + "would produce a program that means something else than the "
-                            + "consulted one, so it is refused rather than linked. Link "
-                            + "it with:" + Environment.NewLine
-                            + $"  shumway-link --consult -L <libdir> ... {path}");
-                        RemoveStaleOutputs(opts);
-                        return ExitLinkError;
-                    }
-                    MaybeHintConsult(path);
-                    objects.Add(res.Object);
-                    if (lastInputIsSource) lastInputModule = res.Object.ModuleName;
-                }
-            }
-        }
-
-        // --goal Z validates syntactically and contributes reachability
-        // roots. The goal is any REPL-acceptable query — its call-position
-        // predicates may be user, builtin or prelude (`time(main)`), and any
-        // user predicate named inside it (a meta-call argument) stays linked.
-        // A library's --goal (no --exe) is the goal the bundle runs when it
-        // loads, in the module of the last input: the linker makes it that
-        // module's last initialization goal, and it is no root.
-        bool loadGoal = opts.Library && string.IsNullOrEmpty(opts.ExePath)
-            && !string.IsNullOrEmpty(opts.Goal);
-        var goalCallRefs = new List<PredicateRef>();
-        var goalTermRefs = new List<PredicateRef>();
-        if (!string.IsNullOrEmpty(opts.Goal))
-        {
-            if (!ExecutableEmitter.TryCollectGoalRefs(opts.Goal,
-                    out goalCallRefs, out goalTermRefs, out string? goalErr))
-            {
-                Console.Error.WriteLine($"shumway-link: --goal: {goalErr}");
-                return ExitUsageError;
-            }
-            if (loadGoal)
-            {
-                goalCallRefs.Clear();
-                goalTermRefs.Clear();
-            }
-        }
-
-        var dynamicLibraries = new List<LinkDynamicLibrary>();
-        foreach (string spec in opts.DynamicLibraries)
-        {
-            string? path = LinkDynamicLibrary.Find(spec, CollectLibraryDirs(opts.LibraryDirs));
-            if (path is null)
-            {
-                Console.Error.WriteLine(
-                    $"shumway-link: dynamic library '{spec}' not found: give its .shum, or its name "
-                    + "with the directory that holds it in -L.");
-                RemoveStaleOutputs(opts);
-                return ExitLinkError;
-            }
-            try
-            {
-                dynamicLibraries.Add(new LinkDynamicLibrary(
-                    System.IO.Path.GetFileNameWithoutExtension(path), BundleReader.ReadFromFile(path)));
-            }
-            catch (Exception ex) when (ex is System.IO.InvalidDataException or System.IO.IOException)
-            {
-                Console.Error.WriteLine($"shumway-link: dynamic library {path}: {ex.Message}");
-                RemoveStaleOutputs(opts);
-                return ExitLinkError;
-            }
-        }
-        foreach (var (name, path) in consultAttached)
-        {
-            if (dynamicLibraries.Exists(l => l.Name == name)) continue;
-            try
-            {
-                dynamicLibraries.Add(new LinkDynamicLibrary(name, BundleReader.ReadFromFile(path)));
-            }
-            catch (Exception ex) when (ex is System.IO.InvalidDataException or System.IO.IOException)
-            {
-                Console.Error.WriteLine($"shumway-link: dynamic library {path}: {ex.Message}");
-                RemoveStaleOutputs(opts);
-                return ExitLinkError;
-            }
-        }
-
-        var config = new LinkConfig
-        {
-            Objects = objects,
-            DynamicLibraries = dynamicLibraries,
+            Consult = opts.Consult,
+            Library = opts.Library,
             EntryPoints = opts.EntryPoints,
-            GoalCallRefs = goalCallRefs,
-            GoalTermRefs = goalTermRefs,
+            Goal = string.IsNullOrEmpty(opts.Goal) ? null : opts.Goal,
+            Executable = !string.IsNullOrEmpty(opts.ExePath),
             AllowUndefined = opts.AllowUndefined,
-            WarnShadow = opts.WarnShadow,
-            Libraries = libraries,
-            // ADR-038 — --library-dir flags plus SHUMWAY_LIBRARY_PATH.
-            LibraryDirs = CollectLibraryDirs(opts.LibraryDirs),
+            StripSource = opts.StripSource,
+            IncludeCompiledIl = opts.IncludeCompiledIl,
+            StripWam = opts.StripWam,
+            Wasm = opts.Wasm,
             // --exe deploys a startup-sensitive single-engine app, so bake the
             // prelude by default there; otherwise only on explicit opt-in. Under
             // --with-compiled-il / --strip-wam the baked prelude is itself
@@ -266,26 +69,30 @@ internal static class LinkCli
             BakePrelude = opts.BakePrelude || !string.IsNullOrEmpty(opts.ExePath)
                 || !string.IsNullOrEmpty(opts.DllPath),
             PrunePrelude = opts.PrunePrelude,
-            Library = opts.Library,
-            LoadGoal = loadGoal ? opts.Goal : null,
-            LoadGoalModule = loadGoal ? lastInputModule : null,
-            VerboseOut = opts.Verbose ? Console.Error : null,
-            StripSource = opts.StripSource,
-            IncludeCompiledIl = opts.IncludeCompiledIl,
-            StripWam = opts.StripWam,
-            RegionPruneReport = opts.RegionPruneReport,
             RegionPrune = opts.RegionPrune,
-            DumpWamPath = opts.DumpWamPath,
-            DumpIlPath = opts.DumpIlPath,
+            DynamicLibraries = opts.DynamicLibraries,
             ForeignAssemblies = opts.ForeignDlls,
             NativeLibraries = opts.NativeDlls,
+            // ADR-038 — --library-dir flags plus SHUMWAY_LIBRARY_PATH.
+            LibraryDirs = libraryDirs,
+            WarnShadow = opts.WarnShadow,
+            RegionPruneReport = opts.RegionPruneReport,
+            DumpWamPath = opts.DumpWamPath,
+            DumpIlPath = opts.DumpIlPath,
+            VerboseOut = opts.Verbose ? Console.Error : null,
 #if !NETFRAMEWORK
-            WasmBaker = opts.Wasm
-                ? b => Shumway.Compiler.Wasm.WasmBundleTier.Bake(b, opts.BakePrelude,
-                    msg => Console.Error.WriteLine("shumway-link: " + msg), library: opts.Library)
-                : null,
+            WasmBaker = b => Shumway.Compiler.Wasm.WasmBundleTier.Bake(b, opts.BakePrelude,
+                msg => Console.Error.WriteLine("shumway-link: " + msg), library: opts.Library),
 #endif
+            Report = Console.Error.WriteLine,
         };
+        var config = plan.Prepare(opts.InputPaths, out bool usageError);
+        if (config is null)
+        {
+            if (usageError) return ExitUsageError;
+            RemoveStaleOutputs(opts);
+            return ExitLinkError;
+        }
 
         LinkResult result;
         Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.Reset();
@@ -894,22 +701,6 @@ internal static class LinkCli
     /// dependencies or load-time expansion hooks will link with unresolved
     /// references (its libraries were never loaded) — point the user at
     /// <c>--consult</c>, which loads them.</summary>
-    private static void MaybeHintConsult(string path)
-    {
-        string text;
-        try { text = System.IO.File.ReadAllText(path); } catch { return; }
-        bool hasLibDeps = text.Contains("use_module(library(");
-        bool hasHooks = text.Contains("term_expansion(")
-            || text.Contains("goal_expansion(")
-            || text.Contains(":- attribute");
-        if (hasLibDeps || hasHooks)
-            Console.Error.WriteLine(
-                $"shumway-link: hint: {path} uses library dependencies or load-time "
-                + "hooks that a file-at-a-time compile does not load; link it through "
-                + "the consult pipeline instead:\n"
-                + $"  shumway-link --consult -L <libdir> ... {path}");
-    }
-
     // ADR-038 — the library search path: --library-dir flags first (highest
     // precedence), then SHUMWAY_LIBRARY_PATH entries, then the shipped lib/
     // directories.

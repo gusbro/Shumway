@@ -323,7 +323,7 @@ public static class BundleWriter
         }
         bw.Flush();
         // compress the body (everything after magic+version).
-        return BundleFormat.FinalizeImage(ms.ToArray());
+        return BundleFormat.FinalizeImage(ms.ToArray(), bundle.Recipe);
     }
 
     /// <summary>Compiles <paramref name="entry"/>'s source through the WAM

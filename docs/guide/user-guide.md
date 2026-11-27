@@ -592,9 +592,12 @@ fed by all of:
   `engine.AddDefaultLibraryDirectories()` for the shipped `lib/`).
 
 The first directory with either file answers. With both `X.pl` and `X.shum`
-in it, the bundle is the library when it is in the format of compiled code
-this Shumway reads and is not older than the source; else the source is. Editing the source therefore loads the source until the
-bundle is built again.
+in it, the bundle is the library when it is not older than the source; else
+the source is. Editing the source therefore loads the source until the
+bundle is built again. A bundle in another format of compiled code is built
+again in memory from what it says it was built from, or refused with the
+reason (see [the format stamp](#separate-compilation-workflow)); the source
+beside a refused bundle is not loaded in its place.
 
 A library without `:- module/2` defines predicates of `user`, whether it
 loads from its source or from its bundle: the top level, other modules and
@@ -833,7 +836,7 @@ shumway-compile [options] input1.pl [input2.pl ...]
   call graph, the `:- ensure_linked` set, and any module-qualified
   references.
 - File header: magic bytes `SHMO` + a `uint32` version field
-  (currently `3`). The format is frozen pre-release: writer and reader
+  (currently `4`). The format is frozen pre-release: writer and reader
   require exactly this version: there is no backward compatibility with
   older `.shmo` versions until the first public release.
 - Every `.shmo` and `.shum` also records **the Shumway version that wrote
@@ -848,10 +851,24 @@ shumway-compile [options] input1.pl [input2.pl ...]
   version field (a `uint64`): a fingerprint of the instruction set and its
   encoding, of the cell tags and of the two files' layouts. It is computed,
   not counted, so it stays the same from one release to the next for as
-  long as the format does, and a bundle built once keeps loading. A file
-  with another stamp is refused when it is opened, with a message that says
-  to build it again; nothing of it is read. `BundleReader.IsCurrent` answers
-  the same question from a file's first sixteen bytes.
+  long as the format does, and a bundle built once keeps loading. The code
+  of a file with another stamp is not read. `BundleReader.IsCurrent`
+  answers the same question from a file's first sixteen bytes.
+- After the stamp, every `.shmo` and `.shum` says **how it was built**
+  (ADR-076), in a part every format reads: the tool, the inputs in order,
+  the options that change the product (`--library`, `--goal`, `--entry`,
+  `--consult`, `--strip`, `--wasm` and the like), and for each source its
+  digest and the time it was last written. Built with `--with-source`, it
+  also holds a copy of each input source. `use_module(library(X))`,
+  `shumway-link` and `shumway-lib` build a file with another stamp again
+  from that, in memory, and say they did. A source is found by its name
+  beside the file or on the library search path, or taken from the copy;
+  when the two differ, the newer is compiled, with a warning. Nothing is
+  written: linking again is how a rebuilt file is kept. A file that cannot
+  be built again is refused, and the message says why: it was built before
+  files said how they were built, a source it names is not there, a host
+  or `save_state/1` wrote it, or it was built under rules this Shumway does
+  not rebuild.
 
 Flags:
 

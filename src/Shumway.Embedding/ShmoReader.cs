@@ -39,6 +39,7 @@ public static class ShmoReader
                 + $"(requires {ShmoFormat.CurrentVersion}; pre-release formats are "
                 + "not backward compatible — recompile the source).");
         BundleFormat.RequireStamp(headerReader, ".shmo");
+        var (rules, recipe) = BundleFormat.ReadRecipe(headerReader);
 
         // the byte after the stamp selects the body encoding
         // (raw / Brotli), sharing the .shum framing; see BundleFormat.
@@ -278,7 +279,11 @@ public static class ShmoReader
             imports: imports, libraryDeps: libraryDeps, dialect: dialect,
             generatorVersion: generatorVersion, flags: flags,
             initializationGoals: initializationGoals,
-            dynamicLibraries: dynamicLibraries);
+            dynamicLibraries: dynamicLibraries)
+        {
+            Recipe = recipe,
+            RecipeRules = rules,
+        };
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

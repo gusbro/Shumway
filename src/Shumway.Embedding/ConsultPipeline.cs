@@ -136,8 +136,11 @@ internal sealed class ConsultPipeline
             Debugging.ShumwayDebugHelper.NoteSourceFile(path);
         try
         {
+            string fullPath = E._directory.FullPath(path);
             ConsultStringInner(
-                Shumway.Core.TextFile.ReadAllText(path, E._flags.DefaultTextEncoding),
+                E._sourcesInMemory is { } inMemory && inMemory.TryGetValue(fullPath, out string? held)
+                    ? held
+                    : Shumway.Core.TextFile.ReadAllText(path, E._flags.DefaultTextEncoding),
                 recordInHistory: true,
                 moduleNameFallback: intoModule,
                 reconsult: reconsult,

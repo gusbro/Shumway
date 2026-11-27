@@ -11,7 +11,8 @@ namespace Shumway.Tests.Embedding;
 public class Phase33Wave5Tests
 {
     // After the magic, the version and the format's stamp.
-    private const int CompressionFlagAt = 16;
+    // After the stamp, the rules version and the recipe (ADR-076).
+    private static int CompressionFlagAt(byte[] image) => BundleFormat.FlagAt(image);
 
     private readonly ITestOutputHelper _output;
     public Phase33Wave5Tests(ITestOutputHelper output) => _output = output;
@@ -109,7 +110,7 @@ public class Phase33Wave5Tests
         });
         Assert.True(result.Success);
         byte[] bytes = result.Bytes!;
-        Assert.Equal(BundleFormat.CompressionBrotli, bytes[CompressionFlagAt]);
+        Assert.Equal(BundleFormat.CompressionBrotli, bytes[CompressionFlagAt(bytes)]);
 
         var bundle = BundleReader.FromBytes(bytes);
         var e = PrologEngine.FromBundle(bundle);
@@ -141,7 +142,7 @@ public class Phase33Wave5Tests
             EntryPoints = new[] { new PredicateRef("p", 0) },
         });
         Assert.True(result.Success);
-        Assert.Equal(BundleFormat.CompressionNone, result.Bytes![CompressionFlagAt]);
+        Assert.Equal(BundleFormat.CompressionNone, result.Bytes![CompressionFlagAt(result.Bytes!)]);
         var e = new PrologEngine();
         e.LoadBundle(BundleReader.FromBytes(result.Bytes!));
         Assert.True(e.Query("p.").Success);
@@ -307,7 +308,7 @@ public class Phase33Wave5Tests
             src.Append($"big(k{i}, v{i}).\n");
         var obj = ShmoCompiler.CompileSource(src.ToString(), moduleNameFallback: "t6big");
         byte[] bytes = ShmoWriter.ToBytes(obj);
-        Assert.Equal(BundleFormat.CompressionBrotli, bytes[CompressionFlagAt]);
+        Assert.Equal(BundleFormat.CompressionBrotli, bytes[CompressionFlagAt(bytes)]);
 
         var back = ShmoReader.FromBytes(bytes);
         Assert.Equal(obj.ModuleName, back.ModuleName);
@@ -333,7 +334,7 @@ public class Phase33Wave5Tests
     {
         var obj = ShmoCompiler.CompileSource(":- public s/0.\ns.\n", moduleNameFallback: "t6tiny");
         byte[] bytes = ShmoWriter.ToBytes(obj);
-        Assert.Equal(BundleFormat.CompressionNone, bytes[CompressionFlagAt]);
+        Assert.Equal(BundleFormat.CompressionNone, bytes[CompressionFlagAt(bytes)]);
         Assert.Equal("t6tiny", ShmoReader.FromBytes(bytes).ModuleName);
     }
 
