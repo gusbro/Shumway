@@ -139,6 +139,26 @@ q.
         Assert.Equal("greet", recipe.Goal);
     }
 
+    // An object of another format given to the librarian is compiled again
+    // from its recipe, in memory, with its source beside it.
+    [Fact]
+    public void Lib_RebuildsAnObjectOfAnotherFormat()
+    {
+        Write("m2.pl", @"
+:- module(m2, [q/0]).
+q.
+");
+        Run("Shumway.Compile", "shumway-compile", "-o", "m2.shmo", "m2.pl");
+        string shmo = Path.Combine(_dir, "m2.shmo");
+        byte[] stale = File.ReadAllBytes(shmo);
+        stale[8] ^= 0xFF;
+        File.WriteAllBytes(shmo, stale);
+        Run("Shumway.Lib", "shumway-lib", "create", "lib2.shum", "m2.shmo");
+        var archive = BundleReader.ReadFromFile(Path.Combine(_dir, "lib2.shum"));
+        Assert.Equal("m2", ShmoReader.FromBytes(Assert.Single(archive.ArchiveMembers).ShmoBytes).ModuleName);
+        Assert.Equal(stale, File.ReadAllBytes(shmo));
+    }
+
     [Fact]
     public void Lib_RecordsItsMembers()
     {

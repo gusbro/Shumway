@@ -386,7 +386,7 @@ export async function importFolder(name, dial, picked, report = () => {}, source
     const library = libraryOf(file.path);
     let failed = null;
     if (file.bundle !== undefined) failed = await engine.LibraryTakeBundle(name, file.path, file.bundle);
-    else if (file.bytes !== undefined) failed = await engine.LibraryPutBundle(name, library, file.bytes);
+    else if (file.bytes !== undefined) failed = await engine.LibraryPutBundle(name, library, file.bytes, true);
     else continue;
     // A library that came as its bundle alone gets the source the bundle
     // carries of it, when it carries one, where it can be read.
@@ -654,7 +654,7 @@ export function restoreBundles(names, say = () => { }, lost = () => { }) {
           // A page closed while it stored a bundle leaves the file empty. Put
           // back, it is what library(X) finds, and the library never loads
           // nor compiles again.
-          if (await engine.LibraryPutBundle(name, library, bytes)) broken.push(library);
+          if (await engine.LibraryPutBundle(name, library, bytes, false)) broken.push(library);
         } catch { /* that library compiles again when it is used */ }
       }
       for (const library of broken) {

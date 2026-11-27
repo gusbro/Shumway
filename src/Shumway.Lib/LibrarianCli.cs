@@ -340,8 +340,32 @@ internal static class LibrarianCli
             try { ShmoReader.FromBytes(bytes); }
             catch (InvalidDataException ex)
             {
-                Console.Error.WriteLine($"shumway-lib: '{path}' is not a valid .shmo: {ex.Message}");
-                return false;
+                // ADR-076: one of another format is compiled again from its
+                // recipe, in memory, with the sources beside it.
+                if (BundleFormat.HeaderRecipe(bytes) is null)
+                {
+                    Console.Error.WriteLine($"shumway-lib: '{path}' is not a valid .shmo: {ex.Message}");
+                    return false;
+                }
+                string dir = Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".";
+                try
+                {
+                    bytes = BundleRebuild.Rebuild(bytes, Path.GetFileName(path), new BundleRebuild.Context
+                    {
+                        BaseDirectory = dir,
+                        FindFile = file => File.Exists(Path.Combine(dir, file)) ? Path.Combine(dir, file) : null,
+                        LibraryDirs = new[] { dir },
+                        Warn = message => Console.Error.WriteLine("shumway-lib: warning: " + message),
+                    });
+                }
+                catch (RebuildRefusedException refused)
+                {
+                    Console.Error.WriteLine($"shumway-lib: '{path}': {refused.Message}");
+                    return false;
+                }
+                Console.Error.WriteLine(
+                    $"shumway-lib: {Path.GetFileName(path)} is in another format of compiled code: "
+                    + "rebuilt from what it says it was built from.");
             }
             members.Add(new BundleArchiveMember(Path.GetFileName(path), bytes));
         }

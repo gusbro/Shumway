@@ -694,6 +694,30 @@ public sealed partial class PrologEngine
     // dynamic facts, the AddLibraryDirectory API, the SHUMWAY_LIBRARY_PATH env
     // var, and (added by the REPL/CLI) the shipped lib/ directory. Lazily built
     // so the env read happens once, on first library resolution.
+    /// <summary>ADR-076: what a rebuild of the bundle at <paramref name="full"/>
+    /// looks things up in: the files beside it, then the library search path.</summary>
+    private BundleRebuild.Context RebuildBeside(string full)
+    {
+        string dir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(full)) ?? ".";
+        var dirs = new List<string> { dir };
+        if (_libraryDirs is not null) dirs.AddRange(_libraryDirs);
+        return new BundleRebuild.Context
+        {
+            BaseDirectory = dir,
+            FindFile = file =>
+            {
+                foreach (string d in dirs)
+                {
+                    string candidate = System.IO.Path.Combine(d, file);
+                    if (System.IO.File.Exists(candidate)) return candidate;
+                }
+                return null;
+            },
+            LibraryDirs = dirs,
+            Warn = message => Warn("warning: " + message),
+        };
+    }
+
     private List<string>? _libraryDirs;
 
     private void EnsureLibraryDirs()
@@ -852,9 +876,10 @@ public sealed partial class PrologEngine
     /// <summary>Resolves <c>library(<paramref name="name"/>)</c> to a file on the
     /// library search path (ADR-038): in search-path order, the first directory
     /// with <c>name.pl</c> or <c>name.shum</c>. With both, the bundle when it is
-    /// of this format of compiled code and not older than its source, else the
-    /// source. Returns the full path in <paramref name="path"/>, or <c>false</c>
-    /// if none is found.</summary>
+    /// not older than its source, else the source. A bundle of another format
+    /// is still the library: its load rebuilds it, or refuses it with the
+    /// reason (ADR-076). Returns the full path in <paramref name="path"/>, or
+    /// <c>false</c> if none is found.</summary>
     internal bool TryResolveLibrary(string name, out string path)
     {
         foreach (string dir in EnumerateLibraryDirs())
@@ -881,8 +906,11 @@ public sealed partial class PrologEngine
         {
             try
             {
-                return System.IO.File.GetLastWriteTimeUtc(bundle) >= System.IO.File.GetLastWriteTimeUtc(source)
-                    && BundleReader.IsCurrentFile(bundle);
+                if (System.IO.File.GetLastWriteTimeUtc(bundle) < System.IO.File.GetLastWriteTimeUtc(source))
+                    return false;
+                using var file = System.IO.File.OpenRead(bundle);
+                var magic = new byte[4];
+                return file.Read(magic, 0, 4) == 4 && BundleReader.IsBundle(magic);
             }
             catch { return false; }
         }
@@ -1083,14 +1111,35 @@ public sealed partial class PrologEngine
             try
             {
                 if (_consultedPaths.Contains(full)) ReconsultFile(path);
-                else if (isBundle && !refusedBefore && !BundleReader.IsCurrentFile(full)
-                         && TryResolveLibrarySource(name, out _))
+                else if (isBundle && !refusedBefore && !BundleReader.IsCurrentFile(full))
                 {
-                    // Written with another format (BundleFormat.Stamp): as none,
-                    // when the library's source is there to load in its place.
-                    Warn($"warning: library({name}): its bundle was written with another format "
-                       + "and is not loaded; its source is");
-                    return LoadLibraryWithNoBundle(name);
+                    // Written with another format (BundleFormat.Stamp): built
+                    // again from its recipe, in memory (ADR-076), or refused
+                    // with the reason. A library a page compiled from its
+                    // source is compiled from it again, as the page does.
+                    byte[] stale = System.IO.File.ReadAllBytes(full);
+                    if (BundleFormat.HeaderRecipe(stale)?.Recipe is { Tool: "page" }
+                        && TryResolveLibrarySource(name, out _))
+                    {
+                        Warn($"warning: library({name}): its bundle was written with another format "
+                           + "and is not loaded; its source is");
+                        return LoadLibraryWithNoBundle(name);
+                    }
+                    Bundle rebuilt;
+                    try
+                    {
+                        rebuilt = BundleReader.FromBytes(BundleRebuild.Rebuild(
+                            stale, System.IO.Path.GetFileName(full), RebuildBeside(full)));
+                    }
+                    catch (RebuildRefusedException ex)
+                    {
+                        throw new System.IO.InvalidDataException($"library({name}): {ex.Message}");
+                    }
+                    Warn($"warning: library({name}): its bundle was written with another format of "
+                       + "compiled code; it was rebuilt from what it says it was built from");
+                    LoadBundleLinkingLive(() => LoadBundleCore(
+                        rebuilt, System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(full))));
+                    ImportLoadedBundleIntoUser();
                 }
                 else if (isBundle && !refusedBefore && LibraryBundleFilter is { } accepts)
                 {

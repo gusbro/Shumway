@@ -54,6 +54,11 @@ public sealed class LinkPlan
     /// <see cref="Report"/> says. <paramref name="usageError"/> is set when
     /// what failed is the goal given.</summary>
     public LinkConfig? Prepare(IReadOnlyList<string> inputPaths, out bool usageError)
+        => Prepare(inputPaths.Select(p => new LinkInput { Path = p }).ToList(), out usageError);
+
+    /// <summary>As <see cref="Prepare(IReadOnlyList{string}, out bool)"/>, for
+    /// inputs a rebuild may hold in memory.</summary>
+    public LinkConfig? Prepare(IReadOnlyList<LinkInput> inputs, out bool usageError)
     {
         usageError = false;
         var objects = new List<ShmoObject>();
@@ -65,14 +70,17 @@ public sealed class LinkPlan
         // archive): a library's goal runs in it.
         string? lastInputModule = null;
         bool lastInputIsSource = false;
-        foreach (var path in inputPaths)
+        var sourceTexts = new Dictionary<string, string>();
+        foreach (var input in inputs)
         {
+            string path = input.Path;
             string name = Path.GetFileName(path);
             try
             {
                 if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
                 {
-                    var lib = BundleReader.ReadFromFile(path);
+                    var lib = input.Archive ?? ReadOrRebuild(path, BundleReader.ReadFromFile,
+                        bytes => BundleReader.FromBytes(bytes));
                     if (lib.ArchiveMembers.Count == 0)
                     {
                         Report($"shumway-link: library '{path}' is a linked bundle, not a "
@@ -92,12 +100,16 @@ public sealed class LinkPlan
                     // --consult, one at a time otherwise.
                     sourceInputs.Add(path);
                     lastInputIsSource = true;
+                    if (input.Text is not null) sourceTexts[path] = input.Text;
                     recipeInputs.Add(new RecipeInput { Kind = RecipeInputKind.Source, Name = name });
-                    recipeSources.Add(RecipeSource.Of(name, File.ReadAllBytes(path), File.GetLastWriteTimeUtc(path)));
+                    recipeSources.Add(RecipeSource.Of(name,
+                        input.Text is not null ? System.Text.Encoding.UTF8.GetBytes(input.Text) : File.ReadAllBytes(path),
+                        input.WrittenUtc ?? File.GetLastWriteTimeUtc(path)));
                 }
                 else
                 {
-                    var obj = ShmoReader.ReadFromFile(path);
+                    var obj = input.Object ?? ReadOrRebuild(path, ShmoReader.ReadFromFile,
+                        bytes => ShmoReader.FromBytes(bytes));
                     objects.Add(obj);
                     lastInputModule = obj.ModuleName;
                     lastInputIsSource = false;
@@ -129,7 +141,8 @@ public sealed class LinkPlan
                 {
                     compiled = ShmoViaConsult.CompileMany(
                         sourceInputs, LibraryDirs, ShmoBuildMode.Release, errors,
-                        attachedLibraries: consultAttached, roots: roots);
+                        attachedLibraries: consultAttached, roots: roots,
+                        rootTexts: sourceTexts.Count > 0 ? sourceTexts : null);
                 }
                 catch (Exception ex)
                 {
@@ -152,7 +165,11 @@ public sealed class LinkPlan
                 // pull. So a small program need not be compiled to a .shmo first.
                 foreach (var path in sourceInputs)
                 {
-                    var res = ShmoCompiler.TryCompileFile(path, ShmoBuildMode.Release);
+                    var res = sourceTexts.TryGetValue(path, out string? text)
+                        ? ShmoCompiler.TryCompileSource(text, Path.GetFileNameWithoutExtension(path),
+                            ShmoBuildMode.Release,
+                            includeBaseDir: Path.GetDirectoryName(Path.GetFullPath(path)))
+                        : ShmoCompiler.TryCompileFile(path, ShmoBuildMode.Release);
                     foreach (var w in res.Warnings)
                         Report($"{w.Where(path)}: warning: {w.Message}");
                     if (res.Object is null)
@@ -296,12 +313,49 @@ public sealed class LinkPlan
         };
     }
 
+    // ADR-076: an object or an archive of another format is built again from
+    // its recipe, in memory, from the sources beside it or on the library
+    // search path; refused, the reason is the read error.
+    private T ReadOrRebuild<T>(string path, Func<string, T> read, Func<byte[], T> fromBytes)
+    {
+        try { return read(path); }
+        catch (InvalidDataException) when (IsOfAnotherFormat(path))
+        {
+            string dir = Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".";
+            var dirs = new List<string> { dir };
+            dirs.AddRange(LibraryDirs);
+            byte[] rebuilt;
+            try
+            {
+                rebuilt = BundleRebuild.Rebuild(File.ReadAllBytes(path), Path.GetFileName(path),
+                    new BundleRebuild.Context
+                    {
+                        BaseDirectory = dir,
+                        FindFile = file => dirs.Select(d => Path.Combine(d, file)).FirstOrDefault(File.Exists),
+                        LibraryDirs = dirs,
+                        WasmBaker = WasmBaker,
+                        Warn = message => Report("shumway-link: warning: " + message),
+                    });
+            }
+            catch (RebuildRefusedException ex) { throw new InvalidDataException(ex.Message); }
+            Report($"shumway-link: {Path.GetFileName(path)} is in another format of compiled code: "
+                + "rebuilt from what it says it was built from.");
+            return fromBytes(rebuilt);
+        }
+    }
+
+    private static bool IsOfAnotherFormat(string path)
+    {
+        try { return BundleFormat.HeaderRecipe(File.ReadAllBytes(path)) is not null; }
+        catch (IOException) { return false; }
+    }
+
     // A source with library dependencies or load-time hooks, compiled one
     // file at a time: the consult pipeline is what loads those.
     private void HintConsult(string path)
     {
         string text;
-        try { text = File.ReadAllText(path); } catch { return; }
+        try { text = File.Exists(path) ? File.ReadAllText(path) : ""; } catch { return; }
         bool hasLibDeps = text.Contains("use_module(library(");
         bool hasHooks = text.Contains("term_expansion(")
             || text.Contains("goal_expansion(")
@@ -312,4 +366,16 @@ public sealed class LinkPlan
                 + "the consult pipeline instead:\n"
                 + $"  shumway-link --consult -L <libdir> ... {path}");
     }
+}
+
+/// <summary>An input of a <see cref="LinkPlan"/>: a file by its path, which a
+/// rebuild may hold in memory: a source's text and the time it was written,
+/// an object or an archive already read.</summary>
+public sealed class LinkInput
+{
+    public string Path { get; init; } = "";
+    public string? Text { get; init; }
+    public DateTime? WrittenUtc { get; init; }
+    public ShmoObject? Object { get; init; }
+    public Bundle? Archive { get; init; }
 }

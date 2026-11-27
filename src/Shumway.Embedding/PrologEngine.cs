@@ -369,6 +369,11 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// source for incremental rebuilds.</summary>
     internal readonly Dictionary<string, string?> _moduleSourceFile = new();
 
+    /// <summary>ADR-076: the text of a source a rebuild holds in memory, by
+    /// its full path: consulting that path reads this text, and nothing is
+    /// written to disk for it.</summary>
+    internal IReadOnlyDictionary<string, string>? _sourcesInMemory;
+
     /// <summary>The source file a module was consulted from, or <c>null</c> if
     /// it came from an embedded string (baked-in library, prelude, shim).</summary>
     internal string? ModuleSourceFile(string moduleName) =>
