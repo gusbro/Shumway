@@ -192,7 +192,7 @@ public static class ShmoWriter
         foreach (string lib in obj.DynamicLibraries) WriteLengthPrefixedUtf8(bw, lib);
 
         bw.Flush();
-        return BundleFormat.FinalizeImage(ms.ToArray());
+        return BundleFormat.FinalizeImage(ms.ToArray(), obj.Recipe);
     }
 
     private static void WriteLengthPrefixedUtf8(BinaryWriter bw, string s)

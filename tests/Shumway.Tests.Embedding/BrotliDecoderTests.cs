@@ -381,8 +381,8 @@ public sealed class BrotliDecoderTests
             }
             byte[] image = Link(compress: true);
             byte[] raw = Link(compress: false);
-            Assert.Equal(BundleFormat.CompressionBrotli, image[16]);
-            Assert.Equal(BundleFormat.CompressionNone, raw[16]);
+            Assert.Equal(BundleFormat.CompressionBrotli, image[BundleFormat.FlagAt(image)]);
+            Assert.Equal(BundleFormat.CompressionNone, raw[BundleFormat.FlagAt(raw)]);
 
             BundleFormat.ForceOwnBrotliDecoder = true;
             try

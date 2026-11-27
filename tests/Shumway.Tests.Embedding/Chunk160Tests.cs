@@ -172,9 +172,10 @@ public class Chunk160Tests
             callGraph: new Dictionary<PredicateRef, IReadOnlyList<ShmoCallEdge>>(),
             qualifiedRefs: Array.Empty<QualifiedPredicateRef>());
         byte[] bytes = ShmoWriter.ToBytes(obj);
-        // Find and corrupt the visibility byte. V2 layout:
-        //  4 magic + 4 version + 8 format stamp
-        //  + 1 compression flag (Phase 33 T6; 0 = raw for this tiny body)
+        // Find and corrupt the visibility byte. The layout, from the
+        // compression flag on (after the stamp, the rules version and the
+        // recipe, ADR-076):
+        //  1 compression flag (Phase 33 T6; 0 = raw for this tiny body)
         //  + 4 moduleNameLen + 1 ('m')
         //  + 4 sourceLen
         //  + 4 bytecodeLen
@@ -183,8 +184,8 @@ public class Chunk160Tests
         //  + 4 definedCount + 4 nameLen + 1 ('p') + 4 arity + 1 visibility
         // Plus 12 bytes of generator version (3 × uint32), the first body
         // field — see ShmoWriter.
-        // visibility byte is at 4+4+8+1 + 12 + 4+1 + 4 + 4 + 1 + 1 + 4 + 4+1 + 4 = 57.
-        bytes[57] = 99;
+        // visibility byte is at flag + 1 + 12 + 4+1 + 4 + 4 + 1 + 1 + 4 + 4+1 + 4.
+        bytes[BundleFormat.FlagAt(bytes) + 41] = 99;
         var ex = Assert.Throws<InvalidDataException>(() => ShmoReader.FromBytes(bytes));
         Assert.Contains("visibility", ex.Message);
     }

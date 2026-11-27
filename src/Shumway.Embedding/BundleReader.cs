@@ -81,6 +81,7 @@ public static class BundleReader
                 + $"(requires {BundleFormat.CurrentVersion}; pre-release formats are "
                 + "not backward compatible — rebuild the bundle).");
         BundleFormat.RequireStamp(headerReader, "Bundle");
+        var (rules, recipe) = BundleFormat.ReadRecipe(headerReader);
 
         // the byte after the stamp selects the body encoding
         // (raw / Brotli); everything below reads from the decoded body.
@@ -339,7 +340,11 @@ public static class BundleReader
         }
         return new Bundle(entries, foreignAssemblies, snapshot, archiveMembers,
             nativeLibraries, generatorVersion, arityCompat, wasmModules, engineLibraries,
-            dynamicLibraries);
+            dynamicLibraries)
+        {
+            Recipe = recipe,
+            RecipeRules = rules,
+        };
     }
 
     /// <summary>The section <see cref="BundleWriter.WriteInitializationGoals"/> writes.</summary>

@@ -41,7 +41,10 @@ public static class Librarian
         RequireDistinctModules(members);
         var bundle = new Bundle(
             Array.Empty<BundleEntry>(), foreignAssemblies: null,
-            snapshot: null, archiveMembers: members);
+            snapshot: null, archiveMembers: members)
+        {
+            Recipe = new BundleRecipe { Tool = "shumway-lib" },
+        };
         if (wasmBaker?.Invoke(bundle) is { Count: > 0 } modules)
             bundle = bundle.WithWasmModules(modules);
         return BundleWriter.ToBytes(bundle);

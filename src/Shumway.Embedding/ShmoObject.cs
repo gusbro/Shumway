@@ -182,6 +182,14 @@ public sealed class ShmoObject
     /// memory with the stamp explicitly suppressed.</summary>
     public ShumwayVersion GeneratorVersion { get; }
 
+    /// <summary>ADR-076: how the object was compiled, or null when its rules
+    /// version (<see cref="RecipeRules"/>) is not one this engine reads.
+    /// A writer writes <see cref="BundleRecipe.Host"/> when it is null.</summary>
+    public BundleRecipe? Recipe { get; init; }
+
+    /// <summary>ADR-076: the rules version the object was compiled under.</summary>
+    public int RecipeRules { get; init; } = BundleRecipe.CurrentRules;
+
     /// <summary><c>true</c> when the module was compiled in
     /// Arity compatibility mode (<c>shumway-compile --arity</c>, or an
     /// in-file <c>:- set_prolog_flag(arity_compat, true)</c> at any
@@ -363,6 +371,8 @@ public sealed class ShmoObject
             LibraryDeps, Dialect, GeneratorVersion, Flags, goals)
         {
             DynamicSnapshotBytecode = DynamicSnapshotBytecode,
+            Recipe = Recipe,
+            RecipeRules = RecipeRules,
         };
     }
 }

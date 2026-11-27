@@ -1182,7 +1182,10 @@ public static class ShmoLinker
                 // Arity call semantics at runtime (unknown=fail).
                 arityCompat: objects.Any(o => o.ArityCompat),
                 engineLibraries: engineLibraries,
-                dynamicLibraries: dynlib.Record());
+                dynamicLibraries: dynlib.Record())
+            {
+                Recipe = new BundleRecipe { Tool = "shumway-link" },
+            };
             // --with-compiled-il routes the bundle through
             // BundleWriter.ToBytes, which (under includeCompiledIl=true)
             // runs PersistedIlBuilder per entry to materialise IL for
@@ -2617,7 +2620,7 @@ public static class ShmoLinker
         }
         bw.Flush();
         // compress the body (everything after magic+version).
-        return BundleFormat.FinalizeImage(ms.ToArray());
+        return BundleFormat.FinalizeImage(ms.ToArray(), bundle.Recipe);
     }
 
     private static void WriteString(BinaryWriter bw, string s)

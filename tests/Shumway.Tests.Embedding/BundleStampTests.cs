@@ -108,8 +108,8 @@ public sealed class BundleStampTests
     // it: a change to it changes the image, and the stamp has to be raised
     // by hand (BundleFormat.ComputeStamp, "wire form") before the two are
     // pinned again here.
-    private const ulong PinnedStamp = 0xF51E4368E86784FB;
-    private const ulong PinnedImage = 0xD13B8FADABB7C24C;
+    private const ulong PinnedStamp = 0x3CAE0E5A80A41BEE;
+    private const ulong PinnedImage = 0x0F5EAC682AB5F59E;
 
     // A bundle with one source-only entry and nothing compiled: every
     // section of the container, none of the compiler's output.
@@ -118,10 +118,13 @@ public sealed class BundleStampTests
         byte[] image = BundleWriter.ToBytes(new Bundle(new[] { new BundleEntry("fixed", "p(1).\n") }));
         const ulong prime = 1099511628211UL;
         ulong h = 14695981039346656037UL;
+        // The body starts after the flag, with the version of the engine
+        // that wrote it.
+        int generator = BundleFormat.FlagAt(image) + 1;
         for (int i = 0; i < image.Length; i++)
         {
             // Not the stamp itself, nor the version of the engine that wrote it.
-            if (i is >= 8 and < 16 or >= 17 and < 29) continue;
+            if (i >= 8 && i < 16 || i >= generator && i < generator + 12) continue;
             h = (h ^ image[i]) * prime;
         }
         return h;

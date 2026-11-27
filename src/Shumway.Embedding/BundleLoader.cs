@@ -2156,7 +2156,11 @@ internal sealed class BundleLoader
                 new PredicateRef(name, arity), encoded));
         }
         var snapshot = new BundleSnapshot(dynamicOnly, consultHistory, dynamicSeeds);
-        return new Bundle(Array.Empty<BundleEntry>(), foreignAssemblies: null, snapshot);
+        // A saved state is the state of an engine: nothing builds it again.
+        return new Bundle(Array.Empty<BundleEntry>(), foreignAssemblies: null, snapshot)
+        {
+            Recipe = new BundleRecipe { Tool = "save_state" },
+        };
     }
 
     /// <summary>Save-state restores a snapshot previously

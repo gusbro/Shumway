@@ -117,7 +117,19 @@ public sealed class Bundle
     /// </summary>
     public Bundle WithWasmModules(IReadOnlyList<byte[]> wasmModules)
         => new(Entries, ForeignAssemblies, Snapshot, ArchiveMembers, NativeLibraries,
-               GeneratorVersion, ArityCompat, wasmModules, EngineLibraries, DynamicLibraries);
+               GeneratorVersion, ArityCompat, wasmModules, EngineLibraries, DynamicLibraries)
+        {
+            Recipe = Recipe,
+            RecipeRules = RecipeRules,
+        };
+
+    /// <summary>ADR-076: how the bundle was built, or null when its rules
+    /// version (<see cref="RecipeRules"/>) is not one this engine reads.
+    /// A writer writes <see cref="BundleRecipe.Host"/> when it is null.</summary>
+    public BundleRecipe? Recipe { get; init; }
+
+    /// <summary>ADR-076: the rules version the bundle was built under.</summary>
+    public int RecipeRules { get; init; } = BundleRecipe.CurrentRules;
 
     /// <summary>The Shumway version that wrote this bundle. Every writer
     /// stamps it, so a <c>.shum</c> can always say which build produced it —
