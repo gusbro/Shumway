@@ -255,12 +255,10 @@ first time the library is loaded, so nothing is compiled in the browser. This
 matters for large libraries: one that takes half a minute to compile in the
 browser loads in a few seconds.
 
-Build the bundle with the linker. It needs the WebAssembly modules (`--wasm`)
-and must not be compressed (`--no-compress`), because the browser's runtime
-cannot read the bundle's own compression:
+Build the bundle with the linker. It needs the WebAssembly modules (`--wasm`):
 
 ```
-shumway-link --library --wasm --no-compress -o x.shum x.pl
+shumway-link --library --wasm -o x.shum x.pl
 ```
 
 The library's `initialization/1` goals run where it loads, in the page. A
@@ -279,7 +277,7 @@ the result without `--strip`:
 
 ```
 shumway-compile --with-source x.pl
-shumway-link --library --wasm --no-compress -o x.shum x.shmo
+shumway-link --library --wasm -o x.shum x.shmo
 ```
 
 For a library compiled with `--consult`, add `--with-source` to that compile

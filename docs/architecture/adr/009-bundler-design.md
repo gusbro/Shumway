@@ -415,6 +415,17 @@ The bundler is deterministic given the same inputs: the output bytes are identic
 
 - `design/bundle-format.md` (to be created): binary format details.
 
+## Amendment (2026-11-27): every runtime reads a compressed body
+
+A body compressed with Brotli is read on every runtime. Where .NET has no
+Brotli codec, a browser and .NET Framework, Shumway decodes it with its own
+decoder (`ManagedBrotliDecoder`), written from RFC 7932, with the static
+dictionary of its appendix A as a resource. Only .NET 10 writes a compressed
+body; `--no-compress` stays, for a bundle read without decoding.
+
+A page stores a bundle it imports with its body raw (`BundleFormat.Uncompressed`),
+so it decodes once, at the import, and not at every load.
+
 ## Amendment (2026-11-22): a file carries a stamp of its format
 
 A `.shum` and a `.shmo` open with their magic and a version number. The

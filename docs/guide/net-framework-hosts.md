@@ -29,9 +29,10 @@ binaries and tests needs Windows.
 | Tier-1 runtime IL promotion (`engine.IlPromotion.Threshold = N`) | ✅ unchanged |
 | Loading `.shum` bundles, including persisted IL | ✅ link them with the **net48 toolchain** (below) |
 | Producing bundles in-process (`BundleWriter`, `SaveState`) | ✅ (always uncompressed) |
+| Reading Brotli-compressed bundles | ✅ with Shumway's own decoder |
 | `shumway-compile` / `shumway-link` (net48 builds) | ✅ |
 | `--exe` / `--dll` from the net48 toolchain | ✅ emit **Framework** apps (folder deployment, below) |
-| Native AOT, Brotli-compressed bundles, single-file exes | ❌ .NET 10 toolchain only |
+| Native AOT, producing compressed bundles, single-file exes | ❌ .NET 10 toolchain only |
 
 ## Bundles: which toolchain links for which host
 
@@ -46,8 +47,7 @@ Persisted IL is emitted against the *linking* runtime's core library:
   compat shims).
 
 Rule of thumb: **if a Framework host is among your targets, link with the
-net48 build of `shumway-link`**: one bundle serves everything. Remember
-`--no-compress` if a net48 process must also *read* the bundle.
+net48 build of `shumway-link`**: one bundle serves everything.
 
 ## `--exe` / `--dll`: Framework apps from the net48 toolchain
 
