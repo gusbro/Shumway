@@ -37,11 +37,14 @@ public static class WasmBundleTier
     /// <para>The libraries an archive imports and does not hold (ADR-038
     /// §4) load first, through the library path <paramref name="prepare"/>
     /// gives the engine, and are not baked: a call into one is a relocation
-    /// the install resolves against their code.</para></summary>
+    /// the install resolves against their code.</para>
+    ///
+    /// <para>A <paramref name="library"/>'s modules call each other through the
+    /// table, for a program that attaches it (<see cref="BakeLoaded"/>).</para></summary>
     public static IReadOnlyList<byte[]> Bake(Bundle bundle, bool stdlib, Action<string>? log = null,
-                                             Action<PrologEngine>? prepare = null)
+                                             Action<PrologEngine>? prepare = null, bool library = false)
     {
-        if (!stdlib) return new WasmBakeSession(prepare).Bake(bundle, log);
+        if (!stdlib) return new WasmBakeSession(prepare).Bake(bundle, log, library);
         var engine = PrologEngine.FromBundle(bundle);
         Silence(engine);
         return BakeLoaded(engine, new HashSet<int>(), new Dictionary<int, string>(), log);
@@ -52,9 +55,13 @@ public static class WasmBundleTier
     /// predicates, in a module of their own the helpers of its dynamic
     /// predicates' rules, and then the snapshot of each dynamic predicate
     /// whose clauses are not the ones of <paramref name="dynamicsBefore"/>
-    /// (<see cref="WasmPromotionStore.DynamicDigestsOf"/>).</summary>
+    /// (<see cref="WasmPromotionStore.DynamicDigestsOf"/>). For a <paramref
+    /// name="library"/>, a call from one of its modules into another goes
+    /// through the table (<see cref="WasmGroupMember.Module"/>), so an attached
+    /// library installs the module with the modules a program brought in
+    /// (ADR-075, decision 12).</summary>
     internal static IReadOnlyList<byte[]> BakeLoaded(PrologEngine engine, HashSet<int> before,
-        Dictionary<int, string> dynamicsBefore, Action<string>? log)
+        Dictionary<int, string> dynamicsBefore, Action<string>? log, bool library = false)
     {
         // What the bundle registered, read before the query that links: that
         // setup mints the helpers of the bundle's dynamic rules (a library's
@@ -65,14 +72,21 @@ public static class WasmBundleTier
         var portable = new WasmPortableNames(engine);
         var members = new List<WasmGroupMember>();
         var helpers = new List<WasmGroupMember>();
+        Dictionary<int, string>? moduleOf = null;
+        if (library)
+        {
+            moduleOf = new Dictionary<int, string>();
+            foreach (var (module, fid) in engine.PrecompiledPredicateModules()) moduleOf[fid] = module;
+        }
         foreach (var (addr, pred) in WasmPromotionStore.StaticPredicatesOf(engine))
         {
             int fid = pred.FunctorId;
             if (before.Contains(fid)) continue;
             bool mine = own.Contains(fid);
             if (!mine && !portable.Names(fid)) continue;
+            string? module = mine && moduleOf is not null && moduleOf.TryGetValue(fid, out var m) ? m : null;
             (mine ? members : helpers).Add(new WasmGroupMember(pred, addr,
-                store.FloatPoolProvider?.Invoke(fid), store.ImagePoolProvider?.Invoke(fid)));
+                store.FloatPoolProvider?.Invoke(fid), store.ImagePoolProvider?.Invoke(fid), module));
         }
         var modules = new List<byte[]>(2);
         // What the compiler refuses goes with the module, under the name the
@@ -93,7 +107,7 @@ public static class WasmBundleTier
             if (module.Members.Count > 0)
             {
                 log?.Invoke($"wasm: {module.Members.Count} of {members.Count} predicates baked");
-                modules.Add(module.WithRefused(refused).ToBytes());
+                modules.Add(module.WithRefused(refused).InPart(library).ToBytes());
             }
         }
         if (helpers.Count > 0)
@@ -264,21 +278,34 @@ public static class WasmBundleTier
         {
             return (Array.Empty<int>(), "not installed: " + e.Message);
         }
-        if (module.IsSnapshot) return Hold(engine, world, module);
+        // ADR-075, decision 12: a module of an attached library, baked for
+        // one, installs with the members that are linked and again as the
+        // rest come in; one baked otherwise once all of them are.
+        bool partial = store.PartialWasmModules.Contains(bytes) && module.InstallsInPart;
+        if (module.IsSnapshot)
+        {
+            store.PartialWasmModules.Remove(bytes);
+            return Hold(engine, world, module);
+        }
         var biasByFid = new Dictionary<int, int>();
         var predByFid = new Dictionary<int, CompiledPredicate>();
-        if (linked is null)
+        // In part, from a running goal: its members linked before, in the
+        // static program, with the goal's new ones.
+        if (linked is null || partial)
             foreach (var (addr, pred) in WasmPromotionStore.StaticPredicatesOf(engine))
             {
                 biasByFid[pred.FunctorId] = addr;
                 predByFid[pred.FunctorId] = pred;
             }
-        else
+        if (linked is not null)
             foreach (var (addr, pred) in linked)
             {
                 biasByFid[pred.FunctorId] = addr;
                 predByFid[pred.FunctorId] = pred;
             }
+        var memberFids = new List<int>(module.Members.Count);
+        foreach (var m in module.Members)
+            memberFids.Add(FunctorTable.Intern(AtomTable.Intern(m.Name, permanent: true).Id, m.Arity));
         // A module of helpers names them as every process does; this
         // engine's names for them are asked for only then.
         var portable = module.CarriesPortableNames ? new WasmPortableNames(engine) : null;
@@ -287,7 +314,7 @@ public static class WasmBundleTier
                 fid => WasmRelocatableModule.ShapeOf(predByFid[fid],
                     portable is null ? null : portable.ToPortable),
                 world.NextModuleId, out var entry, out var entryAddr, out string reason,
-                portable is null ? null : portable.ToLive))
+                portable is null ? null : portable.ToLive, partial))
             return (Array.Empty<int>(), "not installed: " + reason);
         try
         {
@@ -306,6 +333,7 @@ public static class WasmBundleTier
             wasm.NoteInstalled(fid, bias, predByFid[fid]);
             installed.Add(fid);
         }
+        if (memberFids.TrueForAll(wasm.Covers)) store.PartialWasmModules.Remove(bytes);
         // The module's builtins have the forms the bake saw, so what the
         // compiler refused there it refuses here.
         foreach (var (name, arity, why) in module.Refused)
@@ -315,7 +343,7 @@ public static class WasmBundleTier
             int fid = FunctorTable.Intern(AtomTable.Intern(local, permanent: true).Id, arity);
             if (biasByFid.ContainsKey(fid)) wasm.MarkUnpromotable(fid, why);
         }
-        return (installed, $"{installed.Count} predicates installed from the bundle");
+        return (installed, $"{reason} installed from the bundle");
     }
 }
 
@@ -339,7 +367,7 @@ public sealed class WasmBakeSession
     /// its dynamic rules (<see cref="WasmBundleTier.BakeLoaded"/>); no module
     /// when none compiled. The bundle's initialization goals do not run: what
     /// they assert is compiled where the bundle loads.</summary>
-    public IReadOnlyList<byte[]> Bake(Bundle bundle, Action<string>? log = null)
+    public IReadOnlyList<byte[]> Bake(Bundle bundle, Action<string>? log = null, bool library = false)
     {
         var clock = System.Diagnostics.Stopwatch.StartNew();
         _engine.LoadLibraryDependencies(bundle);
@@ -352,6 +380,6 @@ public sealed class WasmBakeSession
         _engine.LoadBundleWithoutInitialization(bundle);
         log?.Invoke($"wasm: loaded what it imports in {dependencies:0.00} s, "
             + $"the bundle in {clock.Elapsed.TotalSeconds - dependencies:0.00} s");
-        return WasmBundleTier.BakeLoaded(_engine, before, dynamicsBefore, log);
+        return WasmBundleTier.BakeLoaded(_engine, before, dynamicsBefore, log, library);
     }
 }

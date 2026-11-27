@@ -2336,6 +2336,11 @@ public sealed partial class PrologEngine
         // the per-query PredicatesByAddress map so it can translate the
         // bytecode-PC the interpreter has into the functor the store
         // wants.
+        if (_codeBroughtIn)
+        {
+            _codeBroughtIn = false;
+            IlPromotion.ForgetUnresolvedCallRefusals();
+        }
         interp.Tier1Dispatcher = new Tier1DispatcherAdapter(
             IlPromotion, linkResult.PredicatesByAddress, _jitIndexProfile, engine)
         {

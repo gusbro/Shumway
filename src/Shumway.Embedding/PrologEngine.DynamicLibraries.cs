@@ -58,26 +58,21 @@ public sealed partial class PrologEngine
     internal bool IsCodePending(string module)
         => _attachedModules is { } modules && modules.TryGetValue(module, out var am) && !am.CodeLoaded;
 
-    // The modules of each attached library whose code is not in, and the
-    // library's baked wasm modules: one binds every predicate it holds, so it
-    // waits for the last of them (ADR-075, decision 12).
-    private readonly Dictionary<string, int> _pendingModulesOfLibrary = new(StringComparer.Ordinal);
-    private Dictionary<string, List<byte[]>>? _wasmAwaitingLibrary;
+    // Each attached library's baked wasm modules (ADR-075, decision 12).
+    private Dictionary<string, List<byte[]>>? _libraryWasm;
 
     /// <summary>Queues <paramref name="modules"/>, baked for the library being
-    /// attached, for when its modules are all in; at once when they are.</summary>
+    /// attached: each installs with the members that are linked (<see
+    /// cref="IlPromotionStore.PartialWasmModules"/>).</summary>
     internal void QueueLibraryWasm(string library, IReadOnlyList<byte[]> modules)
     {
         if (modules.Count == 0) return;
-        if (_pendingModulesOfLibrary.GetValueOrDefault(library) == 0)
+        (_libraryWasm ??= new(StringComparer.Ordinal))[library] = new List<byte[]>(modules);
+        foreach (var module in modules)
         {
-            IlPromotion.PendingWasmModules.AddRange(modules);
-            return;
+            IlPromotion.PartialWasmModules.Add(module);
+            IlPromotion.PendingWasmModules.Add(module);
         }
-        _wasmAwaitingLibrary ??= new(StringComparer.Ordinal);
-        if (!_wasmAwaitingLibrary.TryGetValue(library, out var waiting))
-            _wasmAwaitingLibrary[library] = waiting = new List<byte[]>();
-        waiting.AddRange(modules);
     }
 
     /// <summary>Records a module whose code <c>LoadBundleCore</c> deferred.</summary>
@@ -85,7 +80,6 @@ public sealed partial class PrologEngine
     {
         var am = new AttachedModule(_attachingLibrary!, entry, shippedClausesRead);
         (_attachedModules ??= new(StringComparer.Ordinal))[entry.ModuleName] = am;
-        _pendingModulesOfLibrary[am.Library] = _pendingModulesOfLibrary.GetValueOrDefault(am.Library) + 1;
         _pendingModuleAtoms.Add(AtomTable.Intern(entry.ModuleName, permanent: true).Id);
         _attachedByFid ??= new();
         bool ownsUser = !entry.IsExportQualified;
@@ -122,6 +116,98 @@ public sealed partial class PrologEngine
         return null;
     }
 
+    /// <summary>A public of a module, such as an entry its link made public,
+    /// is defined under its bare name: a call that names the module is for
+    /// that name.</summary>
+    private int PublicOfItsModule(int fid)
+    {
+        if (ModuleQualify.TryDemangle(fid, out int moduleAtom, out int bare)
+            && _attachedByFid!.TryGetValue(bare, out var owner)
+            && !owner.Locals.Contains(bare)
+            && owner.Entry.ModuleName == AtomTable.GetById(moduleAtom)?.Name)
+            return bare;
+        return fid;
+    }
+
+    /// <summary>The attached module that offers <paramref name="fid"/> to a
+    /// call that names no module, with its library, or null.</summary>
+    internal (string Module, string Library)? AttachedOffering(int fid)
+        => _attachedByFid is { } attached && attached.TryGetValue(fid, out var am)
+            ? (am.Entry.ModuleName, am.Library) : null;
+
+    /// <summary>The names a module offers to a call that names no module, as
+    /// <see cref="NoteAttachedModule"/> indexes them: its publics, and the
+    /// predicates of a module without a module directive. A dynamic one comes
+    /// with <c>Dynamic</c> set.</summary>
+    private static IEnumerable<(int Fid, bool Dynamic)> NamesOffered(BundleEntry entry)
+    {
+        bool ownsUser = !entry.IsExportQualified;
+        foreach (var d in entry.Defined)
+        {
+            int fid = FunctorTable.Intern(
+                AtomTable.Intern(d.Indicator.Name, permanent: true).Id, d.Indicator.Arity);
+            if (IsGlobalHookFunctor(fid)) continue;
+            if (d.Visibility == PredicateVisibility.Dynamic)
+            {
+                if (ownsUser) yield return (fid, true);
+            }
+            else if (d.Visibility == PredicateVisibility.Public
+                     || (ownsUser && !IsMetaHelperFunctorName(fid)))
+                yield return (fid, false);
+        }
+    }
+
+    /// <summary>ADR-075: a name is offered by one module. Refuses
+    /// <paramref name="bundle"/> before anything of it is attached when one of
+    /// its modules offers a name that another of its modules, an attached
+    /// module or the program defines. Two dynamic predicates are one, with the
+    /// clauses of both (decision 9).</summary>
+    private void RefuseSharedNames(Bundle bundle, string library)
+    {
+        var offered = new Dictionary<int, (string Module, bool Dynamic)>();
+        HashSet<int>? program = null;
+        foreach (var entry in bundle.Entries)
+        {
+            if (entry.ModuleName == Prelude.ModuleName) continue;
+            foreach (var (fid, dynamic) in NamesOffered(entry))
+            {
+                // A builtin or a library predicate of the engine: ADR-059.
+                if (SystemKindOf(fid) is not null) continue;
+                if (offered.TryGetValue(fid, out var other))
+                {
+                    if (other.Module != entry.ModuleName && !(dynamic && other.Dynamic))
+                        throw SharedName(library, entry.ModuleName, fid, $"module {other.Module} of the same bundle");
+                    continue;
+                }
+                offered[fid] = (entry.ModuleName, dynamic);
+                if (_attachedByFid is { } attached && attached.TryGetValue(fid, out var am))
+                    throw SharedName(library, entry.ModuleName, fid, $"module {am.Entry.ModuleName} of bundle({am.Library})");
+                if (_dynStore.IsDynamic(fid) && !_dynStore.IsImplicitOnly(fid))
+                {
+                    if (!dynamic) throw SharedName(library, entry.ModuleName, fid, "a dynamic predicate already declared");
+                    continue;
+                }
+                program ??= GlobalStaticHeadFunctors();
+                if (program.Contains(fid))
+                    throw SharedName(library, entry.ModuleName, fid, "the program");
+            }
+        }
+    }
+
+    private PrologRuntimeException SharedName(string library, string module, int fid, string definedBy)
+    {
+        var (atomId, arity) = FunctorTable.Lookup(fid);
+        string name = AtomTable.GetById(atomId)?.Name ?? "?";
+        Warn($"error: bundle({library}) is not attached: its module {module} defines {name}/{arity}, "
+             + $"which {definedBy} defines");
+        return new PrologRuntimeException("permission_error", "import,procedure",
+            (object)new CompoundTerm(":", new Term[]
+            {
+                new AtomTerm(module),
+                new CompoundTerm("/", new Term[] { new AtomTerm(name), new IntTerm(arity) }),
+            }));
+    }
+
     /// <summary>Finds <c>Name.shum</c> on the library search path.</summary>
     internal bool TryResolveBundle(string name, out string path)
     {
@@ -150,11 +236,17 @@ public sealed partial class PrologEngine
             throw new PrologRuntimeException(
                 "existence_error", "source_sink",
                 (object)new CompoundTerm("bundle", new Term[] { new AtomTerm(name) }));
-        _bundlesAttachedByName.TryAdd(name, path);
-        if (!_attachedLibraryPaths.Add(path)) return;
+        if (_attachedLibraryPaths.Contains(path))
+        {
+            _bundlesAttachedByName.TryAdd(name, path);
+            return;
+        }
         var read = ProfMark.Now();
         var bundle = BundleReader.ReadFromFile(path);
         read.AddTo(ref ProfAttachReadTicks, ref ProfAttachReadBytes);
+        RefuseSharedNames(bundle, name);
+        _bundlesAttachedByName.TryAdd(name, path);
+        _attachedLibraryPaths.Add(path);
         AttachBundle(bundle, System.IO.Path.GetDirectoryName(path), name);
     }
 
@@ -174,8 +266,13 @@ public sealed partial class PrologEngine
             throw new PrologRuntimeException(
                 "existence_error", "source_sink",
                 (object)new CompoundTerm("bundle", new Term[] { new AtomTerm(library.Name) }));
-        if (_attachedLibraryPaths.Add(path))
-            AttachBundle(BundleReader.ReadFromFile(path), System.IO.Path.GetDirectoryName(path), library.Name);
+        if (!_attachedLibraryPaths.Contains(path))
+        {
+            var bundle = BundleReader.ReadFromFile(path);
+            RefuseSharedNames(bundle, library.Name);
+            _attachedLibraryPaths.Add(path);
+            AttachBundle(bundle, System.IO.Path.GetDirectoryName(path), library.Name);
+        }
         foreach (var use in library.Uses)
         {
             int bare = FunctorTable.Intern(AtomTable.Intern(use.Name, permanent: true).Id, use.Arity);
@@ -397,13 +494,26 @@ public sealed partial class PrologEngine
     /// (<see cref="AdoptDeclaredDynamics"/>). For tests.</summary>
     internal long AdoptedDeclarations;
 
+    // A module's code came in since the last query setup: the next one gives
+    // Tier-1 another try at the callers that found nothing to call.
+    internal bool _codeBroughtIn;
+
     /// <summary>Brings a module's code in. From a running goal, the code is
     /// linked into that goal.</summary>
     private void BringInModule(AttachedModule am, Activation? engine)
     {
         if (am.CodeLoaded) return;
         am.CodeLoaded = true;
+        _codeBroughtIn = true;
         _pendingModuleAtoms.Remove(AtomTable.Intern(am.Entry.ModuleName, permanent: true).Id);
+        // The library's baked wasm installs again with this module's code:
+        // in a running goal, as the load links it into the goal; else at the
+        // next query setup.
+        if (_libraryWasm is { } libraryWasm && libraryWasm.TryGetValue(am.Library, out var wasm))
+            foreach (var module in wasm)
+                if (IlPromotion.PartialWasmModules.Contains(module)
+                    && !IlPromotion.PendingWasmModules.Contains(module))
+                    IlPromotion.PendingWasmModules.Add(module);
         var prevLive = _liveConsultEngine;
         if (engine is not null) _liveConsultEngine = engine;
         // A dynamic predicate's code is linked from the store, and it was
@@ -428,12 +538,6 @@ public sealed partial class PrologEngine
             _liveConsultEngine = prevLive;
             _captureLivePublish = false;
         }
-        // The last module of the library is in: its baked wasm installs at the
-        // next query setup, against the link that has them all.
-        int left = _pendingModulesOfLibrary[am.Library] - 1;
-        _pendingModulesOfLibrary[am.Library] = left;
-        if (left == 0 && _wasmAwaitingLibrary is { } awaiting && awaiting.Remove(am.Library, out var wasm))
-            IlPromotion.PendingWasmModules.AddRange(wasm);
         // The goal linked the module's code into the buffer it runs on. When
         // that is the host's buffer and the link has every predicate, it
         // stays: the next query finds the program as it is (ADR-015,
@@ -521,6 +625,7 @@ public sealed partial class PrologEngine
     {
         if (_attachedByFid is null) return -1;
         AttachedLibraryLookups++;
+        fid = PublicOfItsModule(fid);
         if (AttachedOwnerOf(fid) is not { } am)
         {
             // A name user imported from a module with module/2 after this goal

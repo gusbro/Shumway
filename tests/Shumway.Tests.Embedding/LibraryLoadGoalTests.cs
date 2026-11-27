@@ -82,13 +82,20 @@ q :- write(q_ran), nl.
         Assert.True(engine.Query("catch(q, error(existence_error(procedure, q/0), _), true).").Success);
     }
 
+    // Each module has its own private who/0: a library offers a name from
+    // one module only (ADR-075).
     [Theory]
     [InlineData(null, "b")]
     [InlineData("a", "a")]
     public void TheGoal_RunsInTheModuleNamed_OrTheLastObject(string? module, string expected)
     {
-        var link = Link("who", module,
-            Object("a", "who :- write(a), nl.\n"), Object("b", "who :- write(b), nl.\n"));
+        var link = Link("who", module, Object("a", @"
+:- module(a, []).
+who :- write(a), nl.
+"), Object("b", @"
+:- module(b, []).
+who :- write(b), nl.
+"));
         Assert.True(link.Success, Messages(link));
         var output = new StringWriter();
         Engine(output).LoadBundle(BundleReader.FromBytes(link.Bytes!));

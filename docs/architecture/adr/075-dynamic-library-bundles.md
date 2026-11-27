@@ -71,8 +71,9 @@ from the start.
    entry already says of its module**: its name, whether it has a
    `:- module/2` directive, its exports and imports, the predicates it
    defines with their kind, its dynamic clauses, its operators and flags,
-   and its initialization goals. Any bundle linked with `--library` can be
-   attached; nothing special is asked when it is built.
+   and its initialization goals. Any bundle can be attached, and nothing
+   special is asked when it is built: one linked with `--library` offers all
+   of its modules, one linked from entry points what its link kept.
 2. **Attaching it declares every module and loads no code.** Each module
    exists from then on, with its exports, its imports, its operators, its
    flags and its dynamic predicates declared. The code of its predicates
@@ -169,17 +170,32 @@ in.
 12. **Each module comes in the form its bundle chose.** Bytecode is always
     there; Tier-1 code (IL, or WebAssembly modules) is optional. Linking
     against a library asks nothing about its tiers.
-13. **A call into another bundle, or into another module of a dynamic
-    library, is a dispatch by name**, in either direction and in either
-    tier. No region, no inlined fact and no direct call crosses that line,
-    so a module can be brought in, and a bundle replaced, without rebuilding
-    its callers.
+13. **The code a bundle carries calls into another bundle, or into another
+    module of a dynamic library, by name**, in either direction and in
+    either tier, its persisted IL and its baked WebAssembly. No region, no
+    inlined fact and no direct call of that code crosses that line, so a
+    module can be brought in, and a bundle replaced, without rebuilding its
+    callers. The code the host compiles at run time follows decision 14.
 14. **A module that came as bytecode is promoted by the host's rules**, the
     ones a consulted source gets: by count, or compiled after it is brought
     in where the host compiles a program after each consult. Nothing is
     special to a library. Brought in on demand, the cost follows what is
     used: the page compiled the 1,880 predicates of the application above
     in 5.6 to 7.1 s because it came as one module.
+
+### A name offered twice
+
+15. **A name that two modules would offer is a conflict, and the attach
+    fails before anything comes in.** Two modules offer the same predicate
+    when both would answer an unqualified call to it: two libraries, the
+    program and a library in either order, and two modules of one library,
+    which `shumway-link --library` refuses (`shared_library_name`). A
+    dynamic predicate that both declare is one predicate; a static and a
+    dynamic one are a conflict. The privates of a module with `:- module/2`
+    never are. The attach raises `permission_error(import, procedure,
+    M:N/A)` and names the module that defines the name. A clause that a
+    consult gives to a name an attached library offers is ignored, with an
+    error.
 
 ### What does not change
 
@@ -192,6 +208,11 @@ page.
 
 ## Consequences
 
+- Attaching, and bringing each module in when it is used, pays for a bundle
+  of many modules of which a program uses some. A runtime of one or two
+  modules is linked with `--library` all the same, so that the link keeps
+  all of it; its initialization goals bring it in at the attach, and it is
+  loaded whole at once, as without this.
 - A program's bundle holds its own code, and a missing predicate is found
   when it is linked or when it is loaded, not in the middle of a run.
 - A runtime that keeps a table of the entities loaded, each entity's file
@@ -214,47 +235,51 @@ page.
 - A file whose only content is an initialization goal that loads other
   files, a loader, would be brought in at once by decision 10 and should
   stay out of a dynamic library: the registry holds the dependencies.
+- Attaching reads and parses the whole file, which needs no index: 0.4 s
+  and 85 MB on the desktop for the bundle of 967 modules of the Context,
+  0.14 s in a browser.
+- A call by name into an attached library costs what a call to a predicate
+  of the program does once the host compiles them (decision 14): measured
+  on the desktop in Tier-1 IL, 41 ns a call for both, a library without
+  `:- module/2` called by the bare name and a module with it imported by
+  `use_module/1` alike. In Tier-0 every form costs the same. Not measured in
+  WebAssembly.
+- A module brought in by a goal running on a buffer the host has replaced
+  is linked with the whole program by the next query. The goal that runs on
+  the host's buffer keeps the code it brings in, the query that attaches
+  included (ADR-015, amendments). A notebook's server is one query.
+- In a page a table that gets hot is compiled to WebAssembly as a snapshot
+  in the background, and one over 3,000 instructions is not compiled
+  (ADR-054, amendment of 2026-11-25). A change to the table drops its
+  snapshot, which is compiled again when the table gets hot again.
+- A library linked with `--library --wasm` carries one WebAssembly module
+  for its code, whose modules call each other through the table. Attached,
+  it installs with the modules a program brought in, and again in the goal
+  that brings in another, so a goal that never ends, a notebook's server,
+  runs each module's code as it comes in; the query setup after that
+  installs it against the program. A call into a module that has not come
+  in finds no row in the table and brings the module in. Measured in a
+  browser, a call between two of its modules costs what a call inside one
+  does, and each module that comes in compiles the WebAssembly module again:
+  about 28 ms a module, for a library of 40 modules and 1.9 MB. The helpers
+  of the library's dynamic rules are a module of their own, installed once
+  every module of the library is in. A link that is not a library bakes a
+  module that jumps between its modules, which installs once all of them
+  are in. The fact inlining of persisted IL crosses entries.
 - An update of the runtime needs no rebuild of the programs linked against
   it while it still offers what they call. A predicate that keeps its name
-  and changes its meaning is not detected; a version a library declares
-  could cover it later.
+  and changes its meaning is not detected.
 - The bundle format gains the registry and the record of decision 5, and
   the object format the record of decision 3, which moves their stamp
   (ADR-009, amendment): every bundle and every object is built again.
 
-## Open questions
+## Not provided
 
-- **Reading a module without reading the bundle.** Attaching reads and
-  parses the whole file. Measured on the desktop with the bundle of 967
-  modules of the Context: 0.4 s and 85 MB, and 0.14 s in a browser, so no
-  index is needed.
-- **A module brought in by a goal running on a buffer the host has
-  replaced** is linked with the whole program by the next query. The goal
-  that runs on the host's buffer keeps the code it brings in, the query
-  that attaches included (ADR-015, amendments). A notebook's server is one
-  query.
-- **In a page a table that gets hot is compiled to WebAssembly as a
-  snapshot** in the background, and one over 3,000 instructions is not
-  compiled (ADR-054, amendment of 2026-11-25). A change to the table drops
-  its snapshot, which is compiled again when the table gets hot again.
-- **Baked WebAssembly is one module per bundle**, installed when every
-  predicate in it is linked: the library's waits for the last of its
-  modules, and the query setup after that installs it. A dynamic library of
-  one module that is brought in at the attach, a runtime, installs it at
-  once. One of several modules runs each on bytecode, promoted at run time
-  as any program is, until the last is in. A WebAssembly module per entry
-  would lift that. The fact inlining of persisted IL crosses entries in the
-  same way.
-- **`ensure_loaded(bundle(x))` of a bundle that is not a library** loads it
-  whole.
-- **Two attached libraries that offer the same predicate.** The order of
-  attaching decides in this proposal; an error at the second attach is the
-  alternative.
-- **A module marked to run its initialization at first use**, for a library
-  where decision 10 brings in too much. Not provided now.
-- **What a dispatch by name across bundles costs** against a call inside one
-  module, in each tier. Not measured.
-- **Detaching a library** is not provided.
+- A module marked to run its initialization at first use, for a library
+  where decision 10 brings in too much.
+- A version a library declares, which would detect a predicate that keeps
+  its name and changes its meaning.
+- Detaching a library.
 
 ## Tests
 
@@ -274,6 +299,12 @@ The cases the design has to hold, and the classes that hold them:
   `assertz/1` or `retract/1`, in the order of the modules;
   `predicate_property/2`, `current_predicate/1` and `current_module/1`
   answer after the attach and install nothing (`DynamicLibraryBundleTests`);
+- a name that two modules offer fails the attach, between two libraries,
+  between the program and a library in either order, and inside one library
+  at its link, and a dynamic predicate that both declare does not
+  (`DynamicLibraryNameConflictTests`);
+- a bundle linked from entry points is attached and offers what its link
+  kept, its entry called qualified as well (`DynamicLibraryBundleTests`);
 - a module with initialization goals is brought in at the attach, and its
   goals run once, before those of the bundle that attached the library
   (`DynamicLibraryBundleTests`, `LinkingAgainstALibraryTests`);
@@ -281,5 +312,9 @@ The cases the design has to hold, and the classes that hold them:
   reverse, in both tiers, and from a goal that is running: the library's
   persisted IL (`DynamicLibraryCompiledCodeTests`), code the host promoted
   to IL or to WebAssembly (`DynamicLibraryBundleTests`,
-  `DynamicLibraryWasmTests`), and the library's baked WebAssembly, installed
-  when its last module comes in (`DynamicLibraryBakedWasmTests`).
+  `DynamicLibraryWasmTests`), and the library's baked WebAssembly,
+  installed with the modules that are in, in the goal that brings one in,
+  and calling into one that has not (`DynamicLibraryBakedWasmTests`,
+  `LibraryBakeCliTests`);
+- a library's baked modules are queued at the attach and again as a module
+  comes in (`LibraryWasmQueueTests`).

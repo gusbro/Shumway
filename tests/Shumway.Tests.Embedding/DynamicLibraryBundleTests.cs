@@ -671,28 +671,28 @@ public sealed class DynamicLibraryBundleTests : IDisposable
         Assert.True(e.Query("findall(K-V, tbl(K, V), L), L == [z-0, y-1, a-1, b-2, c-3].").Success);
     }
 
-    // Two modules without a module directive define dup/1, and the second
-    // comes in first: the aliases the links use, kept up as modules come in,
-    // are the ones built whole from the modules that are in, the first
-    // module answering for dup/1.
+    // Two modules without a module directive, the second coming in first: the
+    // aliases the links use, kept up as modules come in, are the ones built
+    // whole from the modules that are in.
     [Fact]
     public void TheAliasesOfBareModules_AreTheOnesBuiltWhole_WhicheverComesInFirst()
     {
-        BuildLibrary("dups",
+        BuildLibrary("bare",
             ("d1", @"
-                dup(one).
+                one(1).
                 only1(1).
                 "),
             ("d2", @"
-                dup(two).
+                two(2).
                 only2(2).
                 "));
         var e = Engine();
         Assert.True(e.Query("true.").Success);
-        Assert.True(e.Query("ensure_loaded(bundle(dups)).").Success);
+        Assert.True(e.Query("ensure_loaded(bundle(bare)).").Success);
         Assert.True(e.Query("only2(2).").Success);
         Assert.True(e.IsCodePending("d1"));
-        Assert.Equal(PrologEngine.MangleFunctor("d2", Fid("dup", 1)), e.BareLibraryAliases()![Fid("dup", 1)]);
+        Assert.Equal(PrologEngine.MangleFunctor("d2", Fid("two", 1)), e.BareLibraryAliases()![Fid("two", 1)]);
+        Assert.False(e.BareLibraryAliases()!.ContainsKey(Fid("one", 1)));
         Assert.True(e.Query("only1(1).").Success);
         var whole = new Dictionary<int, int>();
         foreach (string module in e._bareLibraryModules)
@@ -703,8 +703,7 @@ public sealed class DynamicLibraryBundleTests : IDisposable
         var kept = e.BareLibraryAliases()!;
         Assert.Equal(whole.Count, kept.Count);
         foreach (var (fid, to) in whole) Assert.Equal(to, kept[fid]);
-        Assert.Equal(PrologEngine.MangleFunctor("d1", Fid("dup", 1)), kept[Fid("dup", 1)]);
-        Assert.True(e.Query("dup(X), X == one.").Success);
+        Assert.True(e.Query("one(X), X == 1, two(Y), Y == 2.").Success);
     }
 
     // A table only the library declares turns hot: it is laid out indexed in
@@ -872,5 +871,33 @@ public sealed class DynamicLibraryBundleTests : IDisposable
         var e = Engine();
         Assert.True(e.Query("\\+ current_predicate(pa/1).").Success);
         Assert.True(e.Query("ensure_loaded(bundle(two)), current_predicate(pa/1).").Success);
+    }
+
+    // A bundle that is not a library is attached as one: it offers what its
+    // link kept. Its entry, exported by a module with a module directive, is
+    // called by its name and by its module's.
+    [Fact]
+    public void AProgramBundle_IsAttached_AndItsEntryIsCalledQualified()
+    {
+        var link = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[]
+            {
+                ShmoCompiler.CompileSource(":- module(am, [main/1]).\n:- use_module(bm).\nmain(X) :- helper(X).\n", "am"),
+                ShmoCompiler.CompileSource(":- module(bm, [helper/1]).\nhelper(7).\n", "bm"),
+            },
+            EntryPoints = new[] { new PredicateRef("main", 1) },
+        });
+        Assert.True(link.Success, string.Join("; ", link.Diagnostics.Select(d => d.Message)));
+        File.WriteAllBytes(Path.Combine(_dir, "app.shum"), BundleWriter.ToBytes(link.Bundle!, includeCompiledBytecode: true));
+
+        foreach (string goal in new[] { "am:main(X), X == 7", "main(X), X == 7" })
+        {
+            var e = Engine();
+            Assert.True(e.Query("ensure_loaded(bundle(app)).").Success);
+            Assert.True(e.IsCodePending("am"));
+            Assert.True(e.Query(goal + ".").Success, goal);
+            Assert.True(e.Query(goal + ".").Success, "the next query");
+        }
     }
 }

@@ -779,6 +779,16 @@ public sealed partial class PrologEngine
     public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>
         PrecompiledStaticPredicates => _precompiledStaticPredicates;
 
+    /// <summary>The module of each predicate a bundle entry loaded from its
+    /// compiled code: what a bake of one wasm module per entry groups them
+    /// by.</summary>
+    public IEnumerable<(string Module, int FunctorId)> PrecompiledPredicateModules()
+    {
+        foreach (var (module, compiled) in _precompiledModules)
+            foreach (var pred in compiled.Predicates)
+                yield return (module, pred.FunctorId);
+    }
+
     /// <summary>Per-engine cache of compiled dynamic predicates.
     /// The query-setup path consults this cache alongside
     /// <see cref="_precompiledClauseCache"/> so the ModuleCompiler can

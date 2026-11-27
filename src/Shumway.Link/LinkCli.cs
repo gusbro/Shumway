@@ -282,7 +282,7 @@ internal static class LinkCli
 #if !NETFRAMEWORK
             WasmBaker = opts.Wasm
                 ? b => Shumway.Compiler.Wasm.WasmBundleTier.Bake(b, opts.BakePrelude,
-                    msg => Console.Error.WriteLine("shumway-link: " + msg))
+                    msg => Console.Error.WriteLine("shumway-link: " + msg), library: opts.Library)
                 : null,
 #endif
         };

@@ -151,6 +151,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
             byte[] module = pending[i];
             if (!_triedLive.Add(module)) { i++; continue; }
             _held = false;
+            bool inPart = ilStore.PartialWasmModules.Contains(module);
             var (fids, note) = BundleInstaller(engine, module, linked);
             if (_held)
             {
@@ -164,6 +165,9 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
             installed += fids.Count;
             _installedBundles.Add(module);
             _triedLive.Remove(module);
+            // Installed against the goal's link: the next query setup
+            // installs it again against the program's (ADR-075, decision 12).
+            if (inPart) { i++; continue; }
             pending.RemoveAt(i);
         }
         return installed;
@@ -262,6 +266,7 @@ public sealed class WasmPromotionStore(IlPromotionStore ilStore)
     /// <summary>Whether the predicate's delegate is a wasm one, baked or
     /// compiled.</summary>
     public bool Covers(int functorId) => _installed.ContainsKey(functorId);
+
 
     // FNV-1a over the linked bytecode and call sites: equal hashes mean the
     // predicate merely moved; a redefinition changes them.

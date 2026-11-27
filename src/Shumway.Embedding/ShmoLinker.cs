@@ -296,6 +296,7 @@ public static class ShmoLinker
                 }
             }
         }
+        if (config.Library) RefuseSharedLibraryNames(objects, Emit);
 
         // ADR-038 — per-module import table: a bare imported indicator → the
         // export-qualified module that provides it. Used by the reachability walk
@@ -2059,6 +2060,37 @@ public static class ShmoLinker
                 record.Add(new BundleDynamicLibrary(name, sorted));
             }
             return record;
+        }
+    }
+
+    /// <summary>ADR-075: a library offers each name from one module. A
+    /// predicate of a module without a module directive is reached by its name
+    /// once the library is attached, so two such modules that define it, or one
+    /// that defines it static and one dynamic, fail the link. Dynamic ones in
+    /// both are one predicate with the clauses of both.</summary>
+    private static void RefuseSharedLibraryNames(IReadOnlyList<ShmoObject> objects,
+        Action<LinkSeverity, string, string, string?> emit)
+    {
+        var offered = new Dictionary<PredicateRef, (string Module, bool Dynamic)>();
+        foreach (var obj in objects)
+        {
+            if (obj.IsExportQualified) continue;
+            foreach (var d in obj.Defined)
+            {
+                int fid = Shumway.Core.FunctorTable.Intern(
+                    Shumway.Core.AtomTable.Intern(d.Indicator.Name, permanent: true).Id, d.Indicator.Arity);
+                if (PrologEngine.IsGlobalHookFunctor(fid) || PrologEngine.IsMetaHelperFunctorName(fid)) continue;
+                bool dynamic = d.Visibility == PredicateVisibility.Dynamic;
+                if (!offered.TryGetValue(d.Indicator, out var other))
+                {
+                    offered[d.Indicator] = (obj.ModuleName, dynamic);
+                    continue;
+                }
+                if (other.Module == obj.ModuleName || (dynamic && other.Dynamic)) continue;
+                emit(LinkSeverity.Error, "shared_library_name",
+                    $"{d.Indicator} is defined by both '{other.Module}' and '{obj.ModuleName}': "
+                    + "a library offers each name from one module.", obj.ModuleName);
+            }
         }
     }
 

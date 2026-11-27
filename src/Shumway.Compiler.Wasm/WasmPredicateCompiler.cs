@@ -283,6 +283,8 @@ public static class WasmPredicateCompiler
         private readonly Dictionary<int, int> _callee = new();   // call-site pc -> functor
         // fid -> entry address (the member's bias): the in-group call map.
         private readonly Dictionary<int, int> _entryByFid = new();
+        // fid -> the module of a library that defines it (WasmGroupMember.Module).
+        private readonly Dictionary<int, string> _moduleByFid = new();
         // (callerFid, calleeFid) -> call sites between them, for the coupling
         // report. Filled by the cursor pass, which walks every instruction
         // anyway, so it costs nothing at run time and nothing extra to compile.
@@ -292,6 +294,18 @@ public static class WasmPredicateCompiler
         private WasmGroupMember Sec(Instr ins) => _members[ins.Section];
         private int Bias(Instr ins) => _members[ins.Section].Bias;
         private int SelfFid(Instr ins) => _members[ins.Section].Predicate.FunctorId;
+
+        // A call that jumps straight to the callee's entry. Between two
+        // modules of a library it goes through the table instead, whose row
+        // for the callee is there only once its module is in (ADR-075,
+        // decision 12): a jump would run a member whose bytecode is not
+        // linked.
+        private bool InGroup(int caller, int callee, out int calleeEntry)
+            => _entryByFid.TryGetValue(callee, out calleeEntry)
+               && (!_moduleByFid.TryGetValue(caller, out var from)
+                   || !_moduleByFid.TryGetValue(callee, out var to) || from == to);
+
+        private int OwnerAt(int pc) => _members[_instrs[_byPc[pc]].Section].Predicate.FunctorId;
 
         public IReadOnlyDictionary<int, int> CursorByAddress => _cursorByAddr;
         private int _failCase;      // pseudo-cursor: backtrack (not re-enterable)
@@ -378,6 +392,7 @@ public static class WasmPredicateCompiler
                 // would run the old snapshot for it.
                 if (!m.Predicate.IsDynamicSnapshot)
                     _entryByFid[m.Predicate.FunctorId] = m.Bias;
+                if (m.Module is { } module) _moduleByFid[m.Predicate.FunctorId] = module;
                 foreach (var site in m.Predicate.CallSites)
                     _callee[m.Bias + site.OpcodeOffset] = site.CalleeFunctorId;
                 DecodeSection(sec);
@@ -5544,7 +5559,7 @@ public static class WasmPredicateCompiler
             StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
             Op(new Int32Constant(_env.EncodeReturnMarker(SelfFid(ins), ins.Pc + 9)));
             Op(new LocalSet(LCP));
-            if (_entryByFid.TryGetValue(callee, out int calleeEntry))
+            if (InGroup(SelfFid(ins), callee, out int calleeEntry))
             {
                 // In-group non-tail call: jump straight to the entry; the
                 // proceed will match the Cp marker just staged and jump back
@@ -10719,7 +10734,7 @@ public static class WasmPredicateCompiler
                 EmitReturn(WasmVerdict.BuiltinRequest);
                 return;
             }
-            if (_entryByFid.TryGetValue(callee, out int calleeEntry))
+            if (InGroup(OwnerAt(pc), callee, out int calleeEntry))
             {
                 // An in-group tail call: back to the dispatch at the entry,
                 // unless the heap crossed the watermark (the engine collects

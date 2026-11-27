@@ -494,6 +494,24 @@ public sealed partial class IlPromotionStore
         _unpromotableReason[functorId] = reason;
     }
 
+    private const string CallUnresolved = "cannot-compile:call->unresolved";
+
+    /// <summary>ADR-075: the code of a module came in, which a predicate
+    /// refused for calling one that was not there may call. Those predicates
+    /// are tried again.</summary>
+    internal void ForgetUnresolvedCallRefusals()
+    {
+        List<int>? again = null;
+        foreach (var (fid, why) in _unpromotableReason)
+            if (why == CallUnresolved) (again ??= new List<int>()).Add(fid);
+        if (again is null) return;
+        foreach (int fid in again)
+        {
+            _unpromotable.Remove(fid);
+            _unpromotableReason.Remove(fid);
+        }
+    }
+
     // Where there is no runtime codegen (Native AOT, browser-wasm) the store stays
     // a pure Tier-0 counter and the IL compiler (reflection-heavy type init) is
     // never constructed. See RuntimeCaps for why the browser needs more than
@@ -1291,6 +1309,12 @@ public sealed partial class IlPromotionStore
     /// once a static link exists. Stays queued (a handful of references)
     /// while no tier is attached.</summary>
     public List<byte[]> PendingWasmModules { get; } = new();
+
+    /// <summary>ADR-075, decision 12: the baked wasm modules of an attached
+    /// library that hold members whose module has not come in. Each installs
+    /// with the members that are linked, and is queued again when a module
+    /// of the library comes in, until it holds them all.</summary>
+    public HashSet<byte[]> PartialWasmModules { get; } = new();
 
     /// <summary>The wasm store's <see cref="WasmPromotionStore.Enabled"/>
     /// flipped in place (its threshold set to or from zero).</summary>

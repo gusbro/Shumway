@@ -215,6 +215,13 @@ internal sealed class ConsultPipeline
                     case HeadRule.Drop:
                         bad = true;
                         break;
+                    case HeadRule.Attached:
+                        bad = true;
+                        if ((warned ??= new HashSet<int>()).Add(fid)
+                            && E.AttachedOffering(fid) is var (module, library))
+                            E.Warn($"error: {spec.Name}/{spec.Arity} is defined by module {module} "
+                                 + $"of bundle({library}); clause ignored");
+                        break;
                     case HeadRule.Redefine:
                         if ((warned ??= new HashSet<int>()).Add(fid)
                             && E._redefinedFunctors.Add(fid))
@@ -233,10 +240,13 @@ internal sealed class ConsultPipeline
         return kept ?? clauses;
     }
 
-    private enum HeadRule { Allow, Refuse, Drop, Redefine }
+    private enum HeadRule { Allow, Refuse, Drop, Redefine, Attached }
 
     private HeadRule HeadVerdict(int fid, HeadContext context)
     {
+        // ADR-075: a name an attached library offers is that library's.
+        if (context == HeadContext.GlobalProgram && E.AttachedOffering(fid) is not null)
+            return HeadRule.Attached;
         var kind = E.SystemKindOf(fid);
         if (kind is null) return HeadRule.Allow;
         // ISO makes control constructs and its builtins static: no module,
