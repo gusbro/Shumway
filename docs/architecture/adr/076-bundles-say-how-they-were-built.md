@@ -102,9 +102,10 @@ rules version: the rules matter only to rebuild.
   engine libraries the code calls.
 - For each source, a digest of its text and the time it was last written.
 - The sources themselves, for a file built with `--with-source`, compressed
-  with Deflate, which every runtime reads, a browser's included. They move
-  here from the objects and the entries, where the stamp would take them
-  with the code: a bundle keeps one copy of each.
+  with Brotli, which every runtime reads with Shumway's own decoder where
+  .NET has none (a browser, .NET Framework). They move here from the objects
+  and the entries, where the stamp would take them with the code: a bundle
+  keeps one copy of each.
 
 A recipe holds no path of the machine that built it: a source is named the
 way a library search path finds it.
@@ -122,7 +123,7 @@ the warning says so. The product is a file of this format, whose recipe
 records what was compiled.
 
 A source taken out of a file, the `src/X.pl` a page writes from a bundle or
-one a tool extracts, is written with the time the recipe records for it, or
+one a tool extracts when asked to, is written with the time the recipe records for it, or
 a second before the file's own time when the recipe records none. Written
 with the time it is taken out, it would be newer than the file it came from,
 and the file would lose to its own source.
@@ -130,13 +131,16 @@ and the file would lose to its own source.
 Where it is used:
 
 - `use_module(library(X))` that finds a bundle of another format rebuilds it
-  and loads what that builds, with a warning that says it did. It does not
-  write the file back into a library directory: linking it again keeps it.
+  in memory and loads what that builds, with a warning that says it did.
 - A page that imports a collection, or puts back the libraries it keeps,
   rebuilds a library whose bundle is of another format, and stores what that
-  builds.
+  builds: the page keeps its libraries, so it keeps the rebuilt one.
 - `shumway-link` and `shumway-lib` given an object of another format rebuild
-  it when its source is found, and say so.
+  it in memory when its source is found, link what that builds, and say so.
+
+Outside a page, a rebuild writes no file: a tool writes the output it was
+asked for and nothing else, and linking again is how a rebuilt file is
+kept.
 
 A library the page compiled itself, from `X.pl` alone, has that as its recipe,
 so it is rebuilt as it is compiled today.
