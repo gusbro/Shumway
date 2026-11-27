@@ -123,6 +123,15 @@ public sealed class Bundle
             RecipeRules = RecipeRules,
         };
 
+    /// <summary>This bundle with the recipe of its build (ADR-076).</summary>
+    public Bundle WithRecipe(BundleRecipe recipe)
+        => new(Entries, ForeignAssemblies, Snapshot, ArchiveMembers, NativeLibraries,
+               GeneratorVersion, ArityCompat, WasmModules, EngineLibraries, DynamicLibraries)
+        {
+            Recipe = recipe,
+            RecipeRules = BundleRecipe.CurrentRules,
+        };
+
     /// <summary>ADR-076: how the bundle was built, or null when its rules
     /// version (<see cref="RecipeRules"/>) is not one this engine reads.
     /// A writer writes <see cref="BundleRecipe.Host"/> when it is null.</summary>

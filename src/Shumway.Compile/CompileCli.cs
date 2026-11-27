@@ -137,8 +137,18 @@ internal static class CompileCli
         }
         try { System.IO.Directory.CreateDirectory(dir); }
         catch (System.IO.IOException) { /* surfaced by the write below */ }
-        foreach (var (moduleName, obj, srcTime, isRoot) in objects)
+        // ADR-076: each object says it came of consulting these roots, in
+        // this order, and which of the modules it is.
+        var roots = inputs.Select(i => new RecipeInput
         {
+            Kind = RecipeInputKind.Source,
+            Name = System.IO.Path.GetFileName(i),
+        }).ToList();
+        var rootSources = inputs.Select(i => RecipeSource.Of(System.IO.Path.GetFileName(i),
+            System.IO.File.ReadAllBytes(i), System.IO.File.GetLastWriteTimeUtc(i))).ToList();
+        foreach (var (moduleName, compiled, srcTime, isRoot) in objects)
+        {
+            var obj = compiled.WithRecipe(CompileRecipe(opts, roots, rootSources, moduleName, consult: true));
             string path = System.IO.Path.Combine(dir, SanitizeFileName(moduleName) + ".shmo");
             if (!isRoot && ShmoUpToDate(path, srcTime, opts.BuildMode, opts.WithSource))
             {
@@ -228,6 +238,21 @@ internal static class CompileCli
                 + $"  shumway-compile --consult -L <libdir> {input}");
     }
 
+    // ADR-076: the recipe of an object this compile writes.
+    private static BundleRecipe CompileRecipe(Options opts, IReadOnlyList<RecipeInput> inputs,
+        IReadOnlyList<RecipeSource> sources, string module, bool consult)
+        => new()
+        {
+            Tool = "shumway-compile",
+            Inputs = inputs,
+            Sources = sources,
+            Module = module,
+            Consult = consult,
+            Debug = opts.BuildMode == ShmoBuildMode.Debuggable,
+            WithSource = opts.WithSource,
+            ArityCompat = opts.ArityCompat,
+        };
+
     private static int CompileOne(string input, string output, Options opts)
     {
         bool verbose = opts.Verbose;
@@ -275,6 +300,12 @@ internal static class CompileCli
                 RemoveStaleOutput(output);
                 return ExitCompileError;
             }
+            string name = System.IO.Path.GetFileName(input);
+            obj = obj.WithRecipe(CompileRecipe(opts,
+                new[] { new RecipeInput { Kind = RecipeInputKind.Source, Name = name } },
+                new[] { RecipeSource.Of(name, System.IO.File.ReadAllBytes(input),
+                    System.IO.File.GetLastWriteTimeUtc(input)) },
+                obj.ModuleName, consult: false));
             ShmoWriter.WriteToFile(obj, output);
             if (ySurvey && Shumway.Compiler.Wam.ClauseCompiler.YSurvey is { } survey)
             {

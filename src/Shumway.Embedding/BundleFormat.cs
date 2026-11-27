@@ -171,6 +171,25 @@ public static class BundleFormat
         return RecipeAt + length;
     }
 
+    /// <summary>The rules version and the recipe of a compiled file of any
+    /// format that has them (ADR-076), read from its header alone: the recipe
+    /// is null when this engine does not read that rules version. Null for a
+    /// file of an earlier version, or one that is not a compiled file.</summary>
+    public static (int Rules, BundleRecipe? Recipe)? HeaderRecipe(ReadOnlySpan<byte> image)
+    {
+        if (image.Length < RecipeAt) return null;
+        uint version = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(image.Slice(4));
+        bool bundle = image.Slice(0, 4).SequenceEqual(Magic);
+        bool shmo = image.Slice(0, 4).SequenceEqual(ShmoFormat.Magic);
+        // The versions that carry the recipe, and every later one.
+        if (!(bundle && version >= 7 || shmo && version >= 4)) return null;
+        int rules = (int)System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(image.Slice(RulesAt));
+        int length = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(image.Slice(RulesAt + 4));
+        if (length < 0 || length > image.Length - RecipeAt) return null;
+        return (rules, BundleRecipe.Accepts(rules)
+            ? BundleRecipe.FromBytes(image.Slice(RecipeAt, length)) : null);
+    }
+
     /// <summary>Reads the rules version and the recipe that follow the stamp:
     /// the recipe, when this engine reads that rules version.</summary>
     internal static (int Rules, BundleRecipe? Recipe) ReadRecipe(System.IO.BinaryReader header)

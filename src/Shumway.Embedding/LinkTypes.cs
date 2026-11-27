@@ -119,6 +119,10 @@ public sealed class LinkConfig
     /// runs the bytecode that option drops.</summary>
     public Func<Bundle, IReadOnlyList<byte[]>>? WasmBaker { get; init; }
 
+    /// <summary>ADR-076: the recipe the bundle carries (<see cref="LinkPlan"/>
+    /// makes it), or one that names only the linker.</summary>
+    public BundleRecipe? Recipe { get; init; }
+
     /// <summary>Stage 9 (dead-region) report opt-in. When true, after the reachability
     /// walk the linker decodes the reached modules, resolves the externally-reachable
     /// seeds to functor ids, and runs <see cref="RegionReachability"/> to report how many

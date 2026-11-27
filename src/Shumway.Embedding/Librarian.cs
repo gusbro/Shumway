@@ -33,9 +33,12 @@ public static class Librarian
     /// must be unique. With a <paramref name="wasmBaker"/> (the linker's
     /// <see cref="LinkConfig.WasmBaker"/>) the archive also carries the wasm
     /// module baked from its members, in the trailer a linked bundle uses;
-    /// the members themselves stay verbatim.</summary>
+    /// the members themselves stay verbatim. Its recipe (ADR-076) is
+    /// <paramref name="recipe"/>, or the librarian's: the members in order,
+    /// each with the recipe it carries.</summary>
     public static byte[] CreateArchive(IReadOnlyList<BundleArchiveMember> members,
-                                       Func<Bundle, IReadOnlyList<byte[]>>? wasmBaker = null)
+                                       Func<Bundle, IReadOnlyList<byte[]>>? wasmBaker = null,
+                                       BundleRecipe? recipe = null)
     {
         ArgumentNullException.ThrowIfNull(members);
         RequireDistinctModules(members);
@@ -43,7 +46,17 @@ public static class Librarian
             Array.Empty<BundleEntry>(), foreignAssemblies: null,
             snapshot: null, archiveMembers: members)
         {
-            Recipe = new BundleRecipe { Tool = "shumway-lib" },
+            Recipe = recipe ?? new BundleRecipe
+            {
+                Tool = "shumway-lib",
+                Inputs = members.Select(m => new RecipeInput
+                {
+                    Kind = RecipeInputKind.Object,
+                    Name = m.FileName,
+                    Recipe = BundleFormat.HeaderRecipe(m.ShmoBytes)?.Recipe,
+                }).ToList(),
+                Wasm = wasmBaker is not null,
+            },
         };
         if (wasmBaker?.Invoke(bundle) is { Count: > 0 } modules)
             bundle = bundle.WithWasmModules(modules);

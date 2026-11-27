@@ -631,7 +631,18 @@ internal static partial class WebShumwayApp
                          }
                          finally { baked(bakeClock.Elapsed.TotalSeconds); }
                      }
-                     : null);
+                     : null,
+                // ADR-076: compiled from its entry by consult, as here.
+                new BundleRecipe
+                {
+                    Tool = "page",
+                    Inputs = new[] { new RecipeInput { Kind = RecipeInputKind.Source, Name = library + ".pl" } },
+                    Sources = new[] { RecipeSource.Of(library + ".pl", File.ReadAllBytes(entry),
+                        File.GetLastWriteTimeUtc(entry)) },
+                    Consult = true,
+                    Dialect = dialect,
+                    Wasm = wasm,
+                });
             // Written under a temporary name and moved into place, so what
             // `library(X)` can see is either the old bundle or the new one
             // and never half of one — a consult may look while this runs.

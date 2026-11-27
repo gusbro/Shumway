@@ -1184,7 +1184,7 @@ public static class ShmoLinker
                 engineLibraries: engineLibraries,
                 dynamicLibraries: dynlib.Record())
             {
-                Recipe = new BundleRecipe { Tool = "shumway-link" },
+                Recipe = config.Recipe ?? new BundleRecipe { Tool = "shumway-link" },
             };
             // --with-compiled-il routes the bundle through
             // BundleWriter.ToBytes, which (under includeCompiledIl=true)

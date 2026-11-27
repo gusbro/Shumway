@@ -360,6 +360,18 @@ public sealed class ShmoObject
     /// Compiled through the consult they ran then, and none travel.</summary>
     public IReadOnlyList<Shumway.Compiler.Ast.Term> InitializationGoals { get; }
 
+    /// <summary>This object with the recipe of its build (ADR-076).</summary>
+    public ShmoObject WithRecipe(BundleRecipe recipe)
+        => new ShmoObject(ModuleName, Source, Bytecode, Defined, EnsureLinked, CallGraph,
+            QualifiedRefs, BuildMode, DynamicSeeds, ClauseTerms, ArityCompat, NativeBlocks,
+            NativeFunctions, NativeDecls, Operators, IsExportQualified, Exports, Imports,
+            LibraryDeps, Dialect, GeneratorVersion, Flags, InitializationGoals, DynamicLibraries)
+        {
+            DynamicSnapshotBytecode = DynamicSnapshotBytecode,
+            Recipe = recipe,
+            RecipeRules = BundleRecipe.CurrentRules,
+        };
+
     /// <summary>This object with <paramref name="goal"/> after its
     /// initialization goals.</summary>
     internal ShmoObject WithInitializationGoal(Shumway.Compiler.Ast.Term goal)
@@ -368,7 +380,7 @@ public sealed class ShmoObject
         return new ShmoObject(ModuleName, Source, Bytecode, Defined, EnsureLinked, CallGraph,
             QualifiedRefs, BuildMode, DynamicSeeds, ClauseTerms, ArityCompat, NativeBlocks,
             NativeFunctions, NativeDecls, Operators, IsExportQualified, Exports, Imports,
-            LibraryDeps, Dialect, GeneratorVersion, Flags, goals)
+            LibraryDeps, Dialect, GeneratorVersion, Flags, goals, DynamicLibraries)
         {
             DynamicSnapshotBytecode = DynamicSnapshotBytecode,
             Recipe = Recipe,

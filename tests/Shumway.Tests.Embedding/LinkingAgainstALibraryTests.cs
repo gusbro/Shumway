@@ -236,6 +236,32 @@ main(X) :- pa(X).
         Assert.True(e.Query("main(X, Y), X == 1, Y == 42.").Success);
     }
 
+    // A library link's goal goes into its last object, which keeps the
+    // library that object attaches.
+    [Fact]
+    public void ALibraryGoal_KeepsTheLibraryItsObjectAttaches()
+    {
+        FullLibrary();
+        var link = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { ShmoCompiler.CompileSource(@"
+:- ensure_loaded(bundle(lib)).
+show :- pa(X), write(X), nl.
+", "prog") },
+            EntryPoints = Array.Empty<PredicateRef>(),
+            Library = true,
+            LoadGoal = "show",
+            LibraryDirs = new[] { _dir },
+        });
+        string prog = WriteProgram(link);
+        Assert.Equal("lib:[:pa/1]", Uses(link.Bundle!));
+
+        var output = new StringWriter();
+        var e = new PrologEngine { Out = output, Warnings = new StringWriter() };
+        e.LoadBundle(prog);
+        Assert.Equal("1\n", output.ToString().Replace("\r\n", "\n"));
+    }
+
     [Fact]
     public void AModuleTheAttachedLibraryHas_IsNotLinkedInFromTheSearchPath()
     {
