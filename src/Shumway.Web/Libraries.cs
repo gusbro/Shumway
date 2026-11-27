@@ -250,6 +250,8 @@ internal static partial class WebShumwayApp
                     return "its bytes are not here any more";
                 if (!BundleReader.IsCurrent(bytes))
                     return "written with another format of compiled code";
+                // Stored raw: decoded once here, not at every load.
+                bytes = BundleFormat.Uncompressed(bytes);
                 string library = path.Substring(0, path.Length - ".shum".Length);
                 foreach (string segment in library.Split('/'))
                     if (segment.Length == 0 || segment == "..") return "not a path inside the collection";
@@ -890,6 +892,8 @@ internal static partial class WebShumwayApp
                 if (!BundleReader.IsCurrent(bundle)) return "not a bundle of this format";
                 foreach (string segment in library.Split('/'))
                     if (segment.Length == 0 || segment == "..") return "not a path inside the collection";
+                // Stored raw: decoded once here, not at every load.
+                bundle = BundleFormat.Uncompressed(bundle);
                 string root = ResolveLibrary(name);
                 // Moved into place, as a compile's is: a query may be
                 // looking for library(X) while this writes.

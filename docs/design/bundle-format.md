@@ -11,10 +11,15 @@ that is either raw or a single Brotli stream:
 
 ```
 [0..3]   Magic 'S' 'H' 'U' 'M'
-[4..7]   Format version (uint32) — CurrentVersion
-[8]      Compression flag: 0 = raw body, 1 = the whole body is ONE Brotli stream
-[9..]    Body (raw, or Brotli-decompressed)
+[4..7]   Format version (uint32): CurrentVersion
+[8..15]  Format stamp (uint64): BundleFormat.Stamp (ADR-009, amendment of 2026-11-22)
+[16]     Compression flag: 0 = raw body, 1 = the whole body is ONE Brotli stream
+[17..]   Body (raw, or Brotli-decompressed)
 ```
+
+Every runtime reads a Brotli body: .NET's codec on .NET 10, and Shumway's own
+decoder (`ManagedBrotliDecoder`, RFC 7932) in a browser and on .NET Framework,
+whose .NET has none. Only .NET 10 writes one.
 
 Compression is whole-body, not per-entry, because the redundancy is
 cross-entry (shared atom names, repeated opcode patterns across modules), and

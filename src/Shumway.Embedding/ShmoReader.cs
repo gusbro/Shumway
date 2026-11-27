@@ -19,7 +19,8 @@ public static class ShmoReader
     public static ShmoObject FromBytes(byte[] data)
     {
         ArgumentNullException.ThrowIfNull(data);
-        using var ms = new MemoryStream(data);
+        // Its buffer visible: a Brotli body is decoded in place (OpenBody).
+        using var ms = new MemoryStream(data, 0, data.Length, writable: false, publiclyVisible: true);
         using var headerReader = new BinaryReader(ms, Encoding.UTF8, leaveOpen: true);
 
         byte[] magic = headerReader.ReadBytes(4);

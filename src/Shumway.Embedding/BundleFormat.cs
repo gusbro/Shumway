@@ -176,13 +176,52 @@ public static class BundleFormat
     /// <see cref="BundleWriter"/> and the linker's in-line serialiser so both
     /// emit identical framing.</summary>
     /// <summary>Set to leave every image uncompressed regardless of size. For
-    /// hosts whose runtime has no Brotli codec — browser-wasm throws
-    /// <c>PlatformNotSupportedException</c> from <c>BrotliStream</c>, so a
-    /// compressed bundle cannot be read there at all. Flag 0 is part of the
-    /// format already, so such an image is an ordinary bundle every reader
-    /// accepts; only the size differs, and a web server re-compresses in
-    /// transport anyway.</summary>
+    /// hosts whose runtime has no Brotli encoder: a browser's .NET has none,
+    /// and reads a compressed image with Shumway's own decoder
+    /// (<see cref="UsesOwnBrotliDecoder"/>). Flag 0 is part of the format, so
+    /// such an image is an ordinary bundle every reader accepts.</summary>
     public static bool DisableCompression { get; set; }
+
+    /// <summary>Whether a Brotli body is read with Shumway's own decoder
+    /// (<see cref="Compression.ManagedBrotliDecoder"/>): where .NET has no Brotli
+    /// codec, a browser and .NET Framework.</summary>
+    internal static bool UsesOwnBrotliDecoder =>
+#if NETFRAMEWORK
+        true;
+#else
+        ForceOwnBrotliDecoder || OperatingSystem.IsBrowser();
+#endif
+
+    /// <summary>Tests set it to read Brotli bodies with Shumway's own decoder
+    /// where .NET has a codec.</summary>
+    internal static bool ForceOwnBrotliDecoder { get; set; }
+
+    /// <summary>How many Brotli bodies Shumway's own decoder has read: a test
+    /// that forces it checks it was the one that read.</summary>
+    internal static int OwnBrotliReads => Volatile.Read(ref _ownBrotliReads);
+
+    private static int _ownBrotliReads;
+
+    /// <summary>The image with its body stored raw: a page that keeps the
+    /// bundles it imports stores them so, and reads them without decoding
+    /// at every load. An image whose body is raw comes back as it is.</summary>
+    public static byte[] Uncompressed(byte[] image)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        const int framedBytes = 8 + sizeof(ulong) + 1;   // magic, version, stamp, flag
+        if (image.Length < framedBytes || image[framedBytes - 1] != CompressionBrotli) return image;
+        using var stream = new MemoryStream(image, 0, image.Length, writable: false, publiclyVisible: true);
+        stream.Position = framedBytes;
+        using BinaryReader body = OpenBody(CompressionBrotli, stream);
+        var bodyStream = (MemoryStream)body.BaseStream;
+        ArraySegment<byte> decoded = bodyStream.TryGetBuffer(out ArraySegment<byte> visible)
+            ? visible : new ArraySegment<byte>(bodyStream.ToArray());
+        var plain = new byte[framedBytes + decoded.Count];
+        Array.Copy(image, 0, plain, 0, framedBytes - 1);
+        plain[framedBytes - 1] = CompressionNone;
+        Array.Copy(decoded.Array!, decoded.Offset, plain, framedBytes, decoded.Count);
+        return plain;
+    }
 
     /// <summary>Writes the producing Shumway version — the first field of a
     /// <c>.shum</c> body. Shared by the two writers (BundleWriter.ToBytes and
@@ -205,9 +244,8 @@ public static class BundleFormat
         const int headerBytes = 8;   // magic + version
         int bodyLen = raw.Length - headerBytes;
 #if NETFRAMEWORK
-        // No Brotli codec on .NET Framework — the browser situation again, at
-        // write time: everything this runtime produces goes uncompressed, which
-        // every reader accepts.
+        // No Brotli encoder on .NET Framework: everything this runtime produces
+        // goes uncompressed, which every reader accepts.
         bool forcePlain = true;
 #else
         bool forcePlain = DisableCompression;
@@ -249,34 +287,25 @@ public static class BundleFormat
                 return new BinaryReader(stream, System.Text.Encoding.UTF8, leaveOpen: true);
             case CompressionBrotli:
             {
+                if (UsesOwnBrotliDecoder)
+                {
+                    Interlocked.Increment(ref _ownBrotliReads);
+                    // The readers' streams show their buffer: the body is
+                    // decoded where it is, not copied first.
+                    ArraySegment<byte> buffer = stream.TryGetBuffer(out ArraySegment<byte> visible)
+                        ? visible : new ArraySegment<byte>(stream.ToArray());
+                    int at = buffer.Offset + (int)stream.Position;
+                    MemoryStream decoded = Compression.ManagedBrotliDecoder.DecompressToStream(
+                        buffer.Array!, at, buffer.Offset + buffer.Count - at);
+                    return new BinaryReader(decoded, System.Text.Encoding.UTF8, leaveOpen: false);
+                }
 #if NETFRAMEWORK
-                // Same story as browser-wasm, and the same words: the fix is to
-                // produce the bundle uncompressed, not to find a codec.
-                throw new NotSupportedException(
-                    "This bundle is Brotli-compressed and .NET Framework has no Brotli "
-                    + "codec. Produce it with compression disabled (shumway-link "
-                    + "--no-compress) — an uncompressed bundle is a normal bundle every "
-                    + "reader accepts.");
+                throw new InvalidOperationException("unreachable: .NET Framework reads with Shumway's decoder");
 #else
                 var body = new MemoryStream();
-                try
-                {
-                    using var brotli = new System.IO.Compression.BrotliStream(
-                        stream, System.IO.Compression.CompressionMode.Decompress, leaveOpen: true);
+                using (var brotli = new System.IO.Compression.BrotliStream(
+                           stream, System.IO.Compression.CompressionMode.Decompress, leaveOpen: true))
                     brotli.CopyTo(body);
-                }
-                catch (PlatformNotSupportedException ex)
-                {
-                    // browser-wasm ships no Brotli codec. Say so, instead of
-                    // letting an opaque platform exception surface from what
-                    // looks to the caller like a plain file read.
-                    throw new NotSupportedException(
-                        "This bundle is Brotli-compressed and the current runtime has no "
-                        + "Brotli codec (browser-wasm does not). Produce it with compression "
-                        + "disabled (BundleFormat.DisableCompression / shumway-link "
-                        + "--no-compress) — an uncompressed bundle is a normal bundle every "
-                        + "reader accepts.", ex);
-                }
                 body.Position = 0;
                 return new BinaryReader(body, System.Text.Encoding.UTF8, leaveOpen: false);
 #endif
