@@ -145,7 +145,8 @@ internal static class CompileCli
             Name = System.IO.Path.GetFileName(i),
         }).ToList();
         var rootSources = inputs.Select(i => RecipeSource.Of(System.IO.Path.GetFileName(i),
-            System.IO.File.ReadAllBytes(i), System.IO.File.GetLastWriteTimeUtc(i))).ToList();
+            System.IO.File.ReadAllBytes(i), System.IO.File.GetLastWriteTimeUtc(i),
+            carry: opts.WithSource)).ToList();
         foreach (var (moduleName, compiled, srcTime, isRoot) in objects)
         {
             var obj = compiled.WithRecipe(CompileRecipe(opts, roots, rootSources, moduleName, consult: true));
@@ -304,7 +305,7 @@ internal static class CompileCli
             obj = obj.WithRecipe(CompileRecipe(opts,
                 new[] { new RecipeInput { Kind = RecipeInputKind.Source, Name = name } },
                 new[] { RecipeSource.Of(name, System.IO.File.ReadAllBytes(input),
-                    System.IO.File.GetLastWriteTimeUtc(input)) },
+                    System.IO.File.GetLastWriteTimeUtc(input), carry: opts.WithSource) },
                 obj.ModuleName, consult: false));
             ShmoWriter.WriteToFile(obj, output);
             if (ySurvey && Shumway.Compiler.Wam.ClauseCompiler.YSurvey is { } survey)

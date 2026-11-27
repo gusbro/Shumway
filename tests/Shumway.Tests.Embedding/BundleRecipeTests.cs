@@ -125,6 +125,29 @@ public sealed class BundleRecipeTests : IDisposable
         Assert.Single(read.ArchiveMembers);
     }
 
+    // ADR-076, decision 3: a build with --with-source carries each input's
+    // bytes, compressed where the runtime has an encoder; they read back the
+    // same on every runtime, from a file of any format.
+    [Fact]
+    public void ACarriedSource_ReadsBackItsBytes_InAnyFormat()
+    {
+        byte[] text = System.Text.Encoding.UTF8.GetBytes(string.Concat(
+            Enumerable.Range(0, 300).Select(i => $"fact({i}, word_{i % 17}).\n")));
+        var written = new DateTime(2026, 11, 1, 12, 0, 0, DateTimeKind.Utc);
+        var source = RecipeSource.Of("m1.pl", text, written, carry: true);
+        Assert.Equal(text, BundleRecipe.FromBytes(new BundleRecipe { Sources = new[] { source } }.ToBytes())
+            .Sources[0].Contents);
+
+        byte[] obj = ShmoWriter.ToBytes(ShmoCompiler.CompileSource(":- module(m1, [p/0]).\np.\n", "m1")
+            .WithRecipe(new BundleRecipe { Tool = "shumway-compile", Module = "m1", Sources = new[] { source } }));
+        byte[] archive = Librarian.CreateArchive(new[] { new BundleArchiveMember("m1.shmo", obj) });
+        archive[10] ^= 0x33;
+        RecipeSource carried = BundleFormat.HeaderRecipe(archive)!.Value.Recipe!.CarriedSource("m1.pl")!;
+        Assert.Equal(text, carried.Contents);
+        Assert.Equal(written, carried.WrittenUtc);
+        Assert.Null(BundleFormat.HeaderRecipe(archive)!.Value.Recipe!.CarriedSource("other.pl"));
+    }
+
     [Fact]
     public void ALink_RecordsItsInputsInOrder_ItsSources_AndItsOptions()
     {

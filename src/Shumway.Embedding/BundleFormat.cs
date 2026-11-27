@@ -251,6 +251,38 @@ public static class BundleFormat
 
     private static int _ownBrotliReads;
 
+    /// <summary>The Brotli stream of <paramref name="data"/>, or null where this
+    /// runtime has no encoder (.NET Framework, a browser).</summary>
+    internal static byte[]? EncodeBrotli(byte[] data)
+    {
+#if NETFRAMEWORK
+        return null;
+#else
+        if (OperatingSystem.IsBrowser()) return null;
+        using var ms = new MemoryStream(data.Length / 3 + 16);
+        using (var brotli = new System.IO.Compression.BrotliStream(
+                   ms, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+            brotli.Write(data, 0, data.Length);
+        return ms.ToArray();
+#endif
+    }
+
+    /// <summary>The bytes a Brotli stream holds, on every runtime.</summary>
+    internal static byte[] DecodeBrotli(byte[] data, int offset, int count)
+    {
+        if (UsesOwnBrotliDecoder) return Compression.ManagedBrotliDecoder.Decompress(data, offset, count);
+#if NETFRAMEWORK
+        throw new InvalidOperationException("unreachable: .NET Framework reads with Shumway's decoder");
+#else
+        using var input = new MemoryStream(data, offset, count);
+        using var brotli = new System.IO.Compression.BrotliStream(
+            input, System.IO.Compression.CompressionMode.Decompress);
+        using var output = new MemoryStream();
+        brotli.CopyTo(output);
+        return output.ToArray();
+#endif
+    }
+
     /// <summary>The image with its body stored raw: a page that keeps the
     /// bundles it imports stores them so, and reads them without decoding
     /// at every load. An image whose body is raw comes back as it is.</summary>

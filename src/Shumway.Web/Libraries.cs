@@ -286,12 +286,13 @@ internal static partial class WebShumwayApp
             string bundle = Path.Combine(root, library + ".shum");
             string source = Path.Combine(root, SourceDir, library + ".pl");
             if (!File.Exists(bundle) || File.Exists(source)) return false;
-            if (Shumway.WebHost.LibraryArchive.SourceOfBundle(File.ReadAllBytes(bundle), library) is not { } text)
+            if (Shumway.WebHost.LibraryArchive.SourceToWrite(File.ReadAllBytes(bundle), library,
+                    File.GetLastWriteTimeUtc(bundle)) is not var (text, written))
                 return false;
             Directory.CreateDirectory(Path.GetDirectoryName(source)!);
             File.WriteAllText(source, text);
-            // Older than the bundle, which stays what library(X) loads.
-            File.SetLastWriteTimeUtc(source, File.GetLastWriteTimeUtc(bundle).AddSeconds(-1));
+            // Not newer than the bundle, which stays what library(X) loads.
+            File.SetLastWriteTimeUtc(source, written);
             return true;
         });
 

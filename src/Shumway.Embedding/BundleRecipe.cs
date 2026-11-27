@@ -29,6 +29,18 @@ public sealed class BundleRecipe
     /// <summary>The recipe of a file a host wrote: nothing to build it from.</summary>
     public static BundleRecipe Host { get; } = new();
 
+    /// <summary>The source named <paramref name="name"/> whose bytes this
+    /// recipe carries, or one of its inputs' recipes does; null when none
+    /// does.</summary>
+    public RecipeSource? CarriedSource(string name)
+    {
+        foreach (RecipeSource source in Sources)
+            if (source.Contents is not null && source.Name == name) return source;
+        foreach (RecipeInput input in Inputs)
+            if (input.Recipe?.CarriedSource(name) is { } found) return found;
+        return null;
+    }
+
     /// <summary>The inputs of the build, in the order it took them.</summary>
     public IReadOnlyList<RecipeInput> Inputs { get; init; } = Array.Empty<RecipeInput>();
 
@@ -266,17 +278,25 @@ public sealed class RecipeInput
 }
 
 /// <summary>A source file a build read: its name, the SHA-256 of its bytes,
-/// and the time it was last written, in UTC.</summary>
+/// the time it was last written, in UTC, and for a build that carries its
+/// sources (<c>--with-source</c>) the bytes.</summary>
 public sealed class RecipeSource
 {
     public string Name { get; init; } = "";
     public byte[] Digest { get; init; } = Array.Empty<byte>();
     public DateTime WrittenUtc { get; init; }
 
-    private enum Field : byte { Name = 1, Digest = 2, Written = 3 }
+    /// <summary>The file's bytes, when the build carries them; else null.</summary>
+    public byte[]? Contents { get; init; }
 
-    /// <summary>The source of a file's bytes: its digest and the time given.</summary>
-    public static RecipeSource Of(string name, byte[] contents, DateTime writtenUtc)
+    private enum Field : byte { Name = 1, Digest = 2, Written = 3, Contents = 4 }
+
+    // How the bytes of Contents are held: the first byte of the field.
+    private const byte Raw = 0, Brotli = 1;
+
+    /// <summary>The source of a file's bytes: its digest and the time given,
+    /// and the bytes themselves when <paramref name="carry"/>.</summary>
+    public static RecipeSource Of(string name, byte[] contents, DateTime writtenUtc, bool carry = false)
     {
         using var sha = System.Security.Cryptography.SHA256.Create();
         return new RecipeSource
@@ -284,6 +304,7 @@ public sealed class RecipeSource
             Name = name,
             Digest = sha.ComputeHash(contents),
             WrittenUtc = DateTime.SpecifyKind(writtenUtc, DateTimeKind.Utc),
+            Contents = carry ? contents : null,
         };
     }
 
@@ -293,6 +314,15 @@ public sealed class RecipeSource
         w.Text((byte)Field.Name, Name);
         w.Bytes((byte)Field.Digest, Digest);
         w.Bytes((byte)Field.Written, BitConverter.GetBytes(WrittenUtc.Ticks));
+        if (Contents is not null)
+        {
+            // Compressed where this runtime has an encoder; every one decodes.
+            byte[]? packed = BundleFormat.EncodeBrotli(Contents);
+            byte[] value = new byte[1 + (packed ?? Contents).Length];
+            value[0] = packed is null ? Raw : Brotli;
+            Array.Copy(packed ?? Contents, 0, value, 1, value.Length - 1);
+            w.Bytes((byte)Field.Contents, value);
+        }
         return w.ToArray();
     }
 
@@ -301,6 +331,7 @@ public sealed class RecipeSource
         string name = "";
         byte[] digest = Array.Empty<byte>();
         DateTime written = default;
+        byte[]? contents = null;
         foreach (var (tag, value) in FieldReader.Fields(bytes))
         {
             switch ((Field)tag)
@@ -310,9 +341,18 @@ public sealed class RecipeSource
                 case Field.Written when value.Length == 8:
                     written = new DateTime(BitConverter.ToInt64(value.ToArray(), 0), DateTimeKind.Utc);
                     break;
+                case Field.Contents when value.Length >= 1:
+                    contents = value[0] switch
+                    {
+                        Raw => value.AsSpan(1).ToArray(),
+                        Brotli => BundleFormat.DecodeBrotli(value, 1, value.Length - 1),
+                        _ => throw new InvalidDataException(
+                            $"The recipe of a compiled file holds {name} in an unknown form."),
+                    };
+                    break;
             }
         }
-        return new RecipeSource { Name = name, Digest = digest, WrittenUtc = written };
+        return new RecipeSource { Name = name, Digest = digest, WrittenUtc = written, Contents = contents };
     }
 }
 

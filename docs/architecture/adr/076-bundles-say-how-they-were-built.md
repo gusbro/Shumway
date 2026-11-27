@@ -101,11 +101,13 @@ rules version: the rules matter only to rebuild.
   `--allow-undefined`, `--wasm`, the name of each `--dynlib` library, and the
   engine libraries the code calls.
 - For each source, a digest of its text and the time it was last written.
-- The sources themselves, for a file built with `--with-source`, compressed
-  with Brotli, which every runtime reads with Shumway's own decoder where
-  .NET has none (a browser, .NET Framework). They move here from the objects
-  and the entries, where the stamp would take them with the code: a bundle
-  keeps one copy of each.
+- For a file built with `--with-source`, a copy of each input source,
+  compressed with Brotli where the writer has an encoder and raw where it
+  has none (.NET Framework, a browser); every runtime reads either, with
+  Shumway's own decoder where .NET has none. The text an object and an entry
+  carry stays where it is: the debugger, the loader and the linker read it
+  with the code, and it goes stale with the code. To rebuild, the inputs are
+  enough: a module they bring in is found again by its name.
 
 A recipe holds no path of the machine that built it: a source is named the
 way a library search path finds it.
@@ -180,7 +182,8 @@ pins the image of a fixed bundle, recipe included.
 - Every `.shum` and `.shmo` built before this is refused once more, and
   carries no recipe.
 - The header grows by eight bytes and the recipe. A recipe without sources is
-  a few hundred bytes; one with sources holds what `--with-source` held, once.
+  a few hundred bytes; one with sources adds a compressed copy of the input
+  sources, beside the text the entries carry.
 
 ## Not provided
 

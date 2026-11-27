@@ -92,6 +92,27 @@ public static class LibraryArchive
         return string.IsNullOrEmpty(text) ? null : text;
     }
 
+    /// <summary>The text of library <paramref name="library"/>'s source to
+    /// write beside its bundle, and the time to give the file (ADR-076,
+    /// decision 4). The copy the bundle's recipe carries comes first, with
+    /// the time the recipe records, in any format of compiled code; otherwise
+    /// the text its module carries (<see cref="SourceOfBundle"/>), a second
+    /// before the bundle's own time. Either way the source is not newer than
+    /// the bundle, which stays the library. Null when the bundle carries
+    /// neither.</summary>
+    public static (string Text, DateTime WrittenUtc)? SourceToWrite(
+        byte[] bundle, string library, DateTime bundleWrittenUtc)
+    {
+        ArgumentNullException.ThrowIfNull(bundle);
+        ArgumentNullException.ThrowIfNull(library);
+        string own = library.Substring(library.LastIndexOf('/') + 1);
+        if (Shumway.Embedding.BundleFormat.HeaderRecipe(bundle)?.Recipe is { } recipe
+            && (recipe.CarriedSource(library + ".pl") ?? recipe.CarriedSource(own + ".pl")) is { } carried)
+            return (System.Text.Encoding.UTF8.GetString(carried.Contents!), carried.WrittenUtc);
+        return SourceOfBundle(bundle, library) is { } text
+            ? (text, bundleWrittenUtc.AddSeconds(-1)) : null;
+    }
+
     private static bool Kept(string path) => IsSource(path) || IsBundle(path);
 
     private static void ReadZip(byte[] archive, List<(string, byte[])> found)

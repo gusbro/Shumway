@@ -76,6 +76,22 @@ p.
         Assert.False(recipe.Consult);
     }
 
+    // With --with-source the object's recipe carries the file as it is.
+    [Fact]
+    public void CompileWithSource_CarriesTheFile()
+    {
+        Write("a.pl", @"
+:- module(a, [p/0]).
+p.
+");
+        Run("Shumway.Compile", "shumway-compile", "--with-source", "-o", "a.shmo", "a.pl");
+        RecipeSource source = Assert.Single(RecipeOf("a.shmo").Sources);
+        Assert.Equal(File.ReadAllBytes(Path.Combine(_dir, "a.pl")), source.Contents);
+
+        Run("Shumway.Compile", "shumway-compile", "-o", "b.shmo", "a.pl");
+        Assert.Null(Assert.Single(RecipeOf("b.shmo").Sources).Contents);
+    }
+
     // A compile by consult writes one object for each module the roots
     // brought in; each says so, and which module it is.
     [Fact]
