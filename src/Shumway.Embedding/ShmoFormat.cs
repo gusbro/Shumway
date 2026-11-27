@@ -111,6 +111,9 @@ public static class ShmoFormat
     /// exactly this value.</summary>
     public const int CurrentVersion = 4;
 
+    /// <summary>The first version whose files say how they were built (ADR-076).</summary>
+    public const int FirstVersionWithRecipe = 4;
+
     /// <summary>Equal to <see cref="CurrentVersion"/>: no backward
     /// compatibility before the first public release.</summary>
     public const int MinSupportedVersion = CurrentVersion;

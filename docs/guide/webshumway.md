@@ -285,16 +285,25 @@ and link the `.shmo` files it writes.
 
 **A bundle in another format.** A bundle works with every version of
 Shumway that uses the same format of compiled code. The format is written in
-the first bytes of the bundle. When the page cannot read a bundle:
+the first bytes of the bundle, and after it the bundle says how it was built:
+the tool, its inputs in order and its options, such as `--goal`. When the
+page imports a bundle in another format, it builds the bundle again from
+that, with the collection's sources or the copy the bundle carries when it
+was built with `--with-source`, and keeps what that builds. The page does the
+same with the bundles it keeps when it changes to another format.
 
-- if `x.pl` was imported with it, the page ignores the bundle and compiles
-  the library from `x.pl` the first time it is used;
-- if `x.pl` was not imported with it, the library cannot be used. The page
-  says so, and you need to import a bundle in the current format.
-
-The same applies to the bundles stored in the page when the page changes to
-another format: a library with its `.pl` file is compiled again once, and a
-library imported only as a bundle has to be imported again.
+- A library the page compiled itself is compiled again from its `.pl` file
+  the first time it is used.
+- A bundle that cannot be built again is refused, and the list of libraries
+  says why: it was built by Shumway 0.9.3 or earlier, before bundles said
+  how they were built, or a source it names was not imported and it carries
+  no copy. The library is not compiled from its `.pl` file in its place:
+  that would lose what the link added, such as its `--goal`. Build the
+  bundle again with the current tools, or import the library's sources
+  without it.
+- The libraries a page kept from Shumway 0.9.3 or earlier do not say how
+  they were built: one with its `.pl` file is compiled again from it once,
+  and one imported only as a bundle has to be imported again.
 
 ### Sources are sources
 

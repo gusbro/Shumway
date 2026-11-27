@@ -88,7 +88,7 @@ export async function folderFiles(found) {
     if (isSource(path)) files.push({ path, text: await file.text() });
     else if (isBundle(path)) {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      files.push({ path, bytes, current: await engine.LibraryBundleIsCurrent(bytes.subarray(0, 16)) });
+      files.push({ path, bytes, usable: await engine.LibraryBundleIsUsable(bytes) });
     }
   }
   return files;
@@ -104,7 +104,8 @@ export const isBundle = (path) => /\.shum$/i.test(path);
 
 /** Whether a collection's file is a library compiled ahead: one an archive
  *  brought (held by the engine, named by `bundle`) or a folder (its `bytes`).
- *  `current` says whether this engine reads it. */
+ *  `usable` says whether this engine can use it: it reads it, or a tool built
+ *  it and says how, and the import builds it again (ADR-076). */
 export const compiledAhead = (file) => file.bundle !== undefined || file.bytes !== undefined;
 
 /** The library a file of a collection is of: its path less the extension. */
@@ -114,7 +115,7 @@ const libraryOf = (path) => path.replace(/\.(pl|pro|prolog|shum)$/i, '');
  *  without their library's source: nothing of those libraries could load. */
 export function unreadable(files) {
   const sources = new Set(files.filter((f) => !compiledAhead(f)).map((f) => libraryOf(f.path)));
-  return files.filter((f) => compiledAhead(f) && f.current === false && !sources.has(libraryOf(f.path)))
+  return files.filter((f) => compiledAhead(f) && f.usable === false && !sources.has(libraryOf(f.path)))
     .map((f) => f.path);
 }
 
@@ -339,7 +340,8 @@ export const diagnostic = (name, library) => engine.LibraryDiagnostic(name, libr
  * library. Scryer's lib/ is one folder and forty-six of these.
  *
  * `state` is 'compiled', 'bundle' (compiled, and it came without its
- * source), 'source', 'failed' or 'native' (the engine has its
+ * source), 'source', 'failed', 'refused' (its bundle is of another format
+ * and could not be built again, ADR-076) or 'native' (the engine has its
  * own version, so there is nothing to build), and `note` is the headline of
  * the last compile's diagnostic when there was one — a library that failed, or
  * one that compiled while every one of its directives raised, which comes to
@@ -349,9 +351,11 @@ export async function entries(name) {
   await restored();                  // which ones are compiled is in the bundles
   const text = await engine.LibraryEntries(name);
   return lines(text).map((line) => {
-    const [entry, state, note] = line.split('\t');
+    const [entry, listed, note] = line.split('\t');
+    const alone = listed === 'bundle' || listed === 'refused-bundle';
+    const state = listed === 'refused-bundle' ? 'refused' : listed;
     return { name: entry, state, note: note ?? null,
-             compiled: state === 'compiled' || state === 'bundle', source: state !== 'bundle' };
+             compiled: state === 'compiled' || state === 'bundle', source: !alone };
   });
 }
 
@@ -378,9 +382,11 @@ export async function importFolder(name, dial, picked, report = () => {}, source
     const failed = await write(name, file.path, file.text);
     if (failed) return failed;
   }
-  // The libraries the archive or the folder carried compiled. One the engine
-  // does not take, written with another format of compiled code, is left out:
-  // its library compiles from its source the first time it is used.
+  // The libraries the archive or the folder carried compiled. One of another
+  // format of compiled code is built again from what it says it was built
+  // from (ADR-076); one the page compiled compiles from its source the first
+  // time it is used, and one that cannot be built again is left out, with the
+  // reason in its diagnostic.
   const sources = new Set(picked.filter((f) => !compiledAhead(f)).map((f) => libraryOf(f.path)));
   for (const file of picked) {
     const library = libraryOf(file.path);
@@ -658,9 +664,12 @@ export function restoreBundles(names, say = () => { }, lost = () => { }) {
         } catch { /* that library compiles again when it is used */ }
       }
       for (const library of broken) {
-        await stored.removeEntry(library).catch(() => {});
-        // One with its source compiles again when it is used; one that came
-        // alone is gone, and has to be imported again.
+        // Stores it as it is now: no bundle, and the reason when it could not
+        // be built again, so a later page does not compile its source in its
+        // place (ADR-076).
+        if (!(await persistLibrary(name, library))) await stored.removeEntry(library).catch(() => {});
+        // One the page compiled compiles again from its source when it is
+        // used; one that came alone is gone, and has to be imported again.
         if ((await read(name, library + '.pl')) === null) lost(name, library);
       }
     }

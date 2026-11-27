@@ -603,8 +603,10 @@ export async function run(session, emit, out, editor, workspace) {
 
   // A folder from this computer brings each library compiled ahead beside its
   // source, as an archive does: the library is compiled the moment it lands,
-  // and loads from its bundle. One of another format is left out, and its
-  // library compiles from its source when it is used.
+  // and loads from its bundle. Of another format (ADR-076), one the page
+  // compiled compiles from its source when it is used; one that cannot be
+  // built again is refused, with the reason, and its source is not compiled
+  // in its place.
   {
     const made = 'selftest_ahead_src';
     const collection = 'selftest_ahead';
@@ -615,6 +617,16 @@ export async function run(session, emit, out, editor, workspace) {
     check('a library to bring is compiled', await libraries.compile(made, 'lib_ahead'), null);
     const base64 = await session.exports().LibraryBundle(made, 'lib_ahead');
     const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+    const paged = ':- module(lib_paged, [paged/1]).\npaged(8).\n';
+    await libraries.write(made, 'lib_paged.pl', paged);
+    check('and one more', await libraries.compile(made, 'lib_paged'), null);
+    // Of another format: the stamp after the magic and the version.
+    const pagedBytes = Uint8Array.from(atob(await session.exports().LibraryBundle(made, 'lib_paged')),
+                                       (c) => c.charCodeAt(0));
+    pagedBytes[8] ^= 0xFF;
+    // Of a version before bundles said how they were built.
+    const oldBytes = bytes.slice();
+    oldBytes[4] = 6;
     await libraries.remove(made);
     await libraries.forget(made);
 
@@ -622,21 +634,33 @@ export async function run(session, emit, out, editor, workspace) {
       { path: 'lib_ahead.pl', file: new Blob([text]) },
       { path: 'lib_ahead.shum', file: new Blob([bytes]) },
       { path: 'lib_stale.pl', file: new Blob([':- module(lib_stale, [stale/1]).\nstale(7).\n']) },
-      { path: 'lib_stale.shum', file: new Blob([new Uint8Array([1, 2, 3, 4])]) },
+      { path: 'lib_stale.shum', file: new Blob([oldBytes]) },
+      { path: 'lib_paged.pl', file: new Blob([paged]) },
+      { path: 'lib_paged.shum', file: new Blob([pagedBytes]) },
       { path: 'README.md', file: new Blob(['not a library']) },
     ]);
     check('the folder gives its sources and its bundles',
           files.map((f) => `${f.path}:${libraries.compiledAhead(f)}`).join(' '),
-          'lib_ahead.pl:false lib_ahead.shum:true lib_stale.pl:false lib_stale.shum:true');
+          'lib_ahead.pl:false lib_ahead.shum:true lib_stale.pl:false lib_stale.shum:true '
+          + 'lib_paged.pl:false lib_paged.shum:true');
     check('and it imports', await libraries.importFolder(collection, '', files), null);
-    const listed = Object.fromEntries(
-      (await libraries.entries(collection)).map((e) => [e.name, e.state]));
+    const entries = await libraries.entries(collection);
+    const listed = Object.fromEntries(entries.map((e) => [e.name, e.state]));
     check('the library it brought compiled is compiled', listed.lib_ahead, 'compiled');
-    check('one of another format is left out', listed.lib_stale, 'source');
+    check('one the page compiled, of another format, compiles from its source', listed.lib_paged, 'source');
+    check('one that cannot be built again is refused', listed.lib_stale, 'refused');
+    check('and the list says why',
+          (entries.find((e) => e.name === 'lib_stale')?.note ?? '').includes('said how they were built'), true);
     check('and the first loads from its bundle',
           await solutions('use_module(library(lib_ahead)), ahead(X).'), 'X = 42');
-    check('and the other from its source',
-          await solutions('use_module(library(lib_stale)), stale(X).'), 'X = 7');
+    check('the second from its source',
+          await solutions('use_module(library(lib_paged)), paged(X).'), 'X = 8');
+    // Its load warns, with the reason its diagnostic keeps.
+    await solutions('use_module(library(lib_stale)).');
+    check('and the third does not load, nor its source in its place',
+          await solutions('catch(stale(X), _, fail).'), '');
+    check('and its diagnostic says why',
+          (await libraries.diagnostic(collection, 'lib_stale')).includes('said how they were built'), true);
     await libraries.remove(collection);
     await libraries.forget(collection);
 
@@ -675,6 +699,9 @@ export async function run(session, emit, out, editor, workspace) {
     check('but not with its source',
           libraries.unreadable((await libraries.collectionOfFiles([
             new File([new Uint8Array(32)], 'lib_old.shum'), new File([text], 'lib_old.pl')])).files).join(' '), '');
+    check('one of another format a page compiled, alone, is named too',
+          libraries.unreadable((await libraries.collectionOfFiles([
+            new File([pagedBytes], 'lib_paged.shum')])).files).join(' '), 'lib_paged.shum');
   }
 
   // --- the file bar ---------------------------------------------------------

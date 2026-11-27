@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-27). Amends the stamp amendment of
+Accepted (2026-11-27). Amends the stamp amendment of
 [ADR-009](009-bundler-design.md) (2026-11-22), and changes what
 [ADR-075](075-dynamic-library-bundles.md) and the page do with a library
 bundle of another format.
@@ -114,7 +114,7 @@ way a library search path finds it.
 
 ### 4. One function rebuilds a file from its recipe
 
-`BundleRecipe.Rebuild` reads the recipe of a file of another format and runs
+`BundleRebuild.Rebuild` reads the recipe of a file of another format and runs
 again what the recipe says, under the rules it names, with this engine's
 compiler and linker. A source is found by its name, beside the file, in the
 collection's `src/`, or on the library search path, and the file may carry
@@ -145,7 +145,9 @@ asked for and nothing else, and linking again is how a rebuilt file is
 kept.
 
 A library the page compiled itself, from `X.pl` alone, has that as its recipe,
-so it is rebuilt as it is compiled today.
+so it is rebuilt as it is compiled today: from `X.pl`, the first time it is
+used. So is one the page kept from before files said how they were built:
+the page cannot tell one it compiled from one it was given.
 
 ### 5. A file that cannot be rebuilt is refused, with the reason
 
@@ -159,11 +161,13 @@ which of these it is:
   message names the source;
 - the rebuild failed: the message is the compiler's or the linker's.
 
-A file the recipe says nothing can rebuild from, a saved state
-(`save_state/1`), is refused as today.
+A file the recipe says nothing can rebuild from, one a host wrote and a
+saved state (`save_state/1`), is refused as today.
 
 A library of a collection whose bundle is refused this way is not compiled
-from `X.pl` behind the user's back: that is how a `--goal` was lost.
+from `X.pl` behind the user's back: that is how a `--goal` was lost. The page
+keeps the refused bundle as it came, as a file on disk stays: each load of
+it is rebuilt or refused again.
 
 ### 6. What the stamp covers
 
@@ -196,19 +200,33 @@ pins the image of a fixed bundle, recipe included.
 
 ## Tests
 
-To write with the implementation:
-
-- the header of a `.shum` and a `.shmo`: the rules version and the recipe
-  read the same with the stamp changed;
-- a library linked with `--library --goal` from five sources, its stamp
-  changed: rebuilt, the five in order, the goal run once in its module;
-- rebuilt with its sources carried, and with them found by name beside it;
-  a source found that is newer than the one carried is the one compiled;
-- a source taken out of a bundle has the time its recipe records, and the
-  bundle stays the library;
-- a library linked with `--consult`: rebuilt by consult, with the modules
-  its roots brought in;
-- each refusal of decision 5, with its message;
-- the page: a collection whose bundle is of another format rebuilds it, and
-  one whose bundle cannot be rebuilt is refused and not compiled from `X.pl`;
-- a rules version the engine does not accept is refused.
+- `BundleStampTests`: the stamp after the version, the image of a fixed
+  bundle pinned, the recipe included.
+- `BundleRecipeTests`: a recipe reads back as written, a field it does not
+  know is skipped, it is read with the stamp of another format, a rules
+  version the engine does not accept gives none, a carried source reads
+  back in any format, a link records its inputs in order and its options.
+- `RecipeCliTests`: what `shumway-compile` (alone, with `--with-source`, by
+  consult), `shumway-link` and `shumway-lib` record; `shumway-lib` given an
+  object of another format rebuilds it.
+- `BundleRebuildTests`: a library linked with `--library --goal` from five
+  sources, rebuilt with the five in order and the goal once in the module
+  of the last; rebuilt from the copy an object carries; a source edited
+  since the build is compiled, with the warning; a link by consult rebuilt
+  by consult; `use_module` and `shumway-link` given a file of another
+  format; each refusal of decision 5, with its message.
+- `LibraryBundleFilterTests`, `BundleLibraryImportTests`: a library a page
+  compiled, of another format, loads its source; one a host wrote is
+  refused, and the source beside it is not loaded in its place.
+- `SourceToWriteTests` (wasm tests): the source a page writes beside a
+  bundle has the time its recipe records, and the bundle stays the library.
+- `BundleToStoreTests` (wasm tests): what a page keeps of a bundle it
+  imports or puts back; a library linked with `--goal`, of another format,
+  is rebuilt with the collection's sources and its goal runs; one whose
+  sources are gone is refused, naming the source; one the page compiled,
+  and one it kept from before recipes, compile from their source; one
+  brought in from before recipes is refused.
+- The page's self-test: a collection brings a library the page compiled and
+  one from before recipes, both of another format, with their sources: the
+  first loads its source, the second is refused, says why, and its source
+  is not loaded in its place.

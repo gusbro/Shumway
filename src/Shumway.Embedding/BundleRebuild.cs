@@ -51,6 +51,9 @@ public static class BundleRebuild
     /// says why there is none to rebuild it from.</summary>
     public static BundleRecipe RecipeOf(byte[] image, string what)
     {
+        if (!BundleReader.IsBundle(image)
+            && !(image.Length >= 4 && image.AsSpan(0, 4).SequenceEqual(ShmoFormat.Magic)))
+            throw new RebuildRefusedException($"{what} is not a compiled file.");
         if (BundleFormat.HeaderRecipe(image) is not { } header)
             throw new RebuildRefusedException(
                 $"{what} is in another format of compiled code and was built before compiled files "

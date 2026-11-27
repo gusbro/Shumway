@@ -97,6 +97,9 @@ public static class BundleFormat
     /// exactly this value.</summary>
     public const int CurrentVersion = 7;
 
+    /// <summary>The first version whose files say how they were built (ADR-076).</summary>
+    public const int FirstVersionWithRecipe = 7;
+
     /// <summary>A fingerprint of what the bytes of a compiled file mean: the
     /// instruction set and how each instruction is encoded, the cell tags,
     /// and the layouts of a bundle and of an object file. A file carries the
@@ -182,7 +185,8 @@ public static class BundleFormat
         bool bundle = image.Slice(0, 4).SequenceEqual(Magic);
         bool shmo = image.Slice(0, 4).SequenceEqual(ShmoFormat.Magic);
         // The versions that carry the recipe, and every later one.
-        if (!(bundle && version >= 7 || shmo && version >= 4)) return null;
+        if (!(bundle && version >= FirstVersionWithRecipe
+              || shmo && version >= ShmoFormat.FirstVersionWithRecipe)) return null;
         int rules = (int)System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(image.Slice(RulesAt));
         int length = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(image.Slice(RulesAt + 4));
         if (length < 0 || length > image.Length - RecipeAt) return null;
