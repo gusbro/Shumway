@@ -10,6 +10,8 @@ first release and this convention arrive together.
 Amended 2026-10-31: `absolute_file_name/2` no longer adds a trailing `/` to a
 directory (point 5).
 
+Amended 2026-11-26: in a browser a path with a drive is absolute.
+
 ## Context
 
 Shumway's path-producing builtins returned the host's native form. On
@@ -149,3 +151,10 @@ so the saved and expected URLs never matched.
 never adds one. SWI-Prolog and SICStus do not add one either.
 `working_directory/2` keeps its `/`: it always names a directory, so its form
 does not depend on the file system.
+
+## Amendment (2026-11-26): a path with a drive is absolute in a browser
+
+In a browser a path that starts with a letter, a colon and a separator
+(`C:/` or `C:\`) is absolute (`PrologPath.IsRooted`): it resolves to itself,
+and a consult or an include does not put it under the directory of the file
+that names it.

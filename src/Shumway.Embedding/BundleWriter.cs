@@ -352,6 +352,8 @@ public static class BundleWriter
             // source: it is the ground truth that (a) ships in the bundle,
             // (b) the runtime LoadBundle dispatches against, and (c) the
             // linker's dead-region analysis decodes (the Stage-9d lesson).
+            // Without its initialization goals: they run where the bundle
+            // loads, never where it is built.
             if (e.CompiledBytecode is not null && e.Defined.Count > 0)
                 bare.Add(new BundleEntry(
                     e.ModuleName, source: "", compiledBytecode: e.CompiledBytecode,
@@ -364,8 +366,7 @@ public static class BundleWriter
                     operators: e.Operators,
                     isExportQualified: e.IsExportQualified,
                     exports: e.Exports, imports: e.Imports,
-                    dialect: e.Dialect, clauseTerms: e.ClauseTerms, flags: e.Flags,
-                    initializationGoals: e.InitializationGoals));
+                    dialect: e.Dialect, clauseTerms: e.ClauseTerms, flags: e.Flags));
             else if (!string.IsNullOrEmpty(e.Source))
                 sources.Add(e.Source);
         }

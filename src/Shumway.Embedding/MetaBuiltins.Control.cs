@@ -468,7 +468,7 @@ public static partial class MetaBuiltins
         string resolved = ConsultPipeline.ResolveSourcePath(engine.OsPath(path));
         if (!System.IO.File.Exists(resolved)
             && host._consultBaseDir is { } baseDir
-            && !System.IO.Path.IsPathRooted(path))
+            && !Shumway.Core.PrologPath.IsRooted(path))
         {
             string rebased = ConsultPipeline.ResolveSourcePath(
                 System.IO.Path.Combine(baseDir, path));

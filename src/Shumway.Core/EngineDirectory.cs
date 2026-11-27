@@ -58,8 +58,15 @@ public sealed class EngineDirectory
     public string FullPath(string path)
     {
         string? own = _own;
-        return own is null ? Path.GetFullPath(path) : Absolute(path, own);
+        if (own is null)
+            return DriveInBrowser(path) ? path : Path.GetFullPath(path);
+        return Absolute(path, own);
     }
+
+    // ADR-044, amendment of 2026-11-26: in a browser a path with a drive is
+    // absolute, and stays as written (PrologPath.IsRooted).
+    private static bool DriveInBrowser(string path) =>
+        OperatingSystem.IsBrowser() && PrologPath.HasDrive(path);
 
     /// <summary>Changes the directory. A relative <paramref name="directory"/>
     /// is taken against the current one. Throws
@@ -80,6 +87,7 @@ public sealed class EngineDirectory
 
     private static string Absolute(string path, string baseDirectory)
     {
+        if (DriveInBrowser(path)) return path;
 #if NETFRAMEWORK
         // No GetFullPath(path, basePath) on .NET Framework. Combine drops the
         // base for a rooted path, which is right for one with a volume and

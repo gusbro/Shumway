@@ -337,7 +337,8 @@ public sealed class WasmBakeSession
 
     /// <summary>Bakes the bundle's own static predicates and the helpers of
     /// its dynamic rules (<see cref="WasmBundleTier.BakeLoaded"/>); no module
-    /// when none compiled.</summary>
+    /// when none compiled. The bundle's initialization goals do not run: what
+    /// they assert is compiled where the bundle loads.</summary>
     public IReadOnlyList<byte[]> Bake(Bundle bundle, Action<string>? log = null)
     {
         var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -348,7 +349,7 @@ public sealed class WasmBakeSession
             before.Add(pred.FunctorId);
         var dynamicsBefore = WasmPromotionStore.DynamicDigestsOf(_engine);
         double dependencies = clock.Elapsed.TotalSeconds;
-        _engine.LoadBundle(bundle);
+        _engine.LoadBundleWithoutInitialization(bundle);
         log?.Invoke($"wasm: loaded what it imports in {dependencies:0.00} s, "
             + $"the bundle in {clock.Elapsed.TotalSeconds - dependencies:0.00} s");
         return WasmBundleTier.BakeLoaded(_engine, before, dynamicsBefore, log);

@@ -701,6 +701,9 @@ body.busy #consult, body.busy #libraries { opacity: .6; pointer-events: none; }
     flex-direction: column;
     overflow: hidden;
     padding: .9rem 1rem 1rem;
+    /* The whole width as well: the panes share it by the splitter's
+       percentage, so a wider window gives both more room. */
+    max-width: none;
   }
   header { flex: none; margin-bottom: .8rem; }
   .panes { flex: 1 1 0; min-height: 0; }

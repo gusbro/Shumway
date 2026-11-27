@@ -7,7 +7,8 @@
 # directories.
 #
 # Usage:
-#   powershell -File tests/test-wasm-parallel.ps1                    # the gate
+#   powershell -File tests/test-wasm-parallel.ps1                    # Debug, the diagnostic tests skipped
+#   powershell -File tests/test-wasm-parallel.ps1 -Configuration Release -Diag   # the gate
 #   powershell -File tests/test-wasm-parallel.ps1 -Configuration Release -Diag -Filter "Category!=Slow"   # CI
 #
 # The buckets are first letters of the class name, balanced from per-class

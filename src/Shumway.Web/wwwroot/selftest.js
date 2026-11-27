@@ -389,6 +389,15 @@ export async function run(session, emit, out, editor, workspace) {
   check('open/4 wrote into the workspace',
         await workspace.read('written_by_prolog.txt'), 'hello');
 
+  // A bundle built on Windows names its files with a drive. The page has no
+  // drives, but such a path is still absolute: it is not put under the
+  // workspace.
+  check('a path with a drive is absolute',
+        await solutions("absolute_file_name('C:/lib/x.pl', A), absolute_file_name('d:\\\\y', B)."),
+        "A = 'C:/lib/x.pl',\nB = 'd:\\\\y'");
+  check('a relative path is under the workspace',
+        /^A = '\/.+\/x\.pl'$/.test(await solutions("absolute_file_name('x.pl', A).")), true);
+
   check('delete removes it', await workspace.remove('written_by_prolog.txt'), null);
   check('and it is gone', (await workspace.list()).includes('written_by_prolog.txt'), false);
 
