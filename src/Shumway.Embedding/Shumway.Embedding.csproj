@@ -26,6 +26,12 @@
     <InternalsVisibleTo Include="shumway-librarybake" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- RFC 7932, appendix A: the static dictionary of the Brotli decoder. -->
+    <EmbeddedResource Include="Compression/brotli-dictionary.deflate"
+                      LogicalName="Shumway.Embedding.Compression.brotli-dictionary.deflate" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework></TargetFramework>
     <TargetFrameworks>$(ShumwayTargetFrameworks)</TargetFrameworks>
