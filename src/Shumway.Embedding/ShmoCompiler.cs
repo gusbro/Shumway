@@ -142,10 +142,12 @@ public static class ShmoCompiler
         string moduleNameFallback = "user",
         ShmoBuildMode buildMode = ShmoBuildMode.Release,
         Func<PredicateRef, bool>? clauseFilter = null,
-        bool withSource = false)
+        bool withSource = false,
+        IReadOnlyList<string>? libraryDirs = null)
     {
         var result = TryCompileSource(source, moduleNameFallback, buildMode,
-            maxErrors: 100, clauseFilter: clauseFilter, withSource: withSource);
+            maxErrors: 100, clauseFilter: clauseFilter, withSource: withSource,
+            libraryDirs: libraryDirs);
         if (result.Errors.Count > 0)
         {
             var first = result.Errors[0];
@@ -167,6 +169,9 @@ public static class ShmoCompiler
     /// only clauses whose head indicator satisfies the filter are compiled;
     /// directives are unaffected. Used by the linker to bake a reachability-
     /// reduced prelude.</param>
+    /// <param name="libraryDirs">The library search path an
+    /// <c>exists_source(library(X))</c> condition is answered from, before the
+    /// source's own directory, as the consult compile answers it.</param>
     public static ShmoCompileResult TryCompileSource(string source,
         string moduleNameFallback = "user",
         ShmoBuildMode buildMode = ShmoBuildMode.Release,
@@ -174,7 +179,8 @@ public static class ShmoCompiler
         bool arityCompat = false,
         Func<PredicateRef, bool>? clauseFilter = null,
         string? includeBaseDir = null,
-        bool withSource = false)
+        bool withSource = false,
+        IReadOnlyList<string>? libraryDirs = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
@@ -307,6 +313,7 @@ public static class ShmoCompiler
         // The `:- initialization/1` goals, in source order: the bundle's load
         // runs them, as a compiled program runs them when it starts.
         var initializationGoals = new List<Term>();
+        var goalsLeftOut = new List<string>();
         // Conditional compilation keeps the clauses the consult keeps: the
         // same conditions, asked of what this file has read so far.
         var conditionFlags = new Shumway.Compiler.Parsing.PrologFlags { ArityCompat = arityCompat };
@@ -323,7 +330,10 @@ public static class ShmoCompiler
                     if (TryExtractHead(cl) is { } h && h.Equals(pi)) return true;
                 return PreludePublics.Value.Contains(pi);
             },
-            LibraryKnown: _ => false,
+            // As the consult compile (ShmoViaConsult): the search path, then
+            // the source's own directory.
+            LibraryKnown: name => (libraryDirs is not null && LibrarySearchPath.Has(libraryDirs, name))
+                || (includeBaseDir is not null && LibrarySearchPath.Has(new[] { includeBaseDir }, name)),
             FileExists: name => File.Exists(Path.GetFullPath(name)),
             Unsupported: cond => warnings.Add(ShmoCompileError.At(
                 $"unsupported :- if/elif condition ({cond}) treated as false", conditionAt))));
@@ -500,10 +510,13 @@ public static class ShmoCompiler
                             clause.Position));
                 }
                 else if (GoalNotRun(d.Args[0]) is { } notRun)
+                {
+                    goalsLeftOut.Add(notRun);
                     warnings.Add(ShmoCompileError.At(
                         $"directive {notRun} is ignored by file-at-a-time compilation: "
                         + "run it from initialization/1, or compile with --consult",
                         clause.Position));
+                }
                 continue;
             }
             // prelude pruning: drop clauses whose head the
@@ -515,9 +528,9 @@ public static class ShmoCompiler
             rawClauses.Add(clause);
         }
         if (errors.Count > 0)
-            return new ShmoCompileResult(null, errors, warnings);
+            return new ShmoCompileResult(null, errors, warnings) { GoalsLeftOut = goalsLeftOut };
 
-        return CompileFromParts(
+        var compiled = CompileFromParts(
             moduleName,
             source, rawClauses, publicSet, dynamicSet, ensureLinked,
             qualifiedRefs, buildMode, errors, warnings, arityEverOn, tabledSet,
@@ -533,6 +546,8 @@ public static class ShmoCompiler
                 ? ModuleRewrite.MetaArgSpecOfTemplate(t,
                     system: Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _))
                 : ModuleRewrite.DefaultMetaArgSpec(fid, local));
+        compiled.GoalsLeftOut = goalsLeftOut;
+        return compiled;
     }
 
     /// <summary>the compile back-half, shared by
@@ -1106,7 +1121,7 @@ public static class ShmoCompiler
     /// <summary>A static predicate is in <see cref="ShmoObject.Defined"/>
     /// because it has clauses; a dynamic one (multifile included) also for
     /// its declaration alone, its clauses being its seeds.</summary>
-    private static bool HasClauses(ShmoObject obj, ShmoDefinedPredicate d)
+    internal static bool HasClauses(ShmoObject obj, ShmoDefinedPredicate d)
     {
         if (d.Visibility != PredicateVisibility.Dynamic) return true;
         foreach (var seed in obj.DynamicSeeds)
@@ -1118,13 +1133,15 @@ public static class ShmoCompiler
         ShmoBuildMode buildMode = ShmoBuildMode.Release,
         int maxErrors = 100,
         bool arityCompat = false,
-        bool withSource = false)
+        bool withSource = false,
+        IReadOnlyList<string>? libraryDirs = null)
     {
         ArgumentNullException.ThrowIfNull(path);
         string source = Shumway.Core.TextFile.ReadAllText(path);
         string fallback = Path.GetFileNameWithoutExtension(path);
         return TryCompileSource(source, fallback, buildMode, maxErrors, arityCompat,
-            includeBaseDir: Path.GetDirectoryName(Path.GetFullPath(path)), withSource: withSource);
+            includeBaseDir: Path.GetDirectoryName(Path.GetFullPath(path)), withSource: withSource,
+            libraryDirs: libraryDirs);
     }
 
     // ------------------------------------------------------------------------

@@ -71,6 +71,11 @@ public sealed class ShmoCompileResult
 
     public bool Success => Errors.Count == 0;
 
+    /// <summary>The directives the compile left out because they are goals,
+    /// which the consult runs (a warning names each): their indicators, in
+    /// source order.</summary>
+    public IReadOnlyList<string> GoalsLeftOut { get; internal set; } = Array.Empty<string>();
+
     public ShmoCompileResult(ShmoObject? obj, IReadOnlyList<ShmoCompileError> errors,
         IReadOnlyList<ShmoCompileError>? warnings = null)
     {

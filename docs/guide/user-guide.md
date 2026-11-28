@@ -883,7 +883,7 @@ Flags:
 | `--dump-il <file>` | Append the Tier-1 IL the compiler generates for each predicate to `<file>` (analysis aid; see below). |
 | `--regions` | With `--dump-il`, enable **region compilation** so the IL dump shows region methods (flat local code space) instead of one method per predicate. |
 | `-c, --consult` | Compile by **consulting** the file(s) in an ephemeral engine (directives execute, `term_expansion` / `goal_expansion` hooks run, `use_module` dependencies load) and emit one `.shmo` per module the load brought in. Required for libraries that *generate clauses at load time* or need operators defined by their dependencies: the file-at-a-time compile above cannot run those hooks. All inputs are consulted into **one** engine, so a module several inputs share (a library and its dependencies) compiles **once**; and a dragged-in dependency's `.shmo` is **reused when up to date** (it exists, is at least as new as the module's source, and was built with the same mode and the same `--with-source` setting), so compiling `a.pl` then `b.pl` in separate runs produces the same object set as one batch. Each object is self-contained (it carries its own clauses, dynamic seeds, and operators) so any reachability-complete subset links correctly. See [Packaging a third-party library](#packaging-a-third-party-library-into-a-bundle---consult). |
-| `-L, --library-dir <dir>` | With `--consult`: an extra directory searched to resolve `use_module(library(X))` when a dependency is not next to the compiled file. Repeatable; also reads `SHUMWAY_LIBRARY_PATH`. (The compiled file's *own* directory is always searched, so siblings resolve with no flag.) |
+| `-L, --library-dir <dir>` | An extra folder to look for libraries in. With `--consult`, `use_module(library(X))` finds a library there when it is not next to the compiled file. Without `--consult`, `exists_source(library(X))` looks there, and so does the hint about `--consult`. Can be given more than once; `SHUMWAY_LIBRARY_PATH` is read too. (The compiled file's *own* folder is always searched, so libraries next to it are found with no flag.) |
 | `-h, --help` | Usage summary. |
 
 **Error handling**: the compiler is C-style, on a parse or directive
@@ -1043,15 +1043,27 @@ Two things to know going in:
 - **The directives DO run during compilation.** `--consult` executes the
   file. Only consult sources you trust, exactly as you would only *run* a
   program you trust.
-- **You do not have to know the flag in advance.** `shumway-compile` prints a
-  hint pointing at `--consult` whenever a file compiled the ordinary way
-  relies on load-time hooks or dependency-defined operators. A file that
-  defines `term_expansion/2`, `goal_expansion/2` or a clause for another
-  module (`M:Head :- Body`) is refused instead, by `shumway-compile` and
-  `shumway-link` alike: compiled one file at a time, the hook would never
-  run and the clause would define a predicate named `:`. A file that only
-  declares one of those hooks `multifile` or `dynamic`, with no clause, is
-  not refused: the declaration installs nothing.
+- **You do not have to know in advance when to use `--consult`.** If a file
+  needs it, `shumway-compile` and `shumway-link` say so in a hint. That
+  happens when:
+  - the file loads a library that changes the code of the files that load
+    it (the library defines `term_expansion/2` or `goal_expansion/2`);
+  - the file loads a library with a directive that runs a goal, such as
+    `:- assertz(...)`. Without `--consult`, that goal does not run;
+  - the file does not compile because it uses an operator from a library it
+    loads, such as `#=` from `library(clpfd)`;
+  - the file does not compile because a declaration names another module,
+    such as `:- multifile(user:portray/1)`.
+
+  Loading a library is not a reason by itself: the linker finds the library
+  and links it either way.
+
+  Some files are refused, with a message that shows the `--consult` command:
+  a file that defines `term_expansion/2` or `goal_expansion/2`, and a file
+  with a clause for another module (`M:Head :- Body`). Compiled on its own,
+  the hook would never run, and the clause would define a predicate named
+  `:`. A file that only declares one of those hooks `multifile` or
+  `dynamic`, with no clause, is not refused.
 - **A file-at-a-time compile does not run directives, and carries
   `:- initialization`.** An `:- initialization(G)` goal runs when the bundle
   loads, once all of it is in and in its module, as a compiled program runs
@@ -1061,11 +1073,13 @@ Two things to know going in:
   while compiling; the object then carries the state they leave in its
   dynamic predicates, and its `initialization` goals do not run again when
   the bundle loads.
-- **Conditional compilation keeps the same clauses either way.** A
-  condition of `:- if`, `:- elif` is answered from the flags, the builtins,
-  the prelude, the libraries Shumway ships and what the file defined above
-  it, without running a query. A condition neither compile can answer is
-  reported and taken as false.
+- **Conditional compilation gives the same result either way.** The
+  conditions of `:- if` and `:- elif` are answered without running the
+  program. They can look at the flags, the builtins, the prelude, what the
+  file defined above them, and which libraries exist: the ones Shumway ships
+  and, for `exists_source(library(X))`, the ones in the `-L` folders, in
+  `SHUMWAY_LIBRARY_PATH` and next to the file. A condition that cannot be
+  answered this way is reported and taken as false.
 
 ### Step 2: `shumway-link` (linker)
 
@@ -1094,9 +1108,9 @@ shumway-link -o app.shum \
 | `--library` | Keep every predicate of every input: the bundle is a library loaded whole, and nothing is pruned. A `--goal` runs when the bundle loads, as the last `initialization/1` goal of the last input, in its module. |
 | `--allow-undefined` | Downgrade missing-predicate errors to warnings; still produce the bundle. The engine raises `existence_error/2` at call time if the missing predicate is actually invoked. |
 | `--warn-shadow` | Warn when a module's **local** predicate shares an indicator with another linked module's public: the C `static`-shadows-global shape. Legal either way (inside its module the local wins); the `--map` file always lists these regardless of the flag. (Two *publics* with the same indicator are always a `duplicate_public` **error**.) |
-| `-L, --library-dir <dir>` | Directory searched to resolve a `use_module(library(X))` dependency not passed explicitly: `X.pl`/`X.shmo` is compiled and linked in (transitively), C-linker style: already-provided inputs win, source is the last resort. Repeatable; also reads `SHUMWAY_LIBRARY_PATH`. |
+| `-L, --library-dir <dir>` | Directory searched to resolve a `use_module(library(X))` dependency not passed explicitly: `X.pl`/`X.shmo` is compiled and linked in (transitively), C-linker style: already-provided inputs win, source is the last resort. A `.pl` compiled without `--consult` also looks here for `exists_source(library(X))`. Repeatable; also reads `SHUMWAY_LIBRARY_PATH`. |
 | `-dl, --dynlib <lib>` | Link against a library bundle (one linked with `--library`) without linking its code in. A call the inputs leave undefined is looked up in the library; the bundle records what it uses, and when it loads it attaches the library, checks that it still offers those predicates, and loads the modules that define them. `<lib>` is a `.shum` file, or a name found as `<lib>.shum` in the `-L` directories; at load the bundle finds it next to itself or on the library search path. Repeatable. A source with `:- ensure_loaded(bundle(<lib>))` is linked the same way without the option: the compiler records the directive in its `.shmo`, and the link finds `<lib>.shum` in the `-L` directories (under `--consult`, the file the consult attached). See [ADR-075](../architecture/adr/075-dynamic-library-bundles.md). |
-| `--consult` | Compile `.pl` inputs **through the consult pipeline** (directives and `term_expansion` / `goal_expansion` hooks run, `use_module` dependencies load) instead of file-at-a-time: the linker equivalent of `shumway-compile --consult`. Needed when a source uses a library's operators or generates clauses at load time; every module the load brings in is linked. Without it, a `.pl` that uses `library(...)` compiles file-at-a-time and the linker prints a hint pointing here; one that defines an expansion hook or a clause for another module is refused. |
+| `--consult` | Compile `.pl` inputs **through the consult pipeline** (directives and `term_expansion` / `goal_expansion` hooks run, `use_module` dependencies load) instead of file-at-a-time: the linker equivalent of `shumway-compile --consult`. Needed when a source uses a library's operators or generates clauses at load time; every module the load brings in is linked. Without it, each `.pl` is compiled on its own and the linker finds its libraries. When a file needs `--consult`, the linker says so: the cases are listed under Step 1. A `.pl` that defines an expansion hook or a clause for another module is refused. |
 | `-s, --strip` | Remove the embedded Prolog source and the clause terms from every bundle entry. Bytecode preserved, so the program runs the same; `clause/2` and `listing/1` no longer see its static predicates. Useful for size analysis / IP-protection. Without it, a release bundle (no source) still ships each module's clause terms, so `clause/2` and `listing/1` answer exactly as they do on the consulted source. A `.shmo` always carries the clause terms: it is an *intermediate* build artifact, like an object file with embedded IR, and the linker uses them for cross-module optimization (e.g. the meta-wrapper unfold). |
 | `-m, --map <path>` | Write a C-toolchain-style audit file describing what landed in the bundle: per-module sizes, exported / dynamic predicate lists, local-shadows-public listing, dropped modules, totals. |
 | `-i, --with-compiled-il` | Persist a Tier-1 IL assembly inside the bundle: each predicate switches from its bytecode to that IL once it is hot, with no IL generation at run time. By default the IL uses the **region** layout with the dead-region prune applied: a predicate and its local closure share one IL method, and each absorbed-only predicate drops its standalone IL. |

@@ -147,8 +147,10 @@ public static class BundleRebuild
             ShmoCompileResult res = source.Text is not null
                 ? ShmoCompiler.TryCompileSource(source.Text, Path.GetFileNameWithoutExtension(source.Path),
                     mode, arityCompat: r.ArityCompat,
-                    includeBaseDir: Path.GetDirectoryName(Path.GetFullPath(source.Path)), withSource: r.WithSource)
-                : ShmoCompiler.TryCompileFile(source.Path, mode, arityCompat: r.ArityCompat, withSource: r.WithSource);
+                    includeBaseDir: Path.GetDirectoryName(Path.GetFullPath(source.Path)), withSource: r.WithSource,
+                    libraryDirs: c.LibraryDirs)
+                : ShmoCompiler.TryCompileFile(source.Path, mode, arityCompat: r.ArityCompat, withSource: r.WithSource,
+                    libraryDirs: c.LibraryDirs);
             obj = res.Object ?? throw Failed(what, res.Errors.FirstOrDefault()?.Message ?? "the compile failed");
         }
         // The recipe of what was compiled: the sources as they were taken.
