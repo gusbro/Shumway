@@ -1,0 +1,19 @@
+### call
+X = 1. % a comment after the term
+### call
+% a comment before the term
+X = 2.
+### call
+X = 3.
+% a comment on the last line
+### call
+/* a block comment */
+### call
+
+### call
+X = 4.
+
+### call
+X
+  =
+    5.

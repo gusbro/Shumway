@@ -46,6 +46,23 @@ jobs:
       # consult the solution.
       - name: Build everything (the CLIs have no tests to build them)
         run: dotnet build Shumway.slnx -c Release --nologo -v q
+      # A Release toolchain is precompiled (build/Shumway.Dist): a crossgen2
+      # that fails breaks the build above, one that is skipped fails here.
+      - name: The toolchain carries native code
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.Reflection.Metadata
+          $dlls = @(Get-ChildItem dist/Release/*.dll)
+          if ($dlls.Count -lt 10) { throw "dist/Release holds $($dlls.Count) assemblies" }
+          $il = @()
+          foreach ($dll in $dlls) {
+              $pe = [System.Reflection.PortableExecutable.PEReader]::new([System.IO.File]::OpenRead($dll.FullName))
+              try { if ($pe.PEHeaders.CorHeader.ManagedNativeHeaderDirectory.Size -eq 0) { $il += $dll.Name } }
+              finally { $pe.Dispose() }
+          }
+          if ($il) { throw "IL only: $($il -join ', ')" }
+          "$($dlls.Count) assemblies, all with native code"
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64

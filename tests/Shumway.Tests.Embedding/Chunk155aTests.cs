@@ -55,8 +55,8 @@ public class Chunk155aTests
             "chunk 155a: bucket chains use try_me_else (extensible).");
         Assert.False(HasOpcode(cached.Bytecode, Opcode.Try),
             "chunk 155a: contiguous try opcode is gone for dynamic indexed predicates.");
-        Assert.True(HasOpcode(cached.Bytecode, Opcode.Execute),
-            "chunk 155a: chain entries reach shared bodies via execute.");
+        Assert.True(HasOpcode(cached.Bytecode, Opcode.Jump),
+            "chunk 155a: chain entries reach shared bodies by a jump.");
         Assert.True(HasOpcode(cached.Bytecode, Opcode.EnterDynamic));
         Assert.True(HasOpcode(cached.Bytecode, Opcode.CheckVisible));
     }

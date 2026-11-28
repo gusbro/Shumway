@@ -204,6 +204,15 @@ public sealed partial class IlPredicateCompiler
     }
 #endif
 
+    /// <summary>ADR-056, amendment: the functor a call by this name reaches.
+    /// The callee map resolves the bare name of a library predicate to that
+    /// predicate, and the code calls it under its own name, so the call takes
+    /// the table and the region its code is in.</summary>
+    private static int CallTarget(int siteFunctorId,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+        => calleeMap is not null && calleeMap.TryGetValue(siteFunctorId, out var callee)
+            ? callee.FunctorId : siteFunctorId;
+
     /// <summary>binary search. <see cref="CompiledPredicate.CallSites"/>
     /// is built in ascending <c>OpcodeOffset</c> order at every construction
     /// site (per-clause emission appends sites forward, predicate assembly
@@ -316,7 +325,8 @@ public sealed partial class IlPredicateCompiler
                     var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
                         BytecodeIO.ReadInt32(code, pc + 1));
                     // precomputed flags instead of name compares.
-                    if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable)
+                    if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable
+                        || entry.OpensCatchScope)
                         return false;
                     endsTerminal = false;
                     pc += OpcodeTable.Get((byte)op).Size;

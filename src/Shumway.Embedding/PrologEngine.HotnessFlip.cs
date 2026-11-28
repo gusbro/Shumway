@@ -20,8 +20,10 @@ public sealed partial class PrologEngine
     /// Returns the reason when any of them cannot be, and the setup lays the
     /// program out again as it did: a predicate with rules (its helpers would
     /// have to be linked with it), one with source clauses in a module, a
-    /// flip back to cold, a debug session, an activation on the buffer, the
-    /// wasm tier. A predicate with nothing to index, no argument or no clause,
+    /// flip back to cold, a debug session, an activation on the buffer. Under
+    /// the wasm tier the chain's chunks are not reused: a module may hold pcs
+    /// of code dropped from the buffer (ChainPatcher.ReleaseUnreached). A
+    /// predicate with nothing to index, no argument or no clause,
     /// keeps the chain it has, which is what its indexed compile would be.</summary>
     private string? TryFlipHotnessInPlace(List<int> fids)
     {
@@ -33,7 +35,6 @@ public sealed partial class PrologEngine
         if (_debugEvalDepth > 0 || DebugSession is not null || _flags.EmitDebugInfo || _flags.DebugCodegen)
             return "debugging";
         if (DynChains.Attached > 0) return "an activation on the buffer";
-        if (IlPromotion.Wasm is not null) return "wasm tier";
         if (_dynamicLink.SwitchTables is not List<SwitchTable> dynTables) return "switch tables";
 
         // Every predicate is checked before any is compiled, and every version
@@ -58,11 +59,17 @@ public sealed partial class PrologEngine
             }
             if (_staticRewriteHeadFids?.Contains(fid) == true)
                 return "source clauses in a module: " + FunctorDisplayName(fid);
-            if (_dynamicSeedModule.ContainsKey(fid)) return "seed module: " + FunctorDisplayName(fid);
+            // A seed module's context changes only how a rule's body is
+            // rewritten: a predicate of facts rewrites the same in user's.
             if (!_dynStore.HoldsOnlyFacts(fid)) return "rules: " + FunctorDisplayName(fid);
             int index = product.DynamicFunctors.Contains(fid)
                 ? product.DynamicPreds.FindIndex(p => p.FunctorId == fid) : -1;
-            if (index < 0 || !_dynamicLink.Addresses.TryGetValue(fid, out int oldAddr))
+            // One an attach declared is in the buffer and not in the product
+            // (AdoptDeclaredDynamics): its version joins the product.
+            bool declared = index < 0 && _liveDeclaredDynamics.Contains(fid);
+            int oldAddr = -1;
+            if ((index < 0 && !declared)
+                || !_persistentAddressesCache.TryGetValue(fid, out oldAddr))
                 return "not in the product: " + FunctorDisplayName(fid);
             if (oldAddr + 6 > prog.Length
                 || prog[oldAddr] != (byte)Opcode.EnterDynamic
@@ -102,7 +109,7 @@ public sealed partial class PrologEngine
             Linker.LinkResult link;
             try
             {
-                link = new Linker().Link(
+                link = new Linker { Aliases = BareLibraryAliases() }.Link(
                     module.Predicates, at, externalSymbols: _persistentAddressesCache,
                     switchTableIdBase: _staticLink.SwitchTables.Count + dynTables.Count);
             }
@@ -112,6 +119,11 @@ public sealed partial class PrologEngine
             }
             if (link.Bytecode.Length != pred.Bytecode.Length || link.Addresses[fid] != at)
                 return "link: " + FunctorDisplayName(fid);
+            // The version's tables go after the dynamic region's: not into
+            // the slots adopted code has past the gap.
+            foreach (var (adoptedAt, _) in _adoptedTables)
+                if (adoptedAt < _staticLink.SwitchTables.Count + dynTables.Count + link.SwitchTables.Count)
+                    return "adopted code: " + FunctorDisplayName(fid);
             PlacePersistent(link.Bytecode, at);
             dynTables.AddRange(link.SwitchTables);
             laid.Add((fid, oldAddr, index, at, pred, link));
@@ -150,9 +162,15 @@ public sealed partial class PrologEngine
                     BytecodeIO.WriteInt32(prog, _persistentPrefixLength + offset + 1, at);
             // The product holds what the buffer runs, so does the cache the next
             // build compiles from.
-            product.DynamicPreds[index] = pred;
+            if (index >= 0) product.DynamicPreds[index] = pred;
+            else
+            {
+                product.DynamicPreds.Add(pred);
+                product.DynamicFunctors.Add(fid);
+                _liveDeclaredDynamics.Remove(fid);
+            }
             _productStaleDynamicFids.Remove(fid);
-            _dynamicPredicateCache[fid] = pred;
+            CacheDynamicCompile(fid, pred);
             if (_skipCompileMergedCache is { } merged) merged[fid] = pred;
             _jitIndexProfile.RecordCompileDecision(fid, true);
             HotnessFlipsInPlace++;

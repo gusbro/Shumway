@@ -310,7 +310,18 @@ public sealed class PositionTrackingReader : TextReader
 
     /// <summary>The wrapped reader (typically a <c>StreamReader</c> for a
     /// file stream, or <c>Console.In</c> for <c>user_input</c>).</summary>
-    public TextReader Inner { get; }
+    public TextReader Inner { get; private set; }
+
+    /// <summary>Reads from <paramref name="inner"/> from now on, keeping the
+    /// position: the stream is the same, its source is another. What was
+    /// read ahead from the old source is dropped.</summary>
+    internal void Rebind(TextReader inner, bool readsHostInput)
+    {
+        Inner = inner ?? throw new ArgumentNullException(nameof(inner));
+        ReadsHostInput = readsHostInput;
+        _buffered = Empty;
+        _buffered2 = Empty;
+    }
 
     /// <summary>Characters consumed so far — the stream's logical
     /// position.</summary>
@@ -454,6 +465,38 @@ public sealed class PositionTrackingReader : TextReader
     /// <summary>True when the wrapped reader is the host's standard input,
     /// the case where a key can be read from its console.</summary>
     internal bool ReadsHostInput { get; set; }
+
+    /// <summary>Whether the input has ended, for a source that can be waited
+    /// on: a reader that says so (<see cref="IEndOfInputReader"/>), or the
+    /// host's standard input when it is a file or a pipe. False, the end not
+    /// known, for a console a person types at and for any other reader: asking
+    /// would stop the program until a line is typed.</summary>
+    public bool TryAtEndOfInput(out bool atEnd)
+    {
+        atEnd = false;
+        if (_buffered != Empty) return true;
+        if (Inner is IEndOfInputReader { PeekWaitsForInput: true })
+        {
+            atEnd = Peek() < 0;
+            return true;
+        }
+        if (!ReadsHostInput || !HostInputIsRedirected) return false;
+        // Not a peek: the console's reader answers -1 while a pipe has
+        // nothing yet. The character is read and kept for the next read.
+        int c = TranslatesNewlines ? BufferAcrossCr() : Inner.Read();
+        if (c >= 0) _buffered = c;
+        atEnd = c < 0;
+        return true;
+    }
+
+    private static bool HostInputIsRedirected
+    {
+        get
+        {
+            try { return Console.IsInputRedirected; }
+            catch (PlatformNotSupportedException) { return false; }
+        }
+    }
 
     /// <summary>Reads one code point for <c>get_unbuffered_char/1</c> and
     /// <c>get_unbuffered_code/1</c>: a key when this reader is a terminal,

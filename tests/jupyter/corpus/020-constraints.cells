@@ -1,0 +1,16 @@
+### call
+use_module(library(clpfd)).
+### call
+X in 1..5.
+### call
+X in 1..5, X #> 2.
+### call
+X in 1..3, Y in 1..3, X #< Y.
+### call
+X in 1..2, label([X]).
+### call
+retry.
+### call
+X in 1..5, L = [X, a].
+### call
+X in 1..5, X = 3.

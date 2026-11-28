@@ -12,10 +12,17 @@ public sealed partial class PrologEngine
     private BundleLoader Bundles => _bundleLoader ??= new BundleLoader(this);
 
     /// <summary>Loads a linked <c>.shum</c> bundle from disk into this engine.</summary>
-    public void LoadBundle(string path) => Bundles.LoadBundle(path);
+    public void LoadBundle(string path) => Bundles.LoadBundle(_directory.Resolve(path));
 
     /// <summary>Loads an in-memory <see cref="Bundle"/> into this engine.</summary>
     public void LoadBundle(Bundle bundle) => Bundles.LoadBundle(bundle);
+
+    /// <summary>Loads an in-memory <see cref="Bundle"/> into this engine
+    /// without running the <c>initialization/1</c> goals of its modules: for a
+    /// tool that compiles the bundle's code. They run where the bundle loads,
+    /// never where it is built.</summary>
+    public void LoadBundleWithoutInitialization(Bundle bundle)
+        => Bundles.LoadBundleCore(bundle, bundleDir: null, deferredInitialization: new());
 
     /// <summary>Loads the libraries the members of a librarian archive import
     /// and the archive does not hold, as loading it does first (ADR-038 §4),
@@ -23,18 +30,19 @@ public sealed partial class PrologEngine
     /// predicates from its dependencies' loads these before it.</summary>
     public void LoadLibraryDependencies(Bundle bundle) => Bundles.LoadLibraryDependencies(bundle);
 
-    internal void LoadBundleCore(Bundle bundle, string? bundleDir)
-        => Bundles.LoadBundleCore(bundle, bundleDir);
+    internal void LoadBundleCore(Bundle bundle, string? bundleDir,
+        List<(Term Goal, string Module)>? deferredInitialization = null)
+        => Bundles.LoadBundleCore(bundle, bundleDir, deferredInitialization);
 
     /// <summary>Arity <c>save/0,1</c> — snapshots consult history + dynamic
     /// clauses to a bundle file.</summary>
     public void SaveState(string path, bool dynamicOnly = false)
-        => Bundles.SaveState(path, dynamicOnly);
+        => Bundles.SaveState(_directory.Resolve(path), dynamicOnly);
 
     public byte[] SaveStateToBytes(bool dynamicOnly = false)
         => Bundles.SaveStateToBytes(dynamicOnly);
 
-    public void RestoreState(string path) => Bundles.RestoreState(path);
+    public void RestoreState(string path) => Bundles.RestoreState(_directory.Resolve(path));
 
     public void RestoreStateFromBytes(byte[] data) => Bundles.RestoreStateFromBytes(data);
 

@@ -76,11 +76,15 @@ src/
 ├── Shumway.Lib/            # `shumway-lib` — .shmo archives (ar-style)
 ├── Shumway.Disasm/         # `shumway-disasm` — WAM disassembler / audit
 ├── Shumway.Dap/            # `shumway-dap` — VS Code debug adapter
+├── Shumway.WebHost/        # Web host sessions: engine, thread, input, output (ADR-068)
 ├── Shumway.Web/            # WebShumway (browser-wasm static site)
 └── Shumway.SourceGen/      # [PrologTerm] / [PrologPredicate] source generators
 
 tests/                      # The six-project gate (see CONTRIBUTING.md) +
 │                           # Benchmarks, Smoke.Net48, conformity/
+jupyterlite/                # The notebook site: a JupyterLite kernel on the WebShumway
+│                           # runtime. Built apart from the solution, with Node and
+│                           # Python; no project may depend on it (jupyterlite/README.md)
 docs/
 ├── README.md               # Index of all documentation
 ├── guide/                  # User-facing guides + compatibility status
@@ -110,7 +114,9 @@ dotnet restore
 # PATH and `shumway`, `shumway-compile`, `shumway-link`, `shumway-lib`,
 # `shumway-disasm`, `shumway-dap` are available directly. Prefer it to
 # `dotnet run --project`, which re-evaluates the project every invocation
-# (~5.8 s against ~0.65 s). Collected by build/Shumway.Dist.
+# (~5.8 s against ~0.65 s). Collected by build/Shumway.Dist. In Release the
+# collected assemblies are precompiled (ReadyToRun) for this machine;
+# -p:ShumwayReadyToRun=false keeps them IL only.
 dotnet build
 
 # Run all tests
@@ -350,6 +356,8 @@ When proposing changes:
 | Rich outputs in notebooks, no Python in the kernel (accepted in part) | ADR-072 |
 | What the notebook site adds to the build, protocol versioning, feature table | ADR-073 |
 | More solutions of a notebook's query, asked for from its answer | ADR-074 |
+| Dynamic library bundles: attached, their modules brought in on demand | ADR-075 |
+| A bundle says how it was built, and is rebuilt from that | ADR-076 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | WAM instruction set | docs/design/wam-instruction-set.md |

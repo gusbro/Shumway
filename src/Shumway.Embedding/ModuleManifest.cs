@@ -89,6 +89,11 @@ public sealed class ModuleManifest
     /// leaves one of them out loads it first.</summary>
     public List<string> ImportedModules { get; }
 
+    /// <summary>ADR-075, decision 3: the library bundles this module's
+    /// <c>:- ensure_loaded(bundle(Name))</c> directives attached, by name, in
+    /// order.</summary>
+    public List<string> AttachedLibraries { get; }
+
     /// <summary>Functors the module declares <c>:- dynamic</c>. These bypass
     /// local-functor mangling so the runtime <c>assertz</c> / <c>retract</c>
     /// store (a flat global table on the engine) can reach the same predicate
@@ -124,6 +129,7 @@ public sealed class ModuleManifest
         ExportFunctors = new HashSet<int>();
         Imports = new Dictionary<int, string>();
         ImportedModules = new List<string>();
+        AttachedLibraries = new List<string>();
         DynamicFunctors = new HashSet<int>();
         DiscontiguousFunctors = new HashSet<int>();
         MultifileFunctors = new HashSet<int>();

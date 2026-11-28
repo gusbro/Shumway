@@ -15,10 +15,13 @@ namespace Shumway.Embedding;
 /// <code>
 ///   [0..3]    Magic 'S','H','U','M'
 ///   [4..7]    Format version (uint32, = CurrentVersion)
-///   [8]       Compression flag: 0 = raw body, 1 = the whole
+///   [8..15]   Format stamp (uint64, = Stamp): what the bytes below mean
+///   [16..19]  Rules version (uint32, ADR-076): what the recipe means
+///   [20..23]  Recipe length (int32), then the recipe (BundleRecipe)
+///   then      Compression flag: 0 = raw body, 1 = the whole
 ///             body below is one Brotli stream (bodies ≥ 4 KB compress;
 ///             typical ratio ~4-6× on real corpora)
-///   [9..]     Body (raw or decompressed):
+///   then      Body (raw or decompressed):
 ///                 genMajor         : uint32  \
 ///                 genMinor         : uint32   > the Shumway that wrote this
 ///                 genPatch         : uint32  /  file (see ShumwayVersion)
@@ -80,6 +83,10 @@ namespace Shumway.Embedding;
 /// stale bundles by re-linking); the number starts meaning something at the
 /// first public release. Do not add <c>version &gt;=</c> conditionals to the
 /// reader.</para>
+///
+/// <para>What tells a stale file from a current one is the stamp
+/// (<see cref="Stamp"/>), not the number: a reader checks it before it reads
+/// anything else, and refuses a file with another.</para>
 /// </summary>
 public static class BundleFormat
 {
@@ -88,7 +95,116 @@ public static class BundleFormat
     /// <summary>The single supported format version — frozen pre-release
     /// (see the format-policy note above). Writer and reader both require
     /// exactly this value.</summary>
-    public const int CurrentVersion = 6;
+    public const int CurrentVersion = 7;
+
+    /// <summary>The first version whose files say how they were built (ADR-076).</summary>
+    public const int FirstVersionWithRecipe = 7;
+
+    /// <summary>A fingerprint of what the bytes of a compiled file mean: the
+    /// instruction set and how each instruction is encoded, the cell tags,
+    /// and the layouts of a bundle and of an object file. A file carries the
+    /// stamp of the engine that wrote it, right after its version, and a
+    /// reader refuses one with another: read as this format, a file of
+    /// another is misread, with nothing downstream to catch it.
+    ///
+    /// <para>Computed, so it moves when the instruction set does, and stays
+    /// when a build changes nothing of the format: a bundle is good for every
+    /// version of the engine with the same stamp. A change to the wire form
+    /// of a section cannot be computed and is mixed in by hand, below.</para></summary>
+    public static readonly ulong Stamp = ComputeStamp();
+
+    private static ulong ComputeStamp()
+    {
+        const ulong prime = 1099511628211UL;
+        ulong h = 14695981039346656037UL;
+        void Mix(string text, long value)
+        {
+            foreach (char c in text) { h ^= c; h *= prime; }
+            h ^= (ulong)value; h *= prime;
+        }
+        Mix("shum", CurrentVersion);
+        Mix("shmo", ShmoFormat.CurrentVersion);
+        // The bytecode: each instruction's number, size and operands.
+        for (int op = 0; op < 256; op++)
+        {
+            var info = Shumway.Core.OpcodeTable.Get((byte)op);
+            if (!info.IsDefined) continue;
+            Mix(info.Mnemonic!, op);
+            Mix("size", info.Size);
+            if (info.OperandKinds is { } kinds)
+                foreach (var kind in kinds) Mix("operand", (int)kind);
+        }
+        foreach (string name in Enum.GetNames(typeof(Shumway.Core.OperandKind)))
+            Mix(name, (int)(Shumway.Core.OperandKind)Enum.Parse(typeof(Shumway.Core.OperandKind), name));
+        // The cells of a literal and of a term image.
+        foreach (string name in Enum.GetNames(typeof(Shumway.Core.Tag)))
+            Mix(name, (int)(Shumway.Core.Tag)Enum.Parse(typeof(Shumway.Core.Tag), name));
+        // The wire form of the sections of a .shum and of a .shmo, and of
+        // what they hold (CompiledModuleCodec, TermCodec). By hand: a change
+        // to any of them raises this, which BundleStampTests asks for when
+        // the image of a fixed bundle changes.
+        Mix("wire form", 4);
+        return h;
+    }
+
+    /// <summary>Reads the stamp that follows a file's version, and refuses
+    /// the file when it is not this engine's: the instruction set or a file
+    /// layout changed between the engine that wrote it and this one.</summary>
+    internal static void RequireStamp(System.IO.BinaryReader header, string what)
+    {
+        if (header.ReadUInt64() != Stamp)
+            throw new InvalidDataException(
+                $"{what}: written with another format of compiled code than this runtime "
+                + "reads. Compile its source, or link it, again.");
+    }
+
+    // ADR-076: the rules version and the length of the recipe follow the
+    // stamp in every format from version 7 on, and do not move.
+    internal const int RulesAt = 16;
+    internal const int RecipeAt = 24;
+
+    /// <summary>Where the compression flag of a file of this layout is: after
+    /// its recipe.</summary>
+    internal static int FlagAt(ReadOnlySpan<byte> image)
+    {
+        if (image.Length < RecipeAt) throw new InvalidDataException("A compiled file cut short.");
+        int length = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(image.Slice(RulesAt + 4));
+        if (length < 0 || length > image.Length - RecipeAt - 1)
+            throw new InvalidDataException("A compiled file cut short.");
+        return RecipeAt + length;
+    }
+
+    /// <summary>The rules version and the recipe of a compiled file of any
+    /// format that has them (ADR-076), read from its header alone: the recipe
+    /// is null when this engine does not read that rules version. Null for a
+    /// file of an earlier version, or one that is not a compiled file.</summary>
+    public static (int Rules, BundleRecipe? Recipe)? HeaderRecipe(ReadOnlySpan<byte> image)
+    {
+        if (image.Length < RecipeAt) return null;
+        uint version = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(image.Slice(4));
+        bool bundle = image.Slice(0, 4).SequenceEqual(Magic);
+        bool shmo = image.Slice(0, 4).SequenceEqual(ShmoFormat.Magic);
+        // The versions that carry the recipe, and every later one.
+        if (!(bundle && version >= FirstVersionWithRecipe
+              || shmo && version >= ShmoFormat.FirstVersionWithRecipe)) return null;
+        int rules = (int)System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(image.Slice(RulesAt));
+        int length = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(image.Slice(RulesAt + 4));
+        if (length < 0 || length > image.Length - RecipeAt) return null;
+        return (rules, BundleRecipe.Accepts(rules)
+            ? BundleRecipe.FromBytes(image.Slice(RecipeAt, length)) : null);
+    }
+
+    /// <summary>Reads the rules version and the recipe that follow the stamp:
+    /// the recipe, when this engine reads that rules version.</summary>
+    internal static (int Rules, BundleRecipe? Recipe) ReadRecipe(System.IO.BinaryReader header)
+    {
+        int rules = (int)header.ReadUInt32();
+        int length = header.ReadInt32();
+        if (length < 0) throw new InvalidDataException("A compiled file cut short.");
+        byte[] bytes = header.ReadBytes(length);
+        if (bytes.Length != length) throw new InvalidDataException("A compiled file cut short.");
+        return (rules, BundleRecipe.Accepts(rules) ? BundleRecipe.FromBytes(bytes) : null);
+    }
 
     // ---- whole-body compression ------------------------------
     // Layout addition: One flag byte follows the version; the rest of the
@@ -109,17 +225,89 @@ public static class BundleFormat
 
     /// <summary>turns a writer's raw image
     /// (<c>[magic 4][version 4][body…]</c>) into the on-disk form:
-    /// <c>[magic][version][flag][raw-or-brotli body]</c>. Shared by
+    /// <c>[magic][version][stamp][flag][raw-or-brotli body]</c>. Shared by
     /// <see cref="BundleWriter"/> and the linker's in-line serialiser so both
     /// emit identical framing.</summary>
     /// <summary>Set to leave every image uncompressed regardless of size. For
-    /// hosts whose runtime has no Brotli codec — browser-wasm throws
-    /// <c>PlatformNotSupportedException</c> from <c>BrotliStream</c>, so a
-    /// compressed bundle cannot be read there at all. Flag 0 is part of the
-    /// format already, so such an image is an ordinary bundle every reader
-    /// accepts; only the size differs, and a web server re-compresses in
-    /// transport anyway.</summary>
+    /// hosts whose runtime has no Brotli encoder: a browser's .NET has none,
+    /// and reads a compressed image with Shumway's own decoder
+    /// (<see cref="UsesOwnBrotliDecoder"/>). Flag 0 is part of the format, so
+    /// such an image is an ordinary bundle every reader accepts.</summary>
     public static bool DisableCompression { get; set; }
+
+    /// <summary>Whether a Brotli body is read with Shumway's own decoder
+    /// (<see cref="Compression.ManagedBrotliDecoder"/>): where .NET has no Brotli
+    /// codec, a browser and .NET Framework.</summary>
+    internal static bool UsesOwnBrotliDecoder =>
+#if NETFRAMEWORK
+        true;
+#else
+        ForceOwnBrotliDecoder || OperatingSystem.IsBrowser();
+#endif
+
+    /// <summary>Tests set it to read Brotli bodies with Shumway's own decoder
+    /// where .NET has a codec.</summary>
+    internal static bool ForceOwnBrotliDecoder { get; set; }
+
+    /// <summary>How many Brotli bodies Shumway's own decoder has read: a test
+    /// that forces it checks it was the one that read.</summary>
+    internal static int OwnBrotliReads => Volatile.Read(ref _ownBrotliReads);
+
+    private static int _ownBrotliReads;
+
+    /// <summary>The Brotli stream of <paramref name="data"/>, or null where this
+    /// runtime has no encoder (.NET Framework, a browser).</summary>
+    internal static byte[]? EncodeBrotli(byte[] data)
+    {
+#if NETFRAMEWORK
+        return null;
+#else
+        if (OperatingSystem.IsBrowser()) return null;
+        using var ms = new MemoryStream(data.Length / 3 + 16);
+        using (var brotli = new System.IO.Compression.BrotliStream(
+                   ms, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+            brotli.Write(data, 0, data.Length);
+        return ms.ToArray();
+#endif
+    }
+
+    /// <summary>The bytes a Brotli stream holds, on every runtime.</summary>
+    internal static byte[] DecodeBrotli(byte[] data, int offset, int count)
+    {
+        if (UsesOwnBrotliDecoder) return Compression.ManagedBrotliDecoder.Decompress(data, offset, count);
+#if NETFRAMEWORK
+        throw new InvalidOperationException("unreachable: .NET Framework reads with Shumway's decoder");
+#else
+        using var input = new MemoryStream(data, offset, count);
+        using var brotli = new System.IO.Compression.BrotliStream(
+            input, System.IO.Compression.CompressionMode.Decompress);
+        using var output = new MemoryStream();
+        brotli.CopyTo(output);
+        return output.ToArray();
+#endif
+    }
+
+    /// <summary>The image with its body stored raw: a page that keeps the
+    /// bundles it imports stores them so, and reads them without decoding
+    /// at every load. An image whose body is raw comes back as it is.</summary>
+    public static byte[] Uncompressed(byte[] image)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        if (image.Length <= RecipeAt) return image;
+        int framedBytes = FlagAt(image) + 1;   // magic, version, stamp, rules, recipe, flag
+        if (image[framedBytes - 1] != CompressionBrotli) return image;
+        using var stream = new MemoryStream(image, 0, image.Length, writable: false, publiclyVisible: true);
+        stream.Position = framedBytes;
+        using BinaryReader body = OpenBody(CompressionBrotli, stream);
+        var bodyStream = (MemoryStream)body.BaseStream;
+        ArraySegment<byte> decoded = bodyStream.TryGetBuffer(out ArraySegment<byte> visible)
+            ? visible : new ArraySegment<byte>(bodyStream.ToArray());
+        var plain = new byte[framedBytes + decoded.Count];
+        Array.Copy(image, 0, plain, 0, framedBytes - 1);
+        plain[framedBytes - 1] = CompressionNone;
+        Array.Copy(decoded.Array!, decoded.Offset, plain, framedBytes, decoded.Count);
+        return plain;
+    }
 
     /// <summary>Writes the producing Shumway version — the first field of a
     /// <c>.shum</c> body. Shared by the two writers (BundleWriter.ToBytes and
@@ -137,31 +325,41 @@ public static class BundleFormat
     internal static ShumwayVersion ReadGeneratorVersion(System.IO.BinaryReader br) =>
         new((int)br.ReadUInt32(), (int)br.ReadUInt32(), (int)br.ReadUInt32());
 
-    internal static byte[] FinalizeImage(byte[] raw)
+    internal static byte[] FinalizeImage(byte[] raw, BundleRecipe? recipe)
     {
         const int headerBytes = 8;   // magic + version
         int bodyLen = raw.Length - headerBytes;
+        byte[] recipeBytes = (recipe ?? BundleRecipe.Host).ToBytes();
 #if NETFRAMEWORK
-        // No Brotli codec on .NET Framework — the browser situation again, at
-        // write time: everything this runtime produces goes uncompressed, which
-        // every reader accepts.
+        // No Brotli encoder on .NET Framework: everything this runtime produces
+        // goes uncompressed, which every reader accepts.
         bool forcePlain = true;
 #else
         bool forcePlain = DisableCompression;
 #endif
+        var header = new MemoryStream(RecipeAt + recipeBytes.Length + 1);
+        using (var hw = new BinaryWriter(header, System.Text.Encoding.UTF8, leaveOpen: true))
+        {
+            hw.Write(raw, 0, headerBytes);
+            hw.Write(Stamp);
+            hw.Write((uint)BundleRecipe.CurrentRules);
+            hw.Write(recipeBytes.Length);
+            hw.Write(recipeBytes);
+        }
+        int framedBytes = (int)header.Length + 1;   // + flag
         if (bodyLen < CompressionThresholdBytes || forcePlain)
         {
-            var plain = new byte[raw.Length + 1];
-            Array.Copy(raw, 0, plain, 0, headerBytes);
-            plain[headerBytes] = CompressionNone;
-            Array.Copy(raw, headerBytes, plain, headerBytes + 1, bodyLen);
+            var plain = new byte[framedBytes + bodyLen];
+            Array.Copy(header.GetBuffer(), 0, plain, 0, framedBytes - 1);
+            plain[framedBytes - 1] = CompressionNone;
+            Array.Copy(raw, headerBytes, plain, framedBytes, bodyLen);
             return plain;
         }
 #if NETFRAMEWORK
         throw new InvalidOperationException("unreachable: forcePlain is constant true");
 #else
-        using var ms = new MemoryStream(headerBytes + 1 + bodyLen / 3);
-        ms.Write(raw, 0, headerBytes);
+        using var ms = new MemoryStream(framedBytes + bodyLen / 3);
+        ms.Write(header.GetBuffer(), 0, framedBytes - 1);
         ms.WriteByte(CompressionBrotli);
         using (var brotli = new System.IO.Compression.BrotliStream(
                    ms, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
@@ -181,34 +379,25 @@ public static class BundleFormat
                 return new BinaryReader(stream, System.Text.Encoding.UTF8, leaveOpen: true);
             case CompressionBrotli:
             {
+                if (UsesOwnBrotliDecoder)
+                {
+                    Interlocked.Increment(ref _ownBrotliReads);
+                    // The readers' streams show their buffer: the body is
+                    // decoded where it is, not copied first.
+                    ArraySegment<byte> buffer = stream.TryGetBuffer(out ArraySegment<byte> visible)
+                        ? visible : new ArraySegment<byte>(stream.ToArray());
+                    int at = buffer.Offset + (int)stream.Position;
+                    MemoryStream decoded = Compression.ManagedBrotliDecoder.DecompressToStream(
+                        buffer.Array!, at, buffer.Offset + buffer.Count - at);
+                    return new BinaryReader(decoded, System.Text.Encoding.UTF8, leaveOpen: false);
+                }
 #if NETFRAMEWORK
-                // Same story as browser-wasm, and the same words: the fix is to
-                // produce the bundle uncompressed, not to find a codec.
-                throw new NotSupportedException(
-                    "This bundle is Brotli-compressed and .NET Framework has no Brotli "
-                    + "codec. Produce it with compression disabled (shumway-link "
-                    + "--no-compress) — an uncompressed bundle is a normal bundle every "
-                    + "reader accepts.");
+                throw new InvalidOperationException("unreachable: .NET Framework reads with Shumway's decoder");
 #else
                 var body = new MemoryStream();
-                try
-                {
-                    using var brotli = new System.IO.Compression.BrotliStream(
-                        stream, System.IO.Compression.CompressionMode.Decompress, leaveOpen: true);
+                using (var brotli = new System.IO.Compression.BrotliStream(
+                           stream, System.IO.Compression.CompressionMode.Decompress, leaveOpen: true))
                     brotli.CopyTo(body);
-                }
-                catch (PlatformNotSupportedException ex)
-                {
-                    // browser-wasm ships no Brotli codec. Say so, instead of
-                    // letting an opaque platform exception surface from what
-                    // looks to the caller like a plain file read.
-                    throw new NotSupportedException(
-                        "This bundle is Brotli-compressed and the current runtime has no "
-                        + "Brotli codec (browser-wasm does not). Produce it with compression "
-                        + "disabled (BundleFormat.DisableCompression / shumway-link "
-                        + "--no-compress) — an uncompressed bundle is a normal bundle every "
-                        + "reader accepts.", ex);
-                }
                 body.Position = 0;
                 return new BinaryReader(body, System.Text.Encoding.UTF8, leaveOpen: false);
 #endif

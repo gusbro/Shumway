@@ -9,6 +9,7 @@ documentation index; start with the [user guide](guide/user-guide.md).
 |---|---|
 | [user-guide.md](guide/user-guide.md) | The complete walkthrough: building, the REPL, embedding in .NET, modules, the compile/link/exe toolchain |
 | [webshumway.md](guide/webshumway.md) | Prolog in the browser: the top level, workspaces, imported libraries, sharing, hosting |
+| [jupyter.md](guide/jupyter.md) | Jupyter notebooks in the browser: queries and answers, magics, tables, graphs and plots, files, libraries, sessions |
 | [network-and-processes.md](guide/network-and-processes.md) | TCP and UDP sockets, TLS, and running other programs through pipes |
 | [interop.md](guide/interop.md) | C# ↔ Prolog interop: typed foreign predicates, typed queries, re-entrant `SolveOnce`, and the zero-copy cell-access hot path |
 | [predicates.md](guide/predicates.md) | Reference of every builtin and library predicate (auto-generated — do not edit) |

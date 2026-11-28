@@ -208,6 +208,101 @@ public class WasmRelocatableModuleTests
         Assert.Contains("rebake", ex.Message);
     }
 
+    /// <summary>What a host that keeps the bundles it compiles asks as it
+    /// loads one: a module of another build would be refused at every install.</summary>
+    [Fact]
+    public void AModuleOfAnotherBuild_IsNotCurrent()
+    {
+        var (_, membersA) = Linked();
+        byte[] bytes = WasmRelocatableModule.Bake(membersA, new EngineWasmCompileEnv()).ToBytes();
+        var bundle = new Bundle(Array.Empty<BundleEntry>(), foreignAssemblies: null,
+            snapshot: null, archiveMembers: Array.Empty<BundleArchiveMember>());
+
+        Assert.True(WasmRelocatableModule.IsCurrent(bytes));
+        Assert.True(WasmBundleTier.ModulesAreCurrent(bundle));
+        Assert.True(WasmBundleTier.ModulesAreCurrent(bundle.WithWasmModules(new[] { bytes })));
+
+        byte[] other = (byte[])bytes.Clone();
+        other[4] ^= 0xFF;
+
+        Assert.False(WasmRelocatableModule.IsCurrent(other));
+        Assert.False(WasmBundleTier.ModulesAreCurrent(bundle.WithWasmModules(new[] { bytes, other })));
+        Assert.False(WasmRelocatableModule.IsCurrent(bytes.AsSpan(0, 8)));
+    }
+
+    // ADR-063: a body term with a hole, copied from an image the module
+    // carries as a data segment.
+    private const string ImageCorpus = """
+        img(X, T) :- id(k(lin(0, [X-1]), atom_x, g(h(i))), T).
+        id(X, X).
+        """;
+
+    private static (PrologEngine Engine, List<WasmGroupMember> Members) ImageLinked()
+    {
+        var engine = new PrologEngine();
+        engine.ConsultString(ImageCorpus);
+        var store = engine.IlPromotion;
+        store.Threshold = 0;
+        store.Wasm = new WasmPromotionStore(store) { Threshold = int.MaxValue };
+        engine.Query("true.");
+        var members = new List<WasmGroupMember>();
+        foreach (var (addr, pred) in WasmPromotionStore.StaticPredicatesOf(engine))
+        {
+            var (name, _) = RelocatingCompileEnv.NameOf(pred.FunctorId);
+            if (name is "user$img" or "user$id")
+                members.Add(new WasmGroupMember(pred, addr,
+                    store.FloatPoolProvider?.Invoke(pred.FunctorId),
+                    store.ImagePoolProvider?.Invoke(pred.FunctorId)));
+        }
+        Assert.Equal(2, members.Count);
+        // id/2 first: TryInstallRelocated installs the first member, with no
+        // image pool, as a filler ahead of the module.
+        members.Sort((x, y) => string.CompareOrdinal(
+            RelocatingCompileEnv.NameOf(x.Predicate.FunctorId).Name,
+            RelocatingCompileEnv.NameOf(y.Predicate.FunctorId).Name));
+        return (engine, members);
+    }
+
+    /// <summary>The atoms and functors of an image are ids of the process
+    /// that baked it. Baked as they were, a module installed in another
+    /// process built its terms with whatever those ids named there (clpr's
+    /// <c>lin/2</c> came out as a helper's functor in the browser).</summary>
+    [Fact]
+    public void AnImagesAtomsAndFunctors_AreRelocations()
+    {
+        var (_, members) = ImageLinked();
+        var module = RoundTrip(WasmRelocatableModule.Bake(members, new EngineWasmCompileEnv()));
+        foreach (var (kind, name, arity) in new[]
+        {
+            (WasmRelocKind.Functor, "k", 3), (WasmRelocKind.Functor, "lin", 2),
+            (WasmRelocKind.Functor, "-", 2), (WasmRelocKind.Functor, "g", 1),
+            (WasmRelocKind.Atom, "atom_x", 0), (WasmRelocKind.Atom, "i", 0),
+        })
+            Assert.Contains(module.Relocations, r => r.Kind == kind && r.Name == name
+                && r.Arity == arity && r.DataSites.Length > 0);
+    }
+
+    [Fact]
+    public void TamperedImageFunctor_ChangesTheTerm()
+    {
+        var (engine, members) = ImageLinked();
+        var module = WasmRelocatableModule.Bake(members, new EngineWasmCompileEnv());
+        // What the image's lin/2 resolves to is the relocation's to say.
+        var relocs = new List<WasmRelocation>();
+        foreach (var r in module.Relocations)
+            relocs.Add(r.Kind == WasmRelocKind.Functor && r.Name == "lin" ? r with { Name = "lin_moved" } : r);
+        var tampered = Tamper(module, relocs, module.Builtins);
+        Assert.True(TryInstallRelocated(engine, members, tampered, out string reason), reason);
+        WasmTierDelegate.ResetDiag();
+        var q = engine.Query("img(7, T), T = k(L, A, G), L = lin_moved(Z, [V-O]).");
+        Assert.True(q.Success, "the copy did not take its functor from the relocation");
+        Assert.Equal("0", q.Bindings["Z"].ToString());
+        Assert.Equal("7", q.Bindings["V"].ToString());
+        Assert.Equal("1", q.Bindings["O"].ToString());
+        Assert.Equal("atom_x", q.Bindings["A"].ToString());
+        Assert.Equal("g(h(i))", q.Bindings["G"].ToString());
+    }
+
     /// <summary>A copy of the module with other relocations or evidence:
     /// through the wire, so a tampered file is what the reader sees.</summary>
     private static WasmRelocatableModule Tamper(WasmRelocatableModule m,

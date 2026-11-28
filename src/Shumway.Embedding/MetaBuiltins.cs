@@ -228,7 +228,8 @@ public static partial class MetaBuiltins
             Control, "trace",
             "Turns on the four-port tracer: from here on, every goal prints a line "
             + "at its call, exit, redo and fail ports. Takes effect immediately, "
-            + "including for the goals remaining in the current query.");
+            + "including for the goals remaining in the current query. While it is on "
+            + "the program runs interpreted.");
         BuiltinsRegistry.Register("notrace", 0, NoTrace,
             Control, "notrace", "Turns the four-port tracer off.");
 
@@ -413,6 +414,8 @@ public static partial class MetaBuiltins
             "Adds Clause at the end of its predicate and unifies Ref with its clause reference.");
         BuiltinsRegistry.Register("$clause_refs_of", 2, ClauseRefsOf);
         BuiltinsRegistry.Register("$clause_ref_fetch", 3, ClauseRefFetch);
+        BuiltinsRegistry.Register(PrologEngine.InstallClausesBuiltin, 2, DynlibInstall);
+        BuiltinsRegistry.Register("$dynlib_bring_in", 3, DynlibBringIn);
         BuiltinsRegistry.Register("$op_ctx", 4, OpCtx);
         BuiltinsRegistry.Register("$current_op_ctx", 4, CurrentOpCtx);
         BuiltinsRegistry.Register("op", 3, Op,
@@ -543,11 +546,14 @@ public static partial class MetaBuiltins
             Database, "consult(+File)",
             "Loads File and adds its clauses to the database, appending to any "
             + "existing predicates. File is an atom path; a .shum extension is loaded "
-            + "as a compiled bundle, everything else is read as Prolog source. An "
-            + "extensionless File that does not exist is retried as File.pl. File may "
+            + "as a compiled bundle, everything else is read as Prolog source. A file of "
+            + "a module with an export list makes its exports callable from user; so "
+            + "does a bundle, for each such module that no other module of it imports. "
+            + "An extensionless File that does not exist is retried as File.pl. File may "
             + "also be a list of specifications, each consulted in order, or the atom "
             + "user: clauses are then read from current input until end of input or a "
-            + "line reading end_of_file.");
+            + "line reading end_of_file. A file the load refuses whole, as one whose "
+            + "clauses for a predicate are not contiguous, raises system_error(Message).");
         BuiltinsRegistry.Register("$load_text", 2, LoadTextCore,
             Database, "'$load_text'(+TextAtom, +Options)",
             "Native core of load_text/2 (Trealla): consults TextAtom's characters "

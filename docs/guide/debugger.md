@@ -155,8 +155,8 @@ on disk by that name. (A release-compiled bundle has no debug information at all
 debuggable, with or without its source: build it debug.)
 
 **A stand-alone `--exe`.** `shumway-link --exe` bakes a program into a single executable
-that runs one goal at startup. Pass `--debug` and that executable is built debuggable: its
-modules compile debuggable and it materialises their embedded source at launch, so a
+that runs one goal at startup. Pass `--debug` and the executable is built for debugging: it
+runs the debug code of its modules and writes their source to files at startup, so a
 debugger attached to the running process sets breakpoints and steps exactly as the REPL
 does: the Prolog is just one part of a shipped binary.
 
@@ -172,11 +172,11 @@ The executable runs normally and can be attached to whenever you like. Add `--de
 instead of `--debug` to make it **block at startup** until a debugger has attached and armed
 its breakpoints, then **stop at the entry point** (the first goal of the program), so you
 land there ready to step, without setting a breakpoint first. (`--debug` alone never stops on
-its own; you attach and set breakpoints while it runs.) Because the
-executable shows the source it carries, `--debug` requires the bundle to carry it: compile
-the inputs with `shumway-compile --debug` (release `.shmo` objects are source-stripped) and
-link without `--strip`. The linker checks this before building and fails with a clear message
-otherwise, rather than ship an undebuggable "debug" exe.
+its own; you attach and set breakpoints while it runs.) `--debug` needs at least one module
+compiled with `shumway-compile --debug` and linked without `--strip`, so that the bundle has
+both debug code and its source. Release code has no place to stop, even when it was compiled
+with `--with-source`. The linker checks this before building and stops with a clear message
+when it is not met.
 
 ## What you see
 

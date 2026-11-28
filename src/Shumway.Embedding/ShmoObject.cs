@@ -80,6 +80,20 @@ public readonly record struct ShmoOperatorDef(int Priority, string Type, string 
     public override string ToString() => $"op({Priority}, {Type}, {Name})";
 }
 
+/// <summary>One <c>set_prolog_flag(Flag, Value)</c> of a module's load, in
+/// the order the load made them: compiled from the file alone, its
+/// directives; compiled through the consult (<c>--consult</c>), every call
+/// that succeeded while the module loaded, an <c>initialization</c> goal's
+/// among them. <see cref="Value"/> is the value as <c>writeq</c> writes it.
+/// Carried through <c>.shmo</c> to <c>.shum</c>; <c>LoadBundle</c> makes the
+/// calls again as the runtime builtin does, so a flag such as
+/// <c>lenient_escapes</c> or <c>double_quotes</c> governs what the program
+/// reads at run time.</summary>
+public readonly record struct ShmoFlagSetting(string Flag, string Value)
+{
+    public override string ToString() => $"set_prolog_flag({Flag}, {Value})";
+}
+
 /// <summary>ADR-038 — one entry of an export-qualified module's import table
 /// carried in the <c>.shmo</c>: the bare indicator this module imported, and the
 /// name of the export-qualified module that provides it (so a call to
@@ -168,6 +182,14 @@ public sealed class ShmoObject
     /// memory with the stamp explicitly suppressed.</summary>
     public ShumwayVersion GeneratorVersion { get; }
 
+    /// <summary>ADR-076: how the object was compiled, or null when its rules
+    /// version (<see cref="RecipeRules"/>) is not one this engine reads.
+    /// A writer writes <see cref="BundleRecipe.Host"/> when it is null.</summary>
+    public BundleRecipe? Recipe { get; init; }
+
+    /// <summary>ADR-076: the rules version the object was compiled under.</summary>
+    public int RecipeRules { get; init; } = BundleRecipe.CurrentRules;
+
     /// <summary><c>true</c> when the module was compiled in
     /// Arity compatibility mode (<c>shumway-compile --arity</c>, or an
     /// in-file <c>:- set_prolog_flag(arity_compat, true)</c> at any
@@ -245,7 +267,10 @@ public sealed class ShmoObject
         IReadOnlyList<ShmoImportEntry>? imports = null,
         IReadOnlyList<ShmoLibraryDep>? libraryDeps = null,
         string? dialect = null,
-        ShumwayVersion? generatorVersion = null)
+        ShumwayVersion? generatorVersion = null,
+        IReadOnlyList<ShmoFlagSetting>? flags = null,
+        IReadOnlyList<Shumway.Compiler.Ast.Term>? initializationGoals = null,
+        IReadOnlyList<string>? dynamicLibraries = null)
     {
         GeneratorVersion = generatorVersion ?? ShumwayVersion.Current;
         ModuleName = moduleName;
@@ -268,7 +293,15 @@ public sealed class ShmoObject
         Imports = imports ?? System.Array.Empty<ShmoImportEntry>();
         LibraryDeps = libraryDeps ?? System.Array.Empty<ShmoLibraryDep>();
         Dialect = dialect;
+        Flags = flags ?? System.Array.Empty<ShmoFlagSetting>();
+        InitializationGoals = initializationGoals ?? System.Array.Empty<Shumway.Compiler.Ast.Term>();
+        DynamicLibraries = dynamicLibraries ?? System.Array.Empty<string>();
     }
+
+    /// <summary>ADR-075, decision 3: the library bundles this module attaches
+    /// with <c>:- ensure_loaded(bundle(Name))</c>, by name, in order. The
+    /// linker links against each as it does against a <c>--dynlib</c>.</summary>
+    public IReadOnlyList<string> DynamicLibraries { get; }
 
     /// <summary>ADR-040 — the source dialect this module was compiled under
     /// (<c>"swi"</c>, <c>"scryer"</c>, …), or <c>null</c> for Shumway/ISO. Travels
@@ -315,6 +348,45 @@ public sealed class ShmoObject
     /// runtime term reading in a source-stripped bundle parses with the same
     /// operators the source declared.</summary>
     public IReadOnlyList<ShmoOperatorDef> Operators { get; }
+
+    /// <summary>The <c>set_prolog_flag/2</c> calls this module's load ran, in
+    /// order (see <see cref="ShmoFlagSetting"/>). <c>LoadBundle</c> runs them
+    /// again, after the module's operators.</summary>
+    public IReadOnlyList<ShmoFlagSetting> Flags { get; }
+
+    /// <summary>The module's <c>:- initialization/1</c> goals, in source order,
+    /// when it was compiled from the file alone: <c>LoadBundle</c> runs them
+    /// once the bundle is in, as a compiled program runs them when it starts.
+    /// Compiled through the consult they ran then, and none travel.</summary>
+    public IReadOnlyList<Shumway.Compiler.Ast.Term> InitializationGoals { get; }
+
+    /// <summary>This object with the recipe of its build (ADR-076).</summary>
+    public ShmoObject WithRecipe(BundleRecipe recipe)
+        => new ShmoObject(ModuleName, Source, Bytecode, Defined, EnsureLinked, CallGraph,
+            QualifiedRefs, BuildMode, DynamicSeeds, ClauseTerms, ArityCompat, NativeBlocks,
+            NativeFunctions, NativeDecls, Operators, IsExportQualified, Exports, Imports,
+            LibraryDeps, Dialect, GeneratorVersion, Flags, InitializationGoals, DynamicLibraries)
+        {
+            DynamicSnapshotBytecode = DynamicSnapshotBytecode,
+            Recipe = recipe,
+            RecipeRules = BundleRecipe.CurrentRules,
+        };
+
+    /// <summary>This object with <paramref name="goal"/> after its
+    /// initialization goals.</summary>
+    internal ShmoObject WithInitializationGoal(Shumway.Compiler.Ast.Term goal)
+    {
+        var goals = new List<Shumway.Compiler.Ast.Term>(InitializationGoals) { goal };
+        return new ShmoObject(ModuleName, Source, Bytecode, Defined, EnsureLinked, CallGraph,
+            QualifiedRefs, BuildMode, DynamicSeeds, ClauseTerms, ArityCompat, NativeBlocks,
+            NativeFunctions, NativeDecls, Operators, IsExportQualified, Exports, Imports,
+            LibraryDeps, Dialect, GeneratorVersion, Flags, goals, DynamicLibraries)
+        {
+            DynamicSnapshotBytecode = DynamicSnapshotBytecode,
+            Recipe = Recipe,
+            RecipeRules = RecipeRules,
+        };
+    }
 }
 
 /// <summary>ADR-022 — one embedded native block's marshalling data, carried

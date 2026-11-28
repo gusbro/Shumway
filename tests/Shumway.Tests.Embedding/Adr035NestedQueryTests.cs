@@ -84,6 +84,8 @@ public sealed class Adr035NestedQueryTests : IDisposable
         // net48 has no default interface implementations.
         void IDebugSession.OnInlineGoal(Activation engine) { }
         void IDebugSession.OnLeaveProlog(Activation engine) { }
+        void IDebugSession.OnRedoExit(Activation engine) { }
+        void IDebugSession.OnUnwind(Activation engine) { }
 
         private readonly PrologEngine _engine;
         public readonly List<string> Stops = new();

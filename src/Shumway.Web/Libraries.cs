@@ -68,16 +68,22 @@ internal static partial class WebShumwayApp
     /// compile went.</para></summary>
     private const string DiagnosticSuffix = ".diag";
 
+    /// <summary>Where a collection came from: the URL or the file it was
+    /// imported from, so importing it again from there is known to be the
+    /// same collection and one from elsewhere under its name is refused.</summary>
+    private const string SourceMarker = ".source";
+
     /// <summary>How many warning lines one compile's diagnostic keeps.</summary>
     private const int DiagnosticLineLimit = 200;
 
-    /// <summary>Puts every imported library on the new engine's search path.
-    /// Called from StartEngine, so a reset engine knows them too.</summary>
-    internal static void RegisterLibraries()
+    /// <summary>Puts every imported library on <paramref name="engine"/>'s
+    /// search path: the page's engine at each start, a notebook session's at
+    /// its start and before each cell. Adding a directory twice adds it once.</summary>
+    internal static void RegisterLibraries(PrologEngine engine)
     {
         Directory.CreateDirectory(LibrariesRoot);
-        PrologEngine engine = _session!.Engine;
         engine.LibrarySourceResolver = (library, source) => CompileOnDemand(engine, library, source);
+        engine.LibraryBundleFilter = (_, path, bundle) => TakesStored(path, bundle);
         foreach (string dir in Directory.GetDirectories(LibrariesRoot))
         {
             string marker = Path.Combine(dir, DialectMarker);
@@ -86,10 +92,20 @@ internal static partial class WebShumwayApp
         }
     }
 
+    /// <summary>The page's own engine, or null in a notebook page, which
+    /// never starts one: its engines are its kernels' sessions (ADR-068).</summary>
+    private static PrologEngine? PageEngine => _only?.TopLevel?.Engine;
+
+    /// <summary>Where the library exports run: queued on the page's engine
+    /// when there is one, since a consult reads these files; on a pool thread
+    /// in a notebook page.</summary>
+    private static Task<T> OnLibraries<T>(Func<T> work)
+        => PageEngine is not null ? S.OnEngine(work) : Task.Run(work);
+
     /// <summary>The imported libraries, newline-separated, sorted.</summary>
     [JSExport]
     internal static Task<string> LibraryNames()
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             Directory.CreateDirectory(LibrariesRoot);
             var names = Directory.GetDirectories(LibrariesRoot)
@@ -102,7 +118,7 @@ internal static partial class WebShumwayApp
     /// <summary>The dialect a library loads under, or the empty string.</summary>
     [JSExport]
     internal static Task<string> LibraryDialect(string name)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             string marker = Path.Combine(ResolveLibrary(name), DialectMarker);
             return File.Exists(marker) ? File.ReadAllText(marker).Trim() : "";
@@ -112,7 +128,7 @@ internal static partial class WebShumwayApp
     /// Returns null, or the error text.</summary>
     [JSExport]
     internal static Task<string?> LibraryCreate(string name, string dialect)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             if (InvalidWorkspaceName(name) is { } bad) return bad;
             try
@@ -123,20 +139,238 @@ internal static partial class WebShumwayApp
                 if (string.IsNullOrWhiteSpace(dialect))
                 {
                     if (File.Exists(marker)) File.Delete(marker);
-                    _session!.Engine.AddLibraryDirectory(dir);
+                    PageEngine?.AddLibraryDirectory(dir);
                 }
                 else
                 {
                     // Tag first: an unknown dialect must not leave a marker
-                    // behind that every later boot would trip over.
-                    _session!.Engine.AddLibraryDirectory(dir, dialect.Trim());
+                    // behind that every later boot would trip over. A notebook
+                    // page has no engine to ask: its dialects come checked,
+                    // and a session registers an unknown one untagged.
+                    PageEngine?.AddLibraryDirectory(dir, dialect.Trim());
                     File.WriteAllText(marker, dialect.Trim());
                 }
-                _session!.Engine.AddLibraryDirectory(Path.Combine(dir, SourceDir));
+                PageEngine?.AddLibraryDirectory(Path.Combine(dir, SourceDir));
                 return null;
             }
             catch (Exception ex) { return ex.Message; }
         });
+
+    /// <summary>Where a collection was imported from, or the empty string
+    /// when that was not kept: it was imported before the marker existed.</summary>
+    [JSExport]
+    internal static Task<string> LibrarySource(string name)
+        => OnLibraries(() =>
+        {
+            string marker = Path.Combine(ResolveLibrary(name), SourceMarker);
+            return File.Exists(marker) ? File.ReadAllText(marker).Trim() : "";
+        });
+
+    /// <summary>Records where a collection was imported from. Returns null,
+    /// or the error text.</summary>
+    [JSExport]
+    internal static Task<string?> LibrarySetSource(string name, string source)
+        => OnLibraries(() =>
+        {
+            try
+            {
+                string dir = ResolveLibrary(name);
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, SourceMarker), source.Trim());
+                return (string?)null;
+            }
+            catch (Exception ex) { return ex.Message; }
+        });
+
+    /// <summary>What a .zip, .tar.gz or .tar archive of a collection holds,
+    /// as a JSON array, or <c>{"error": ...}</c>: <c>{path, text}</c> for a
+    /// Prolog source, and <c>{path, bundle}</c> for the bundle of a library
+    /// compiled ahead (<c>x.shum</c>), whose bytes stay here until
+    /// <see cref="LibraryTakeBundle"/> is given that <c>bundle</c>.</summary>
+    [JSExport]
+    internal static Task<string> LibraryUnpack([JSMarshalAs<JSType.Array<JSType.Number>>] byte[] archive)
+        => Task.Run(() =>
+        {
+            using var buffer = new MemoryStream();
+            using (var json = new System.Text.Json.Utf8JsonWriter(buffer))
+            {
+                try
+                {
+                    var contents = Shumway.WebHost.LibraryArchive.Read(archive);
+                    json.WriteStartArray();
+                    foreach ((string path, string text) in contents.Sources)
+                    {
+                        json.WriteStartObject();
+                        json.WriteString("path", path);
+                        json.WriteString("text", text);
+                        json.WriteEndObject();
+                    }
+                    // The bundles of one archive at a time: an import that
+                    // was given up leaves the last one's here, and no more.
+                    UnpackedBundles.Clear();
+                    foreach ((string path, byte[] bytes) in contents.Bundles)
+                    {
+                        string id = Guid.NewGuid().ToString("N");
+                        UnpackedBundles[id] = bytes;
+                        json.WriteStartObject();
+                        json.WriteString("path", path);
+                        json.WriteString("bundle", id);
+                        json.WriteBoolean("usable", IsUsable(bytes));
+                        json.WriteEndObject();
+                    }
+                    json.WriteEndArray();
+                }
+                catch (Exception ex) when (ex is InvalidDataException or IOException)
+                {
+                    json.WriteStartObject();
+                    json.WriteString("error", ex.Message);
+                    json.WriteEndObject();
+                }
+            }
+            return System.Text.Encoding.UTF8.GetString(buffer.ToArray());
+        });
+
+    // What the last archive unpacked carried compiled, until it is taken.
+    private static readonly ConcurrentDictionary<string, byte[]> UnpackedBundles = new();
+
+    /// <summary>Puts into a collection the bundle an archive carried of one
+    /// of its libraries (<see cref="LibraryUnpack"/>), where
+    /// <c>library(X)</c> finds it, as if this engine had compiled it. Answers
+    /// null, or why it was not put: one written with another format of
+    /// compiled code is left out, and the library compiles from its source
+    /// the first time it is used. <paramref name="path"/> is the bundle's
+    /// path in the archive, <c>x.shum</c> beside <c>x.pl</c>.</summary>
+    [JSExport]
+    internal static Task<string?> LibraryTakeBundle(string name, string path, string bundle)
+        => OnLibraries(() =>
+        {
+            try
+            {
+                if (!UnpackedBundles.TryRemove(bundle, out byte[]? taken))
+                    return "its bytes are not here any more";
+                string library = path.Substring(0, path.Length - ".shum".Length);
+                foreach (string segment in library.Split('/'))
+                    if (segment.Length == 0 || segment == "..") return "not a path inside the collection";
+                string root = ResolveLibrary(name);
+                if (ToStore(name, root, library, taken, imported: true, out string? why) is not { } bytes)
+                    return why;
+                string target = Path.Combine(root, library + ".shum");
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                string partial = target + ".partial";
+                File.WriteAllBytes(partial, bytes);
+                File.Move(partial, target, overwrite: true);
+                return (string?)null;
+            }
+            catch (Exception ex) { return ex.Message; }
+        });
+
+    /// <summary>ADR-076: what to store of a bundle a collection brings, or one
+    /// the page kept: one of this format, raw, so it is decoded once here and
+    /// not at every load; one of another format built again from its recipe
+    /// with the collection's sources. A library the page compiled, and one it
+    /// kept from before bundles said how they were built, is compiled again
+    /// from its source when it is used. Null, with the reason, for one that
+    /// is not stored; one refused is recorded, and is not compiled from its
+    /// source in its place.</summary>
+    private static byte[]? ToStore(string name, string root, string library, byte[] bytes,
+        bool imported, out string? why)
+    {
+        string marker = Path.Combine(root, DialectMarker);
+        string? dialect = File.Exists(marker) ? File.ReadAllText(marker).Trim() : null;
+        if (string.IsNullOrEmpty(dialect)) dialect = null;
+        var stored = Shumway.WebHost.LibraryArchive.ToStore(bytes, library, imported,
+            Shumway.WebHost.LibraryArchive.RebuildIn(root,
+                RuntimeCaps.SupportsWasmCodegen && !Tier.Disabled
+                    ? b => BakeSessionFor(root, dialect).Bake(b, BakeLog)
+                    : null));
+        why = stored.Reason;
+        if (stored.Refused)
+        {
+            // Kept as it came, as a file on disk is: a load of it tries again
+            // and says why, and a source imported later lets it build.
+            RecordRefusal(root, library, stored.Reason!);
+            why = null;
+            return bytes;
+        }
+        ClearRefusal(root, library);
+        // Built again from a kept one: the page keeps the product.
+        if (stored.Rebuilt && !imported) _compiledOnDemand.Enqueue($"{name}\t{library}");
+        return stored.Bytes;
+    }
+
+    // A refused bundle reads as a failed library, and its reason is what a
+    // load of it says (CompileOnDemand). Kept with the diagnostic, which the
+    // page stores.
+    private static void RecordRefusal(string root, string library, string reason)
+    {
+        try
+        {
+            File.WriteAllText(Path.Combine(root, library + DiagnosticSuffix),
+                string.Join("\n", "refused", Flatten(reason), reason));
+        }
+        catch { /* a diagnostic that cannot be filed is not worth failing over */ }
+    }
+
+    private static string? RefusalOf(string root, string library)
+    {
+        string marker = Path.Combine(root, library + DiagnosticSuffix);
+        try
+        {
+            if (!File.Exists(marker)) return null;
+            var lines = File.ReadLines(marker).ToList();
+            return lines.Count >= 3 && lines[0] == "refused" ? string.Join("\n", lines.Skip(2)) : null;
+        }
+        catch (IOException) { return null; }
+    }
+
+    private static void ClearRefusal(string root, string library)
+    {
+        if (RefusalOf(root, library) is null) return;
+        try { File.Delete(Path.Combine(root, library + DiagnosticSuffix)); }
+        catch (IOException) { }
+    }
+
+    /// <summary>Whether this engine can use a bundle a collection brings: it is
+    /// in the format of compiled code this engine reads, or its recipe says a
+    /// tool built it, and an import builds it again (ADR-076).</summary>
+    [JSExport]
+    internal static Task<bool> LibraryBundleIsUsable(
+        [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] bundle)
+        => Task.FromResult(IsUsable(bundle));
+
+    private static bool IsUsable(byte[] bundle)
+        => BundleReader.IsCurrent(bundle)
+           || BundleFormat.HeaderRecipe(bundle)?.Recipe is
+                { Tool: "shumway-link" or "shumway-lib" or "shumway-compile" };
+
+    /// <summary>Writes beside a library that came as its bundle alone the
+    /// source the bundle carries of it (<see cref="Shumway.WebHost.LibraryArchive.SourceOfBundle"/>),
+    /// where it can be read as any library's source, and where the library
+    /// compiles from when the bundle cannot be read any more. True when it
+    /// wrote one; never over a source that is there.</summary>
+    [JSExport]
+    internal static Task<bool> LibraryWriteBundleSource(string name, string library)
+        => OnLibraries(() =>
+        {
+            string root = ResolveLibrary(name);
+            string bundle = Path.Combine(root, library + ".shum");
+            string source = Path.Combine(root, SourceDir, library + ".pl");
+            if (!File.Exists(bundle) || File.Exists(source)) return false;
+            if (Shumway.WebHost.LibraryArchive.SourceToWrite(File.ReadAllBytes(bundle), library,
+                    File.GetLastWriteTimeUtc(bundle)) is not var (text, written))
+                return false;
+            Directory.CreateDirectory(Path.GetDirectoryName(source)!);
+            File.WriteAllText(source, text);
+            // Not newer than the bundle, which stays what library(X) loads.
+            File.SetLastWriteTimeUtc(source, written);
+            return true;
+        });
+
+    /// <summary>A file the engine sees, base64-encoded: an archive or a source
+    /// a notebook imports from its own files.</summary>
+    [JSExport]
+    internal static Task<string> LibraryReadLocal(string path)
+        => Task.Run(() => Convert.ToBase64String(File.ReadAllBytes(path)));
 
     /// <summary>Compiles a library's sources into a bundle beside them, which is
     /// then what <c>library(X)</c> resolves to.
@@ -165,7 +399,7 @@ internal static partial class WebShumwayApp
             EnterCompileGate(onDemand: false);
             try
             {
-                if (!force && File.Exists(Path.Combine(root, library + ".shum"))) return null;
+                if (!force && HasCurrentBundle(root, library)) return null;
                 return CompileLibrary(root, name, library);
             }
             finally { ExitCompileGate(); }
@@ -252,11 +486,14 @@ internal static partial class WebShumwayApp
     /// library compiled because it needed them, since the last call: one per
     /// line, the collection, a tab and the library.</summary>
     [JSExport]
-    internal static Task<string> LibraryTakeCompiledOnDemand()
+    internal static Task<string> LibraryTakeCompiledOnDemand() => Answered(TakeCompiledOnDemand());
+
+    /// <summary>What <see cref="LibraryTakeCompiledOnDemand"/> answers.</summary>
+    private static string TakeCompiledOnDemand()
     {
         var taken = new List<string>();
         while (_compiledOnDemand.TryDequeue(out string? entry)) taken.Add(entry);
-        return Task.FromResult(string.Join('\n', taken));
+        return string.Join('\n', taken);
     }
 
     /// <summary>The engine's <see cref="PrologEngine.LibrarySourceResolver"/>:
@@ -279,6 +516,10 @@ internal static partial class WebShumwayApp
         if (SynchronizationContext.Current == _jsThread) return null;
         string name = Path.GetFileName(root);
         string target = Path.Combine(root, library + ".shum");
+        // A bundle the collection brought that could not be rebuilt: its
+        // source is not compiled in its place (ADR-076, decision 5).
+        if (RefusalOf(root, library) is { } refused)
+            throw new InvalidDataException($"library({library}) from {name}: {refused}");
         // Its last compile failed: trying again on every consult would only
         // repeat the wait, and the list already says why.
         if (LastCompileFailed(root, library)) return null;
@@ -293,8 +534,9 @@ internal static partial class WebShumwayApp
         try
         {
             _compileLog = say;
-            // The batch may have been compiling this very library.
-            failed = File.Exists(target) ? null : CompileLibrary(root, name, library);
+            // The batch may have been compiling this very library. A bundle
+            // of another format is as none: the compile writes over it.
+            failed = HasCurrentBundle(root, library) ? null : CompileLibrary(root, name, library);
         }
         finally
         {
@@ -302,7 +544,7 @@ internal static partial class WebShumwayApp
             ExitCompileGate();
         }
 
-        if (failed is null && File.Exists(target))
+        if (failed is null && HasCurrentBundle(root, library))
         {
             _compiledOnDemand.Enqueue($"{name}\t{library}");
             say.WriteLine($"% library({library}) compiled in {clock.Elapsed.TotalSeconds:0.#} s.");
@@ -314,6 +556,35 @@ internal static partial class WebShumwayApp
         say.Flush();
         return null;
     }
+
+    /// <summary>The engine's <see cref="PrologEngine.LibraryBundleFilter"/>.
+    /// A bundle a browser kept may carry a WebAssembly module another build
+    /// of the engine baked. Such a module is refused at every install, and
+    /// the library would run from what the tier compiles for itself at every
+    /// load: the bundle goes, and the resolver, asked next, compiles the
+    /// library again. The page stores what that compiles over what it had.
+    ///
+    /// <para>Asked as the library loads, about the bundle the load has read:
+    /// looking when the page puts the stored bundles back read every one of
+    /// them a second time, used or not. With the tier off the bundle stays:
+    /// compiled now, it would carry no module at all.</para></summary>
+    private static bool TakesStored(string path, Bundle bundle)
+    {
+        if (!RuntimeCaps.SupportsWasmCodegen || Tier.Disabled) return true;
+        if (WasmBundleTier.ModulesAreCurrent(bundle)) return true;
+        // Only what an imported collection compiled: there is a source to
+        // compile it from again.
+        if (Path.GetDirectoryName(Path.GetDirectoryName(path)) != LibrariesRoot) return true;
+        try { File.Delete(path); }
+        catch (IOException) { return true; }
+        return false;
+    }
+
+    /// <summary>Whether the library has a bundle this engine reads: one of
+    /// its format (<see cref="BundleFormat.Stamp"/>), which the first bytes
+    /// of the file say.</summary>
+    private static bool HasCurrentBundle(string root, string library)
+        => BundleReader.IsCurrentFile(Path.Combine(root, library + ".shum"));
 
     private static bool LastCompileFailed(string root, string library)
     {
@@ -420,7 +691,7 @@ internal static partial class WebShumwayApp
             // the archive also carries its predicates as a wasm module, baked
             // here once (the batch compile the tier would otherwise run on
             // every visit) and installed when the library loads.
-            bool wasm = RuntimeCaps.SupportsWasmCodegen && !BrowserWasmTier.Disabled;
+            bool wasm = RuntimeCaps.SupportsWasmCodegen && !Tier.Disabled;
             byte[] bytes = Librarian.CreateArchive(compiled
                 .Where(c => c.IsRoot || !HasBundleOfItsOwn(root, c.ModuleName))
                 .Select(c => new BundleArchiveMember(
@@ -435,7 +706,18 @@ internal static partial class WebShumwayApp
                          }
                          finally { baked(bakeClock.Elapsed.TotalSeconds); }
                      }
-                     : null);
+                     : null,
+                // ADR-076: compiled from its entry by consult, as here.
+                new BundleRecipe
+                {
+                    Tool = "page",
+                    Inputs = new[] { new RecipeInput { Kind = RecipeInputKind.Source, Name = library + ".pl" } },
+                    Sources = new[] { RecipeSource.Of(library + ".pl", File.ReadAllBytes(entry),
+                        File.GetLastWriteTimeUtc(entry)) },
+                    Consult = true,
+                    Dialect = dialect,
+                    Wasm = wasm,
+                });
             // Written under a temporary name and moved into place, so what
             // `library(X)` can see is either the old bundle or the new one
             // and never half of one — a consult may look while this runs.
@@ -465,12 +747,12 @@ internal static partial class WebShumwayApp
         if (dir != Path.GetFullPath(Path.Combine(root, SourceDir))) return null;
         if (compiling.Contains(library) || LastCompileFailed(root, library)) return null;
         string target = Path.Combine(root, library + ".shum");
-        if (!File.Exists(target))
+        if (!HasCurrentBundle(root, library))
         {
             if (CompileLibrary(root, name, library, compiling) is not null) return null;
             _compiledOnDemand.Enqueue($"{name}\t{library}");
         }
-        return File.Exists(target) ? target : null;
+        return HasCurrentBundle(root, library) ? target : null;
     }
 
     /// <summary>Whether <paramref name="module"/> is a library of the collection
@@ -555,16 +837,29 @@ internal static partial class WebShumwayApp
     /// tab and its headline.</summary>
     [JSExport]
     internal static Task<string> LibraryEntries(string name)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             string root = ResolveLibrary(name);
             string sources = Path.Combine(root, SourceDir);
-            if (!Directory.Exists(sources)) return "";
-            var entries = Directory.GetFiles(sources, "*.pl", SearchOption.TopDirectoryOnly)
-                .Select(Path.GetFileNameWithoutExtension)
-                .Where(n => !string.IsNullOrEmpty(n))
-                .OrderBy(n => n, StringComparer.Ordinal)
-                .Select(n => DescribeEntry(root, n!));
+            var withSource = Directory.Exists(sources)
+                ? Directory.GetFiles(sources, "*.pl", SearchOption.TopDirectoryOnly)
+                    .Select(Path.GetFileNameWithoutExtension)
+                    .Where(n => !string.IsNullOrEmpty(n))
+                    .Select(n => n!)
+                    .ToHashSet(StringComparer.Ordinal)
+                : new HashSet<string>(StringComparer.Ordinal);
+            // A library that came as its bundle alone: what it loads from is
+            // there, and nothing to compile it from.
+            var alone = Directory.Exists(root)
+                ? Directory.GetFiles(root, "*.shum", SearchOption.TopDirectoryOnly)
+                    .Select(Path.GetFileNameWithoutExtension)
+                    .Where(n => !string.IsNullOrEmpty(n) && !withSource.Contains(n!))
+                    .Select(n => n!)
+                : Enumerable.Empty<string>();
+            var entries = withSource.Select(n => DescribeEntry(root, n))
+                .Concat(alone.Select(n => ReadDiagnostic(root, n) is ("refused", var headline)
+                    ? $"{n}\trefused-bundle\t{headline}" : $"{n}\tbundle"))
+                .OrderBy(line => line, StringComparer.Ordinal);
             return string.Join('\n', entries);
         });
 
@@ -572,8 +867,8 @@ internal static partial class WebShumwayApp
     {
         if (ProvidedNatively(root, library)) return $"{library}\tnative";
         var (kind, headline) = ReadDiagnostic(root, library);
-        string state = kind == "failed" ? "failed"
-            : File.Exists(Path.Combine(root, library + ".shum")) ? "compiled"
+        string state = kind is "failed" or "refused" ? kind
+            : HasCurrentBundle(root, library) ? "compiled"
             : "source";
         return headline is null ? $"{library}\t{state}" : $"{library}\t{state}\t{headline}";
     }
@@ -597,7 +892,7 @@ internal static partial class WebShumwayApp
     /// empty string. What the library list's <c>details</c> shows.</summary>
     [JSExport]
     internal static Task<string> LibraryDiagnostic(string name, string library)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             string marker = Path.Combine(ResolveLibrary(name), library + DiagnosticSuffix);
             return File.Exists(marker) ? File.ReadAllText(marker) : "";
@@ -608,7 +903,7 @@ internal static partial class WebShumwayApp
     /// matters, since the batch that found out runs once, at import.</summary>
     [JSExport]
     internal static Task<string?> LibraryPutDiagnostic(string name, string library, string text)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             try
             {
@@ -624,7 +919,7 @@ internal static partial class WebShumwayApp
     /// path until the next engine — a path that resolves nothing is harmless.</summary>
     [JSExport]
     internal static Task<string?> LibraryRemove(string name)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             if (InvalidWorkspaceName(name) is { } bad) return bad;
             try
@@ -641,7 +936,7 @@ internal static partial class WebShumwayApp
     /// real thing. The dialect marker is not one of them.</summary>
     [JSExport]
     internal static Task<string> LibraryFiles(string name)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             string dir = Path.Combine(ResolveLibrary(name), SourceDir);
             if (!Directory.Exists(dir)) return "";
@@ -657,25 +952,42 @@ internal static partial class WebShumwayApp
     /// a byte array; the page stores the bytes.</summary>
     [JSExport]
     internal static Task<string> LibraryBundle(string name, string library)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             string path = Path.Combine(ResolveLibrary(name), library + ".shum");
             return File.Exists(path) ? Convert.ToBase64String(File.ReadAllBytes(path)) : "";
         });
 
-    /// <summary>Puts a stored bundle back. Bytes, not base64: every page load
-    /// restores every stored bundle, and decoding strings of tens of megabytes
-    /// held the page up.</summary>
+    /// <summary>Puts a stored bundle back, and answers null, or why it was
+    /// not put: what the page stored is not a bundle of this engine's format.
+    /// A page closed while it stored one leaves an empty file, and a bundle
+    /// kept from an engine with another format of compiled code says so in
+    /// its first bytes (<see cref="BundleReader.IsCurrent(ReadOnlySpan{byte})"/>).
+    /// The page drops from its storage what is not put back, and the library
+    /// compiles again when it is used. Bytes, not base64: every page load
+    /// restores every stored bundle, and decoding strings of tens of
+    /// megabytes held the page up. Also how a folder or files picked on this
+    /// computer bring a library compiled ahead: <paramref name="library"/> is
+    /// then its path in the collection, which may name a directory.</summary>
     [JSExport]
     internal static Task<string?> LibraryPutBundle(
-        string name, string library, [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] bundle)
-        => OnEngine(() =>
+        string name, string library, [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] given, bool imported)
+        => OnLibraries(() =>
         {
             try
             {
+                foreach (string segment in library.Split('/'))
+                    if (segment.Length == 0 || segment == "..") return "not a path inside the collection";
                 string root = ResolveLibrary(name);
-                Directory.CreateDirectory(root);
-                File.WriteAllBytes(Path.Combine(root, library + ".shum"), bundle);
+                if (ToStore(name, root, library, given, imported, out string? why) is not { } bundle)
+                    return why;
+                // Moved into place, as a compile's is: a query may be
+                // looking for library(X) while this writes.
+                string target = Path.Combine(root, library + ".shum");
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                string partial = target + ".partial";
+                File.WriteAllBytes(partial, bundle);
+                File.Move(partial, target, overwrite: true);
                 return (string?)null;
             }
             catch (Exception ex) { return ex.Message; }
@@ -684,7 +996,7 @@ internal static partial class WebShumwayApp
     /// <summary>A library file's contents, or null when there is no such file.</summary>
     [JSExport]
     internal static Task<string?> LibraryRead(string name, string file)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             string path = ResolveLibraryFile(name, file);
             return File.Exists(path) ? File.ReadAllText(path) : null;
@@ -693,7 +1005,7 @@ internal static partial class WebShumwayApp
     /// <summary>Creates or replaces a library file. Returns null, or the error.</summary>
     [JSExport]
     internal static Task<string?> LibraryWrite(string name, string file, string content)
-        => OnEngine(() =>
+        => OnLibraries(() =>
         {
             try
             {

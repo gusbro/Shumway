@@ -1,4 +1,5 @@
-# Builds WebShumway and publishes it to GitHub Pages.
+# Builds WebShumway and publishes it to GitHub Pages, with the notebook site
+# (jupyterlite/) under jupyter/: Pages takes one artifact (ADR-073).
 #
 # The site is static files, so Pages can serve it — with one caveat that shapes
 # the whole deployment: the app uses threads, which need the page to be
@@ -16,6 +17,7 @@ on:
     branches: [main]
     paths:
       - 'src/**'
+      - 'jupyterlite/**'
       - '.github/workflows/webshumway.yml'
   workflow_dispatch:
 
@@ -47,6 +49,39 @@ jobs:
 
       - name: Publish
         run: dotnet publish src/Shumway.Web -c Release -o publish
+
+      # The notebook site is made of jupyterlite/ and the runtime scripts
+      # build.mjs copies, not of the engine: a change to the engine alone
+      # reuses it.
+      - name: Restore the notebook site
+        id: notebooks
+        uses: actions/cache@v4
+        with:
+          path: notebook-site
+          key: notebook-site-${{ hashFiles('jupyterlite/**', 'src/Shumway.Web/wwwroot/isolate.js', 'src/Shumway.Web/wwwroot/session.js', 'src/Shumway.Web/wwwroot/mirror.js', 'src/Shumway.Web/wwwroot/libraries.js') }}
+
+      - uses: actions/setup-node@v4
+        if: steps.notebooks.outputs.cache-hit != 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: jupyterlite/extension/package-lock.json
+
+      - uses: actions/setup-python@v5
+        if: steps.notebooks.outputs.cache-hit != 'true'
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: jupyterlite/requirements.txt
+
+      - name: Build the notebook site
+        if: steps.notebooks.outputs.cache-hit != 'true'
+        run: |
+          python -m pip install -r jupyterlite/requirements.txt
+          node jupyterlite/build.mjs --out notebook-site
+
+      - name: Put the notebook site under jupyter/
+        run: cp -r notebook-site publish/wwwroot/jupyter
 
       # A file starting with an underscore is skipped by Pages' Jekyll
       # processing, and the .NET runtime lives in _framework.

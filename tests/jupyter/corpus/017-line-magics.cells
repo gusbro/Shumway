@@ -1,0 +1,54 @@
+### call
+X = f(a), Y = [1, 2].
+### call
+member(Z, [p, q]).
+### call
+%bindings
+### call
+%queries
+### call
+%pwd
+### call
+%versions
+### call
+%magic
+### call
+%help
+### call
+%flags
+### call
+%bindings
+X = 2.
+### call
+X = 3.
+%bindings
+### call
+  %bindings
+### call
+%nosuch
+### call
+%bindings extra
+### call
+jupyter:print_variable_bindings.
+### reference
+jupyter::print_variable_bindings.
+### call
+jupyter:print_queries.
+### reference
+jupyter::print_queries.
+### call
+jupyter:print_queries([1, 2]).
+### reference
+jupyter::print_queries([1, 2]).
+### call
+jupyter:print_query_time.
+### reference
+jupyter::print_query_time.
+### call
+jupyter:pwd.
+### reference
+jupyter::pwd.
+### call
+jupyter:version.
+### reference
+jupyter::version.

@@ -272,9 +272,10 @@ public static class PersistedIlBuilder
                 // emitter check, or a construct the IL compiler does not
                 // handle). The runtime promotion store skips such a predicate;
                 // so does the build, rather than abort the whole .shum.
-                System.Console.Error.WriteLine(
-                    $"shumway-persisted-il: skipped {functorName} "
-                    + $"(fid={functorId}): {ex.GetType().Name}: {ex.Message}");
+                System.Console.Error.WriteLine(ex is IlJitLimitsException
+                    ? $"shumway-persisted-il: {functorName} stays bytecode: {ex.Message}"
+                    : $"shumway-persisted-il: skipped {functorName} "
+                        + $"(fid={functorId}): {ex.GetType().Name}: {ex.Message}");
                 DiagDumpSkippedPredicate(functorName, functorId, pred, ex);
                 if (patches.Count > patchesBeforeThisPred)
                     patches.RemoveRange(patchesBeforeThisPred,

@@ -1,0 +1,10 @@
+### raw
+{"jsonrpc":"2.0","id":0,"method":"backend"}
+### raw
+{"jsonrpc":"2.0","id":0,"method":"version"}
+### raw
+{"jsonrpc":"2.0","id":7,"method":"no_such_method"}
+### raw
+{"jsonrpc":"2.0","id":8,"method":"call","params":{"cod":"true."}}
+### call
+true.

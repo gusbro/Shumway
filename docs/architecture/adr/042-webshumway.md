@@ -2,7 +2,10 @@
 
 ## Status
 
-Shipped ([Phase 38](../../history/phase-38-closure.md), 2026-08-07).
+Shipped ([Phase 38](../../history/phase-38-closure.md), 2026-08-07). Amended
+2026-11-14 (§3): the embedder policy is `require-corp`, and the service worker
+deletes only its own caches. Amended 2026-11-16 (§3): the worker also serves
+the notebook site, a directory of this one.
 
 `src/Shumway.Web/`, a static site that runs the
 full engine (Tier-0, and Tier-1 in WebAssembly since
@@ -88,9 +91,29 @@ load-bearing:
   module loads. Hosting a JS worker that owns the runtime was tried first and
   does not boot.
 
-`Cross-Origin-Embedder-Policy: credentialless` rather than `require-corp`, so the
-library importer can read GitHub's listing API (CORS, no CORP). Cost: Safari does
-not support `credentialless`, so URL import is unavailable there.
+`Cross-Origin-Embedder-Policy: require-corp`, the value every browser engine
+implements (amended 2026-11-14). It was `credentialless`, chosen so that the
+library importer could read GitHub's listing API, which sends CORS but no CORP,
+at the stated cost of URL import in Safari. Both halves were wrong. A CORS fetch
+is allowed under `require-corp`, so the importer never needed the other value.
+And WebKit does not implement `credentialless`: a page served with it is not
+isolated there, so the engine did not boot in Safari, nor in any browser on iOS
+and iPadOS, which all use WebKit. Measured in headless Chromium, Firefox and
+WebKit: with `require-corp` all three isolate the page, boot the engine and
+read the listing.
+
+On activation the service worker deletes the older generations of its own
+cache and no other: the origin of a Pages site is shared by every project of
+its owner (amended 2026-11-14; it deleted every cache of the origin).
+
+The same worker serves the notebook site, the directory `jupyter/` of this one
+(ADR-069; amended 2026-11-16). That site runs this app's runtime, whose
+threads are workers with their script in `_framework`, and a worker
+registered under `jupyter/` is not asked about a script outside it. What is
+under `jupyter/` is sent with `credentialless` where the engine implements it,
+for the images of markdown cells; the rest keeps `require-corp`. A page is
+kept for offline use under its own path: under one name for all, a visit to
+one site replaced the other's.
 
 ### 4. Filesystem: MEMFS, mirrored to OPFS
 

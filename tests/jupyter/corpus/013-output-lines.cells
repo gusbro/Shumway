@@ -1,0 +1,10 @@
+### call
+write(a), nl, nl.
+### call
+nl.
+### call
+nl, nl, write(b).
+### call
+write(' c ').
+### call
+write(a), nl, write(user_error, b), nl(user_error), write(c), nl.

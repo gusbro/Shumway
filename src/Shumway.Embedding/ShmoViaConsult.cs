@@ -62,7 +62,16 @@ public static class ShmoViaConsult
     /// load (a host sets its <see cref="PrologEngine.LibrarySourceResolver"/>
     /// there). A module a bundle brought in is that bundle's and gets no
     /// object; the objects that import it record it as a library dependency
-    /// (ADR-038 §4).</para></summary>
+    /// (ADR-038 §4).</para>
+    ///
+    /// <para>A library bundle a module attaches with
+    /// <c>:- ensure_loaded(bundle(Name))</c> is recorded in that module's
+    /// object (ADR-075, decision 3). <paramref name="attachedLibraries"/>, when
+    /// given, takes the file the consult attached for each name, which a link
+    /// of these objects links against.</para>
+    ///
+    /// <para><paramref name="roots"/>, when given, receives the module of each
+    /// root that loaded, in the order of <paramref name="rootPaths"/>.</para></summary>
     public static List<(string ModuleName, ShmoObject Object, System.DateTime SourceTimeUtc, bool IsRoot)> CompileMany(
         IReadOnlyList<string> rootPaths,
         IReadOnlyList<string> libraryDirs,
@@ -70,7 +79,11 @@ public static class ShmoViaConsult
         List<ShmoCompileError> errors,
         string? dialect = null,
         System.IO.TextWriter? warnings = null,
-        System.Action<PrologEngine>? configure = null)
+        System.Action<PrologEngine>? configure = null,
+        bool withSource = false,
+        IDictionary<string, string>? attachedLibraries = null,
+        List<string>? roots = null,
+        IReadOnlyDictionary<string, string>? rootTexts = null)
     {
         // Strict: consult mode is how the toolchain compiles sources, so a
         // clause that does not parse fails the build (the object it would
@@ -82,6 +95,10 @@ public static class ShmoViaConsult
             _clausesFromBundles = new HashSet<Clause>(ReferenceEqualityComparer.Instance),
         };
         if (warnings is not null) e.Warnings = warnings;
+        // ADR-076: a rebuild's roots in memory, by full path.
+        if (rootTexts is not null)
+            e._sourcesInMemory = rootTexts.ToDictionary(
+                kv => System.IO.Path.GetFullPath(kv.Key), kv => kv.Value);
         // ADR-040: a library collection may be a non-shumway dialect. An
         // explicit dialect applies to every dir; otherwise each dir spec may
         // carry its own `dialect:path` prefix (AddLibraryDirectorySpec parses it).
@@ -115,7 +132,9 @@ public static class ShmoViaConsult
             string? rootDialect = dialect is { Length: > 0 }
                 ? dialect
                 : e.DialectForResolvedPath(System.IO.Path.GetFullPath(rp));
-            string text = Shumway.Core.TextFile.ReadAllText(rp);
+            string text = e._sourcesInMemory is { } inMemory
+                && inMemory.TryGetValue(System.IO.Path.GetFullPath(rp), out string? held)
+                ? held : Shumway.Core.TextFile.ReadAllText(rp);
             var m = System.Text.RegularExpressions.Regex.Match(
                 text, @"^\s*:-\s*module\(\s*'?([^,)'\s]+)",
                 System.Text.RegularExpressions.RegexOptions.Multiline);
@@ -145,6 +164,7 @@ public static class ShmoViaConsult
             if (rootModuleSet.Add(name)) rootModules.Add(name);
         }
         string? primaryRoot = rootModules.Count > 0 ? rootModules[0] : null;
+        roots?.AddRange(rootModules);
 
         // Assign each dynamic functor to exactly one owning module, so its
         // clauses are seeded once across the object set. The owner is the
@@ -257,9 +277,19 @@ public static class ShmoViaConsult
             }
 
             var localErrors = new List<ShmoCompileError>();
+            // The module's file as it is on disk, when it was asked for and
+            // the load came from one. Only in a release build: the link
+            // promotes a debug build's local entry points by compiling its text,
+            // and the text of a module this consult built need not compile
+            // alone (its hooks and operators may come from others).
+            string kept = "";
+            if (withSource && buildMode == ShmoBuildMode.Release
+                && e._moduleSourceFile.TryGetValue(name, out string? file)
+                && file is not null && System.IO.File.Exists(file))
+                kept = Shumway.Core.TextFile.ReadAllText(file);
             var res = ShmoCompiler.CompileFromParts(
                 name,
-                source: "",
+                source: kept,
                 rawClauses: raw,
                 publicSet: publicSet,
                 dynamicSet: dynamicSet,
@@ -268,10 +298,12 @@ public static class ShmoViaConsult
                 buildMode: buildMode,
                 errors: localErrors,
                 operatorDefs: ops.Count > 0 ? ops : null,
+                flagSettings: e.ModuleFlags(name) is { Count: > 0 } moduleFlags ? moduleFlags : null,
                 isExportQualified: manifest.IsExportQualified,
                 exports: exports,
                 imports: imports,
                 libraryDeps: libraryDeps,
+                dynamicLibraries: manifest.AttachedLibraries,
                 dialect: manifest.Dialect,
                 metaArgSpec: e.MetaArgSpec,
                 // A Module:Goal resolves as the consult that loaded this module
@@ -280,7 +312,8 @@ public static class ShmoViaConsult
                 // (atts generates one per clause of a module's get_atts).
                 qualifiedResolver: e.ResolveQualifiedStatic,
                 isVisibleGlobal: e.IsVisibleGlobalFunctor,
-                sourceOwnsDynamics: e.ModuleOwnsDynamics);
+                sourceOwnsDynamics: e.ModuleOwnsDynamics,
+                keepSource: withSource);
             if (res.Object is null)
             {
                 foreach (var err in localErrors)
@@ -293,6 +326,8 @@ public static class ShmoViaConsult
             var entry = (name, res.Object, srcTime, isRoot);
             if (name == primaryRoot) results.Insert(0, entry); else results.Add(entry);
         }
+        if (attachedLibraries is not null)
+            foreach (var (name, path) in e._bundlesAttachedByName) attachedLibraries[name] = path;
         return results;
     }
 

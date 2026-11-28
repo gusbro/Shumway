@@ -25,7 +25,9 @@ public sealed class CalleeRecorder : IReadOnlyDictionary<int, CompiledPredicate>
     /// callee map is keyed by.</summary>
     public IReadOnlyDictionary<int, CompiledPredicate> Inner => _inner;
 
-    /// <summary>The functor ids found by a lookup.</summary>
+    /// <summary>The functor ids found by a lookup. A lookup by the bare name of
+    /// a library predicate (ADR-056, amendment) records the predicate's own
+    /// functor too: the code is stale when either name gets new clauses.</summary>
     public IReadOnlyCollection<int> LookedUp => _lookedUp;
 
     /// <summary>When the compile emitted a region: each non-root member and the
@@ -35,7 +37,7 @@ public sealed class CalleeRecorder : IReadOnlyDictionary<int, CompiledPredicate>
     public bool TryGetValue(int key, out CompiledPredicate value)
     {
         if (!_inner.TryGetValue(key, out value!)) return false;
-        _lookedUp.Add(key);
+        Record(key, value);
         return true;
     }
 
@@ -44,16 +46,22 @@ public sealed class CalleeRecorder : IReadOnlyDictionary<int, CompiledPredicate>
         get
         {
             var value = _inner[key];
-            _lookedUp.Add(key);
+            Record(key, value);
             return value;
         }
     }
 
     public bool ContainsKey(int key)
     {
-        if (!_inner.ContainsKey(key)) return false;
-        _lookedUp.Add(key);
+        if (!_inner.TryGetValue(key, out var value)) return false;
+        Record(key, value);
         return true;
+    }
+
+    private void Record(int key, CompiledPredicate value)
+    {
+        _lookedUp.Add(key);
+        if (value.FunctorId != key) _lookedUp.Add(value.FunctorId);
     }
 
     public int Count => _inner.Count;

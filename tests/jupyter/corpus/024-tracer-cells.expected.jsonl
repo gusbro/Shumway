@@ -1,0 +1,6 @@
+{"jsonrpc":"2.0","id":1,"result":{"1":{"status":"success","type":"query","bindings":{},"output":""}}}
+{"jsonrpc":"2.0","id":2,"result":{"1":{"status":"error","error":{"code":-4712,"message":"Exception","data":{"logtalk_message":"!     Error:   existence_error(procedure,trace/2)\n!     Context: _G162469"}}}}}
+{"jsonrpc":"2.0","id":3,"result":{"1":{"status":"error","error":{"code":-4712,"message":"Exception","data":{"logtalk_message":"!     Error:   existence_error(procedure,leash/1)\n!     Context: _G166530"}}}}}
+{"jsonrpc":"2.0","id":4,"result":{"1":{"status":"error","error":{"code":-4712,"message":"Exception","data":{"logtalk_message":"!     Error:   existence_error(procedure,leash/1)\n!     Context: _G170575"}}}}}
+{"jsonrpc":"2.0","id":5,"result":{"1":{"status":"success","type":"query","bindings":{},"output":""}}}
+{"jsonrpc":"2.0","id":6,"result":{"1":{"status":"success","type":"query","bindings":{"L":"[1,2]"},"output":""}}}

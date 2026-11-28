@@ -1,0 +1,6 @@
+{"jsonrpc":"2.0","id":1,"method":"call","params":{"code":"X = 1. Y = 2."}}
+{"jsonrpc":"2.0","id":2,"method":"call","params":{"code":"member(X, [a, b]).\nwrite(between), nl.\nretry.\nretry.\nretry."}}
+{"jsonrpc":"2.0","id":3,"method":"call","params":{"code":"retry."}}
+{"jsonrpc":"2.0","id":4,"method":"call","params":{"code":"X = 1.\nthrow(middle).\nX = 3."}}
+{"jsonrpc":"2.0","id":5,"method":"call","params":{"code":"X = 1.\nY = ."}}
+{"jsonrpc":"2.0","id":6,"method":"call","params":{"code":"write(one), nl.\nwrite(two), nl."}}

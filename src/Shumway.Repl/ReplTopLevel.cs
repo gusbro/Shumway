@@ -316,6 +316,13 @@ internal static class ReplTopLevel
                     engine.PromoteBareBundleModulesToUser();
                 }
             }
+            catch (Shumway.Core.PrologHaltException halted)
+            {
+                // An initialization goal of a bundle halted: the program ran.
+                MaybeDumpIlStats(engine);
+                MaybeDumpProfile(engine);
+                return halted.ExitCode;
+            }
             catch (Exception ex)
             {
                 PrintError(engine, ex);
@@ -763,8 +770,8 @@ internal static class ReplTopLevel
                 }
                 foreach (var pm in outcome.Promoted)
                 {
-                    // Hide the compiler's internal `$`-helpers (aliased too, but
-                    // noise); report only the module's user-facing predicates.
+                    // Hide `$`-names, internals that are noise at the prompt;
+                    // report only the module's user-facing predicates.
                     var preds = pm.Predicates.Where(p => !p.Name.StartsWith('$')).ToList();
                     if (preds.Count > 0 && !_quiet)
                         Console.WriteLine(

@@ -9,16 +9,60 @@ namespace Shumway.Embedding;
 /// </summary>
 public static class BundleReader
 {
+    // Engines that load the same bundle, each from its own read of it, hold
+    // one copy of its wasm module: megabytes they only ever read.
+    private static readonly Shumway.Core.SharedByteArrays WasmModules = new();
+
     public static Bundle ReadFromFile(string path)
     {
         ArgumentNullException.ThrowIfNull(path);
         return FromBytes(File.ReadAllBytes(path));
     }
 
+    /// <summary>Whether <paramref name="data"/> starts as a bundle does. An
+    /// empty or cut file does not: a host that keeps bundles asks before it
+    /// puts one where <c>library(X)</c> would find it.</summary>
+    public static bool IsBundle(ReadOnlySpan<byte> data)
+        => data.Length >= BundleFormat.Magic.Length
+           && data[..BundleFormat.Magic.Length].SequenceEqual(BundleFormat.Magic);
+
+    /// <summary>Whether <paramref name="data"/> starts as a bundle of this
+    /// engine's format does: its magic, its version and its stamp
+    /// (<see cref="BundleFormat.Stamp"/>). Looks at its first sixteen bytes
+    /// and reads nothing of the rest.</summary>
+    public static bool IsCurrent(ReadOnlySpan<byte> data)
+        => IsBundle(data) && data.Length >= 16
+           && System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(4))
+              == BundleFormat.CurrentVersion
+           && System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(data.Slice(8))
+              == BundleFormat.Stamp;
+
+    /// <summary><see cref="IsCurrent(ReadOnlySpan{byte})"/> of a file, of
+    /// which it reads the first sixteen bytes; false when there is none.</summary>
+    public static bool IsCurrentFile(string path)
+    {
+        try
+        {
+            using var file = File.OpenRead(path);
+            var head = new byte[16];
+            int read = 0;
+            while (read < head.Length)
+            {
+                int got = file.Read(head, read, head.Length - read);
+                if (got == 0) break;
+                read += got;
+            }
+            return IsCurrent(head.AsSpan(0, read));
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
+
     public static Bundle FromBytes(byte[] data)
     {
         ArgumentNullException.ThrowIfNull(data);
-        using var ms = new MemoryStream(data);
+        // Its buffer visible: a Brotli body is decoded in place (OpenBody).
+        using var ms = new MemoryStream(data, 0, data.Length, writable: false, publiclyVisible: true);
         using var headerReader = new BinaryReader(ms, Encoding.UTF8, leaveOpen: true);
 
         byte[] magic = headerReader.ReadBytes(4);
@@ -36,8 +80,10 @@ public static class BundleReader
                 $"Bundle: format version {version} is not supported by this runtime "
                 + $"(requires {BundleFormat.CurrentVersion}; pre-release formats are "
                 + "not backward compatible — rebuild the bundle).");
+        BundleFormat.RequireStamp(headerReader, "Bundle");
+        var (rules, recipe) = BundleFormat.ReadRecipe(headerReader);
 
-        // the byte after the version selects the body encoding
+        // the byte after the stamp selects the body encoding
         // (raw / Brotli); everything below reads from the decoded body.
         byte compression = headerReader.ReadByte();
         using var br = BundleFormat.OpenBody(compression, ms);
@@ -152,6 +198,8 @@ public static class BundleReader
                 string opName = ReadLengthPrefixedUtf8(br);
                 operators.Add(new ShmoOperatorDef(opPrio, opType, opName));
             }
+            var flags = ReadFlags(br);
+            var initializationGoals = ReadInitializationGoals(br);
             // ADR-038 — export-qualification + import table per entry.
             bool isExportQualified = br.ReadBoolean();
             uint exCount = br.ReadUInt32();
@@ -190,7 +238,8 @@ public static class BundleReader
                 compiledIlPatches, compiledIlEntries, dynamicSeeds, nativeBlocks,
                 nativeFunctions, nativeDecls, operators,
                 isExportQualified: isExportQualified, exports: exports, imports: imports,
-                dialect: dialect, clauseTerms: clauseTerms);
+                dialect: dialect, clauseTerms: clauseTerms, flags: flags,
+                initializationGoals: initializationGoals);
         }
         // Foreign-assemblies trailer.
         uint asmCount = br.ReadUInt32();
@@ -266,15 +315,55 @@ public static class BundleReader
                 throw new InvalidDataException(
                     $"Bundle: truncated wasm module (expected {byteCount} bytes, "
                     + $"got {bytes.Length}).");
-            wasmModules[i] = bytes;
+            wasmModules[i] = WasmModules.Share(bytes);
         }
         // Engine-libraries trailer.
         uint engineLibraryCount = br.ReadUInt32();
         var engineLibraries = new List<string>((int)engineLibraryCount);
         for (uint i = 0; i < engineLibraryCount; i++)
             engineLibraries.Add(ReadLengthPrefixedUtf8(br));
+        // Dynamic-libraries trailer (ADR-075, decision 5).
+        uint dynamicLibraryCount = br.ReadUInt32();
+        var dynamicLibraries = new List<BundleDynamicLibrary>((int)dynamicLibraryCount);
+        for (uint i = 0; i < dynamicLibraryCount; i++)
+        {
+            string libName = ReadLengthPrefixedUtf8(br);
+            uint useCount = br.ReadUInt32();
+            var uses = new List<QualifiedPredicateRef>((int)useCount);
+            for (uint j = 0; j < useCount; j++)
+            {
+                string module = ReadLengthPrefixedUtf8(br);
+                string name = ReadLengthPrefixedUtf8(br);
+                uses.Add(new QualifiedPredicateRef(module, name, (int)br.ReadUInt32()));
+            }
+            dynamicLibraries.Add(new BundleDynamicLibrary(libName, uses));
+        }
         return new Bundle(entries, foreignAssemblies, snapshot, archiveMembers,
-            nativeLibraries, generatorVersion, arityCompat, wasmModules, engineLibraries);
+            nativeLibraries, generatorVersion, arityCompat, wasmModules, engineLibraries,
+            dynamicLibraries)
+        {
+            Recipe = recipe,
+            RecipeRules = rules,
+        };
+    }
+
+    /// <summary>The section <see cref="BundleWriter.WriteInitializationGoals"/> writes.</summary>
+    internal static Shumway.Compiler.Ast.Term[] ReadInitializationGoals(BinaryReader br)
+    {
+        uint count = br.ReadUInt32();
+        var goals = new Shumway.Compiler.Ast.Term[count];
+        for (uint i = 0; i < count; i++) goals[i] = TermCodec.ReadTerm(br);
+        return goals;
+    }
+
+    /// <summary>The section <see cref="BundleWriter.WriteFlags"/> writes.</summary>
+    internal static ShmoFlagSetting[] ReadFlags(BinaryReader br)
+    {
+        uint count = br.ReadUInt32();
+        var flags = new ShmoFlagSetting[count];
+        for (uint i = 0; i < count; i++)
+            flags[i] = new ShmoFlagSetting(ReadLengthPrefixedUtf8(br), ReadLengthPrefixedUtf8(br));
+        return flags;
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

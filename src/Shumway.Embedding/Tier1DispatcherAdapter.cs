@@ -57,6 +57,13 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
     /// out.</summary>
     public bool WasmSuspended { get; init; }
 
+    /// <summary>ADR-056, amendment: the bare name of each predicate of a
+    /// library without a module directive, to its module's functor. The link
+    /// resolves a call by that name through it, and so does the compiler's
+    /// view of the callees: without it a caller is refused as calling an
+    /// undefined predicate.</summary>
+    public IReadOnlyDictionary<int, int>? BareAliases { get; init; }
+
     private bool SuspendsWasm(int functorId)
         => WasmSuspended && _store.Wasm is { } wasm && wasm.Covers(functorId);
 
@@ -79,6 +86,9 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
                 _calleeMap = new Dictionary<int, CompiledPredicate>(_predicatesByAddress.Count);
                 foreach (var (_, pred) in _predicatesByAddress)
                     _calleeMap[pred.FunctorId] = pred;
+                if (BareAliases is { } aliases)
+                    foreach (var (bare, target) in aliases)
+                        if (_calleeMap.TryGetValue(target, out var pred)) _calleeMap.TryAdd(bare, pred);
             }
             return _calleeMap;
         }
@@ -86,6 +96,10 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
 
     public Func<Activation, int, bool>? ResolveByFunctorId(int functorId)
         => SuspendsWasm(functorId) ? null : _store.TryGetResumeWrapper(functorId);
+
+    public Func<Activation, int, bool>? ResolveCallByFunctorId(int functorId)
+        => _store.CallsStayInterpreted && AddressOfFunctor(functorId) >= 0
+            ? null : ResolveByFunctorId(functorId);
 
     // Built on the first miss only: a CallIl site losing its delegate is an
     // eviction between queries, not a per-dispatch event.
@@ -159,6 +173,9 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
 
     public Func<Activation, bool>? OnDispatch(int targetAddress)
     {
+        // A tracer is attached: every call runs its bytecode, and none counts
+        // toward a promotion.
+        if (_store.CallsStayInterpreted) return null;
         if (_evictionStampSeen != _store.EvictionStamp)
         {
             _dispatchCache.Clear();
@@ -194,6 +211,16 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
         {
             _dispatchCache[targetAddress] = existing;
             return existing;
+        }
+
+        // A site the linker would have made bytecode-only, had it linked
+        // with the tiers as they are now. After jit_compile(off) in a
+        // running query every site of the program is one, and each paid the
+        // whole of this method at every call, for the same null.
+        if (_store.StaysOnBytecode(functorId, pred))
+        {
+            _dispatchCache[targetAddress] = null!;
+            return null;
         }
 
         // The wasm tier counts the same dispatches; its install lands in the

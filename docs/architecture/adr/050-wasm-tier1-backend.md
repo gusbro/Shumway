@@ -13,7 +13,9 @@ many-modules arc remain open. The full design and the running record live in
 [`docs/design/wasm-tier1-plan.md`](../../design/wasm-tier1-plan.md); this ADR
 records the decisions the policy calls major: a new backend and a new
 external dependency. Amended 2026-11-11: the module writes state the host
-owns only through rings the host drains in order.
+owns only through rings the host drains in order. Amended 2026-11-22:
+`jit_compile(off)` evicts this backend's builds at the goal, and the helpers
+of a bundle's dynamic rules are baked.
 
 ## Context
 
@@ -124,7 +126,8 @@ the top level answers it the way it answers `restart.`.
 cannot happen where it is asked: a choice point created inside tier code has
 to be able to redo there, and query setup is the existing safe point for work
 of this shape (the dynamic-buffer compaction is deferred to the same place).
-So `off` governs the goals after it, not the one it appears in.
+So `off` governs the goals after it, not the one it appears in. For this
+backend that changed: see the amendment of 2026-11-22.
 
 The browser keeps the mode across `restart.`, which builds a fresh engine:
 the setting is what the session is working under, and clearing the database
@@ -178,3 +181,81 @@ parked and the list goes to a free variable.
 No invariant changes. The trails keep their formats and rules (an entry the
 module writes is the one the host would have written), and the managed side
 tables are written only by managed code.
+
+## Amendment (2026-11-22): `off` evicts at the goal
+
+D8 deferred the eviction of `jit_compile(off)` to the next query setup,
+because a choice point created inside tier code had to redo there. That
+holds for the IL compiler, and it no longer holds here. A choice point of a
+module is a WAM choice point whose alternative names a bytecode address, and
+since ADR-054 a build can leave in the middle of a query: its rows go, a
+resume that names it resolves nowhere and lands on the bytecode, and a
+snapshot of a dynamic predicate is retired for new calls and kept for the
+calls running in it. A consult that defines a compiled predicate again
+already evicts it that way, and so does `jit_compile(bundles_off)`.
+
+The deferral also had a cost. A notebook's session is one query for its
+whole life (ADR-067), so the next query setup never came: after
+`jit_compile(off)` its program stayed compiled, and a change of form under a
+threshold never took effect.
+
+So with this backend `off`, and a change of form, evict every build at the
+goal (`WasmPromotionStore.LeaveNow`). The rest of the goal that asked runs
+on the interpreter, and a choice point left inside a build gives its next
+solution from the bytecode. The IL compiler keeps the deferral.
+
+The call sites of that goal were linked while the tier was on, so each asks
+the dispatcher where a site linked with no tier on is bytecode-only and does
+not. With no tier on the dispatcher keeps its answer for such a site
+(`IlPromotionStore.StaysOnBytecode`), and a tier going on drops the answers
+kept. Before, every call went the whole way through the dispatcher, and a
+program ran slower after `off` than in a session that never compiled.
+
+## Amendment (2026-11-22): the helpers of a bundle's dynamic rules are baked
+
+A rule of a dynamic predicate takes helper predicates when an engine first
+links it: one for a disjunction, one for a negation, one for the goal of a
+`catch/3`. Each is named with a number of that engine's counter, so the same
+rule's helper is `'$disj_41'` in one process and `'$disj_97'` in the next. A
+relocatable module names its members, and the bake left these out: a member
+the loading engine names differently refuses the whole module. A host then
+compiled them itself at every load. For the largest library measured that was
+311 predicates and 1.5 to 4.3 seconds of each visit to the page.
+
+The IL tier's bake of a bundle already takes them. It compiles each dynamic
+predicate that has clauses as a snapshot (ADR-023), with the helpers that
+snapshot reaches, and loads them as delegates. A delegate is the whole
+implementation of its predicate, so the names of the baking engine do no
+harm: nothing in the loading engine has to match them.
+
+A module of this backend is not the whole implementation. It hands any
+instruction back to the interpreter, which runs the bytecode at a linked
+address, and the loading engine has that bytecode under its own helper's
+name. So the bake names a helper by something every process agrees on: the
+rule that took it and its place among that rule's helpers
+(`PrologEngine.PortableHelperNames`, `WasmPortableNames`). The rule is the
+key the engine already memoizes a rule's transform under, which is its
+module, its place in its file and its term up to a renaming of variables,
+less the file's id, which a process hands out. The module carries a digest of
+that key. At install each such name resolves to the loading engine's helper
+of the same rule, and the check of a member's code against the code it was
+compiled from compares call sites under the same names.
+
+These helpers go in a module of their own, the bundle's second
+(`WasmBundleTier.BakeLoaded`). An engine may not have one of the rules as it
+was baked: a clause retracted before the first goal, a rule transformed under
+debug code generation, which keeps no memo. A module installs whole or not at
+all, and such an engine refuses the helpers' module alone and compiles those
+helpers as it did before. The module of the static predicates names none of
+them and installs as it always did.
+
+A module also carries the predicates its bake refused, each with the
+compiler's reason (`WasmRelocatableModule.Refused`). A host that installs
+the module marks them refused: its batch offered each of them to the
+compiler again at every load, to be refused again. A refusal depends on the
+forms the builtins have, which the install has checked by then.
+
+A rule two files hold at the same place gives its helpers no portable name,
+and they stay out of the bake. The snapshots themselves are baked too, each
+in a module of its own: the amendment of the same date to
+[ADR-054](054-dynamic-predicates-in-wasm.md).

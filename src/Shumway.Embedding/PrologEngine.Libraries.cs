@@ -94,19 +94,70 @@ public sealed partial class PrologEngine
     private void UseLibrary(string name)
     {
         if (!_loadedEngineLibraries.Add(name)) return;
+        LoadBundleLinkingLive(() =>
+        {
+            LoadBundle(LibraryBundles.Get(name));
+            SeedMetaTemplatesFromSource(LibraryBundles.SourceOf(name));
+            MarkModuleNonDebuggable(name);   // ADR-035 — a library, not the user's code
+        });
+    }
+
+    /// <summary>Runs <paramref name="load"/>, which loads bundles. Loaded by a
+    /// running goal, what they define is linked into that goal's code now, as
+    /// a mid-query consult of a source links what it defines: the rest of the
+    /// query calls it. A notebook's server is one query, so without this a
+    /// library a cell imported from a bundle was never callable.</summary>
+    internal void LoadBundleLinkingLive(Action load)
+    {
         var before = _liveConsultEngine is null
             ? null : new HashSet<int>(_precompiledStaticPredicates.Keys);
-        LoadBundle(LibraryBundles.Get(name));
-        SeedMetaTemplatesFromSource(LibraryBundles.SourceOf(name));
-        MarkModuleNonDebuggable(name);   // ADR-035 — a library, not the user's code
-        // Loaded by a running goal: link it into that goal's code now, as a
-        // mid-query consult links what it defines.
+        // The bundles' initialization goals run in that goal, so they wait
+        // for what the bundles define to be linked into it.
+        List<(Term Goal, string Module)>? initialization = null;
+        var outer = _deferredBundleInitialization;
+        if (before is not null) _deferredBundleInitialization = initialization = new();
+        var staleBefore = before is not null ? new HashSet<int>(_productStaleDynamicFids) : null;
+        var pendingBefore = before is not null ? PendingClauseFunctors() : null;
+        try { load(); }
+        finally { _deferredBundleInitialization = outer; }
+        // An attach that only declared modules left the layout to the goal it
+        // runs in (ADR-075): the goal adopts what it declared, or the program
+        // is laid out again.
+        bool declaredOnly = _attachDeclaredOnly;
+        _attachDeclaredOnly = false;
         if (_liveConsultEngine is { } live && before is not null)
         {
-            EnsureLiveDynamicTrampolines(live);
-            LinkLoadedPredicatesLive(live, _precompiledStaticPredicates
+            var declared = declaredOnly
+                ? new Dictionary<int, (int Addr, Shumway.Compiler.Wam.CompiledPredicate Pred)>() : null;
+            EnsureLiveDynamicTrampolines(live, declared);
+            if (declaredOnly) PlaceAttachStubsFirst(live, pendingBefore!);
+            // A bundle's clauses for a dynamic the goal already dispatches
+            // (another bundle's, or the program's) went to the store only; the
+            // goal's view takes them here, as at the end of a source consult.
+            ReconcileEngineDynamicView(live);
+            if (declaredOnly)
+            {
+                if (AdoptDeclaredDynamics(live, declared!, staleBefore!, pendingBefore!) is { } why)
+                {
+                    if (LoadProfEnabled) ProfProductDrop("attach not kept: " + why);
+                }
+                else declaredOnly = false;
+            }
+            var linked = LinkLoadedPredicatesLive(live, _precompiledStaticPredicates
                 .Where(kv => !before.Contains(kv.Key)).Select(kv => kv.Value).ToList());
+            // The bundle's wasm module binds to where its predicates are
+            // linked: here, for the goal that loaded it.
+            if (linked is not null && IlPromotion.PendingWasmModules.Count > 0)
+                IlPromotion.Wasm?.InstallPendingBundlesLive(this, linked);
         }
+        if (declaredOnly)
+        {
+            _staticLink = null;
+            InvalidatePersistent();
+        }
+        if (initialization is not null)
+            foreach (var (goal, module) in initialization)
+                RunInitializationGoal(goal, module);
     }
 
     // Compatibility libraries loaded on demand by use_module(library(Name)),
@@ -160,7 +211,7 @@ public sealed partial class PrologEngine
             throw new System.ArgumentException($"unknown library dialect '{dialect}'");
         AddLibraryDirectory(path);
         string full;
-        try { full = System.IO.Path.GetFullPath(path); } catch { full = path; }
+        try { full = _directory.FullPath(path); } catch { full = path; }
         (_libraryDirDialect ??= new(System.StringComparer.OrdinalIgnoreCase))[full] = dialect;
         // Trealla surfaces BUILTIN-level names (limit/2, load_text/2) that its
         // programs use without importing anything, so mounting a trealla tree
@@ -271,9 +322,24 @@ public sealed partial class PrologEngine
             ? body()
             : WithDialect(dialect!, body);
 
+    // The dialect of the library load in progress, if any. Not the
+    // library_dialect preference, which a user sets for good.
+    private string? _loadingDialect;
+
+    /// <summary>The dialect of the library load in progress, or null.</summary>
+    internal string? LoadingDialect => _loadingDialect;
+
+    /// <summary>The flags a dialect library's load saves and restores (see
+    /// <see cref="WithDialect{T}"/>): what the library sets of them stays with
+    /// it.</summary>
+    internal static readonly HashSet<string> DialectScopedFlags =
+        new(System.StringComparer.Ordinal) { "double_quotes", "lenient_escapes", "discontiguous_check" };
+
     private T WithDialect<T>(string dialect, System.Func<T> body)
     {
         string? savedDialect = _activeLibraryDialect;
+        string? savedLoading = _loadingDialect;
+        _loadingDialect = dialect;
         var savedDq = Flags.DoubleQuotes;
         bool savedSep = Flags.DigitSeparators;
         _activeLibraryDialect = dialect;
@@ -339,6 +405,7 @@ public sealed partial class PrologEngine
         finally
         {
             _activeLibraryDialect = savedDialect;
+            _loadingDialect = savedLoading;
             Flags.DoubleQuotes = savedDq;
             Flags.DigitSeparators = savedSep;
             Flags.LenientBareOperatorOperands = savedLenientOps;
@@ -627,6 +694,30 @@ public sealed partial class PrologEngine
     // dynamic facts, the AddLibraryDirectory API, the SHUMWAY_LIBRARY_PATH env
     // var, and (added by the REPL/CLI) the shipped lib/ directory. Lazily built
     // so the env read happens once, on first library resolution.
+    /// <summary>ADR-076: what a rebuild of the bundle at <paramref name="full"/>
+    /// looks things up in: the files beside it, then the library search path.</summary>
+    private BundleRebuild.Context RebuildBeside(string full)
+    {
+        string dir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(full)) ?? ".";
+        var dirs = new List<string> { dir };
+        if (_libraryDirs is not null) dirs.AddRange(_libraryDirs);
+        return new BundleRebuild.Context
+        {
+            BaseDirectory = dir,
+            FindFile = file =>
+            {
+                foreach (string d in dirs)
+                {
+                    string candidate = System.IO.Path.Combine(d, file);
+                    if (System.IO.File.Exists(candidate)) return candidate;
+                }
+                return null;
+            },
+            LibraryDirs = dirs,
+            Warn = message => Warn("warning: " + message),
+        };
+    }
+
     private List<string>? _libraryDirs;
 
     private void EnsureLibraryDirs()
@@ -651,7 +742,7 @@ public sealed partial class PrologEngine
     {
         if (string.IsNullOrWhiteSpace(path)) return;
         string full;
-        try { full = System.IO.Path.GetFullPath(path); } catch { full = path; }
+        try { full = _directory.FullPath(path); } catch { full = path; }
         if (!_libraryDirs!.Contains(full, StringComparer.OrdinalIgnoreCase))
             _libraryDirs!.Add(full);
     }
@@ -664,6 +755,16 @@ public sealed partial class PrologEngine
     /// library the engine replaces with its own (a native override) never
     /// reaches it.</summary>
     public Func<string, string, string?>? LibrarySourceResolver { get; set; }
+
+    /// <summary>Asked when <c>use_module(library(Name))</c> resolves to a
+    /// bundle (ADR-038), with the bundle as the load has read it. False, and
+    /// the library loads as one that has no bundle: from its source, through
+    /// <see cref="LibrarySourceResolver"/>. A host that keeps the bundles it
+    /// compiles refuses one it can no longer use and compiles the library
+    /// again. Called with the library's name, the bundle's full path and the
+    /// bundle, on the thread doing the load; not for the bundle the resolver
+    /// answers with after a refusal.</summary>
+    public Func<string, string, Bundle, bool>? LibraryBundleFilter { get; set; }
 
     /// <summary>Adds <paramref name="path"/> to this engine's library search
     /// path (ADR-038), so a later <c>use_module(library(X))</c> can resolve
@@ -773,32 +874,47 @@ public sealed partial class PrologEngine
     }
 
     /// <summary>Resolves <c>library(<paramref name="name"/>)</c> to a file on the
-    /// library search path (ADR-038): the first <c>Dir/name.pl</c> or
-    /// <c>Dir/name.shum</c> that exists, in search-path order. Returns the full
-    /// path in <paramref name="path"/>, or <c>false</c> if none is found.</summary>
+    /// library search path (ADR-038): in search-path order, the first directory
+    /// with <c>name.pl</c> or <c>name.shum</c>. With both, the bundle when it is
+    /// not older than its source, else the source. A bundle of another format
+    /// is still the library: its load rebuilds it, or refuses it with the
+    /// reason (ADR-076). Returns the full path in <paramref name="path"/>, or
+    /// <c>false</c> if none is found.</summary>
     internal bool TryResolveLibrary(string name, out string path)
     {
         foreach (string dir in EnumerateLibraryDirs())
         {
-            foreach (string ext in LibraryExtensions)
-            {
-                string candidate = System.IO.Path.Combine(dir, name + ext);
-                try
-                {
-                    if (System.IO.File.Exists(candidate))
-                    {
-                        path = System.IO.Path.GetFullPath(candidate);
-                        return true;
-                    }
-                }
-                catch { /* an invalid path component — skip this candidate */ }
-            }
+            string? source = Existing(System.IO.Path.Combine(dir, name + ".pl"));
+            string? bundle = Existing(System.IO.Path.Combine(dir, name + ".shum"));
+            string? chosen = source is null ? bundle
+                : bundle is null ? source
+                : BundleIsTheLibrary(source, bundle) ? bundle : source;
+            if (chosen is null) continue;
+            path = System.IO.Path.GetFullPath(chosen);
+            return true;
         }
         path = "";
         return false;
-    }
 
-    private static readonly string[] LibraryExtensions = { ".pl", ".shum" };
+        static string? Existing(string candidate)
+        {
+            try { return System.IO.File.Exists(candidate) ? candidate : null; }
+            catch { return null; }   // an invalid path component
+        }
+
+        static bool BundleIsTheLibrary(string source, string bundle)
+        {
+            try
+            {
+                if (System.IO.File.GetLastWriteTimeUtc(bundle) < System.IO.File.GetLastWriteTimeUtc(source))
+                    return false;
+                using var file = System.IO.File.OpenRead(bundle);
+                var magic = new byte[4];
+                return file.Read(magic, 0, 4) == 4 && BundleReader.IsBundle(magic);
+            }
+            catch { return false; }
+        }
+    }
 
     // ADR-038 — the module name the most recent consult defined, set at
     // manifest creation (ConsultPipeline). A nested library consult sets it, so
@@ -937,8 +1053,9 @@ public sealed partial class PrologEngine
             if (_modules.ContainsKey(fileAtom.Name))
                 return ExportQualifiedNameOrNull(fileAtom.Name);
             string path = fileAtom.Name;
-            if (_consultBaseDir is not null && !System.IO.Path.IsPathRooted(path))
+            if (_consultBaseDir is not null && !PrologPath.IsRooted(path))
                 path = System.IO.Path.Combine(_consultBaseDir, path);
+            path = _directory.Resolve(path);
             if (!System.IO.Path.HasExtension(path) && System.IO.File.Exists(path + ".pl"))
                 path += ".pl";
             if (!System.IO.File.Exists(path))
@@ -961,10 +1078,10 @@ public sealed partial class PrologEngine
     // ConsultFile is extension-routed (.shum → LoadBundle, else source). A failed
     // import warns and continues — a predicate genuinely needed surfaces a clearer
     // existence_error at its call site — rather than aborting the importing consult.
-    private string? LoadResolvedLibrary(string name, string path)
+    private string? LoadResolvedLibrary(string name, string path, bool refusedBefore = false)
     {
         string full;
-        try { full = System.IO.Path.GetFullPath(path); }
+        try { full = _directory.FullPath(path); }
         catch { full = path; }
 
         // Already loaded, and still what was loaded: importing it again is the
@@ -990,8 +1107,56 @@ public sealed partial class PrologEngine
 
             // Reloading replaces what the file defines rather than adding to it;
             // a first load has nothing to replace, so the two are the same call.
-            if (_consultedPaths.Contains(full)) ReconsultFile(path);
-            else ConsultFile(path);
+            if (isBundle) _libraryBundleLoadDepth++;
+            try
+            {
+                if (_consultedPaths.Contains(full)) ReconsultFile(path);
+                else if (isBundle && !refusedBefore && !BundleReader.IsCurrentFile(full))
+                {
+                    // Written with another format (BundleFormat.Stamp): built
+                    // again from its recipe, in memory (ADR-076), or refused
+                    // with the reason. A library a page compiled from its
+                    // source is compiled from it again, as the page does.
+                    byte[] stale = System.IO.File.ReadAllBytes(full);
+                    if (BundleFormat.HeaderRecipe(stale)?.Recipe is { Tool: "page" }
+                        && TryResolveLibrarySource(name, out _))
+                    {
+                        Warn($"warning: library({name}): its bundle was written with another format "
+                           + "and is not loaded; its source is");
+                        return LoadLibraryWithNoBundle(name);
+                    }
+                    Bundle rebuilt;
+                    try
+                    {
+                        rebuilt = BundleReader.FromBytes(BundleRebuild.Rebuild(
+                            stale, System.IO.Path.GetFileName(full), RebuildBeside(full)));
+                    }
+                    catch (RebuildRefusedException ex)
+                    {
+                        throw new System.IO.InvalidDataException($"library({name}): {ex.Message}");
+                    }
+                    Warn($"warning: library({name}): its bundle was written with another format of "
+                       + "compiled code; it was rebuilt from what it says it was built from");
+                    LoadBundleLinkingLive(() => LoadBundleCore(
+                        rebuilt, System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(full))));
+                    ImportLoadedBundleIntoUser();
+                }
+                else if (isBundle && !refusedBefore && LibraryBundleFilter is { } accepts)
+                {
+                    // Read here, once: the host is asked about the bundle the
+                    // load is about to take.
+                    var bundle = BundleReader.ReadFromFile(full);
+                    if (!accepts(name, full, bundle)) return LoadLibraryWithNoBundle(name);
+                    LoadBundleLinkingLive(() => LoadBundleCore(
+                        bundle, System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(full))));
+                    ImportLoadedBundleIntoUser();
+                }
+                else ConsultFile(path);
+            }
+            finally
+            {
+                if (isBundle) _libraryBundleLoadDepth--;
+            }
 
             // ADR-035: a library bundle is code the user did not write, as
             // clpfd is. Release-compiled is not enough: the interpreter raises
@@ -1019,6 +1184,34 @@ public sealed partial class PrologEngine
         }
     }
 
+    // The library's bundle is not one to load (another format, or the host
+    // refused it through LibraryBundleFilter): its source, and what the
+    // host's resolver gives for it, which may be the bundle it has just
+    // compiled where the other was.
+    private string? LoadLibraryWithNoBundle(string name)
+    {
+        if (!TryResolveLibrarySource(name, out string source))
+        {
+            Warn($"warning: use_module(library({name})): its bundle was refused and it has no source");
+            return null;
+        }
+        string load = LibrarySourceResolver?.Invoke(name, source) ?? source;
+        return LoadResolvedLibrary(name, load, refusedBefore: true);
+    }
+
+    private bool TryResolveLibrarySource(string name, out string source)
+    {
+        foreach (string dir in EnumerateLibraryDirs())
+        {
+            string candidate = System.IO.Path.Combine(dir, name + ".pl");
+            if (!System.IO.File.Exists(candidate)) continue;
+            source = System.IO.Path.GetFullPath(candidate);
+            return true;
+        }
+        source = "";
+        return false;
+    }
+
     /// <summary>One bare module aliased into <c>user</c> (or, for a collision
     /// skip, the indicators that collided).</summary>
     internal readonly record struct BareModulePromotion(
@@ -1026,10 +1219,72 @@ public sealed partial class PrologEngine
 
     /// <summary>The outcome of <see cref="PromoteBareBundleModulesToUser"/>:
     /// modules whose locals were aliased into <c>user</c>, and modules skipped
-    /// wholesale because a predicate name collided.</summary>
+    /// wholesale because a predicate name collided, each the first time it is.</summary>
     internal readonly record struct BundlePromotionResult(
         List<BareModulePromotion> Promoted,
         List<BareModulePromotion> SkippedForCollision);
+
+    private readonly HashSet<string> _bareModulesReportedSkipped = new(StringComparer.Ordinal);
+
+    // Keyed by what it is computed from: the libraries and their locals, which
+    // change only with a load. With it, the module each name is from (its
+    // index in _bareLibraryModules) and the locals of each module it holds.
+    private Dictionary<int, int>? _bareLibraryAliases;
+    private Dictionary<int, int>? _bareLibraryAliasOwners;
+    private int[] _bareLibraryAliased = Array.Empty<int>();
+    private (int Modules, int Locals) _bareLibraryAliasesKey = (-1, -1);
+
+    /// <summary>ADR-056, amendment: the bare name of each local of a library
+    /// whose predicates are user's, to its module's functor, for the links of
+    /// the program, so that a call another bundle compiled finds it as it finds
+    /// the source's. The library loaded first answers for a name two define.
+    /// <c>null</c> when there is no such library.</summary>
+    internal IReadOnlyDictionary<int, int>? BareLibraryAliases()
+    {
+        if (_bareLibraryModules.Count == 0) return null;
+        // A module of an attached library whose code is not in has no address
+        // for an alias to lead to: a call to it stays unresolved and brings it
+        // in, and the adoption of its code then names the call (ADR-075).
+        var counts = new int[_bareLibraryModules.Count];
+        int locals = 0;
+        for (int i = 0; i < counts.Length; i++)
+        {
+            string module = _bareLibraryModules[i];
+            counts[i] = !IsCodePending(module) && _precompiledModuleLocals.TryGetValue(module, out var set)
+                ? set.Count : 0;
+            locals += counts[i];
+        }
+        var key = (_bareLibraryModules.Count, locals);
+        if (_bareLibraryAliases is not null && key == _bareLibraryAliasesKey) return _bareLibraryAliases;
+        // Modules are only added and their locals only grow: the modules whose
+        // locals changed are added to a copy of the map (a link may hold the
+        // one it was given), and a name goes to the module that comes first,
+        // as in a map built whole. Anything that shrank builds it whole.
+        bool whole = _bareLibraryAliases is null || _bareLibraryAliasOwners is null
+            || _bareLibraryAliased.Length > counts.Length;
+        for (int i = 0; !whole && i < counts.Length && i < _bareLibraryAliased.Length; i++)
+            if (counts[i] < _bareLibraryAliased[i]) whole = true;
+        var map = whole ? new Dictionary<int, int>() : new Dictionary<int, int>(_bareLibraryAliases!);
+        var owners = whole ? new Dictionary<int, int>() : new Dictionary<int, int>(_bareLibraryAliasOwners!);
+        for (int i = 0; i < counts.Length; i++)
+        {
+            int had = whole || i >= _bareLibraryAliased.Length ? 0 : _bareLibraryAliased[i];
+            if (counts[i] == had) continue;
+            string module = _bareLibraryModules[i];
+            foreach (int fid in _precompiledModuleLocals[module])
+            {
+                if (IsMetaHelperFunctorName(fid)) continue;
+                if (owners.TryGetValue(fid, out int from) && from <= i) continue;
+                map[fid] = MangleFunctor(module, fid);
+                owners[fid] = i;
+            }
+        }
+        _bareLibraryAliases = map;
+        _bareLibraryAliasOwners = owners;
+        _bareLibraryAliased = counts;
+        _bareLibraryAliasesKey = key;
+        return map;
+    }
 
     /// <summary>REPL usability (ADR-038): a bundle loaded interactively leaves
     /// the top level standing in <c>user</c>, so the bundle's module-local
@@ -1053,7 +1308,12 @@ public sealed partial class PrologEngine
     /// or one already claimed in <c>user</c> — that whole module is skipped, so
     /// <c>user</c> never sees a module half-promoted. The decision is computed
     /// over all candidates at once, so a name shared by two modules skips both.
-    /// Public/dynamic predicates are already bare-global and need no alias.</para></summary>
+    /// Public/dynamic predicates are already bare-global and need no alias.</para>
+    ///
+    /// <para>The compiler's control helpers (<c>$disj_N</c> and the rest) are
+    /// never aliased: only their own module's clauses call them, and two bundles
+    /// linked apart mint the same names. A module an earlier call promoted is no
+    /// longer a candidate; its aliases are part of what <c>user</c> resolves.</para></summary>
     internal BundlePromotionResult PromoteBareBundleModulesToUser()
     {
         var promoted = new List<BareModulePromotion>();
@@ -1061,15 +1321,22 @@ public sealed partial class PrologEngine
         if (!_modules.TryGetValue(DefaultModuleName, out ModuleManifest? userManifest))
             return new BundlePromotionResult(promoted, skipped);
 
-        // Bare candidates: non-library modules carrying aliasable locals.
+        // Bare candidates: non-library modules with a local that user does not
+        // resolve to them yet.
         var candidates = new List<string>();
         foreach (var (name, m) in _modules)
         {
             if (name == DefaultModuleName || name == PreludeModuleName) continue;
             if (m.IsExportQualified) continue;   // library — never promote
-            if (_precompiledModuleLocals.TryGetValue(name, out var locals)
-                && locals.Count > 0)
-                candidates.Add(name);
+            if (_bareLibraryModules.Contains(name)) continue;   // user's already
+            if (!_precompiledModuleLocals.TryGetValue(name, out var locals)) continue;
+            foreach (int fid in locals)
+                if (!IsMetaHelperFunctorName(fid)
+                    && !(userManifest.Imports.TryGetValue(fid, out string? to) && to == name))
+                {
+                    candidates.Add(name);
+                    break;
+                }
         }
         if (candidates.Count == 0)
             return new BundlePromotionResult(promoted, skipped);
@@ -1079,7 +1346,8 @@ public sealed partial class PrologEngine
         List<(int Fid, string Target)> Contributions(string mod)
         {
             var list = new List<(int, string)>();
-            foreach (int fid in _precompiledModuleLocals[mod]) list.Add((fid, mod));
+            foreach (int fid in _precompiledModuleLocals[mod])
+                if (!IsMetaHelperFunctorName(fid)) list.Add((fid, mod));
             foreach (var (fid, src) in _modules[mod].Imports) list.Add((fid, src));
             return list;
         }
@@ -1111,13 +1379,16 @@ public sealed partial class PrologEngine
                 }
             if (colliding.Count > 0)
             {
-                skipped.Add(new BareModulePromotion(mod, colliding));
+                // Still a candidate on later calls, so that its names keep
+                // counting against a new module's; reported once.
+                if (_bareModulesReportedSkipped.Add(mod))
+                    skipped.Add(new BareModulePromotion(mod, colliding));
                 continue;   // all-or-nothing: promote none of this module
             }
             // Clean — commit its locals (reported) and inherited imports (silent).
             var aliased = new List<(string, int)>();
             foreach (int fid in _precompiledModuleLocals[mod])
-                if (userManifest.Imports.TryAdd(fid, mod))
+                if (!IsMetaHelperFunctorName(fid) && userManifest.Imports.TryAdd(fid, mod))
                 {
                     changed = true;
                     var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
@@ -1196,6 +1467,26 @@ public sealed partial class PrologEngine
     /// Invalidates the rewrite caches when it adds anything.</summary>
     internal void ImportAllExportsIntoUser(string sourceModule)
         => ImportExportsIntoUser(sourceModule, only: null);
+
+    /// <summary>A bundle consulted directly imports into <c>user</c>, as a
+    /// module file consulted directly does: the exports of each of its
+    /// export-qualified modules that no other module of the bundle imports.
+    /// What its modules import of each other stays theirs, as a source's
+    /// use_module dependencies do. A use_module of the bundle imports what
+    /// it asks for instead.</summary>
+    internal void ImportLoadedBundleIntoUser()
+    {
+        if (_useModuleLoadDepth != 0) return;
+        IReadOnlyList<string> loaded = Bundles.LastLoadedModules;
+        var imported = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string module in loaded)
+            if (_modules.TryGetValue(module, out var manifest))
+                foreach (string source in manifest.Imports.Values) imported.Add(source);
+        foreach (string module in loaded)
+            if (module != DefaultModuleName && module != Prelude.ModuleName && !imported.Contains(module)
+                && _modules.TryGetValue(module, out var manifest) && manifest.IsExportQualified)
+                ImportAllExportsIntoUser(module);
+    }
 
     /// <summary>As <see cref="ImportAllExportsIntoUser"/>, for the functors in
     /// <paramref name="only"/> (the goal-form <c>use_module/2</c>), or the whole
@@ -1390,10 +1681,41 @@ public sealed partial class PrologEngine
             // file) are user's as much as a consulted clause, and user:foo(1)
             // as a goal reaches them already. The prelude's are the system's.
             if (mod == DefaultModuleName)
-                foreach (int fid in AllStaticAndDynamicFunctors())
+                foreach (int fid in GlobalStaticAndDynamicFunctors())
                     if (!IsPreludeFunctor(fid) && Fresh(fid)) yield return (mod, fid);
         }
     }
+
+    /// <summary>What an unqualified <c>current_predicate/1</c> written in
+    /// <paramref name="module"/> answers for. An export-qualified module asks
+    /// about itself, as <c>current_predicate(Module:PI)</c> does (SICStus). One
+    /// loaded as SWI code sees what it can call by name, as it does there: its
+    /// own, its imports, the builtins and the global namespace. Any other
+    /// module's predicates are global, so it sees <c>user</c>'s.</summary>
+    internal IEnumerable<int> UnqualifiedPredicateView(string module)
+    {
+        if (!_modules.TryGetValue(module, out ModuleManifest? manifest)
+            || !manifest.IsExportQualified)
+        {
+            foreach (var (_, fid) in DefinedModulePredicates(DefaultModuleName))
+                yield return fid;
+            yield break;
+        }
+        foreach (var (_, fid) in DefinedModulePredicates(module))
+            yield return fid;
+        if (manifest.Dialect != "swi") yield break;
+        foreach (int fid in manifest.Imports.Keys)
+            yield return fid;
+        foreach (int fid in Shumway.Builtins.BuiltinsRegistry.AllRegisteredFunctorIds())
+            yield return fid;
+        foreach (int fid in GlobalStaticAndDynamicFunctors())
+            yield return fid;
+    }
+
+    /// <summary>Whether <paramref name="module"/> exports the functor: the
+    /// <c>exported</c> property of <c>predicate_property/2</c>.</summary>
+    internal bool ModuleExportsFunctor(string module, int fid)
+        => _modules.TryGetValue(module, out ModuleManifest? m) && m.ExportFunctors.Contains(fid);
 
     /// <summary>The modules a program sees, in name order: every module of
     /// the table but the engine's own (<c>$</c>-named). <c>current_module/1</c>
@@ -1412,22 +1734,70 @@ public sealed partial class PrologEngine
         => !module.StartsWith('$') && _modules.ContainsKey(module);
 
     /// <summary>Whether <paramref name="module"/> defines the functor — the
-    /// membership form of <see cref="DefinedModulePredicates"/>.</summary>
+    /// membership form of <see cref="DefinedModulePredicates"/>, asking each
+    /// of its sources instead of enumerating them: predicate_property/2 asks
+    /// this for every call, and a module of thousands of clauses made each
+    /// question a walk over all of them.</summary>
     internal bool ModuleDefinesFunctor(string module, int fid)
     {
         if (ModuleOwnsDynamicFunctor(module, fid)) return true;
-        foreach (var (_, f) in DefinedModulePredicates(module))
-            if (f == fid) return true;
-        return false;
+        if (!IsVisibleModule(module)) return false;
+        ModuleManifest manifest = _modules[module];
+        // $-names never surface, as in the enumeration.
+        var (atomId, _) = Shumway.Core.FunctorTable.Lookup(fid);
+        string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
+        if (name is not { Length: > 0 } || name.IndexOf('$') >= 0) return false;
+        if (ModuleClauseHeadFunctors(module, manifest).Contains(fid)) return true;
+        if (manifest.DynamicFunctors.Contains(fid)) return true;
+        if (_dynamicDeclaringModule.TryGetValue(fid, out string? declarer) && declarer == module)
+            return true;
+        if (manifest.PublicFunctors.Contains(fid)) return true;
+        if (_precompiledModuleLocals.TryGetValue(module, out var bundleLocals)
+            && bundleLocals.Contains(fid))
+            return true;
+        return module == DefaultModuleName && !IsPreludeFunctor(fid)
+            && ((_dynStore.Functors.Contains(fid) && !_dynStore.IsImplicitOnly(fid))
+                || GlobalStaticHeadFunctors().Contains(fid));
+    }
+
+    private readonly Dictionary<string, (object ClausesRef, int ClauseCount, HashSet<int> Heads)>
+        _moduleClauseHeadsCache = new();
+
+    /// <summary>The head functors of a module's clauses, kept until its
+    /// clause list changes.</summary>
+    private HashSet<int> ModuleClauseHeadFunctors(string module, ModuleManifest manifest)
+    {
+        if (_moduleClauseHeadsCache.TryGetValue(module, out var e)
+            && ReferenceEquals(e.ClausesRef, manifest.Clauses)
+            && e.ClauseCount == manifest.Clauses.Count)
+            return e.Heads;
+        var heads = new HashSet<int>();
+        foreach (var c in manifest.Clauses)
+            if (c.Kind != Shumway.Compiler.Ast.ClauseKind.Directive)
+                heads.Add(ConsultPipeline.HeadFunctorIdOf(c));
+        _moduleClauseHeadsCache[module] = (manifest.Clauses, manifest.Clauses.Count, heads);
+        return heads;
     }
 
     /// <summary>The module <paramref name="module"/> imports the functor
-    /// from, or null — one hop of the import table, for the M:X viewpoint
-    /// resolution (predicate_property's imported_from, clause's view).</summary>
+    /// from, or null: one hop of its own import table.</summary>
     internal string? ModuleImportSource(string module, int fid)
         => _modules.TryGetValue(module, out ModuleManifest? m)
            && m.Imports.TryGetValue(fid, out string? src)
             ? src : null;
+
+    /// <summary>Where M's viewpoint takes an import from: M's table, then,
+    /// for a loaded module not declared with <c>:- module/2</c> (a
+    /// <c>:- module/1</c> name, a file's name in a link), <c>user</c>'s,
+    /// which its text sees when consulted (ADR-038, third amendment).</summary>
+    internal string? ViewImportSource(string module, int fid)
+    {
+        if (ModuleImportSource(module, fid) is { } src) return src;
+        return module != DefaultModuleName
+               && _modules.TryGetValue(module, out ModuleManifest? m) && !m.IsExportQualified
+            ? ModuleImportSource(DefaultModuleName, fid)
+            : null;
+    }
 
     /// <summary>Static clauses with head functor <paramref name="fid"/> in
     /// one module — <see cref="StaticClausesFor"/> restricted to

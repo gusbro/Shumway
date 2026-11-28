@@ -24,6 +24,10 @@
     <!-- The shared wasm-tier conformance corpus: the desktop runner reads it
          from the output directory, the browser hook from wwwroot. One source. -->
     <Content Include="wasm-conformance.pl" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The notebook server's differential corpus (tests/jupyter): the
+         requests and what the reference answered to them. -->
+    <Content Include="..\jupyter\corpus\*.jsonl" Link="jupyter-corpus\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
@@ -33,6 +37,12 @@
          Tier-0 to check the answers and to anchor the timings. -->
     <ProjectReference Include="..\..\src\Shumway.Embedding\Shumway.Embedding.csproj" />
     <ProjectReference Include="..\..\src\Shumway.Libraries\Shumway.Libraries.csproj" />
+    <!-- The web host's sessions (ADR-068): the part with no JavaScript in it
+         runs on the desktop, where two sessions can be set against each other. -->
+    <ProjectReference Include="..\..\src\Shumway.WebHost\Shumway.WebHost.csproj" />
+    <!-- The notebook server (ADR-067), driven on the desktop as a kernel
+         will drive it in a page. -->
+    <ProjectReference Include="..\..\src\Shumway.Jupyter\Shumway.Jupyter.csproj" />
   </ItemGroup>
 
 </Project>

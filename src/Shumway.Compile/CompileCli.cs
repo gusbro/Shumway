@@ -106,7 +106,7 @@ internal static class CompileCli
     {
         Console.Error.WriteLine(
             $"shumway-compile: compiling {inputs.Count} file(s) via consult "
-            + $"[{opts.BuildMode.ToString().ToLowerInvariant()}]");
+            + $"[{ModeLabel(opts)}]");
         var errors = new List<ShmoCompileError>();
         List<(string ModuleName, ShmoObject Object, DateTime SourceTimeUtc, bool IsRoot)> objects;
         // Output is a directory: each module is named by its module name (a
@@ -117,7 +117,8 @@ internal static class CompileCli
             : System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(inputs[0])) ?? ".";
         try
         {
-            objects = ShmoViaConsult.CompileMany(inputs, opts.LibraryDirs, opts.BuildMode, errors);
+            objects = ShmoViaConsult.CompileMany(inputs, opts.LibraryDirs, opts.BuildMode, errors,
+                withSource: opts.WithSource);
         }
         catch (Exception ex)
         {
@@ -136,10 +137,21 @@ internal static class CompileCli
         }
         try { System.IO.Directory.CreateDirectory(dir); }
         catch (System.IO.IOException) { /* surfaced by the write below */ }
-        foreach (var (moduleName, obj, srcTime, isRoot) in objects)
+        // ADR-076: each object says it came of consulting these roots, in
+        // this order, and which of the modules it is.
+        var roots = inputs.Select(i => new RecipeInput
         {
+            Kind = RecipeInputKind.Source,
+            Name = System.IO.Path.GetFileName(i),
+        }).ToList();
+        var rootSources = inputs.Select(i => RecipeSource.Of(System.IO.Path.GetFileName(i),
+            System.IO.File.ReadAllBytes(i), System.IO.File.GetLastWriteTimeUtc(i),
+            carry: opts.WithSource)).ToList();
+        foreach (var (moduleName, compiled, srcTime, isRoot) in objects)
+        {
+            var obj = compiled.WithRecipe(CompileRecipe(opts, roots, rootSources, moduleName, consult: true));
             string path = System.IO.Path.Combine(dir, SanitizeFileName(moduleName) + ".shmo");
-            if (!isRoot && ShmoUpToDate(path, srcTime, opts.BuildMode))
+            if (!isRoot && ShmoUpToDate(path, srcTime, opts.BuildMode, opts.WithSource))
             {
                 Console.Error.WriteLine($"shumway-compile:   {moduleName}.shmo up to date, skipped");
                 continue;
@@ -154,18 +166,30 @@ internal static class CompileCli
     /// exists, is at least as new as the module's source, and was built in the
     /// same mode — never reuse a release object for a debug build (or vice
     /// versa). An unreadable / stale-format object regenerates.</summary>
-    private static bool ShmoUpToDate(string path, DateTime sourceTimeUtc, ShmoBuildMode mode)
+    private static bool ShmoUpToDate(string path, DateTime sourceTimeUtc, ShmoBuildMode mode,
+        bool withSource)
     {
         try
         {
             if (!System.IO.File.Exists(path)) return false;
             if (System.IO.File.GetLastWriteTimeUtc(path) < sourceTimeUtc) return false;
-            try { if (ShmoReader.ReadFromFile(path).BuildMode != mode) return false; }
+            try
+            {
+                var old = ShmoReader.ReadFromFile(path);
+                if (old.BuildMode != mode) return false;
+                // A release object made with or without its text is another build.
+                if (mode == ShmoBuildMode.Release && withSource == string.IsNullOrEmpty(old.Source))
+                    return false;
+            }
             catch { return false; }
             return true;
         }
         catch { return false; }
     }
+
+    private static string ModeLabel(Options opts)
+        => opts.BuildMode.ToString().ToLowerInvariant()
+           + (opts.WithSource && opts.BuildMode == ShmoBuildMode.Release ? ", with source" : "");
 
     private static string SanitizeFileName(string name)
     {
@@ -215,13 +239,28 @@ internal static class CompileCli
                 + $"  shumway-compile --consult -L <libdir> {input}");
     }
 
+    // ADR-076: the recipe of an object this compile writes.
+    private static BundleRecipe CompileRecipe(Options opts, IReadOnlyList<RecipeInput> inputs,
+        IReadOnlyList<RecipeSource> sources, string module, bool consult)
+        => new()
+        {
+            Tool = "shumway-compile",
+            Inputs = inputs,
+            Sources = sources,
+            Module = module,
+            Consult = consult,
+            Debug = opts.BuildMode == ShmoBuildMode.Debuggable,
+            WithSource = opts.WithSource,
+            ArityCompat = opts.ArityCompat,
+        };
+
     private static int CompileOne(string input, string output, Options opts)
     {
         bool verbose = opts.Verbose;
         ShmoBuildMode buildMode = opts.BuildMode;
         Console.Error.WriteLine(
             $"shumway-compile: compiling {input} -> {output} "
-            + $"[{buildMode.ToString().ToLowerInvariant()}]");
+            + $"[{ModeLabel(opts)}]");
         // Register-allocator design survey (ADR-021). Classifies every permanent
         // allocated while compiling this file (Class B = live only across inline
         // goals; Class A = crosses a real call, irreducible). Diagnostic.
@@ -231,7 +270,7 @@ internal static class CompileCli
         try
         {
             var result = ShmoCompiler.TryCompileFile(input, buildMode, maxErrors: 100,
-                arityCompat: opts.ArityCompat);
+                arityCompat: opts.ArityCompat, withSource: opts.WithSource);
             // Warnings (e.g. unknown directives under --arity) are
             // reported but never fail the compile.
             foreach (var warn in result.Warnings)
@@ -262,6 +301,12 @@ internal static class CompileCli
                 RemoveStaleOutput(output);
                 return ExitCompileError;
             }
+            string name = System.IO.Path.GetFileName(input);
+            obj = obj.WithRecipe(CompileRecipe(opts,
+                new[] { new RecipeInput { Kind = RecipeInputKind.Source, Name = name } },
+                new[] { RecipeSource.Of(name, System.IO.File.ReadAllBytes(input),
+                    System.IO.File.GetLastWriteTimeUtc(input), carry: opts.WithSource) },
+                obj.ModuleName, consult: false));
             ShmoWriter.WriteToFile(obj, output);
             if (ySurvey && Shumway.Compiler.Wam.ClauseCompiler.YSurvey is { } survey)
             {
@@ -617,6 +662,7 @@ internal static class CompileCli
         public string OutputPath { get; set; } = "";
         public bool Verbose { get; set; }
         public ShmoBuildMode BuildMode { get; set; } = ShmoBuildMode.Release;
+        public bool WithSource { get; set; }
         public bool DumpWam { get; set; }
         public bool DumpIl { get; set; }
         public bool Regions { get; set; }
@@ -669,6 +715,10 @@ internal static class CompileCli
                 case "--release":
                 case "-r":
                     opts.BuildMode = ShmoBuildMode.Release;
+                    break;
+
+                case "--with-source":
+                    opts.WithSource = true;
                     break;
 
                 case "--dump-wam":
@@ -788,7 +838,10 @@ internal static class CompileCli
             + "                       directory (multiple inputs). Default: alongside each\n"
             + "                       input with the extension replaced.\n"
             + "  -r, --release        Build in release mode (default). The source text is\n"
-            + "                       not embedded in the .shmo.\n"
+            + "                       not embedded in the .shmo (but see --with-source).\n"
+            + "      --with-source    Keep the source in a release object. A bundle linked\n"
+            + "                       from it (without --strip) includes the source, but\n"
+            + "                       still runs the compiled code, like any release bundle.\n"
             + "  -d, --debug          Build a source-level DEBUGGABLE object: keeps the\n"
             + "                       source text AND bakes the debug-shape WAM (stop sites,\n"
             + "                       variable maps) so a bundle/exe built from it can be\n"

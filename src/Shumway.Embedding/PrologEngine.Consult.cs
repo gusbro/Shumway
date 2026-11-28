@@ -12,17 +12,24 @@ public sealed partial class PrologEngine
 
     /// <summary>Consults a file by path — <c>.shum</c> loads a bundle,
     /// anything else consults source.</summary>
-    public void ConsultFile(string path) => HostChange(() => Consults.ConsultFile(path));
+    public void ConsultFile(string path)
+        => HostChange(() => Consults.ConsultFile(_directory.Resolve(path)));
+
+    /// <summary>A loaded bundle's <c>:- initialization/1</c> goal, run in its
+    /// module as a consult runs one.</summary>
+    internal void RunInitializationGoal(Term goal, string moduleName)
+        => Consults.RunInitializationGoal(goal, moduleName);
 
     internal void ConsultFileLive(string path, Shumway.Core.Activation liveEngine, string? intoModule = null)
-        => Consults.ConsultFileLive(path, liveEngine, intoModule);
+        => Consults.ConsultFileLive(_directory.Resolve(path), liveEngine, intoModule);
 
     /// <summary>Classical reconsult: abolishes the predicates the file
     /// defines, then consults it.</summary>
-    public void ReconsultFile(string path) => HostChange(() => Consults.ReconsultFile(path));
+    public void ReconsultFile(string path)
+        => HostChange(() => Consults.ReconsultFile(_directory.Resolve(path)));
 
     internal void ReconsultFileLive(string path, Shumway.Core.Activation liveEngine, string? intoModule = null)
-        => Consults.ReconsultFileLive(path, liveEngine, intoModule);
+        => Consults.ReconsultFileLive(_directory.Resolve(path), liveEngine, intoModule);
 
     /// <summary>Consults Prolog source text into this engine.</summary>
     public void ConsultString(string source) => HostChange(() => Consults.ConsultString(source));

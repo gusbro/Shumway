@@ -10,6 +10,9 @@ export-qualified module belongs to that module (the amendment at the end).
 Amended 2026-11-08 (accepted; built with it): the engine's own libraries are
 export-qualified modules (the second amendment at the end).
 
+Amended 2026-11-23: a library's bundle beside its source is the library when
+it is current (the fourth amendment at the end).
+
 ## Implementation status
 
 All four components are implemented and tested:
@@ -128,7 +131,7 @@ fed from all of:
 - the shipped `lib/` directory (added by the REPL/CLI).
 
 `use_module(library(X))` resolves in order: (1) baked C# switch (unchanged) →
-(2) file resolver (`Dir/X.pl` then `Dir/X.shum`) → (3) `CompatLibraries` (unchanged) →
+(2) file resolver (`Dir/X.pl` or `Dir/X.shum`; with both, the fourth amendment) → (3) `CompatLibraries` (unchanged) →
 (4) error.
 
 A host may set `PrologEngine.LibrarySourceResolver`. When step (2) lands on a
@@ -549,3 +552,126 @@ pins `call(;, P, Q)` in a module on both tiers;
 `ClauseLookupIndexTests.AQualifiedLookupFiltersHeadsLikeTheBareOne` and
 `EnumerationDeterminismConformance.ClauseFiltersHeadsThatCannotMatch`
 pin `user`'s qualified view and the qualified `clause/2`'s determinism.
+
+## Third amendment (2026-11-16): the global namespace holds nothing of an export-qualified module
+
+### Context
+
+`user`'s view was built from the clause heads of every module, by their
+bare names. A `:- module/2` file's predicates were therefore `user`'s as
+well:
+
+- `current_predicate(user:PI)` and the unqualified form listed another
+  module's private predicates, which a call from `user` cannot reach
+  (ADR-056), and its exports, which `user` imports and does not define;
+- `predicate_property(user:Head, P)` answered `static, defined` for both,
+  so an import never reached the branch that reports `imported_from/1`.
+
+Inside a module, an unqualified `current_predicate/1` answered for the
+module's own predicates, the builtins and that same view.
+
+Measured on the reference systems, with a module `mm` that exports
+`mm_pub/1` and keeps `mm_priv/1`, imported by `user`:
+
+| Query | SICStus 4.8 | Scryer | SWI-Prolog 10 |
+|---|---|---|---|
+| `current_predicate(user:mm_priv/1)` | no | no | no |
+| `current_predicate(user:mm_pub/1)` | no | yes | yes |
+| `predicate_property(user:mm_priv(_), _)` | fails | | fails |
+| `predicate_property(user:mm_pub(_), P)` | `imported_from(mm)` | | `imported_from(mm)` |
+| `predicate_property(mm:mm_pub(_), exported)` | yes | | yes |
+
+And asked with no module from a clause of a module `m2` that imports `mm`:
+
+| Asked about | SICStus 4.8 | Scryer | SWI-Prolog 10 |
+|---|---|---|---|
+| its own private, exported or dynamic predicate | yes | exported only | yes |
+| an import | no | no | yes |
+| another module's private | no | no | no |
+| a predicate of `user` | no | yes | yes |
+| a builtin | no | no | yes |
+
+Scryer answers for `user` whichever module asks. SICStus asks the module
+the call is written in. SWI-Prolog answers for everything the module can
+call.
+
+### Decision
+
+1. **The global namespace is what the modules that are not export-qualified
+   define**, with the global dynamic store. An export-qualified module adds
+   nothing to it, private or exported (section 4 already says so of the
+   names a call resolves). `current_predicate(user:PI)`,
+   `predicate_property/2` and every view built on `user`'s read it.
+2. **`current_predicate/1` is about definitions**, as the qualified form
+   already was. Asked with no module from `user`, `user` is asked. An import
+   is not a definition: `predicate_property/2` reports it, with
+   `imported_from(Module)`.
+3. **Asked with no module from an export-qualified module, that module is
+   asked**: `current_predicate(PI)` written in `m` is
+   `current_predicate(m:PI)`. This is SICStus's rule and the one that agrees
+   with point 2.
+4. **A module loaded as SWI-Prolog code keeps SWI-Prolog's answer**: its own
+   predicates, its imports, the builtins and the global namespace. Its
+   libraries ask `current_predicate(Name/Arity)` to learn whether they can
+   call a predicate, and the module's dialect is on its manifest (ADR-040).
+   No module sees another's private.
+5. **`predicate_property(M:Head, exported)`** holds for a predicate `M`
+   exports.
+
+A module that is not export-qualified is unchanged: its predicates are
+global, and it sees the global namespace. It also sees what `user` imports.
+Its text is `user`'s when consulted, and keeps that view when it is given a
+module, by `:- module/1` or by a link that names it after its file:
+`predicate_property/2` and `clause/2` with no module answer through `user`'s
+imports too.
+
+### Consequences
+
+- A program that asked `current_predicate(Name/Arity)` from `user` to learn
+  whether an imported predicate exists gets no. `predicate_property(Head,
+  defined)` answers that question, imports included.
+- Code that enumerated `user`'s predicates no longer gets the predicates of
+  the modules it loaded. `current_module/1` and `current_predicate(M:PI)`
+  enumerate those.
+
+### Tests
+
+`ModuleReflectionTests`: what `user` defines, the properties of an import,
+an export and a private, the unqualified form inside a module, the same
+module loaded as SWI-Prolog code, and a program's own `$`-named predicate,
+which the unqualified form still lists. Text without `:- module/2`, loaded
+each way it can be (consulted, under `:- module/1`, compiled and linked,
+linked through a consult), sees what `user` imports; under `:- module/2` it
+does not.
+
+## Fourth amendment (2026-11-23): a library's source and its bundle in one directory
+
+### Context
+
+The resolver took `Dir/X.pl` before `Dir/X.shum`. A bundle written beside
+its source, as a tool that builds both into one output directory leaves it,
+was never loaded: the library compiled from its source on every load.
+
+### Decision
+
+In one directory with both, `library(X)` is the bundle when it is of this
+format of compiled code (its stamp, ADR-009) and was written no earlier than
+the source; otherwise it is the source. Across directories nothing changes:
+the first directory of the search path with either file answers.
+
+### Consequences
+
+- Editing the source makes it newer, so it loads until the bundle is built
+  again.
+- A bundle of another format beside its source is passed over without a
+  warning. One found alone still falls back to the source on the search
+  path, with the warning.
+- A collection of the web page keeps its bundle at the root and its source
+  under `src/`, so its resolution is unchanged.
+
+### Tests
+
+`BundleLibraryImportTests`: beside its source, a newer bundle and one of the
+same time are the library, an older one and one of another format are not,
+the last without a warning. Red counter-proof: with the source first, the
+newer bundle is not loaded.

@@ -387,7 +387,11 @@ public sealed partial class BytecodeInterpreter
         var ilTable = IlByFunctorId;
         var del = ilTable is not null && (uint)functorId < (uint)ilTable.Length
             ? ilTable[functorId] : null;
-        del ??= Tier1Dispatcher?.ResolveByFunctorId(functorId);
+        // Cursor 0 is a call by functor id, which a tracer keeps on the
+        // interpreter; any other cursor resumes code that is already running.
+        del ??= cursor == 0
+            ? Tier1Dispatcher?.ResolveCallByFunctorId(functorId)
+            : Tier1Dispatcher?.ResolveByFunctorId(functorId);
         if (del is null && cursor > 0)
             del = Tier1Dispatcher?.ResolveRetiredResume(functorId);
         return del;
@@ -469,6 +473,13 @@ public sealed partial class BytecodeInterpreter
                 _engine._ilArtifact = 0;   // no compiled method is on the stack
                 if (resumed)
                 {
+                    // ADR-035 exit port of a builtin's next solution: it ran
+                    // to its end here, and resumes at its return address or
+                    // at the caller's continuation. A compiled alternative
+                    // that tail-calls on has not exited.
+                    if (!_engine.IlTailCallPending
+                        || _engine._ilTailCallPending == Activation.ResumeFromBuiltin)
+                        _engine.Debug?.OnRedoExit(_engine);
                     // Success: if the IL signalled a tail-call,
                     // leave Pc alone so the next dispatch picks up at the
                     // tail-call target. Otherwise resume at the caller's

@@ -1,0 +1,4 @@
+{"jsonrpc":"2.0","id":9,"result":"0.9.3"}
+{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Invalid JSON was received by the server.","data":{"logtalk_message":""}}}
+{"jsonrpc":"2.0","id":1,"result":{"1":{"status":"success","type":"query","bindings":{},"output":""}}}
+{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Invalid JSON was received by the server.","data":{"logtalk_message":""}}}

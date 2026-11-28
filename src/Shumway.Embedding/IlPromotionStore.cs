@@ -213,7 +213,7 @@ public sealed partial class IlPromotionStore
         // With no tier on, the linker made every site bytecode-only; these
         // have to count their dispatches.
         if (Threshold <= 0 && Wasm is not { Enabled: true })
-            PromotabilityChanged?.Invoke();
+            BytecodeOnlyChanged();
     }
 
     private void Stand(int functorId, bool wakes, bool isDynamic,
@@ -494,6 +494,24 @@ public sealed partial class IlPromotionStore
         _unpromotableReason[functorId] = reason;
     }
 
+    private const string CallUnresolved = "cannot-compile:call->unresolved";
+
+    /// <summary>ADR-075: the code of a module came in, which a predicate
+    /// refused for calling one that was not there may call. Those predicates
+    /// are tried again.</summary>
+    internal void ForgetUnresolvedCallRefusals()
+    {
+        List<int>? again = null;
+        foreach (var (fid, why) in _unpromotableReason)
+            if (why == CallUnresolved) (again ??= new List<int>()).Add(fid);
+        if (again is null) return;
+        foreach (int fid in again)
+        {
+            _unpromotable.Remove(fid);
+            _unpromotableReason.Remove(fid);
+        }
+    }
+
     // Where there is no runtime codegen (Native AOT, browser-wasm) the store stays
     // a pure Tier-0 counter and the IL compiler (reflection-heavy type init) is
     // never constructed. See RuntimeCaps for why the browser needs more than
@@ -751,6 +769,12 @@ public sealed partial class IlPromotionStore
     /// currently-visible clauses. Null when it has no visible clauses yet.</summary>
     public Func<int, CompiledPredicate?>? DynamicSnapshotProvider { get; set; }
 
+    /// <summary>The fewest instructions a snapshot of the dynamic predicate
+    /// would have, from the code its clauses have now: what refuses one over
+    /// <see cref="WasmPromotionStore.MaxSnapshotInstructions"/> without taking
+    /// it.</summary>
+    public Func<int, int>? SnapshotInstructionsAtLeastProvider { get; set; }
+
     // ADR-023 churn pinning: a dynamic snapshot evicted EvictionChurnLimit times is
     // mutation-hot and stays on Tier 0; the pin re-arms after ChurnRearmCalls
     // mutation-free invocations (load-then-read predicates must not be banished by
@@ -775,6 +799,23 @@ public sealed partial class IlPromotionStore
     /// still-growing predicate is never snapshotted mid-load. Existing
     /// delegates keep serving.</summary>
     public bool PromotionsSuspended { get; set; }
+
+    /// <summary>True while a tracer is attached (ADR-035): a call is
+    /// dispatched to its bytecode whatever compiled code the predicate has,
+    /// and counts toward no promotion. Nothing is dropped, so the compiled
+    /// code serves again once it is false, and it keeps serving the resumes
+    /// of what was already running in it.</summary>
+    public bool CallsStayInterpreted { get; private set; }
+
+    /// <summary>Sets <see cref="CallsStayInterpreted"/>. The stamp moves so
+    /// that the call sites a query set up before the change are linked again
+    /// for the next one.</summary>
+    public void KeepCallsInterpreted(bool on)
+    {
+        if (CallsStayInterpreted == on) return;
+        CallsStayInterpreted = on;
+        EvictionStamp++;
+    }
 
 
     /// <summary>ADR-023 — drops a dynamic predicate's IL snapshot after a mutation;
@@ -860,6 +901,16 @@ public sealed partial class IlPromotionStore
     /// <summary>ADR-054: links a dynamic predicate's snapshot into the running
     /// code space for the wasm tier (<see cref="WasmPromotionStore"/>).</summary>
     internal Func<Activation, int, DynamicShadow>? ShadowSnapshotProvider { get; set; }
+
+    /// <summary>The shadow region of a snapshot already taken
+    /// (<see cref="DynamicSnapshotProvider"/>), while the predicate has the
+    /// clauses it was taken from.</summary>
+    internal Func<Activation, int, CompiledPredicate, DynamicShadow>? ShadowOfSnapshotProvider { get; set; }
+
+    /// <summary>The digest of a dynamic predicate's clauses
+    /// (<see cref="PrologEngine.DynamicClauseDigest"/>), for a baked snapshot
+    /// the wasm tier holds.</summary>
+    internal Func<int, string?>? DynamicDigestProvider { get; set; }
 
     // ADR-023 priming: a dynamic/visible predicate declared with source clauses is
     // read-hot and mutation-cold — promote on its first call (still fully evictable).
@@ -1107,7 +1158,7 @@ public sealed partial class IlPromotionStore
             _threshold = value;
             if (!flip) return;
             FollowTier();
-            PromotabilityChanged?.Invoke();
+            BytecodeOnlyChanged();
         }
     }
     private int _threshold = DefaultThreshold;
@@ -1126,6 +1177,28 @@ public sealed partial class IlPromotionStore
     /// </summary>
     internal Action? PromotabilityChanged { get; set; }
 
+    // The answer of IsPermanentlyBytecodeOnly may have changed. The next
+    // query links for it, and the sites a running query linked ask again:
+    // the dispatcher holds the old answer for them (StaysOnBytecode), under
+    // the eviction stamp.
+    private void BytecodeOnlyChanged()
+    {
+        EvictionStamp++;
+        PromotabilityChanged?.Invoke();
+    }
+
+    /// <summary>Whether a call to a static predicate with no compiled code
+    /// runs its bytecode for as long as the tiers stay as they are, because
+    /// none is on: what <see cref="IsPermanentlyBytecodeOnly"/> answers the
+    /// linker then, which makes the call site bytecode-only. A site linked
+    /// before the tier went off was not made so, and asks the dispatcher at
+    /// every call. With a tier on this is two comparisons, and the
+    /// dispatcher goes on to count the call. Not for a dynamic predicate,
+    /// whose calls the indexing profile counts.</summary>
+    internal bool StaysOnBytecode(int functorId, CompiledPredicate predicate)
+        => Wasm is not { Enabled: true } && !IlTierActive
+           && !_offers.ContainsKey(functorId) && !IsExcludedByLayout(predicate);
+
     /// <summary>Profile samples required before the phase-2 PGO recompile.</summary>
     public int PgoSampleThreshold { get; set; } = 32;
 
@@ -1139,9 +1212,10 @@ public sealed partial class IlPromotionStore
     ///
     /// <para>0 stops further promotion at once -- safe, since no live
     /// delegate is touched -- and queues the return of what already promoted.
-    /// Dropping those here would strand a choice point created inside Tier-1
-    /// code with nowhere to redo, so the eviction waits for the next query
-    /// setup: "off" governs the goals after it.</para></summary>
+    /// Dropping an IL delegate here would strand a choice point created
+    /// inside Tier-1 code with nowhere to redo, so that eviction waits for
+    /// the next query setup: "off" governs the goals after it. A wasm build
+    /// leaves at once: a choice point inside one resumes in the bytecode.</para></summary>
     public bool SetJitThreshold(int threshold)
     {
         // A host whose tier needs more than a threshold supplies its own
@@ -1164,7 +1238,7 @@ public sealed partial class IlPromotionStore
             if (threshold > 0 && !Shumway.Core.RuntimeCaps.SupportsRuntimeCodegen) return false;
             Threshold = threshold;
         }
-        if (threshold == 0) _jitOffPending = true;
+        if (threshold == 0) QueueJitOff();
         return true;
     }
 
@@ -1192,8 +1266,13 @@ public sealed partial class IlPromotionStore
     public Func<bool, bool>? JitFormPolicy { get; set; }
 
     /// <summary>Queues the return of every promoted predicate to its
-    /// bytecode, for a host policy that turned the tier off.</summary>
-    public void QueueJitOff() => _jitOffPending = true;
+    /// bytecode, for a host policy that turned the tier off. The builds of
+    /// a wasm tier leave at once (<see cref="WasmPromotionStore.LeaveNow"/>).</summary>
+    public void QueueJitOff()
+    {
+        _wasm?.LeaveNow();
+        _jitOffPending = true;
+    }
 
     private bool _jitOffPending;
 
@@ -1220,7 +1299,7 @@ public sealed partial class IlPromotionStore
             _wasm = value;
             if (!flip) return;
             FollowTier();
-            PromotabilityChanged?.Invoke();
+            BytecodeOnlyChanged();
         }
     }
     private WasmPromotionStore? _wasm;
@@ -1231,12 +1310,18 @@ public sealed partial class IlPromotionStore
     /// while no tier is attached.</summary>
     public List<byte[]> PendingWasmModules { get; } = new();
 
+    /// <summary>ADR-075, decision 12: the baked wasm modules of an attached
+    /// library that hold members whose module has not come in. Each installs
+    /// with the members that are linked, and is queued again when a module
+    /// of the library comes in, until it holds them all.</summary>
+    public HashSet<byte[]> PartialWasmModules { get; } = new();
+
     /// <summary>The wasm store's <see cref="WasmPromotionStore.Enabled"/>
     /// flipped in place (its threshold set to or from zero).</summary>
     internal void WasmEnabledChanged()
     {
         FollowTier();
-        PromotabilityChanged?.Invoke();
+        BytecodeOnlyChanged();
     }
 
     /// <summary>The delegate bound to <paramref name="functorId"/>, or null.</summary>
@@ -1462,13 +1547,23 @@ public sealed partial class IlPromotionStore
 
         var syncRoots = RootsFor(functorId);
         var syncCallees = Recording(calleeMap);
-        var syncResult = RunOnLargeStack(() =>
-            WithPools(targetPools, () =>
-                WithNativeInline(() => WithRoots(syncRoots, () =>
-                {
-                    using var wam = IlPredicateCompiler.WamChoicePoints(!isDynamic && IlPredicateCompiler.CpsMode);
-                    return Compiled(Compiler.CompileInstrumented(target, syncCallees));
-                }))));
+        IlPredicateCompiler.PgoCompileResult syncResult;
+        try
+        {
+            syncResult = RunOnLargeStack(() =>
+                WithPools(targetPools, () =>
+                    WithNativeInline(() => WithRoots(syncRoots, () =>
+                    {
+                        using var wam = IlPredicateCompiler.WamChoicePoints(!isDynamic && IlPredicateCompiler.CpsMode);
+                        return Compiled(Compiler.CompileInstrumented(target, syncCallees));
+                    }))));
+        }
+        catch (IlJitLimitsException ex)
+        {
+            MarkUnpromotable(functorId, "compile-failed:" + ex.Message);
+            settled = true;
+            return null;
+        }
         if (ChangedSince(syncCallees, viewEpoch))
         {
             _staleForView[functorId] = viewEpoch;
@@ -1614,9 +1709,20 @@ public sealed partial class IlPromotionStore
             }
             var syncPgoRoots = RootsFor(functorId);
             var syncPgoCallees = Recording(calleeMap);
-            var optimized = RunOnLargeStack(
-                () => WithFloatPool(functorId, () => WithNativeInline(() => WithRoots(syncPgoRoots,
-                    () => Compiled(Compiler.CompileOptimized(predicate, profileKey, syncPgoCallees))))));
+            PredicateDelegate optimized;
+            try
+            {
+                optimized = RunOnLargeStack(
+                    () => WithFloatPool(functorId, () => WithNativeInline(() => WithRoots(syncPgoRoots,
+                        () => Compiled(Compiler.CompileOptimized(predicate, profileKey, syncPgoCallees))))));
+            }
+            catch (IlJitLimitsException)
+            {
+                // The instrumented form stays: the optimized one inlines more.
+                Shumway.Compiler.Il.IlProfileCounters.Release(profileKey);
+                _pgoProfileKeys.Remove(functorId);
+                continue;
+            }
             InstallDelegate(functorId, optimized, ArtifactFor(functorId, optimized, predicate, syncPgoCallees, null));
             _pgoProfileKeys.Remove(functorId);
             _pgoOptimized.Add(functorId);
@@ -1699,12 +1805,21 @@ public sealed partial class IlPromotionStore
         }
         var warmRoots = RootsFor(functorId);
         var warmCallees = Recording(calleeMap);
-        var del = RunOnLargeStack(() =>
-            WithFloatPool(functorId, () => WithNativeInline(() => WithRoots(warmRoots, () =>
-            {
-                using var wam = IlPredicateCompiler.WamChoicePoints(IlPredicateCompiler.CpsMode);
-                return Compiled(Compiler.Compile(predicate, warmCallees));
-            }))));
+        PredicateDelegate del;
+        try
+        {
+            del = RunOnLargeStack(() =>
+                WithFloatPool(functorId, () => WithNativeInline(() => WithRoots(warmRoots, () =>
+                {
+                    using var wam = IlPredicateCompiler.WamChoicePoints(IlPredicateCompiler.CpsMode);
+                    return Compiled(Compiler.Compile(predicate, warmCallees));
+                }))));
+        }
+        catch (IlJitLimitsException ex)
+        {
+            MarkUnpromotable(functorId, "compile-failed:" + ex.Message);
+            return null;
+        }
         _mutationStamp.TryGetValue(functorId, out int warmStamp);
         if (!InstallCompiled(functorId, new IlPredicateCompiler.PgoCompileResult(del, -1), predicate, warmCallees,
                 isDynamic: false, _staticEpoch, warmStamp))
@@ -1756,7 +1871,7 @@ public sealed partial class IlPromotionStore
         // With no tier on, the linker made every site bytecode-only; a
         // delegate bound by hand still has to be reached from them.
         if (Threshold <= 0 && Wasm is not { Enabled: true })
-            PromotabilityChanged?.Invoke();
+            BytecodeOnlyChanged();
         InstallDelegate(functorId, del,
             ArtifactFor(functorId, del, compiledFrom, null, null, permanent: compiledFrom is null));
     }

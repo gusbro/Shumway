@@ -216,11 +216,35 @@ public sealed partial class BytecodeInterpreter
         for (int i = 0; i < regCount; i++) savedRegs[i] = _engine.GetRegister(i);
         int savedB = _engine.B;
 
-        bool ok = RunWakeups(code);
+        bool ok = _engine.TryGetWakeDriverAddress(out int driverAddr)
+            ? RunWakeDriver(code, driverAddr)
+            : RunWakeups(code);
 
         if (ok && _engine.B > savedB) _engine.Cut(savedB);   // once-semantics
         for (int i = 0; i < regCount; i++) _engine.SetRegister(i, savedRegs[i]);
         return ok;
+    }
+
+    /// <summary>The whole batch as one goal of the wake driver, so that a
+    /// hook that fails backtracks into the choice points an earlier item of
+    /// the batch left before the drain gives up: a goal queued behind the
+    /// hooks leaves one, as <c>append/3</c> does to go on with its split
+    /// (docs/design/builtin-continues-after-wakeups.md). Run item by item,
+    /// the drain failed with those choice points still standing, and the
+    /// caller's backtrack resumed them with the drain gone.</summary>
+    private bool RunWakeDriver(ProgramView code, int driverAddr)
+    {
+        // The caller holds the registers it saved, heap cells, across the run.
+        _engine.EnterGcInhibit();
+        try
+        {
+            _engine.SetRegister(0, _engine.TakeWakeBatchList());
+            return RunGoalInEngine(code, driverAddr);
+        }
+        finally
+        {
+            _engine.ExitGcInhibit();
+        }
     }
 
     /// <summary>Drains the wakeup queue: for each batch, runs
@@ -879,9 +903,14 @@ public sealed partial class BytecodeInterpreter
         _engine.CurrentBuiltinId = builtinId;
         bool ok;
         Shumway.Core.Diagnostics.BuiltinTally.Note(builtinId, _engine.CellsAllocated);
+        // ADR-035 call port: a builtin that is a goal built at run time is a
+        // goal of the program, as it is at a call_builtin site.
+        _engine.Debug?.OnCallBuiltin(_engine, builtinId, false);
+        if (_engine.TakeDebugPcRedirect()) return true;   // SNS during the stop: skip the builtin
         try { ok = builtin.Impl(_engine); }
         catch (PrologRuntimeException re)
         { re.StampBuiltin(builtin.Name, builtin.Arity); throw; }
+        _engine.Debug?.OnBuiltinResult(_engine, builtinId, ok);
         if (!ok)
             return TryBacktrack();
         _engine.AdvancePc(9);
@@ -980,6 +1009,8 @@ public sealed partial class BytecodeInterpreter
                 return -1;
             }
         }
+        if (_engine.PendingModules is { Count: > 0 } pending && pending.Contains(module))
+            _engine.BringInModule!(module);
         _engine.SetRegister(0, goal);
         return module;
     }

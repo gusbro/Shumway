@@ -1,0 +1,5 @@
+{"jsonrpc":"2.0","id":1,"method":"call","params":{"code":"write(a), nl, nl."}}
+{"jsonrpc":"2.0","id":2,"method":"call","params":{"code":"nl."}}
+{"jsonrpc":"2.0","id":3,"method":"call","params":{"code":"nl, nl, write(b)."}}
+{"jsonrpc":"2.0","id":4,"method":"call","params":{"code":"write(' c ')."}}
+{"jsonrpc":"2.0","id":5,"method":"call","params":{"code":"write(a), nl, write(user_error, b), nl(user_error), write(c), nl."}}

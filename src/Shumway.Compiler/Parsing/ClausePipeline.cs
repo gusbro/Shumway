@@ -134,4 +134,17 @@ public static class ClausePipeline
         }
         return sb.ToString();
     }
+
+    /// <summary>A <see cref="VariantKey"/> less the id of the file the clause
+    /// was read from, which a process hands out: what is left is the same in
+    /// every process that reads the clause from the same place.</summary>
+    public static string PortableKey(string variantKey)
+    {
+        ArgumentNullException.ThrowIfNull(variantKey);
+        // K<kind>;<line>,<column>,<offset>,<file>;<term>
+        int position = variantKey.IndexOf(';') + 1;
+        int end = variantKey.IndexOf(';', position);
+        int file = variantKey.LastIndexOf(',', end);
+        return variantKey.Substring(0, file) + variantKey.Substring(end);
+    }
 }

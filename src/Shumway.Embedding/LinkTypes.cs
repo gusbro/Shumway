@@ -113,10 +113,15 @@ public sealed class LinkConfig
     /// <summary>When set, compiles the linked bundle's static predicates to
     /// a relocatable wasm module stored in the bundle (the <c>--wasm</c>
     /// option; the baker lives in Shumway.Compiler.Wasm, which this assembly
-    /// does not reference). Returns the module bytes, or null when nothing
+    /// does not reference). Returns the modules to store, the helpers of the
+    /// bundle's dynamic rules in one of their own; none when nothing
     /// compiled. Refused together with <see cref="StripWam"/>: the module
     /// runs the bytecode that option drops.</summary>
-    public Func<Bundle, byte[]?>? WasmBaker { get; init; }
+    public Func<Bundle, IReadOnlyList<byte[]>>? WasmBaker { get; init; }
+
+    /// <summary>ADR-076: the recipe the bundle carries (<see cref="LinkPlan"/>
+    /// makes it), or one that names only the linker.</summary>
+    public BundleRecipe? Recipe { get; init; }
 
     /// <summary>Stage 9 (dead-region) report opt-in. When true, after the reachability
     /// walk the linker decodes the reached modules, resolves the externally-reachable
@@ -219,6 +224,15 @@ public sealed class LinkConfig
     /// resort.</summary>
     public IReadOnlyList<string> LibraryDirs { get; init; } = Array.Empty<string>();
 
+    /// <summary>ADR-075, decision 5: the dynamic libraries the inputs are
+    /// linked against (<c>--dynlib</c>). A call the inputs leave undefined
+    /// is resolved against what each offers, in this order, and recorded in
+    /// the bundle; their code is not linked in. A library an input attaches
+    /// (<see cref="ShmoObject.DynamicLibraries"/>) and this list does not
+    /// name is found in <see cref="LibraryDirs"/> and comes after these
+    /// (decision 3).</summary>
+    public IReadOnlyList<LinkDynamicLibrary> DynamicLibraries { get; init; } = Array.Empty<LinkDynamicLibrary>();
+
     /// <summary>When <c>true</c>, bake the precompiled internal prelude into
     /// the bundle as a source-stripped <c>$prelude</c> entry (its WAM bytecode,
     /// and — under <see cref="IncludeCompiledIl"/> — its Tier-1 IL). A
@@ -249,6 +263,53 @@ public sealed class LinkConfig
     /// A library's predicates are reached by runtime-built goals the walk
     /// cannot see (suspended propagators, hooks), so nothing is dropped.</summary>
     public bool Library { get; init; }
+
+    /// <summary>With <see cref="Library"/>: a goal the bundle runs when it
+    /// loads (the <c>--goal</c> option of a library link), as the last
+    /// <c>initialization/1</c> goal of the module <see cref="LoadGoalModule"/>
+    /// names, or of the last of <see cref="Objects"/> when null. Read with the
+    /// standard operators; the trailing <c>.</c> is optional.</summary>
+    public string? LoadGoal { get; init; }
+
+    /// <summary>The module <see cref="LoadGoal"/> runs in.</summary>
+    public string? LoadGoalModule { get; init; }
+}
+
+/// <summary>A dynamic library to link against: the name the linked bundle
+/// finds it by when it loads, and the library bundle itself, whose entries
+/// (or archive members) say what each of its modules offers.</summary>
+public sealed class LinkDynamicLibrary
+{
+    public LinkDynamicLibrary(string name, Bundle library)
+    {
+        Name = name;
+        Library = library;
+    }
+
+    public string Name { get; }
+    public Bundle Library { get; }
+
+    /// <summary>The file a library is named by, as <c>--dynlib</c> names one:
+    /// a <c>.shum</c> file, or a name found as <c>name.shum</c> in one of
+    /// <paramref name="dirs"/>, the first that has it. Null when none does.</summary>
+    public static string? Find(string spec, IReadOnlyList<string> dirs)
+        => File.Exists(spec) ? Path.GetFullPath(spec) : FindByName(spec, dirs);
+
+    /// <summary>The <c>name.shum</c> of the first of <paramref name="dirs"/>
+    /// that has it, as <c>ensure_loaded(bundle(name))</c> finds a library on
+    /// the search path. Null when none does.</summary>
+    public static string? FindByName(string name, IReadOnlyList<string> dirs)
+    {
+        string file = name.EndsWith(".shum", StringComparison.OrdinalIgnoreCase) ? name : name + ".shum";
+        foreach (string dir in dirs)
+        {
+            string candidate;
+            try { candidate = Path.Combine(dir, file); }
+            catch (ArgumentException) { continue; }
+            if (File.Exists(candidate)) return Path.GetFullPath(candidate);
+        }
+        return null;
+    }
 }
 
 /// <summary>One library input to <see cref="ShmoLinker.Link"/>: a

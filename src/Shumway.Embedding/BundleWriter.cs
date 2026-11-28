@@ -170,7 +170,9 @@ public static class BundleWriter
                     exports: effective[i].Exports,
                     imports: effective[i].Imports,
                     dialect: effective[i].Dialect,
-                    clauseTerms: effective[i].ClauseTerms);
+                    clauseTerms: effective[i].ClauseTerms,
+                    flags: effective[i].Flags,
+                    initializationGoals: effective[i].InitializationGoals);
             }
             for (int i = 0; i < effective.Length; i++)
             {
@@ -238,6 +240,8 @@ public static class BundleWriter
             WriteNativeBlocks(bw, entry.NativeBlocks);
             WriteNativeInterop(bw, entry.NativeFunctions, entry.NativeDecls);
             WriteOperators(bw, entry.Operators);
+            WriteFlags(bw, entry.Flags);
+            WriteInitializationGoals(bw, entry.InitializationGoals);
             WriteExportQualification(bw, entry);
         }
         // Foreign-assemblies trailer after the
@@ -303,9 +307,23 @@ public static class BundleWriter
         bw.Write((uint)bundle.EngineLibraries.Count);
         foreach (var name in bundle.EngineLibraries)
             WriteLengthPrefixedUtf8(bw, name);
+        // Dynamic-libraries trailer (ADR-075, decision 5). Mirrors
+        // ShmoLinker.SerialiseBundle exactly.
+        bw.Write((uint)bundle.DynamicLibraries.Count);
+        foreach (var lib in bundle.DynamicLibraries)
+        {
+            WriteLengthPrefixedUtf8(bw, lib.Name);
+            bw.Write((uint)lib.Uses.Count);
+            foreach (var use in lib.Uses)
+            {
+                WriteLengthPrefixedUtf8(bw, use.Module);
+                WriteLengthPrefixedUtf8(bw, use.Name);
+                bw.Write((uint)use.Arity);
+            }
+        }
         bw.Flush();
         // compress the body (everything after magic+version).
-        return BundleFormat.FinalizeImage(ms.ToArray());
+        return BundleFormat.FinalizeImage(ms.ToArray(), bundle.Recipe);
     }
 
     /// <summary>Compiles <paramref name="entry"/>'s source through the WAM
@@ -334,6 +352,8 @@ public static class BundleWriter
             // source: it is the ground truth that (a) ships in the bundle,
             // (b) the runtime LoadBundle dispatches against, and (c) the
             // linker's dead-region analysis decodes (the Stage-9d lesson).
+            // Without its initialization goals: they run where the bundle
+            // loads, never where it is built.
             if (e.CompiledBytecode is not null && e.Defined.Count > 0)
                 bare.Add(new BundleEntry(
                     e.ModuleName, source: "", compiledBytecode: e.CompiledBytecode,
@@ -346,7 +366,7 @@ public static class BundleWriter
                     operators: e.Operators,
                     isExportQualified: e.IsExportQualified,
                     exports: e.Exports, imports: e.Imports,
-                    dialect: e.Dialect, clauseTerms: e.ClauseTerms));
+                    dialect: e.Dialect, clauseTerms: e.ClauseTerms, flags: e.Flags));
             else if (!string.IsNullOrEmpty(e.Source))
                 sources.Add(e.Source);
         }
@@ -951,6 +971,26 @@ public static class BundleWriter
             WriteLengthPrefixedUtf8(bw, od.Type);
             WriteLengthPrefixedUtf8(bw, od.Name);
         }
+    }
+
+    /// <summary>Per-entry <c>:- set_prolog_flag/2</c> directives, applied at
+    /// LoadBundle. Shared by both .shum writers and the .shmo writer.</summary>
+    internal static void WriteFlags(BinaryWriter bw, IReadOnlyList<ShmoFlagSetting> flags)
+    {
+        bw.Write((uint)flags.Count);
+        foreach (var f in flags)
+        {
+            WriteLengthPrefixedUtf8(bw, f.Flag);
+            WriteLengthPrefixedUtf8(bw, f.Value);
+        }
+    }
+
+    /// <summary>Per-entry <c>:- initialization/1</c> goals, run at LoadBundle.
+    /// Shared by both .shum writers and the .shmo writer.</summary>
+    internal static void WriteInitializationGoals(BinaryWriter bw, IReadOnlyList<Shumway.Compiler.Ast.Term> goals)
+    {
+        bw.Write((uint)goals.Count);
+        foreach (var goal in goals) TermCodec.WriteTerm(bw, goal);
     }
 
     internal static void WriteNativeBlocks(BinaryWriter bw,

@@ -14,6 +14,16 @@ have their own terms.
   Visual Studio, Apache License 2.0) and **Iris** sample plumbing (MIT),
   acknowledged here.
 
+## The notebook site (`jupyterlite/`)
+
+- The site is built with **JupyterLite** and **JupyterLab** (BSD 3-Clause
+  License), installed when it is built and published with it; neither is
+  vendored in this repository.
+- Its kernel extension bundles **dagre** and **graphlib**
+  (`@dagrejs/dagre`, `@dagrejs/graphlib`, MIT License), which lay out the
+  graphs a notebook draws. The site downloads them only for a notebook that
+  draws one.
+
 ## Acknowledgments
 
 - **Logtalk** (<https://logtalk.org/>, Apache License 2.0) — Shumway ships a

@@ -119,6 +119,16 @@ loop over engine state (P/CP/E/B), so the mapping is direct.
    the failure path matters, and it is the same. This is not a compromise;
    it is the same semantics for less machinery.
 
+   **Amended (2026-11-18).** The failure path is the same only when the
+   drain runs the batch as one goal. It ran it item by item, so an item that
+   failed did not backtrack into an earlier item's choice points: a goal
+   queued behind the hooks, as `append/3` queues to go on with its split,
+   left one standing, and the backtrack after the failed drain resumed it
+   with the drain gone (a type error under `( @A #= @B, append(A, B, L) ->
+   ... )`). The drain now runs `'$wake_driver'(Batch)`, the interrupt's own
+   driver, as one nested goal, whose boundaries take the batches its items
+   queue.
+
 6. **Cut inside a woken goal stays local to that goal.** The driver enters
    with a fresh barrier (`B0 = B`) and runs each goal
    via `call/1`, so `!` inside a frozen goal commits that goal — never the

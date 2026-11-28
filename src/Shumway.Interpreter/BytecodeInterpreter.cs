@@ -329,6 +329,11 @@ public sealed partial class BytecodeInterpreter
     private InterpreterResult RunCore(ProgramView code, int startPc)
     {
         ArgumentNullException.ThrowIfNull(code.Primary);
+        // The activation's program is the program, as the dispatch loop below
+        // takes it. A caller's view can be older: a load since the query began
+        // moved the code to a larger array, and a catch resumes into what it
+        // added.
+        if (_engine.CurrentProgram is not null) code = _engine.GetProgramView();
         // A resume-marker start PC is legal: a --strip-wam predicate has no WAM
         // address, so CurrentFunctorAddresses maps its functor to
         // EncodeResumeMarker(fid, 0) and a caller that resolved it that way (e.g.
@@ -506,6 +511,12 @@ public sealed partial class BytecodeInterpreter
         }
     }
 
+    // Compiled optimized at its first call, never precompiled: the loop runs a
+    // whole query in one call, and precompiled (ReadyToRun) code is not
+    // replaced in the middle of a loop, so a long query would run all of it
+    // unoptimized. 0x0200 is AggressiveOptimization, which .NET Framework's
+    // enum lacks and its runtime ignores.
+    [System.Runtime.CompilerServices.MethodImpl((System.Runtime.CompilerServices.MethodImplOptions)0x0200)]
     private InterpreterResult Dispatch(ProgramView code)
     {
         // cache the program array across dispatch iterations.
@@ -985,7 +996,7 @@ public sealed partial class BytecodeInterpreter
                     // debug evaluation promoting clpfd internals mid-stop is the
                     // real case) rewrote shared bytecode to CallIl; the rewrite is
                     // engine-global, the snapshot is not.
-                    ilFn ??= Tier1Dispatcher?.ResolveByFunctorId(functorId);
+                    ilFn ??= Tier1Dispatcher?.ResolveCallByFunctorId(functorId);
                     if (ilFn is null)
                     {
                         // The delegate was evicted after the site was
@@ -1094,7 +1105,7 @@ public sealed partial class BytecodeInterpreter
                     var ilFn = table is not null && (uint)functorId < (uint)table.Length
                         ? table[functorId] : null;
                     // Same stale-snapshot fallback and healing as CallIl above.
-                    ilFn ??= Tier1Dispatcher?.ResolveByFunctorId(functorId);
+                    ilFn ??= Tier1Dispatcher?.ResolveCallByFunctorId(functorId);
                     if (ilFn is null)
                     {
                         HealIlSite(code, pc, functorId, isExecute: true);

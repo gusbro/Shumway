@@ -11,6 +11,8 @@
 // yet cross-origin isolated it asserted about SharedArrayBuffer before a single
 // line of main.js had run — no message, no theme, nothing to explain it.
 
+import { wakeThreadsOf, watchCalls, watcher } from './threads.js';
+
 /** Reply tags from queryNext, matching WebShumwayApp. */
 export const SOLUTION = 's';
 export const LAST = 'l';
@@ -19,28 +21,172 @@ export const ERROR = 'e';
 export const ABORTED = 'a';
 
 let engine = null;
+let wasmModule = null;
+let poolSize = 0;
+
+/** The size of the runtime's linear memory, for the measurement hooks. */
+export const wasmMemoryBytes = () => wasmModule?.HEAPU8?.byteLength ?? 0;
+
+/** How many threads the runtime was asked to make at boot. */
+export const threadPoolSize = () => poolSize;
+
+// A call into the runtime, or a step of its boot, still out after a while
+// wakes its threads (threads.js): in WebKit a thread now and then loses the
+// wait on which it is told of a message, and the call would never come back.
+const wakes = { times: 0, told: 0 };
+
+/** Wakes the runtime's threads that wait for a message (threads.js). Answers
+ *  how many were told by message. */
+export function wakeThreads() {
+  const told = wakeThreadsOf(wasmModule);
+  wakes.times++;
+  wakes.told += told;
+  if (told > 0) console.info(`[shumway] the runtime was slow to answer: told ${told} of its threads to look at their messages`);
+  return told;
+}
+
+/** How many times the threads were woken, and how many were told by message. */
+export const threadWakes = () => ({ ...wakes });
+
+// A runtime that stopped answering for good is one only a reload starts
+// again, and the page has to say so. While a call is out, the runtime is
+// asked a trivial one now and then: a query may take as long as it needs,
+// and the trivial call answers while it runs. One that does not answer in
+// time means the runtime stopped. Asked only for a page that listens: the
+// notebooks tell a runtime that stopped by themselves.
+const stops = { stopped: false, asking: false, listeners: new Set() };
+
+/** Calls `listener` once if the runtime stops answering; answers what
+ *  stops it. */
+export function onRuntimeStopped(listener) {
+  stops.listeners.add(listener);
+  return () => { stops.listeners.delete(listener); };
+}
+
+async function askWhetherAlive(exports, timeoutMs) {
+  if (stops.stopped || stops.asking || stops.listeners.size === 0) return;
+  stops.asking = true;
+  const answered = await Promise.race([
+    exports.SessionAlive().then(() => true, () => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs))
+  ]);
+  stops.asking = false;
+  if (answered || stops.stopped) return;
+  stops.stopped = true;
+  for (const listener of [...stops.listeners]) listener();
+}
+
+let sessionAskForInput = null;
+
+/** Who is told that a notebook session wants a line: (kernelId) => void. */
+export const onSessionAskForInput = (handler) => { sessionAskForInput = handler; };
+
+let sessionImportLibrary = null;
+
+/** Who imports a collection for a notebook session's cell:
+ *  (kernelId, request) => void, answering through SessionSupplyImport. */
+export const onSessionImportLibrary = (handler) => { sessionImportLibrary = handler; };
 
 /**
- * Starts the runtime and the engine.
+ * Starts the runtime, with no engine in it, and resolves to its exports. A
+ * notebook page stops here: its engines are its kernels' sessions (ADR-068).
+ *
+ * @param {object} [options]
+ * @param {string} [options.entry] the URL of the runtime's `dotnet.js`. A page
+ *        of this site leaves it out. A page of another directory has no import
+ *        map that knows the published name, and reads it from `runtime.json`.
+ * @param {number} [options.threads] how many threads the runtime makes at
+ *        boot, when the page will hold more sessions than the default allows
+ *        to start at once.
+ * @param {object} [options.ui] what the page's own session calls: `write`,
+ *        `writeError`, `writeNote`, `askForInput`, `initializationRunning`,
+ *        `debugStopped`. One left
+ *        out does nothing: an undefined import would throw at its first call.
+ * @param {{ patienceMs?: number, timeoutMs?: number }} [options.stops] how
+ *        long a call is out before the runtime is asked whether it answers,
+ *        and how long it has to say so.
+ * @param {(text: string, done?: number, total?: number) => void} [options.step]
+ *        told what the start is doing, for a page that shows it: a step, and
+ *        how far it is when it can be counted.
+ */
+export async function startRuntime({ entry = './_framework/dotnet.js', threads = 0, ui = {}, stops: waits = {}, step = () => { } } = {}) {
+  // The runtime asserts about SharedArrayBuffer and says nothing a reader of
+  // the page can act on.
+  if (!globalThis.crossOriginIsolated)
+    throw new Error('the page is not cross-origin isolated');
+  step('Loading the runtime');
+  const { dotnet } = await import(entry);
+  // The boot is watched as the calls are: a thread that loses its wait while
+  // the runtime starts leaves the page starting for good. The runtime hands
+  // its module to preRun, before its threads start.
+  const watch = watcher(wakeThreads);
+  const runtime = await watch((threads > 0 ? dotnet.withConfig({ pthreadPoolInitialSize: threads }) : dotnet)
+    .withModuleConfig({
+      preRun: [(module) => { wasmModule = module; }],
+      // The total is of the files asked for so far, and grows while the
+      // runtime finds out what it needs.
+      onDownloadResourceProgress: (loaded, total) => {
+        if (loaded < total) step('Downloading the runtime', loaded, total);
+        else step('Starting the runtime');
+      },
+    })
+    .create());
+  const { setModuleImports, getConfig, getAssemblyExports, runMain } = runtime;
+  wasmModule = runtime.Module;
+  poolSize = getConfig().pthreadPoolInitialSize ?? 0;
+  const nothing = () => { };
+  setModuleImports('main.js', {
+    ui: {
+      write: ui.write ?? nothing,
+      writeError: ui.writeError ?? nothing,
+      writeNote: ui.writeNote ?? ui.writeError ?? nothing,
+      askForInput: ui.askForInput ?? nothing,
+      initializationRunning: ui.initializationRunning ?? nothing,
+      sessionAskForInput: (kernelId) => sessionAskForInput?.(kernelId),
+      // A page with no one to import must still answer: the session waits.
+      sessionImportLibrary: (kernelId, request) => (sessionImportLibrary
+        ? sessionImportLibrary(kernelId, request)
+        : engine?.SessionSupplyImport(kernelId, JSON.stringify({ error: 'this page imports no libraries' }))),
+      debugStopped: (json) => ui.debugStopped?.(JSON.parse(json)),
+    },
+  });
+  const exports = (await watch(getAssemblyExports(getConfig().mainAssemblyName))).Shumway.Web.WebShumwayApp;
+  const patienceMs = waits.patienceMs ?? 10000;
+  const timeoutMs = waits.timeoutMs ?? 30000;
+  const watchStop = watcher(() => { void askWhetherAlive(exports, timeoutMs); },
+    { afterMs: patienceMs, everyMs: Math.min(500, Math.max(50, patienceMs / 2)), doubling: false });
+  engine = watchCalls(exports, (answer) => watchStop(watch(answer)));
+  await watch(runMain());
+  return engine;
+}
+
+/**
+ * Starts the runtime and the page's own engine.
  * @param {(text: string) => void} onOutput receives everything Prolog writes,
  *        as it is written — a program that prints while it searches should be
  *        watchable while it runs.
  */
-export async function boot(onOutput, onAskForInput, onDiagnostic, onDebugStop, onNote) {
-  const { dotnet } = await import('./_framework/dotnet.js');
-  const { setModuleImports, getConfig, getAssemblyExports, runMain } = await dotnet.create();
-  setModuleImports('main.js', {
+export async function boot(onOutput, onAskForInput, onDiagnostic, onDebugStop, onNote, onStep = () => { },
+  onInitialization = () => { }) {
+  await startRuntime({
+    step: onStep,
+    // A hook that opens more sessions than the page's own asks for the
+    // threads it needs: &threads=<n>.
+    threads: parseInt(/[#&]threads=(\d+)/.exec(location.hash)?.[1] ?? '0', 10),
+    // A hook that shortens the waits for a runtime that stops answering:
+    // &stops=<seconds a call is out>,<seconds the runtime has to answer>.
+    stops: (([, patience, timeout] = []) => (patience === undefined ? {}
+      : { patienceMs: parseFloat(patience) * 1000, timeoutMs: parseFloat(timeout) * 1000 }))(
+      /[#&]stops=([\d.]+),([\d.]+)/.exec(location.hash) ?? undefined),
     ui: {
       write: (t) => { if (typeof t === 'string' && t.startsWith('[tier]')) { try { fetch('/collect', { method: 'POST', body: t }); } catch {} } return onOutput(t); },
-      // A caller that does not distinguish notes still gets them, as
-      // diagnostics: an undefined import would throw at the first call.
       writeError: onDiagnostic, writeNote: onNote ?? onDiagnostic,
       askForInput: onAskForInput,
-      debugStopped: (json) => onDebugStop?.(JSON.parse(json)),
+      initializationRunning: onInitialization,
+      debugStopped: onDebugStop,
     },
   });
-  engine = (await getAssemblyExports(getConfig().mainAssemblyName)).Shumway.Web.WebShumwayApp;
-  await runMain();
+  onStep('Starting the engine');
   return engine.Boot();
 }
 

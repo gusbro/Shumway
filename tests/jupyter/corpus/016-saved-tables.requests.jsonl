@@ -1,0 +1,7 @@
+{"jsonrpc":"2.0","id":1,"method":"call","params":{"code":"jupyter:print_and_save_table(member(X, [a, 'B c', \"d,e\"]), csv, 'out.csv')."}}
+{"jsonrpc":"2.0","id":2,"method":"call","params":{"code":"catch((open('out.csv', read, _S), close(_S), R = written), _, R = missing)."}}
+{"jsonrpc":"2.0","id":3,"method":"call","params":{"code":"jupyter:print_and_save_table((member(X, [1, 2]), member(Y, [p, q])), tsv, 'out.tsv')."}}
+{"jsonrpc":"2.0","id":4,"method":"call","params":{"code":"%%csv table.csv\nmember(X, [1, 2]), Y is X * X."}}
+{"jsonrpc":"2.0","id":5,"method":"call","params":{"code":"%%tsv table.tsv\nmember(X, [1, 2]), Y is X * X"}}
+{"jsonrpc":"2.0","id":6,"method":"call","params":{"code":"jupyter:print_and_save_table(member(X, [1]), xml, 'out.xml')."}}
+{"jsonrpc":"2.0","id":7,"method":"call","params":{"code":"print_and_save_table(fail, csv, 'empty.csv')."}}

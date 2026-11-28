@@ -741,6 +741,9 @@ public sealed partial class ClauseCompiler
 
     private static List<string> ClassifyPermanents(Term[] headArgs, List<Term> goals)
     {
+        // The head and the first goal are one chunk, and a permanent variable
+        // occurs in two: a fact or a clause of one goal has none.
+        if (goals.Count <= 1) return new List<string>();
         var occurs = new Dictionary<string, HashSet<int>>();
         var order = new List<string>();
         var stack = new Stack<Term>();

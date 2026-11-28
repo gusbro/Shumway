@@ -15,7 +15,7 @@ public static partial class MetaBuiltins
     public static bool Mkdir1(Activation engine)
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "mkdir/1");
-        try { System.IO.Directory.CreateDirectory(path); }
+        try { System.IO.Directory.CreateDirectory(engine.OsPath(path)); }
         catch (UnauthorizedAccessException)
         {
             throw new ShumwayPrologException(
@@ -32,10 +32,10 @@ public static partial class MetaBuiltins
     public static bool Rmdir1(Activation engine)
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "rmdir/1");
-        if (!System.IO.Directory.Exists(path))
+        if (!System.IO.Directory.Exists(engine.OsPath(path)))
             throw new ShumwayPrologException(
                 IsoError.ExistenceError("directory", new AtomTerm(path)));
-        try { System.IO.Directory.Delete(path, recursive: false); }
+        try { System.IO.Directory.Delete(engine.OsPath(path), recursive: false); }
         catch (IOException)
         {
             // Non-empty directory or in use.
@@ -52,10 +52,10 @@ public static partial class MetaBuiltins
     public static bool Delete1(Activation engine)
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "delete/1");
-        if (!System.IO.File.Exists(path))
+        if (!System.IO.File.Exists(engine.OsPath(path)))
             throw new ShumwayPrologException(
                 IsoError.ExistenceError("source_sink", new AtomTerm(path)));
-        try { System.IO.File.Delete(path); }
+        try { System.IO.File.Delete(engine.OsPath(path)); }
         catch (UnauthorizedAccessException)
         {
             throw new ShumwayPrologException(
@@ -73,13 +73,13 @@ public static partial class MetaBuiltins
     {
         string from = RequireAtomPath(engine, register: 0, builtin: "rename/2");
         string to = RequireAtomPath(engine, register: 1, builtin: "rename/2");
-        if (!System.IO.File.Exists(from))
+        if (!System.IO.File.Exists(engine.OsPath(from)))
             throw new ShumwayPrologException(
                 IsoError.ExistenceError("source_sink", new AtomTerm(from)));
-        if (System.IO.File.Exists(to))
+        if (System.IO.File.Exists(engine.OsPath(to)))
             throw new ShumwayPrologException(
                 IsoError.PermissionError("create", "source_sink", new AtomTerm(to)));
-        try { System.IO.File.Move(from, to); }
+        try { System.IO.File.Move(engine.OsPath(from), engine.OsPath(to)); }
         catch (UnauthorizedAccessException)
         {
             throw new ShumwayPrologException(
@@ -96,7 +96,7 @@ public static partial class MetaBuiltins
     public static bool ExistsFile1(Activation engine)
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "exists_file/1");
-        return System.IO.File.Exists(path);
+        return System.IO.File.Exists(engine.OsPath(path));
     }
 
     /// <summary>GProlog-compatible <c>file_permission(+File, +Permission)</c>:
@@ -110,8 +110,8 @@ public static partial class MetaBuiltins
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "file_permission/2");
         string perm = RequireAtomPath(engine, register: 1, builtin: "file_permission/2");
-        bool isFile = System.IO.File.Exists(path);
-        bool isDir = System.IO.Directory.Exists(path);
+        bool isFile = System.IO.File.Exists(engine.OsPath(path));
+        bool isDir = System.IO.Directory.Exists(engine.OsPath(path));
         switch (perm)
         {
             case "read":
@@ -119,7 +119,7 @@ public static partial class MetaBuiltins
             case "write":
                 if (isDir) return true;
                 if (!isFile) return false;
-                return (System.IO.File.GetAttributes(path)
+                return (System.IO.File.GetAttributes(engine.OsPath(path))
                         & System.IO.FileAttributes.ReadOnly) == 0;
             case "execute":
                 if (!isFile) return false;
@@ -134,7 +134,7 @@ public static partial class MetaBuiltins
                 // compiler sees every path produce a value.
                 return false;
 #else
-                return (System.IO.File.GetUnixFileMode(path)
+                return (System.IO.File.GetUnixFileMode(engine.OsPath(path))
                         & (System.IO.UnixFileMode.UserExecute
                            | System.IO.UnixFileMode.GroupExecute
                            | System.IO.UnixFileMode.OtherExecute)) != 0;
@@ -153,12 +153,12 @@ public static partial class MetaBuiltins
     {
         string from = RequireAtomPath(engine, register: 0, builtin: "copy_file/2");
         string to = RequireAtomPath(engine, register: 1, builtin: "copy_file/2");
-        if (!System.IO.File.Exists(from))
+        if (!System.IO.File.Exists(engine.OsPath(from)))
             throw new ShumwayPrologException(IsoError.ExistenceError(
                 "source_sink", new AtomTerm(from), engine));
         try
         {
-            System.IO.File.Copy(from, to, overwrite: true);
+            System.IO.File.Copy(engine.OsPath(from), engine.OsPath(to), overwrite: true);
         }
         catch (UnauthorizedAccessException)
         {
@@ -188,7 +188,7 @@ public static partial class MetaBuiltins
     public static bool ExistsDirectory1(Activation engine)
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "exists_directory/1");
-        return System.IO.Directory.Exists(path);
+        return System.IO.Directory.Exists(engine.OsPath(path));
     }
 
     // ============================================================================
@@ -214,8 +214,13 @@ public static partial class MetaBuiltins
         return new System.Diagnostics.ProcessStartInfo("cmd.exe", "/C " + command);
     }
 
-    private static int RunShell(string command)
+    private static int RunShell(Activation engine, string command)
     {
+        // As library(process) says it: Process.Start throws a .NET exception
+        // there, which no catch/3 takes.
+        if (!Shumway.Core.RuntimeCaps.SupportsNetworkAndProcesses)
+            throw new Shumway.Core.PrologRuntimeException(
+                "system_error", "a browser has no sockets and cannot start programs");
         // Diagnostic dry-run: record every command instead of executing it.
         // A destructive command with a mis-resolved path (an `rmdir /S /Q`
         // aimed at the wrong directory) can only be examined safely this way.
@@ -242,6 +247,11 @@ public static partial class MetaBuiltins
         }
         System.Diagnostics.ProcessStartInfo psi = ShellStartInfo(command, OperatingSystem.IsWindows());
         psi.UseShellExecute = false;
+        // ADR-071: the child starts in the engine's directory. It is an
+        // argument of the call that creates the child, so the process
+        // directory is not touched.
+        if (engine.EngineDirectory is { IsPerEngine: true } own)
+            psi.WorkingDirectory = own.Current;
         try
         {
             using var proc = System.Diagnostics.Process.Start(psi);
@@ -261,13 +271,13 @@ public static partial class MetaBuiltins
     public static bool Shell1(Activation engine)
     {
         string command = RequireAtomPath(engine, register: 0, builtin: "shell/1");
-        return RunShell(command) == 0;
+        return RunShell(engine, command) == 0;
     }
 
     public static bool Shell2(Activation engine)
     {
         string command = RequireAtomPath(engine, register: 0, builtin: "shell/2");
-        int status = RunShell(command);
+        int status = RunShell(engine, command);
         return engine.UnifyRegisterWithCell(1, Cell.Int(status));
     }
 
@@ -306,7 +316,7 @@ public static partial class MetaBuiltins
         // doesn't exist) but portable code sizes it — always 0.
         if (Shumway.Core.PrologPath.IsNullDevice(path))
             return engine.UnifyRegisterWithCell(1, Cell.Int(0));
-        var info = new System.IO.FileInfo(path);
+        var info = new System.IO.FileInfo(engine.OsPath(path));
         if (!info.Exists)
             throw new ShumwayPrologException(
                 IsoError.ExistenceError("source_sink", new AtomTerm(path)));
@@ -316,7 +326,7 @@ public static partial class MetaBuiltins
     public static bool FileModificationTime2(Activation engine)
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "file_modification_time/2");
-        var info = new System.IO.FileInfo(path);
+        var info = new System.IO.FileInfo(engine.OsPath(path));
         if (!info.Exists)
             throw new ShumwayPrologException(
                 IsoError.ExistenceError("source_sink", new AtomTerm(path)));
@@ -327,11 +337,11 @@ public static partial class MetaBuiltins
     public static bool DirectoryFiles2(Activation engine)
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "directory_files/2");
-        if (!System.IO.Directory.Exists(path))
+        if (!System.IO.Directory.Exists(engine.OsPath(path)))
             throw new ShumwayPrologException(
                 IsoError.ExistenceError("directory", new AtomTerm(path)));
         Term list = new AtomTerm("[]");
-        var entries = System.IO.Directory.GetFileSystemEntries(path);
+        var entries = System.IO.Directory.GetFileSystemEntries(engine.OsPath(path));
         // Reverse source order so the cons chain lists them in order;
         // prepend '..' and '.' last so they head the list (SWI shape).
         for (int i = entries.Length - 1; i >= 0; i--)

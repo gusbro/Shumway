@@ -61,6 +61,11 @@ public sealed class Linker
     // Framework, which this project also targets.
     public HashSet<int>? DeadIndices { get; set; }
 
+    /// <summary>What a call resolves to when no predicate of the set and no
+    /// external symbol defines its callee: a bare name to the module-local
+    /// functor that answers for it.</summary>
+    public IReadOnlyDictionary<int, int>? Aliases { get; set; }
+
     public LinkResult Link(
         CompiledModule module, int loadOffset = 0,
         IReadOnlyDictionary<int, int>? externalSymbols = null,
@@ -196,6 +201,11 @@ public sealed class Linker
             else if (externalSymbols is not null
                      && externalSymbols.TryGetValue(fid, out int extAddr))
                 target = extAddr;
+            else if (Aliases is not null && Aliases.TryGetValue(fid, out int toFid)
+                     && (addresses.TryGetValue(toFid, out int aliasAddr)
+                         || (externalSymbols is not null
+                             && externalSymbols.TryGetValue(toFid, out aliasAddr))))
+                target = aliasAddr;
             else
             {
                 target = CallTarget.ForUndefined(fid);

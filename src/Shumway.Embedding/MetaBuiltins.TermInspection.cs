@@ -920,6 +920,8 @@ public static partial class MetaBuiltins
         int fid = ExtractCallableFunctorId(headPattern, "'$all_clauses_of'/2");
 
         var candidates = new List<Clause>();
+        host.InstallPendingClauses(engine, fid);
+        host.BringInOwnerOf(engine, fid);
         candidates.AddRange(host.DynamicClausesFor(fid));
         candidates.AddRange(host.StaticClausesFor(fid));
 
@@ -969,6 +971,7 @@ public static partial class MetaBuiltins
         Term headPattern = MaterializeRegister(engine, 0);
         int fid = ExtractCallableFunctorId(headPattern, "clause/2");
 
+        host.BringInOwnerOf(engine, fid);
         IReadOnlyList<Clause> statics = host.StaticClausesFor(fid);
         // ISO §8.8.1.3: clause/2 reads public procedures only — dynamic, or
         // static and declared `:- public` (the ISO public-procedure notion);
@@ -1014,6 +1017,7 @@ public static partial class MetaBuiltins
         // match at all: the rest of a large predicate is never looked at.
         // The index says only what cannot match, the prefilter and the
         // unification decide; a tombstone is a slot a retract emptied.
+        host.InstallPendingClauses(engine, fid);
         List<Clause> physical = host.PhysicalClausesFor(fid);
         if (physical.Count > 0)
         {
@@ -1234,8 +1238,11 @@ public static partial class MetaBuiltins
         // Builtins (and the prelude's library predicates, which are
         // built_in to a program) are excluded — GNU-verified:
         // current_predicate(atom/1) fails there too. predicate_property/2
-        // is the way to ask about a builtin.
-        foreach (int fid in host.AllStaticAndDynamicFunctors())
+        // is the way to ask about a builtin. Asked with no module, it is
+        // user that is asked: the global namespace, which has nothing of an
+        // export-qualified module. A $-name stays: a program's own may start
+        // with one, and it asks for them this way.
+        foreach (int fid in host.GlobalStaticAndDynamicFunctors())
         {
             if (BuiltinsRegistry.TryGetByFunctor(fid, out _)) continue;
             if (host.IsPreludeFunctor(fid)) continue;
@@ -1266,16 +1273,20 @@ public static partial class MetaBuiltins
         // the global one in the legacy world, M's own or its import's
         // source otherwise.
         IEnumerable<Clause> source;
+        host.EnsureModuleCode(engine, mod.Name);
         int key = host.DatabaseFunctorFor(mod.Name, fid, create: false);
         if (host.IsDynamic(key))
+        {
+            host.InstallPendingClauses(engine, key);
             source = host.DynamicClausesFor(key);
+        }
         else if (host.ModuleDefinesFunctor(mod.Name, fid))
             // user's view is the global one: a program's predicate, in a
             // bundle's file-named module as much as consulted into user.
             source = mod.Name == PrologEngine.DefaultModuleName
                 ? host.StaticClausesFor(fid)
                 : host.StaticClausesInModule(mod.Name, fid);
-        else if (host.ModuleImportSource(mod.Name, fid) is { } src)
+        else if (host.ViewImportSource(mod.Name, fid) is { } src)
             source = host.StaticClausesInModule(src, fid);
         else
             source = System.Array.Empty<Clause>();
@@ -1300,11 +1311,8 @@ public static partial class MetaBuiltins
     }
 
     /// <summary><c>'$ctx_predicate_enum'(+Module, ?PI)</c> — the in-module
-    /// view behind the context-injected <c>current_predicate/1</c>: the
-    /// module's own definitions united with the global view, deduplicated.
-    /// (The qualified form stays strictly per-module — SICStus doctrine;
-    /// this union is only what an UNqualified call inside the module
-    /// sees.)</summary>
+    /// view behind the context-injected <c>current_predicate/1</c>
+    /// (<see cref="PrologEngine.UnqualifiedPredicateView"/>), deduplicated.</summary>
     public static bool CtxPredicateEnum(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
@@ -1319,18 +1327,8 @@ public static partial class MetaBuiltins
             indicators.Add(new CompoundTerm("/", new Term[]
                 { new AtomTerm(name), new IntTerm(arity) }));
         }
-        if (modTerm is AtomTerm ma)
-            foreach (var (_, fid) in host.DefinedModulePredicates(ma.Name))
-            {
-                var (atomId, arity) = FunctorTable.Lookup(fid);
-                Add(AtomTable.GetById(atomId)?.Name ?? "?", arity);
-            }
-        foreach (int fid in Shumway.Builtins.BuiltinsRegistry.AllRegisteredFunctorIds())
-        {
-            var (atomId, arity) = FunctorTable.Lookup(fid);
-            Add(AtomTable.GetById(atomId)?.Name ?? "?", arity);
-        }
-        foreach (int fid in host.AllStaticAndDynamicFunctors())
+        string module = modTerm is AtomTerm ma ? ma.Name : PrologEngine.DefaultModuleName;
+        foreach (int fid in host.UnqualifiedPredicateView(module))
         {
             var (atomId, arity) = FunctorTable.Lookup(fid);
             Add(AtomTable.GetById(atomId)?.Name ?? "?", arity);
@@ -1485,6 +1483,7 @@ public static partial class MetaBuiltins
         int printed = 0;
         foreach (int fid in matchingFids)
         {
+            host.InstallPendingClauses(engine, fid);
             foreach (var clause in host.ClausesForListing(fid))
             {
                 PrintAstClause(output, clause);

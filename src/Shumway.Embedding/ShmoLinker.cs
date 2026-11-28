@@ -91,6 +91,50 @@ public static class ShmoLinker
         }
         AddEngineLibraries(config.Objects);
 
+        // ----- 0-dynlib. ADR-075, decision 5: what the dynamic libraries the
+        // inputs are linked against offer. Their modules count as provided,
+        // a call the inputs leave undefined is resolved against them, and
+        // what was used of each is recorded in the bundle.
+        var dynlib = new DynlibRegistry(config.DynamicLibraries);
+        // Decision 3: a library an input attaches with
+        // `:- ensure_loaded(bundle(x))` is linked against as a --dynlib is,
+        // found on the library search path, and before a dependency is
+        // looked for there: a module the library has is not linked in. One
+        // the link cannot find is still recorded under --allow-undefined:
+        // the bundle attaches it when it loads, as the source does when it
+        // is consulted.
+        void AddAttachedLibraries(IEnumerable<ShmoObject> objs)
+        {
+            foreach (var obj in objs)
+                foreach (string name in obj.DynamicLibraries)
+                {
+                    if (dynlib.Has(name)) continue;
+                    string? path = LinkDynamicLibrary.FindByName(name, config.LibraryDirs);
+                    if (path is null)
+                    {
+                        Emit(config.AllowUndefined ? LinkSeverity.Warning : LinkSeverity.Error,
+                            "unresolved_dynamic_library",
+                            $"library bundle '{name}' (attached by '{obj.ModuleName}') was not found: "
+                            + $"there is no {name}.shum on the library search path (pass "
+                            + "--library-dir <dir>, or give the file with --dynlib).",
+                            obj.ModuleName);
+                        if (config.AllowUndefined) dynlib.AddUnread(name);
+                        continue;
+                    }
+                    try
+                    {
+                        dynlib.Add(new LinkDynamicLibrary(name, BundleReader.ReadFromFile(path)));
+                    }
+                    catch (Exception ex) when (ex is InvalidDataException or IOException)
+                    {
+                        Emit(LinkSeverity.Error, "unreadable_dynamic_library",
+                            $"library bundle {path} (attached by '{obj.ModuleName}'): {ex.Message}",
+                            obj.ModuleName);
+                        dynlib.AddUnread(name);
+                    }
+                }
+        }
+
         // ----- 0a. Library resolution (C-archive semantics) -----
         // Explicit .shmo objects always link; .shum library members are pulled
         // in on demand, FIFO, to satisfy otherwise-unresolved references
@@ -99,21 +143,30 @@ public static class ShmoLinker
         // optimization together (the resolve-then-optimize order real LTO
         // linkers use); a pulled member is optimized exactly like one passed
         // directly.
-        IReadOnlyList<ShmoObject> linkInput = config.Libraries.Count == 0
+        Shumway.Compiler.Ast.Term? loadGoal = null;
+        IReadOnlyList<ShmoObject> explicitObjects = config.LoadGoal is null
             ? config.Objects
-            : PullLibraryMembers(config.Objects, config.Libraries,
+            : WithLoadGoal(config, Emit, out loadGoal);
+        IReadOnlyList<ShmoObject> linkInput = config.Libraries.Count == 0
+            ? explicitObjects
+            : PullLibraryMembers(explicitObjects, config.Libraries,
                 config.EntryPoints, foreignIndicators, Emit);
+        AddAttachedLibraries(linkInput);
 
         // ADR-038 — resolve use_module(library(X)) deps from the search path:
         // compile and link X.pl for any dependency the explicit objects / .shum
         // libraries left unprovided, transitively (C-linker order: already-provided
         // inputs win, source compilation last).
         if (config.LibraryDirs.Count > 0)
-            linkInput = PullLibraryDirDeps(linkInput, config.LibraryDirs, Emit);
+        {
+            linkInput = PullLibraryDirDeps(linkInput, config.LibraryDirs, dynlib.Modules, Emit);
+            AddAttachedLibraries(linkInput);
+        }
         var archived = new HashSet<string>();
         foreach (var lib in config.Libraries)
             foreach (var m in lib.Members)
                 archived.Add(m.ModuleName);
+        archived.UnionWith(dynlib.Modules);
         linkInput = PullShimDeps(linkInput, archived, out var shimsWithoutCode, Emit);
         AddEngineLibraries(linkInput);
 
@@ -147,7 +200,7 @@ public static class ShmoLinker
         // it builds each importer's full import table and recompiles it so the
         // bare calls mangle to Source$pred. Two-arg filtered imports were already
         // resolved from source at compile time and pass through untouched.
-        linkInput = ResolveImportAllDeps(linkInput, Emit);
+        linkInput = ResolveImportAllDeps(linkInput, dynlib.ExportsByModule, Emit);
 
         // ----- 0. cross-module meta-wrapper unfold (the LTO pass) -----
         // V4 .shmo objects carry their raw static clauses (ClauseTerms). Detect
@@ -196,6 +249,14 @@ public static class ShmoLinker
         // ----- 2. Build global public + dynamic namespaces -----
         var globalPublic = new Dictionary<PredicateRef, string>();    // pred → module
         var globalDynamic = new Dictionary<PredicateRef, List<string>>(); // pred → modules
+        // ADR-056: what a module with :- module/2 exports. The rest is
+        // private: no entry point or startup goal promotes it.
+        var exportsOf = new Dictionary<string, HashSet<PredicateRef>>();
+        foreach (var obj in objects)
+            if (obj.IsExportQualified && !obj.ArityCompat)
+                exportsOf[obj.ModuleName] = new HashSet<PredicateRef>(obj.Exports);
+        bool IsPrivate(string module, PredicateRef p)
+            => exportsOf.TryGetValue(module, out var exports) && !exports.Contains(p);
         // Index each module's locally-defined indicators for quick lookup.
         var moduleDefined = new Dictionary<string, Dictionary<PredicateRef, PredicateVisibility>>();
         foreach (var obj in objects)
@@ -235,6 +296,7 @@ public static class ShmoLinker
                 }
             }
         }
+        if (config.Library) RefuseSharedLibraryNames(objects, Emit);
 
         // ADR-038 — per-module import table: a bare imported indicator → the
         // export-qualified module that provides it. Used by the reachability walk
@@ -312,6 +374,13 @@ public static class ShmoLinker
                     $"Entry point {ep} is not defined in any linked .shmo.", null);
                 continue;
             }
+            if (IsPrivate(mod, ep))
+            {
+                Emit(LinkSeverity.Error, "private_entry",
+                    $"Entry point {ep} is private to module '{mod}': export it from '{mod}' "
+                    + "to name it as an entry.", mod);
+                continue;
+            }
             roots.Add((mod, ep, $"entry {ep}"));
         }
         // --goal references. Call-position refs resolve like entry points but
@@ -328,6 +397,13 @@ public static class ShmoLinker
             if (ambiguityMessage is not null)
             {
                 Emit(LinkSeverity.Error, "ambiguous_entry", ambiguityMessage, null);
+                continue;
+            }
+            if (mod is not null && IsPrivate(mod, gr))
+            {
+                Emit(LinkSeverity.Error, "private_goal",
+                    $"--goal calls {gr}, which is private to module '{mod}': export it from "
+                    + $"'{mod}' to call it from the goal.", mod);
                 continue;
             }
             if (mod is not null)
@@ -388,6 +464,35 @@ public static class ShmoLinker
                 roots.Add((mod, el, $"ensure_linked from '{obj.ModuleName}'"));
             }
         }
+        // initialization/1 goals run when the bundle loads: what they call is
+        // reached from them, as from a --goal, resolved in their module first.
+        foreach (var obj in objects)
+            foreach (var goal in obj.InitializationGoals)
+            {
+                ExecutableEmitter.CollectGoalRefs(goal, out var callRefs, out var termRefs);
+                foreach (var (refs, speculative) in new[] { (callRefs, false), (termRefs, true) })
+                    foreach (var r in refs)
+                    {
+                        string why = $"initialization goal of '{obj.ModuleName}'";
+                        var own = moduleDefined[obj.ModuleName];
+                        var mangled = new PredicateRef(obj.ModuleName + "$" + r.Name, r.Arity);
+                        if (own.ContainsKey(r)) { roots.Add((obj.ModuleName, r, why)); continue; }
+                        if (own.ContainsKey(mangled)) { roots.Add((obj.ModuleName, mangled, why)); continue; }
+                        if (ResolveDefiningModule(r, globalPublic, globalDynamic) is { } mod)
+                        {
+                            roots.Add((mod, r, why));
+                            continue;
+                        }
+                        if (preludePublics.Contains(r)) { preludeUsed.Add(r); continue; }
+                        if (speculative || builtinPredicates.Contains(r)) continue;
+                        string caller = ReferenceEquals(goal, loadGoal) ? "--goal"
+                            : $"An initialization goal of '{obj.ModuleName}'";
+                        Emit(config.AllowUndefined ? LinkSeverity.Warning : LinkSeverity.Error,
+                            "initialization_not_found",
+                            $"{caller} calls {r}, which is "
+                            + "not defined in any linked .shmo, builtin, or prelude.", obj.ModuleName);
+                    }
+            }
         // ADR-038 — an imported predicate is a declared dependency: keep the
         // source module's definition even when the only reference is a runtime
         // meta-call (which leaves no static call-graph edge). Adds a root per
@@ -460,6 +565,16 @@ public static class ShmoLinker
                     var target = new PredicateRef(qr.Name, qr.Arity);
                     if (!byModule.TryGetValue(qr.Module, out var qmod))
                     {
+                        if (dynlib.TryQualified(qr.Module, target)) continue;
+                        if (dynlib.Modules.Contains(qr.Module))
+                        {
+                            Emit(config.AllowUndefined ? LinkSeverity.Warning : LinkSeverity.Error,
+                                "missing_predicate",
+                                $"Qualified call {qr} from '{curMod}': '{qr.Module}' of a library "
+                                + $"linked against does not define {target}.", curMod);
+                            missing.Add(target);
+                            continue;
+                        }
                         Emit(config.AllowUndefined ? LinkSeverity.Warning : LinkSeverity.Error,
                             "missing_predicate",
                             $"Qualified call {qr} from '{curMod}' references a module "
@@ -514,6 +629,8 @@ public static class ShmoLinker
                         && foreignIndicators.Contains(
                             new PredicateRef(importSrc + "$" + edge.Name, edge.Arity)))
                         continue;
+                    // Imported from a module of a library linked against.
+                    if (dynlib.TryImport(importSrc, edge)) continue;
                 }
                 // 2) Global public namespace.
                 if (globalPublic.TryGetValue(edge, out var defMod))
@@ -535,6 +652,8 @@ public static class ShmoLinker
                 // 5) Prelude public? Always resolves. record the
                 //    indicator so --prune-prelude can bake only the reached set.
                 if (preludePublics.Contains(edge)) { preludeUsed.Add(edge); continue; }
+                // 5.5) Offered by a library linked against (ADR-075).
+                if (dynlib.TryGlobal(edge)) continue;
                 // 6) a META-marked edge from an Arity-
                 //    compiled module: defer the decision. If by the end
                 //    of the walk the target collected only such
@@ -700,6 +819,11 @@ public static class ShmoLinker
             }
         }
 
+        // A module's initialization goals run when the bundle loads, so the
+        // module stays whatever its goals reach (a goal of builtins alone).
+        foreach (var obj in objects)
+            if (obj.InitializationGoals.Count > 0) reachedModules.Add(obj.ModuleName);
+
         // ----- 7. Unreachable modules → warning + drop -----
         var unreachable = new List<string>();
         foreach (var obj in objects)
@@ -773,6 +897,7 @@ public static class ShmoLinker
                 {
                     if (defs.ContainsKey(ep))
                     {
+                        if (IsPrivate(modName, ep)) break;   // refused above
                         if (!promotionsByModule.TryGetValue(modName, out var list))
                         {
                             list = new List<PredicateRef>();
@@ -790,31 +915,22 @@ public static class ShmoLinker
             foreach (var obj in objects)
             {
                 if (!reachedModules.Contains(obj.ModuleName)) continue;
-                // when StripSource is requested, also strip
-                // the per-clause source positions and the in-bytecode
-                // Meta/DbgInfo opcodes. If obj.Source is still present
-                // (Debug compile), recompile under Release through
-                // ShmoCompiler — that's the canonical strip path and
-                // covers both pieces. If obj.Source is already empty
-                // (Release compile), the bytecode is already stripped
-                // and we pass it through. Net result: a --strip'd
-                // .shum has the same artifact shape regardless of
-                // whether its sources were compiled in Debug or
-                // Release upstream.
-                string entrySource;
-                byte[]? entryBytecode;
-                if (config.StripSource && !string.IsNullOrEmpty(obj.Source))
+                // --strip drops the text and the clause terms. A debug build's code
+                // carries source positions as well, so it is compiled again as
+                // release, from the text it was compiled from; a release object's
+                // code, with text or not, is already that. A release object's
+                // text is carried as it was written; a debuggable one's gets, at
+                // its end, the declarations a load outside a debug session needs
+                // when it consults the text (BundleLoader), which move no line.
+                string entrySource = config.StripSource ? "" : obj.Source;
+                byte[]? entryBytecode = obj.Bytecode.Length > 0 ? obj.Bytecode : null;
+                if (config.StripSource && !string.IsNullOrEmpty(obj.Source)
+                    && obj.BuildMode != ShmoBuildMode.Release)
                 {
                     var restripped = ShmoCompiler.CompileSource(
                         obj.Source, obj.ModuleName, ShmoBuildMode.Release);
-                    entrySource = "";
                     entryBytecode = restripped.Bytecode.Length > 0
                         ? restripped.Bytecode : null;
-                }
-                else
-                {
-                    entrySource = config.StripSource ? "" : obj.Source;
-                    entryBytecode = obj.Bytecode.Length > 0 ? obj.Bytecode : null;
                 }
 
                 // apply entry-point promotions for this module.
@@ -824,8 +940,13 @@ public static class ShmoLinker
                 // CompileEntryToBytes path uses bare ModuleCompiler and
                 // would NotSupportedException on any DCG rule.
                 HashSet<PredicateRef>? promotedToPublic = null;
+                // A debug build recompiles from its text, which holds the source
+                // positions its code carries (the clause terms do not); a release
+                // one from its clause terms below, text or not, since a module a
+                // consult compiled need not compile from its text alone.
                 if (promotionsByModule.TryGetValue(obj.ModuleName, out var promoted)
-                    && !string.IsNullOrEmpty(entrySource))
+                    && !string.IsNullOrEmpty(obj.Source)
+                    && obj.BuildMode != ShmoBuildMode.Release)
                 {
                     // ADR-035 — append the `:- public` declarations after the source,
                     // never prepend. ShmoCompiler collects visibility directives in a
@@ -835,29 +956,25 @@ public static class ShmoLinker
                     // debug build would slide the stop sites off the source the debugger
                     // opens. The appended directive lines carry no stop sites of their own.
                     var sb = new System.Text.StringBuilder();
-                    sb.Append(entrySource);
-                    if (entrySource.Length > 0 && entrySource[^1] != '\n') sb.Append('\n');
+                    sb.Append(obj.Source);
+                    if (obj.Source[^1] != '\n') sb.Append('\n');
                     foreach (var pr in promoted)
                         sb.Append(":- public ").Append(pr.Name).Append('/')
                           .Append(pr.Arity).Append(".\n");
-                    string augmented = sb.ToString();
-                    // Recompile augmented source so the bundled bytecode matches what
-                    // LoadBundle's ConsultString would produce on it. Without this the
-                    // precompiled-cache substitution at SetupQueryFromTerm would slot in
-                    // bytecode that still has the entry mangled. Recompile in the object's
-                    // own build mode so a Debuggable object keeps its debug-shape WAM (a
-                    // hardcoded Debug here would silently drop the debug codegen).
+                    // Recompile in the object's own build mode so a Debuggable object
+                    // keeps its debug-shape WAM (release under --strip, as above).
                     var recompiled = ShmoCompiler.CompileSource(
-                        augmented, obj.ModuleName,
+                        sb.ToString(), obj.ModuleName,
                         config.StripSource ? ShmoBuildMode.Release : obj.BuildMode);
-                    entrySource = config.StripSource ? "" : augmented;
                     entryBytecode = recompiled.Bytecode.Length > 0
                         ? recompiled.Bytecode : null;
+                    promotedToPublic = new HashSet<PredicateRef>(promoted);
+                    if (obj.BuildMode == ShmoBuildMode.Debuggable && !config.StripSource)
+                        entrySource = sb.ToString();
                 }
                 else if (promoted is not null && obj.ClauseTerms.Count > 0)
                 {
-                    // Source-STRIPPED (release) object: no source to augment,
-                    // but the ClauseTerms carry the raw static
+                    // Release object: its ClauseTerms carry the raw static
                     // clauses. Recompile from them with the local entry points
                     // added to the public set, so each promoted predicate gets
                     // a bare (un-mangled) head — callable by its plain name (a
@@ -891,11 +1008,14 @@ public static class ShmoLinker
                         new List<QualifiedPredicateRef>(), ShmoBuildMode.Release, perrs,
                         arityCompat: obj.ArityCompat,
                         operatorDefs: obj.Operators,   // preserve op/3 defs
+                        flagSettings: obj.Flags,
+                        initializationGoals: obj.InitializationGoals,
                         multifileSet: MultifileSeedSet(obj),
                         // ADR-038 — carry the resolved import table (preserve mangling).
                         isExportQualified: obj.IsExportQualified,
                         exports: obj.Exports, imports: obj.Imports,
-                        libraryDeps: obj.LibraryDeps);
+                        libraryDeps: obj.LibraryDeps,
+                        dynamicLibraries: obj.DynamicLibraries);
                     if (recompiled.Success && recompiled.Object is { } robj
                         && robj.Bytecode.Length > 0)
                     {
@@ -919,11 +1039,9 @@ public static class ShmoLinker
                 // dynamic functor with an empty clause list, and query
                 // setup emits the fail-only stub trampoline. A clauseless
                 // dynamic declaration adds no bytecode, so the entry's
-                // CompiledBytecode is untouched; source-carrying entries
-                // get the directive prepended so the ConsultString load
-                // path registers the same declaration.
+                // CompiledBytecode is untouched.
                 IReadOnlyList<ShmoDefinedPredicate> entryDefined = obj.Defined;
-                // Source-stripped entry-point promotion (above): mark the
+                // Entry-point promotion (above): mark the
                 // promoted predicates Public so LoadEntryFromBytecode registers
                 // them un-mangled, consistent with the recompiled bare-head
                 // bytecode.
@@ -944,13 +1062,15 @@ public static class ShmoLinker
                         augmentedDefined.Add(new ShmoDefinedPredicate(
                             p, PredicateVisibility.Dynamic));
                     entryDefined = augmentedDefined;
-                    if (!string.IsNullOrEmpty(entrySource))
+                    // Appended, as the `:- public` lines are: a prepend would move
+                    // every clause off the lines its stop sites name.
+                    if (obj.BuildMode == ShmoBuildMode.Debuggable && entrySource.Length > 0)
                     {
-                        var dsb = new System.Text.StringBuilder();
+                        var dsb = new System.Text.StringBuilder(entrySource);
+                        if (entrySource[^1] != '\n') dsb.Append('\n');
                         foreach (var p in implicits)
                             dsb.Append(":- dynamic ").Append(p.Name).Append('/')
                                .Append(p.Arity).Append(".\n");
-                        dsb.Append(entrySource);
                         entrySource = dsb.ToString();
                     }
                 }
@@ -966,14 +1086,15 @@ public static class ShmoLinker
                     nativeFunctions: obj.NativeFunctions,
                     nativeDecls: obj.NativeDecls,
                     operators: obj.Operators,
+                    flags: obj.Flags,
+                    initializationGoals: obj.InitializationGoals,
                     isExportQualified: obj.IsExportQualified,
                     exports: obj.Exports,
                     imports: obj.Imports,
                     dialect: obj.Dialect,
-                    // Only a source-less entry needs its raw clauses (a
-                    // source-carrying one is re-consulted); --strip drops them.
-                    clauseTerms: config.StripSource || entrySource.Length > 0
-                        ? null : obj.ClauseTerms));
+                    // What clause/2 and listing/1 read of a module loaded from
+                    // its code, which every entry with code is; --strip drops them.
+                    clauseTerms: config.StripSource ? null : obj.ClauseTerms));
             }
             // Bake the precompiled prelude so a bare-loaded engine
             // (PrologEngine.FromBundle / the generated --exe) gets it without
@@ -1060,7 +1181,11 @@ public static class ShmoLinker
                 // any Arity module makes the whole program expect
                 // Arity call semantics at runtime (unknown=fail).
                 arityCompat: objects.Any(o => o.ArityCompat),
-                engineLibraries: engineLibraries);
+                engineLibraries: engineLibraries,
+                dynamicLibraries: dynlib.Record())
+            {
+                Recipe = config.Recipe ?? new BundleRecipe { Tool = "shumway-link" },
+            };
             // --with-compiled-il routes the bundle through
             // BundleWriter.ToBytes, which (under includeCompiledIl=true)
             // runs PersistedIlBuilder per entry to materialise IL for
@@ -1144,13 +1269,17 @@ public static class ShmoLinker
                 }
                 else
                 {
-                    byte[]? module = config.WasmBaker(bundle);
-                    if (module is not null)
+                    var modules = config.WasmBaker(bundle);
+                    if (modules.Count > 0)
                     {
-                        bundle = bundle.WithWasmModules(new[] { module });
+                        bundle = bundle.WithWasmModules(modules);
                         bytes = SerialiseBundle(bundle);
+                        long size = 0;
+                        foreach (var module in modules) size += module.Length;
                         Emit(LinkSeverity.Info, "wasm_module",
-                            $"wasm module: {module.Length} bytes.");
+                            modules.Count == 1
+                                ? $"wasm module: {size} bytes."
+                                : $"wasm modules: {modules.Count}, {size} bytes.");
                     }
                     else
                         Emit(LinkSeverity.Warning, "wasm_module",
@@ -1351,14 +1480,18 @@ public static class ShmoLinker
                 obj.ModuleName, obj.Source, rawAll, publicSet, dynamicSet,
                 new List<PredicateRef>(obj.EnsureLinked),
                 new List<QualifiedPredicateRef>(), obj.BuildMode, errors,
+                keepSource: !string.IsNullOrEmpty(obj.Source),
                 arityCompat: obj.ArityCompat,
                 operatorDefs: obj.Operators,   // preserve op/3 defs
+                flagSettings: obj.Flags,
+                initializationGoals: obj.InitializationGoals,
                 multifileSet: MultifileSeedSet(obj),
                 // ADR-038 — carry the resolved import table so this recompile
                 // does not lose the import mangling.
                 isExportQualified: obj.IsExportQualified,
                 exports: obj.Exports, imports: obj.Imports,
-                libraryDeps: obj.LibraryDeps);
+                libraryDeps: obj.LibraryDeps,
+                dynamicLibraries: obj.DynamicLibraries);
             if (!res.Success || res.Object is null)
             {
                 emit(LinkSeverity.Warning, "lto_unfold_recompile_failed",
@@ -1477,13 +1610,17 @@ public static class ShmoLinker
                 obj.ModuleName, obj.Source, rawAll, publicSet, dynamicSet,
                 new List<PredicateRef>(obj.EnsureLinked),
                 new List<QualifiedPredicateRef>(), obj.BuildMode, errors,
+                keepSource: !string.IsNullOrEmpty(obj.Source),
                 arityCompat: obj.ArityCompat,
                 operatorDefs: obj.Operators,
+                flagSettings: obj.Flags,
+                initializationGoals: obj.InitializationGoals,
                 multifileSet: MultifileSeedSet(obj),
                 // ADR-038 — carry the resolved import table (preserve mangling).
                 isExportQualified: obj.IsExportQualified,
                 exports: obj.Exports, imports: obj.Imports,
-                libraryDeps: obj.LibraryDeps);
+                libraryDeps: obj.LibraryDeps,
+                dynamicLibraries: obj.DynamicLibraries);
             if (!res.Success || res.Object is null)
             {
                 emit(LinkSeverity.Warning, "lto_cut_elision_recompile_failed",
@@ -1694,6 +1831,44 @@ public static class ShmoLinker
         return null;
     }
 
+    /// <summary>The objects with <see cref="LinkConfig.LoadGoal"/> after the
+    /// initialization goals of the module it runs in: from there on the link
+    /// checks it and reaches what it calls as it does any initialization goal.</summary>
+    private static IReadOnlyList<ShmoObject> WithLoadGoal(LinkConfig config,
+        Action<LinkSeverity, string, string, string?> emit, out Shumway.Compiler.Ast.Term? loadGoal)
+    {
+        loadGoal = null;
+        var objects = config.Objects;
+        if (!config.Library)
+        {
+            emit(LinkSeverity.Error, "load_goal_not_library",
+                "A goal run when the bundle loads needs a library link.", null);
+            return objects;
+        }
+        if (!ExecutableEmitter.TryReadGoal(config.LoadGoal!, out var goal, out string? error))
+        {
+            emit(LinkSeverity.Error, "load_goal_syntax", $"--goal: {error}", null);
+            return objects;
+        }
+        int at = objects.Count - 1;
+        if (config.LoadGoalModule is { } module)
+        {
+            at = -1;
+            for (int i = 0; i < objects.Count; i++)
+                if (objects[i].ModuleName == module) at = i;
+        }
+        if (at < 0)
+        {
+            emit(LinkSeverity.Error, "load_goal_module",
+                $"--goal runs in module '{config.LoadGoalModule}', which no linked object is.", null);
+            return objects;
+        }
+        var result = new List<ShmoObject>(objects);
+        result[at] = result[at].WithInitializationGoal(goal);
+        loadGoal = goal;
+        return result;
+    }
+
     /// <summary>Reflects every <c>--foreign-dll</c> assembly,
     /// returning the set of <c>[PrologPredicate]</c> <c>(name, arity)</c>
     /// indicators it exposes and (via <paramref name="assemblyNames"/>) the
@@ -1702,6 +1877,14 @@ public static class ShmoLinker
     /// once and available to both the library pull pre-pass (which must not
     /// pull a member to satisfy a foreign-provided reference) and the
     /// builtin-set snapshot.</summary>
+    // Reached only for a link given --foreign-dll assemblies, which are loaded
+    // from disk and are outside the trimmer's view by construction. A page
+    // links when it rebuilds a bundle (ADR-076); a foreign assembly it cannot
+    // load fails that link with a message.
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Only reached for the assemblies a link is given, loaded from disk.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2075",
+        Justification = "The types of an assembly loaded from disk, which trimming never removes.")]
     private static HashSet<PredicateRef> ReflectForeignAssemblies(
         LinkConfig config,
         Action<LinkSeverity, string, string, string?> emit,
@@ -1780,13 +1963,157 @@ public static class ShmoLinker
     /// search dirs and added, transitively. Convention: the library name is the
     /// module name. An unresolved dep is left for the reachability walk to report
     /// as a missing predicate.</summary>
+    /// <summary>ADR-075, decision 5: what the dynamic libraries a link is
+    /// made against offer, the library given first answering, and what the
+    /// link used of each, for the record in the bundle.</summary>
+    private sealed class DynlibRegistry
+    {
+        // A call by name: a public, and every predicate of a module without a
+        // module directive, its compiler helpers aside (ADR-056, amendment).
+        private readonly Dictionary<PredicateRef, string> _global = new();
+        // A call to Module:p reaches any predicate the module defines (ADR-056).
+        private readonly Dictionary<(string Module, PredicateRef Pred), string> _qualified = new();
+        // An import from a module with module/2 reaches its exports.
+        private readonly Dictionary<string, (string Library, HashSet<PredicateRef> Exports)> _exports =
+            new(StringComparer.Ordinal);
+        private readonly List<(string Name, HashSet<QualifiedPredicateRef> Uses)> _libraries = new();
+        private readonly Dictionary<string, HashSet<QualifiedPredicateRef>> _usesOf = new(StringComparer.Ordinal);
+
+        public readonly HashSet<string> Modules = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, IReadOnlyList<PredicateRef>> ExportsByModule = new(StringComparer.Ordinal);
+
+        public DynlibRegistry(IReadOnlyList<LinkDynamicLibrary> libraries)
+        {
+            foreach (var lib in libraries) Add(lib);
+        }
+
+        public bool Has(string name) => _usesOf.ContainsKey(name);
+
+        /// <summary>A library after those already here: what it offers that an
+        /// earlier one does not.</summary>
+        public void Add(LinkDynamicLibrary lib)
+        {
+            if (!AddUnread(lib.Name)) return;
+            foreach (var (module, qualified, defined, exports) in ModulesOf(lib.Library))
+            {
+                if (!Modules.Add(module)) continue;
+                if (qualified)
+                {
+                    _exports[module] = (lib.Name, new HashSet<PredicateRef>(exports));
+                    ExportsByModule[module] = exports;
+                }
+                foreach (var d in defined)
+                {
+                    _qualified.TryAdd((module, d.Indicator), lib.Name);
+                    if (d.Visibility == PredicateVisibility.Public
+                        || (!qualified && !IsCompilerHelper(d.Indicator)))
+                        _global.TryAdd(d.Indicator, lib.Name);
+                }
+            }
+        }
+
+        /// <summary>A library recorded with nothing it offers: the bundle
+        /// attaches it, and uses none of it. False when it is here.</summary>
+        public bool AddUnread(string name)
+        {
+            if (_usesOf.ContainsKey(name)) return false;
+            var uses = new HashSet<QualifiedPredicateRef>();
+            _libraries.Add((name, uses));
+            _usesOf[name] = uses;
+            return true;
+        }
+
+        private static IEnumerable<(string Module, bool Qualified, IReadOnlyList<ShmoDefinedPredicate> Defined,
+            IReadOnlyList<PredicateRef> Exports)> ModulesOf(Bundle library)
+        {
+            foreach (var e in library.Entries)
+                if (e.ModuleName != Prelude.ModuleName)
+                    yield return (e.ModuleName, e.IsExportQualified, e.Defined, e.Exports);
+            foreach (var member in library.ArchiveMembers)
+            {
+                var o = ShmoReader.FromBytes(member.ShmoBytes);
+                yield return (o.ModuleName, o.IsExportQualified, o.Defined, o.Exports);
+            }
+        }
+
+        private static bool IsCompilerHelper(PredicateRef p)
+            => PrologEngine.IsMetaHelperFunctorName(Shumway.Core.FunctorTable.Intern(
+                Shumway.Core.AtomTable.Intern(p.Name, permanent: true).Id, p.Arity));
+
+        private bool Use(string library, string module, PredicateRef p)
+        {
+            _usesOf[library].Add(new QualifiedPredicateRef(module, p.Name, p.Arity));
+            return true;
+        }
+
+        public bool TryGlobal(PredicateRef p)
+            => _global.TryGetValue(p, out var lib) && Use(lib, "", p);
+
+        public bool TryQualified(string module, PredicateRef p)
+            => _qualified.TryGetValue((module, p), out var lib) && Use(lib, module, p);
+
+        public bool TryImport(string module, PredicateRef p)
+            => _exports.TryGetValue(module, out var e) && e.Exports.Contains(p) && Use(e.Library, module, p);
+
+        /// <summary>Each library with what was used of it, in a stable order.</summary>
+        public IReadOnlyList<BundleDynamicLibrary> Record()
+        {
+            var record = new List<BundleDynamicLibrary>(_libraries.Count);
+            foreach (var (name, uses) in _libraries)
+            {
+                var sorted = new List<QualifiedPredicateRef>(uses);
+                sorted.Sort((a, b) =>
+                {
+                    int c = string.CompareOrdinal(a.Module, b.Module);
+                    if (c == 0) c = string.CompareOrdinal(a.Name, b.Name);
+                    return c != 0 ? c : a.Arity.CompareTo(b.Arity);
+                });
+                record.Add(new BundleDynamicLibrary(name, sorted));
+            }
+            return record;
+        }
+    }
+
+    /// <summary>ADR-075: a library offers each name from one module. A
+    /// predicate of a module without a module directive is reached by its name
+    /// once the library is attached, so two such modules that define it, or one
+    /// that defines it static and one dynamic, fail the link. Dynamic ones in
+    /// both are one predicate with the clauses of both.</summary>
+    private static void RefuseSharedLibraryNames(IReadOnlyList<ShmoObject> objects,
+        Action<LinkSeverity, string, string, string?> emit)
+    {
+        var offered = new Dictionary<PredicateRef, (string Module, bool Dynamic)>();
+        foreach (var obj in objects)
+        {
+            if (obj.IsExportQualified) continue;
+            foreach (var d in obj.Defined)
+            {
+                int fid = Shumway.Core.FunctorTable.Intern(
+                    Shumway.Core.AtomTable.Intern(d.Indicator.Name, permanent: true).Id, d.Indicator.Arity);
+                if (PrologEngine.IsGlobalHookFunctor(fid) || PrologEngine.IsMetaHelperFunctorName(fid)) continue;
+                bool dynamic = d.Visibility == PredicateVisibility.Dynamic;
+                if (!offered.TryGetValue(d.Indicator, out var other))
+                {
+                    offered[d.Indicator] = (obj.ModuleName, dynamic);
+                    continue;
+                }
+                if (other.Module == obj.ModuleName || (dynamic && other.Dynamic)) continue;
+                emit(LinkSeverity.Error, "shared_library_name",
+                    $"{d.Indicator} is defined by both '{other.Module}' and '{obj.ModuleName}': "
+                    + "a library offers each name from one module.", obj.ModuleName);
+            }
+        }
+    }
+
     private static IReadOnlyList<ShmoObject> PullLibraryDirDeps(
         IReadOnlyList<ShmoObject> input,
         IReadOnlyList<string> libraryDirs,
+        IEnumerable<string> provided,
         Action<LinkSeverity, string, string, string?> emit)
     {
         var result = new List<ShmoObject>(input);
         var have = new HashSet<string>(result.Select(o => o.ModuleName));
+        have.UnionWith(provided);
         var queue = new Queue<ShmoObject>(result);
         while (queue.Count > 0)
         {
@@ -1883,12 +2210,16 @@ public static class ShmoLinker
     /// bare imported calls mangle to <c>Source$pred</c>.</summary>
     private static IReadOnlyList<ShmoObject> ResolveImportAllDeps(
         IReadOnlyList<ShmoObject> input,
+        IReadOnlyDictionary<string, IReadOnlyList<PredicateRef>> libraryExports,
         Action<LinkSeverity, string, string, string?> emit)
     {
         var exportsByModule = new Dictionary<string, IReadOnlyList<PredicateRef>>();
         foreach (var o in input)
             if (o.IsExportQualified)
                 exportsByModule[o.ModuleName] = o.Exports;
+        // A module of a dynamic library linked against (ADR-075).
+        foreach (var (module, exports) in libraryExports)
+            exportsByModule.TryAdd(module, exports);
         // An engine library that is an export-qualified module (ADR-038, second
         // amendment) has its surface in its baked bundle; a legacy one offers
         // bare publics and nothing to import.
@@ -1963,13 +2294,17 @@ public static class ShmoLinker
             obj.ModuleName, obj.Source, rawAll, publicSet, dynamicSet,
             new List<PredicateRef>(obj.EnsureLinked),
             new List<QualifiedPredicateRef>(), obj.BuildMode, errors,
+                keepSource: !string.IsNullOrEmpty(obj.Source),
             arityCompat: obj.ArityCompat,
             operatorDefs: obj.Operators,
+            flagSettings: obj.Flags,
+            initializationGoals: obj.InitializationGoals,
             multifileSet: MultifileSeedSet(obj),
             isExportQualified: obj.IsExportQualified,
             exports: obj.Exports,
             imports: imports,
-            libraryDeps: obj.LibraryDeps);
+            libraryDeps: obj.LibraryDeps,
+            dynamicLibraries: obj.DynamicLibraries);
         if (!res.Success || res.Object is null)
         {
             emit(LinkSeverity.Warning, "import_resolve_recompile_failed",
@@ -2236,6 +2571,8 @@ public static class ShmoLinker
             BundleWriter.WriteNativeInterop(bw, e.NativeFunctions, e.NativeDecls);
             // Operator trailer.
             BundleWriter.WriteOperators(bw, e.Operators);
+            BundleWriter.WriteFlags(bw, e.Flags);
+            BundleWriter.WriteInitializationGoals(bw, e.InitializationGoals);
             // ADR-038 — export-qualification trailer (shared serialiser).
             BundleWriter.WriteExportQualification(bw, e);
         }
@@ -2276,9 +2613,22 @@ public static class ShmoLinker
         bw.Write((uint)bundle.EngineLibraries.Count);
         foreach (var name in bundle.EngineLibraries)
             WriteString(bw, name);
+        // Dynamic-libraries trailer. Mirrors BundleWriter.ToBytes exactly.
+        bw.Write((uint)bundle.DynamicLibraries.Count);
+        foreach (var lib in bundle.DynamicLibraries)
+        {
+            WriteString(bw, lib.Name);
+            bw.Write((uint)lib.Uses.Count);
+            foreach (var use in lib.Uses)
+            {
+                WriteString(bw, use.Module);
+                WriteString(bw, use.Name);
+                bw.Write((uint)use.Arity);
+            }
+        }
         bw.Flush();
         // compress the body (everything after magic+version).
-        return BundleFormat.FinalizeImage(ms.ToArray());
+        return BundleFormat.FinalizeImage(ms.ToArray(), bundle.Recipe);
     }
 
     private static void WriteString(BinaryWriter bw, string s)
@@ -2294,6 +2644,8 @@ public static class ShmoLinker
     /// ReflectionTypeLoadException — recover the types that did
     /// resolve and keep going. The linker only needs to see
     /// [PrologPredicate]-decorated methods on resolved types.</summary>
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Only called on an assembly a link is given, loaded from disk.")]
     private static IEnumerable<Type> SafeGetTypes(System.Reflection.Assembly asm)
     {
         try { return asm.GetTypes(); }

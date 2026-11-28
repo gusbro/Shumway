@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The notebook server (ADR-067): the JSON-RPC server a notebook kernel
+       talks to, as Prolog modules, and what a session of the web host
+       library gives it to run on: a pipe of request lines, a pipe of response
+       lines and the capture of what a cell writes. No JavaScript interop
+       here: the desktop tests drive it as the kernel will. -->
+  <PropertyGroup>
+    <RootNamespace>Shumway.Jupyter</RootNamespace>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shumway.WebHost\Shumway.WebHost.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="server\*.pl" LogicalName="%(Filename).pl" />
+  </ItemGroup>
+
+</Project>

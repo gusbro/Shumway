@@ -277,9 +277,30 @@ public static partial class MetaBuiltins
         // at depth > 0 keeps the SWI-style auto-import off (the same way a
         // use_module dependency loads).
         host._useModuleLoadDepth++;
-        try { host.ConsultString(source); }
+        try { LoadForGoal(host, engine, () => host.ConsultString(source)); }
         finally { host._useModuleLoadDepth--; }
         return true;
+    }
+
+    /// <summary>Runs a load a goal asked for. A load the consult refuses
+    /// whole (clauses that are not contiguous, a malformed directive) throws
+    /// to the host that asked for it. A goal has no host to tell: it gets
+    /// <c>system_error(Message)</c>, which its program can catch, where the
+    /// host's exception would end the query. A load asked by a directive of
+    /// a file that is loading is left to that file, which reports the
+    /// directive and goes on.</summary>
+    private static void LoadForGoal(PrologEngine host, Activation engine, Action load)
+    {
+        if (host._consultDepth > 0)
+        {
+            load();
+            return;
+        }
+        try { load(); }
+        catch (InvalidOperationException refused)
+        {
+            throw new ShumwayPrologException(IsoError.SystemError(refused.Message, engine));
+        }
     }
 
     public static bool Consult(Activation engine)
@@ -329,14 +350,14 @@ public static partial class MetaBuiltins
                 return;
             case Shumway.Compiler.Ast.AtomTerm a:
             {
-                string path = ConsultPipeline.ResolveSourcePath(a.Name);   // SWI-style: consult(algo) → algo.pl
+                string path = ConsultPipeline.ResolveSourcePath(engine.OsPath(a.Name));   // SWI-style: consult(algo) → algo.pl
                 if (!System.IO.File.Exists(path))
                     throw new Shumway.Core.PrologRuntimeException(
                         "existence_error", "source_sink",
                         (object)new Shumway.Compiler.Ast.AtomTerm(a.Name));
                 // Runtime consult: thread the live engine so source-declared dynamic
                 // clauses become visible to a later call in the same query.
-                host.ConsultFileLive(path, engine, intoModule);
+                LoadForGoal(host, engine, () => host.ConsultFileLive(path, engine, intoModule));
                 return;
             }
             case Shumway.Compiler.Ast.CompoundTerm { Functor: ".", Args: [var f, var fs] }:
@@ -377,7 +398,7 @@ public static partial class MetaBuiltins
             text.Append(s).Append('\n');
             if (ch < 0) break;                        // last line without newline
         }
-        host.ConsultString(text.ToString());
+        LoadForGoal(host, engine, () => host.ConsultString(text.ToString()));
     }
 
     /// <summary><c>'$timeout_push'(+Seconds)</c> — starts the deadline that
@@ -429,16 +450,25 @@ public static partial class MetaBuiltins
             LoadLibraryIntoUser(engine, host, unqualified);
             return true;
         }
+        // ADR-075: ensure_loaded(bundle(Name)) attaches the library Name.shum.
+        if (unqualified is CompoundTerm { Functor: "bundle", Args: [AtomTerm bundleName] })
+        {
+            var prevLive = host._liveConsultEngine;
+            host._liveConsultEngine = engine;
+            try { host.AttachBundleByName(bundleName.Name); }
+            finally { host._liveConsultEngine = prevLive; }
+            return true;
+        }
 
         string given = FileSpecAtom(engine, spec, out string? intoModule);
         string path = given;
         // A relative name resolves against the directory of the file being
         // loaded, as `:- include/1` does — `:- ensure_loaded(file_1)` inside
         // dir/main.pl means dir/file_1.pl, not one relative to the CWD.
-        string resolved = ConsultPipeline.ResolveSourcePath(path);
+        string resolved = ConsultPipeline.ResolveSourcePath(engine.OsPath(path));
         if (!System.IO.File.Exists(resolved)
             && host._consultBaseDir is { } baseDir
-            && !System.IO.Path.IsPathRooted(path))
+            && !Shumway.Core.PrologPath.IsRooted(path))
         {
             string rebased = ConsultPipeline.ResolveSourcePath(
                 System.IO.Path.Combine(baseDir, path));
@@ -457,8 +487,11 @@ public static partial class MetaBuiltins
         // not append to it — otherwise the stale clauses stay and the file is
         // effectively loaded twice, which is the one thing this predicate
         // exists to prevent.
-        if (host.WasConsulted(path)) host.ReconsultFileLive(path, engine, intoModule);
-        else host.ConsultFileLive(path, engine, intoModule);
+        LoadForGoal(host, engine, () =>
+        {
+            if (host.WasConsulted(path)) host.ReconsultFileLive(path, engine, intoModule);
+            else host.ConsultFileLive(path, engine, intoModule);
+        });
         return true;
     }
 
@@ -634,7 +667,7 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "restore/1 requires the engine to be hosted by a PrologEngine.");
         string path = RequireAtomPath(engine, register: 0, builtin: "restore/1");
-        if (!System.IO.File.Exists(path))
+        if (!System.IO.File.Exists(engine.OsPath(path)))
             throw new Shumway.Core.PrologRuntimeException(
                 "existence_error", "source_sink",
                 (object)new Shumway.Compiler.Ast.AtomTerm(path));
@@ -657,7 +690,7 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException(
                 "restore_state/1 requires the engine to be hosted by a PrologEngine.");
         string path = RequireAtomPath(engine, register: 0, builtin: "restore_state/1");
-        if (!System.IO.File.Exists(path))
+        if (!System.IO.File.Exists(engine.OsPath(path)))
             throw new Shumway.Core.PrologRuntimeException(
                 "existence_error", "source_sink",
                 (object)new Shumway.Compiler.Ast.AtomTerm(path));
@@ -716,14 +749,14 @@ public static partial class MetaBuiltins
                 "reconsult/1 requires the engine to be hosted by a PrologEngine.");
 
         string given = FileSpecAtom(engine, MaterializeRegister(engine, 0), out string? intoModule);
-        string path = ConsultPipeline.ResolveSourcePath(given);   // SWI-style: reconsult(algo) → algo.pl
+        string path = ConsultPipeline.ResolveSourcePath(engine.OsPath(given));   // SWI-style: reconsult(algo) → algo.pl
         if (!System.IO.File.Exists(path))
             throw new Shumway.Core.PrologRuntimeException(
                 "existence_error", "source_sink",
                 (object)new Shumway.Compiler.Ast.AtomTerm(given));
 
         // Runtime reconsult: the rest of this query sees the file, as with consult/1.
-        host.ReconsultFileLive(path, engine, intoModule);
+        LoadForGoal(host, engine, () => host.ReconsultFileLive(path, engine, intoModule));
         return true;
     }
 
@@ -868,6 +901,45 @@ public static partial class MetaBuiltins
         return engine.UnifyRegisterWithCell(1, c);
     }
 
+    /// <summary><c>'$dynlib_install'(+Owner, +Name/Arity)</c>: installs the
+    /// clauses attached libraries hold for a dynamic predicate (ADR-075,
+    /// decision 9). Called by the stub clause its first call runs.</summary>
+    public static bool DynlibInstall(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException("$dynlib_install/2: PrologEngine host required.");
+        if (MaterializeRegister(engine, 0) is not AtomTerm owner
+            || MaterializeRegister(engine, 1) is not CompoundTerm
+                { Functor: "/", Args: [AtomTerm name, IntTerm arity] })
+            return false;
+        int fid = FunctorTable.Intern(AtomTable.Intern(name.Name, permanent: true).Id, (int)arity.Value);
+        if (owner.Name != PrologEngine.DefaultModuleName)
+            fid = PrologEngine.MangleFunctor(owner.Name, fid);
+        host.InstallPendingClauses(engine, fid);
+        return true;
+    }
+
+    /// <summary><c>'$dynlib_bring_in'(+Module, +Name, ?Arity)</c>: before a
+    /// listing, brings in the attached modules whose code it would read
+    /// (ADR-075, decision 11): <paramref name="Module"/> when it is one, else
+    /// (<c>[]</c>) the ones that define <c>Name</c>, of <c>Arity</c> when it
+    /// is bound. Always succeeds.</summary>
+    public static bool DynlibBringIn(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException("$dynlib_bring_in/3: PrologEngine host required.");
+        Term module = MaterializeRegister(engine, 0);
+        if (module is AtomTerm { Name: not "[]" } m)
+        {
+            host.EnsureModuleCode(engine, m.Name);
+            return true;
+        }
+        if (MaterializeRegister(engine, 1) is not AtomTerm name) return true;
+        int arity = MaterializeRegister(engine, 2) is IntTerm a ? (int)a.Value : -1;
+        host.BringInDefinersOf(engine, name.Name, arity);
+        return true;
+    }
+
     /// <summary><c>'$clause_ref_fetch'(+Ref, ?Head, ?Body)</c> — unifies
     /// Head/Body with the clause the reference designates; fails when the
     /// clause was erased/retracted. A bound non-reference is
@@ -953,6 +1025,7 @@ public static partial class MetaBuiltins
         if (engine.CodeRoom < PrologEngine.AssertCodeHeadroom
             && !host.HasFreeCodeChunk(engine, PrologEngine.AssertCodeHeadroom))
             throw new Shumway.Core.PrologRuntimeException("resource_error", "code_space");
+        host.InstallPendingClauses(engine, fid);
         if (prepend) host.Asserta(clause, fid);
         else host.Assertz(clause, fid);
         // ADR-015 incremental dispatch — the canonical path:
@@ -1235,7 +1308,11 @@ public static partial class MetaBuiltins
     private static int ReadPatternHeadFunctorId(Activation engine, PrologEngine host, ref int patternHeap)
     {
         Cell head = PeelPatternQualifiers(engine, ref patternHeap, out string? module);
-        return host.DatabaseFunctorFor(module, ReadFunctorIdFromCell(engine, head));
+        int key = host.DatabaseFunctorFor(module, ReadFunctorIdFromCell(engine, head));
+        // ADR-075, decision 9: a predicate's clauses are all there before a
+        // database builtin looks at it.
+        host.InstallPendingClauses(engine, key);
+        return key;
     }
 
     /// <summary>Peels the <c>Module:</c> chain off the pattern, and off the

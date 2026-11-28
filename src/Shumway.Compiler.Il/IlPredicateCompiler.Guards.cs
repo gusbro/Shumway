@@ -285,12 +285,14 @@ public sealed partial class IlPredicateCompiler
     /// shared copy (entered by <c>br</c> from its call sites), then the ok /
     /// fail pop-and-dispatch blocks switching over the continuation label
     /// table. No-op when no site used the mechanism.</summary>
-    /// <summary>ADR-033 — the shared-copy entry label for <paramref name="fid"/>,
-    /// registering the callee for method-end emission on first request.</summary>
+    /// <summary>ADR-033 — the shared-copy entry label for <paramref name="callee"/>,
+    /// registering the callee for method-end emission on first request. Keyed
+    /// by the callee's own functor, which the epilogue marks: a call site by
+    /// the bare name of a library predicate names another (ADR-056, amendment).</summary>
     private static IlLabel GetOrAddGuardContCopy(
-        IlEmit emit, GuardContEmitContext ctx,
-        int fid, CompiledPredicate callee)
+        IlEmit emit, GuardContEmitContext ctx, CompiledPredicate callee)
     {
+        int fid = callee.FunctorId;
         if (!ctx.CalleeEntry.TryGetValue(fid, out var entryLbl))
         {
             entryLbl = emit.DefineLabel($"gc_callee_{fid}");
@@ -614,7 +616,8 @@ public sealed partial class IlPredicateCompiler
                         && Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out int bid))
                     {
                         var bentry = Shumway.Builtins.BuiltinsRegistry.GetById(bid);
-                        if (bentry.IsCall || bentry.IsDollarCall || bentry.IsBacktrackable)
+                        if (bentry.IsCall || bentry.IsDollarCall || bentry.IsBacktrackable
+                            || bentry.OpensCatchScope)
                         {
                             CountGuardOpReject(Opcode.CallBuiltin, pc);
                             return false;
@@ -701,7 +704,8 @@ public sealed partial class IlPredicateCompiler
                     // builtins need the CP machinery → reject.
                     var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
                         BytecodeIO.ReadInt32(code, pc + 1));
-                    if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable)
+                    if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable
+                        || entry.OpensCatchScope)
                     {
                         CountGuardOpReject(op, pc);
                         return false;
@@ -1409,7 +1413,8 @@ public sealed partial class IlPredicateCompiler
                     {
                         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
                             BytecodeIO.ReadInt32(code, pc + 1));
-                        if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable)
+                        if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable
+                            || entry.OpensCatchScope)
                         {
                             CpFreeGuardStats.BumpShapeDetail(
                                 $"builtin:{entry.Name}/{entry.Arity}");
@@ -1694,7 +1699,7 @@ public sealed partial class IlPredicateCompiler
                 || !calleeMap.TryGetValue(c.CrossTailFid, out var tailTgt))
                 throw new InvalidOperationException(
                     "cross-tail clause emitted without a continuation context");
-            emit.Branch(GetOrAddGuardContCopy(emit, gcCtx, c.CrossTailFid, tailTgt));
+            emit.Branch(GetOrAddGuardContCopy(emit, gcCtx, tailTgt));
         }
         else
         {

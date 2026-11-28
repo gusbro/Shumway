@@ -404,7 +404,8 @@ public sealed partial class IlPredicateCompiler
             profileKey, groundOrder, calleeMap);
 
         var del = FinishEmit(emit,
-            $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}");
+            $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}",
+            declinePastJitLimits: DeclinesPastJitLimits(predicate));
         IndexedDelegateHolder.Register(holderKey, del);
         _nextHolderKey = holderKey + 1;
         return del;

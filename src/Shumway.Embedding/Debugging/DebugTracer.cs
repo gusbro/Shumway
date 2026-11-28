@@ -63,6 +63,7 @@ public sealed class DebugTracer : IDebugSession
         public int Arity;
         public int ArgBase;     // heap index of the copied argument cells (-1: none)
         public int B;           // engine.B when the goal was called
+        public int HeapMark;    // engine.HeapTop when the goal was called
         public int Depth;       // printed depth: parent's depth + 1
         public bool Exited;     // has succeeded — still redoable if it left a CP
     }
@@ -80,6 +81,44 @@ public sealed class DebugTracer : IDebugSession
     // no default interface implementations and they are required.
     void IDebugSession.OnInlineGoal(Activation engine) { }
     void IDebugSession.OnLeaveProlog(Activation engine) { }
+
+    /// <summary>The entry <see cref="IDebugSession.OnRedo"/> reported a redo
+    /// for and nothing has happened to since, or -1. A builtin's next solution
+    /// has no port but the one that follows its redo.</summary>
+    private int _redone = -1;
+
+    void IDebugSession.OnRedoExit(Activation engine)
+    {
+        int redone = _redone;
+        _redone = -1;
+        if (redone >= 0 && redone == _stack.Count - 1 && !_stack[redone].Exited)
+            Exit(engine);
+    }
+
+    /// <summary>A caught ball took every goal called since its catch/3 began:
+    /// the ones still running get the port that says so. By name only, since
+    /// their arguments were on the heap the catch gave back.</summary>
+    void IDebugSession.OnUnwind(Activation engine)
+    {
+        _redone = -1;
+        while (_stack.Count > 0 && _stack[^1].HeapMark >= engine.HeapTop)
+        {
+            Entry e = _stack[^1];
+            _stack.RemoveAt(_stack.Count - 1);
+            if (!e.Exited)
+                _out.WriteLine($"   Exception: ({e.Depth}) {e.Name}/{e.Arity}");
+        }
+    }
+
+    /// <summary>Drops the goals of a query that ended with an error nobody
+    /// caught: they were called above a heap that is no longer there. Within
+    /// a query nothing live is: backtracking and a catch report first, and a
+    /// collection moves the marks.</summary>
+    private void DropGoalsOfADeadQuery(Activation engine)
+    {
+        while (_stack.Count > 0 && _stack[^1].HeapMark > engine.HeapTop)
+            _stack.RemoveAt(_stack.Count - 1);
+    }
 
     void IDebugSession.OnCallAddress(Activation engine, int address, bool tailCall)
     {
@@ -106,11 +145,16 @@ public sealed class DebugTracer : IDebugSession
         // A builtin's result is known the moment its dispatch returns, so its
         // port follows immediately — but a backtrackable one (between/3,
         // clause/2, …) leaves a choice point, and Exited keeps it redoable.
+        _redone = -1;
         if (succeeded) Exit(engine);
         else Fail(engine);
     }
 
-    void IDebugSession.OnExit(Activation engine) => Exit(engine);
+    void IDebugSession.OnExit(Activation engine)
+    {
+        _redone = -1;
+        Exit(engine);
+    }
 
     /// <summary>The tracer prints ports, not source lines, and it stops for
     /// nobody — a stop site is not an event it has anything to say about. The
@@ -119,6 +163,8 @@ public sealed class DebugTracer : IDebugSession
 
     void IDebugSession.OnRedo(Activation engine, int retryPc)
     {
+        _redone = -1;
+        DropGoalsOfADeadQuery(engine);
         // Every goal called after the choice point now at engine.B was pushed
         // is dead: its recorded B is at or above it, and the CP that could have
         // revived it is below. Report those top-down; what remains on top is
@@ -137,10 +183,13 @@ public sealed class DebugTracer : IDebugSession
         Report(engine, "Redo", e, e.Depth);
         e.Exited = false;               // it is running again
         _stack[^1] = e;
+        _redone = _stack.Count - 1;
     }
 
     void IDebugSession.OnFail(Activation engine)
     {
+        _redone = -1;
+        DropGoalsOfADeadQuery(engine);
         while (_stack.Count > 0)
             Pop("Fail", engine);
     }
@@ -210,8 +259,8 @@ public sealed class DebugTracer : IDebugSession
         for (int i = 0; i < _stack.Count; i++)
         {
             var e = _stack[i];
-            if (e.ArgBase < 0) continue;
-            e.ArgBase = relocIndex(e.ArgBase);
+            e.HeapMark = relocBoundary(e.HeapMark);
+            if (e.ArgBase >= 0) e.ArgBase = relocIndex(e.ArgBase);
             _stack[i] = e;
         }
     }
@@ -222,6 +271,8 @@ public sealed class DebugTracer : IDebugSession
     {
         name = PrologEngine.DemangleLocalName(name);
         if (IsInternal(name)) return;
+        _redone = -1;
+        DropGoalsOfADeadQuery(engine);
 
         // The caller is the deepest goal still running; a tail call, though,
         // reuses the caller's frame and so takes the caller's own place —
@@ -238,6 +289,7 @@ public sealed class DebugTracer : IDebugSession
             Name = name,
             Arity = arity,
             B = engine.B,
+            HeapMark = engine.HeapTop,
             Depth = depth,
             ArgBase = -1,
         };

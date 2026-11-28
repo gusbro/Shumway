@@ -72,6 +72,14 @@ public sealed class Clause
     /// memoized: their expanded (+2) arity differs between callers.</summary>
     public int HeadFidMemo;
 
+    // A clause is equal only to itself, and maps of clauses are on every
+    // assert and retract. The runtime's identity hash is slow the first time
+    // an object is hashed, which for an asserted clause is every time.
+    private static int _hashes;
+    private readonly int _hash = Interlocked.Increment(ref _hashes);
+
+    public override int GetHashCode() => _hash;
+
     public Clause(ClauseKind kind, Term term, SourcePosition position)
     {
         Kind = kind;

@@ -53,7 +53,7 @@ public static class IncludeExpander
                 result.Add(c);
                 continue;
             }
-            string resolved = Path.IsPathRooted(fileRef!)
+            string resolved = Shumway.Core.PrologPath.IsRooted(fileRef!)
                 ? fileRef!
                 : Path.Combine(baseDir ?? Directory.GetCurrentDirectory(), fileRef!);
             if (!File.Exists(resolved) && !Path.HasExtension(resolved))

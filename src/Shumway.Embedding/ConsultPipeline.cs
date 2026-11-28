@@ -61,7 +61,8 @@ internal sealed class ConsultPipeline
         path = ResolveSourcePath(path);
         if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
         {
-            E.LoadBundle(path);
+            E.LoadBundleLinkingLive(() => E.LoadBundle(path));
+            E.ImportLoadedBundleIntoUser();
             return;
         }
         try { LoadSourceFile(path, reconsult: false, intoModule); }
@@ -103,10 +104,10 @@ internal sealed class ConsultPipeline
         // directory for the duration of the consult (restored after: a
         // nested ConsultFile from an initialization goal must not leak).
         string? prevBase = E._consultBaseDir;
-        E._consultBaseDir = Path.GetDirectoryName(Path.GetFullPath(path));
+        E._consultBaseDir = Path.GetDirectoryName(E._directory.FullPath(path));
         // prolog_load_context(file, _) / (source, _).
         string? prevLoadFile = E._currentLoadFile;
-        try { E._currentLoadFile = Path.GetFullPath(path); } catch { E._currentLoadFile = path; }
+        try { E._currentLoadFile = E._directory.FullPath(path); } catch { E._currentLoadFile = path; }
         // ADR-035 — stop sites compiled during this consult are stamped with this
         // file, so a debugger can map a breakpoint in foo.pl back to them.
         int prevFile = E._debugFileId;
@@ -120,7 +121,7 @@ internal sealed class ConsultPipeline
         // a breakpoint the editor sets still binds — but the name it reports is now one anybody
         // can find.)
         string debugPath = path;
-        try { debugPath = Path.GetFullPath(path); }
+        try { debugPath = E._directory.FullPath(path); }
         catch (Exception) { /* unresolvable — the name as given is the best we have */ }
         E._debugFileId = DebugSiteTable.InternFile(debugPath);
 
@@ -135,8 +136,11 @@ internal sealed class ConsultPipeline
             Debugging.ShumwayDebugHelper.NoteSourceFile(path);
         try
         {
+            string fullPath = E._directory.FullPath(path);
             ConsultStringInner(
-                Shumway.Core.TextFile.ReadAllText(path, E._flags.DefaultTextEncoding),
+                E._sourcesInMemory is { } inMemory && inMemory.TryGetValue(fullPath, out string? held)
+                    ? held
+                    : Shumway.Core.TextFile.ReadAllText(path, E._flags.DefaultTextEncoding),
                 recordInHistory: true,
                 moduleNameFallback: intoModule,
                 reconsult: reconsult,
@@ -214,6 +218,13 @@ internal sealed class ConsultPipeline
                     case HeadRule.Drop:
                         bad = true;
                         break;
+                    case HeadRule.Attached:
+                        bad = true;
+                        if ((warned ??= new HashSet<int>()).Add(fid)
+                            && E.AttachedOffering(fid) is var (module, library))
+                            E.Warn($"error: {spec.Name}/{spec.Arity} is defined by module {module} "
+                                 + $"of bundle({library}); clause ignored");
+                        break;
                     case HeadRule.Redefine:
                         if ((warned ??= new HashSet<int>()).Add(fid)
                             && E._redefinedFunctors.Add(fid))
@@ -232,10 +243,13 @@ internal sealed class ConsultPipeline
         return kept ?? clauses;
     }
 
-    private enum HeadRule { Allow, Refuse, Drop, Redefine }
+    private enum HeadRule { Allow, Refuse, Drop, Redefine, Attached }
 
     private HeadRule HeadVerdict(int fid, HeadContext context)
     {
+        // ADR-075: a name an attached library offers is that library's.
+        if (context == HeadContext.GlobalProgram && E.AttachedOffering(fid) is not null)
+            return HeadRule.Attached;
         var kind = E.SystemKindOf(fid);
         if (kind is null) return HeadRule.Allow;
         // ISO makes control constructs and its builtins static: no module,
@@ -822,6 +836,8 @@ internal sealed class ConsultPipeline
         // §7.6.2: a source-declared clause for a dynamic predicate enters the
         // database in its converted form, exactly as an assertz'd one does.
         c = Shumway.Compiler.Ast.ClauseBodyConversion.Convert(c);
+        // After the clauses attached libraries hold for it (ADR-075).
+        E.InstallPendingClauses(E._liveConsultEngine, fid);
         int at;
         if (insertAt < 0)
         {
@@ -1037,7 +1053,7 @@ internal sealed class ConsultPipeline
 
         // Contiguity was deferred (unexpanded grammar clauses shared one head);
         // check it now on the expanded clauses.
-        ValidateContiguity(rebuilt, pendingDiscontiguous);
+        ValidateContiguity(rebuilt, pendingDiscontiguous, pendingMultifile);
 
         if (changed)
         {
@@ -1075,11 +1091,19 @@ internal sealed class ConsultPipeline
     /// engine's <c>compile_mode</c> is whatever the user's program set — so without this
     /// the library would silently become debuggable, take stop sites, and attribute them
     /// to the user's file.</para></summary>
-    internal void MarkModuleNonDebuggable(string moduleName)
+    /// <param name="dynamicsOnly">Only the module's dynamic predicates: those
+    /// of a module of an attached library whose code is not in yet.</param>
+    internal void MarkModuleNonDebuggable(string moduleName, bool dynamicsOnly = false)
     {
         E._nonDebuggableModules.Add(moduleName);
         if (!E._modules.TryGetValue(moduleName, out var module)) return;
         var specs = new HashSet<(string Name, int Arity)>();
+        if (dynamicsOnly)
+        {
+            foreach (int fid in module.DynamicFunctors) AddSpecOf(specs, fid);
+            E._nonDebuggableFunctors.UnionWith(ResolveNonDebuggableFids(specs, moduleName));
+            return;
+        }
         foreach (var clause in module.Clauses)
             if (TryReadClauseHead(clause, out var spec))
                 specs.Add(spec);
@@ -1130,12 +1154,6 @@ internal sealed class ConsultPipeline
     /// the ISO logical update view). Save/restore keeps nested consults sound.</summary>
     internal void ConsultFileLive(string path, Activation liveEngine, string? intoModule = null)
     {
-        // A .shum bundle load has no runtime dynamic-clause routing to patch.
-        if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
-        {
-            ConsultFile(path);
-            return;
-        }
         var prev = E._liveConsultEngine;
         E._liveConsultEngine = liveEngine;
         try { ConsultFile(path, intoModule); }
@@ -1147,11 +1165,6 @@ internal sealed class ConsultPipeline
     /// <see cref="ConsultFileLive"/> does for <c>consult/1</c>.</summary>
     internal void ReconsultFileLive(string path, Activation liveEngine, string? intoModule = null)
     {
-        if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
-        {
-            ReconsultFile(path);
-            return;
-        }
         var prev = E._liveConsultEngine;
         E._liveConsultEngine = liveEngine;
         try { ReconsultFile(path, intoModule); }
@@ -1212,7 +1225,8 @@ internal sealed class ConsultPipeline
                 foreach (int fid in defined)
                     AbolishPredicateInModule(targetModule, fid);
             }
-            E.LoadBundle(bundle);
+            E.LoadBundleLinkingLive(() => E.LoadBundle(bundle));
+            E.ImportLoadedBundleIntoUser();
         }
         else
         {
@@ -1492,7 +1506,11 @@ internal sealed class ConsultPipeline
                 System.Threading.Volatile.Write(ref s_preludeClauses, list);
             // ISO 7.4.2.7 `:- include(File)` — textual inclusion.
             rawClauses = Shumway.Compiler.Parsing.IncludeExpander.Expand(
-                list, E._consultBaseDir, E._operators, E._flags);
+                list,
+                // ADR-071: text with no file of its own includes relative to
+                // the engine's directory when it has one.
+                E._consultBaseDir ?? (E._directory.IsPerEngine ? E._directory.Current : null),
+                E._operators, E._flags);
         }
         else
         {
@@ -1546,6 +1564,7 @@ internal sealed class ConsultPipeline
         var exports = new HashSet<int>();
         Dictionary<int, string>? pendingImports = null;
         List<string>? pendingImportedModules = null;
+        List<string>? pendingAttachedLibraries = null;
         var clauses = new List<Clause>();
         // ADR-055: the clauses this source defines for another module
         // (`M:Head :- Body`), static ones, by target. They join M's manifest
@@ -1655,96 +1674,25 @@ internal sealed class ConsultPipeline
             static List<Clause> SingletonClause(Clause c) => new(1) { c };
         }
 
-        // Conditional compilation — `:- if(Cond) / :- elif(Cond) / :- else /
-        // :- endif`. A first-class feature (SWI, GProlog, SICStus): clauses in an
-        // inactive branch are dropped at load. A stack of (Active, AnyTaken)
-        // frames; "including" iff the top frame is active (a frame is active only
-        // when its parent was, so the top's flag suffices). Conditions are
-        // evaluated by a small evaluator against the current engine state — not a
-        // query, which cannot run mid-scan — covering the forms real programs use;
-        // anything else warns and is treated as false (the branch is skipped).
+        // Conditional compilation (`:- if/elif/else/endif`): a clause in an
+        // inactive branch is dropped before expansion. The conditions are the
+        // ones file-at-a-time compilation evaluates too (ConditionalCompilation).
         // Limitation: a `:- op` inside a skipped branch is still applied (the
         // reader applies ops eagerly at parse time).
-        var condStack = new List<(bool Active, bool AnyTaken)>();
-        bool CondIncluding() => condStack.Count == 0 || condStack[^1].Active;
-        bool CondOuter() => condStack.Count <= 1 || condStack[^2].Active;
-        bool CondPredExists(Term pi)
-        {
-            if (pi is not CompoundTerm { Functor: "/", Args: [AtomTerm n, IntTerm a] }) return false;
-            int fid = FunctorTable.Intern(
-                AtomTable.Intern(n.Name, permanent: true).Id, (int)a.Value);
-            if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _)) return true;
-            if (E._preludeFunctors.Contains(fid)) return true;
-            if (E._dynStore.IsDynamic(fid) || E._dynStore.HasClauses(fid)) return true;
-            if (E._precompiledStaticPredicates.ContainsKey(fid)) return true;
-            foreach (var cl in clauses) if (HeadFunctorIdOf(cl) == fid) return true;
-            return false;
-        }
-        bool EvalCond(Term cond) => cond switch
-        {
-            AtomTerm { Name: "true" } => true,
-            AtomTerm { Name: "fail" or "false" } => false,
-            CompoundTerm { Functor: ",", Args: [var a, var b] } => EvalCond(a) && EvalCond(b),
-            CompoundTerm { Functor: ";", Args: [var a, var b] } => EvalCond(a) || EvalCond(b),
-            CompoundTerm { Functor: "\\+" or "not", Args: [var a] } => !EvalCond(a),
-            CompoundTerm { Functor: "current_predicate", Args: [var pi] } => CondPredExists(pi),
-            CompoundTerm { Functor: "exists_source", Args: [var spec] } => CondExistsSource(spec),
-            CompoundTerm { Functor: "current_prolog_flag", Args: [AtomTerm f, var v] } => CondFlagIs(f.Name, v),
-            _ => CondWarnFalse(cond),
-        };
-        // exists_source(library(X)) / exists_source(File): does the source resolve?
-        bool CondExistsSource(Term spec)
-        {
-            if (spec is CompoundTerm { Functor: "library", Args: [AtomTerm lib] })
-                return E.TryResolveLibrary(lib.Name, out _)
-                    || CompatLibraries.TryGet(lib.Name, out _)
-                    || LibraryBundles.IsEngineLibrary(lib.Name);
-            if (spec is AtomTerm f)
-                return System.IO.File.Exists(f.Name) || System.IO.File.Exists(f.Name + ".pl");
-            return false;
-        }
-        // current_prolog_flag(Flag, Value): compare against the engine's flag.
-        bool CondFlagIs(string flag, Term valueTerm)
-        {
-            string? actual = flag switch
+        var conditional = new ConditionalCompilation(new ConditionContext(
+            E._flags,
+            PredicateKnown: (name, arity) =>
             {
-                "bounded" => "false",
-                "dialect" => "shumway",
-                "double_quotes" => E._flags.DoubleQuotes.ToString().ToLowerInvariant(),
-                "unknown" => E._flags.Unknown,
-                "occurs_check" => E._flags.OccursCheck,
-                "verbose" => E._flags.Verbose,
-                _ => null,   // unknown flag → the condition cannot hold
-            };
-            return actual is not null && valueTerm is AtomTerm v && v.Name == actual;
-        }
-        bool CondWarnFalse(Term cond)
-        {
-            E.Warn($"warning: unsupported :- if/elif condition ({cond}) — treated as false");
-            return false;
-        }
-        // Handles an if/elif/else/endif directive body, returning true if it was
-        // one (and thus consumed). Everything else returns false to fall through.
-        bool TryCondCompile(Term cbody)
-        {
-            switch (cbody)
-            {
-                case CompoundTerm { Functor: "if", Args: [var g] }:
-                    { bool on = CondIncluding() && EvalCond(g); condStack.Add((on, on)); return true; }
-                case CompoundTerm { Functor: "elif", Args: [var g] }:
-                    if (condStack.Count == 0) return true;
-                    { var t = condStack[^1]; bool on = CondOuter() && !t.AnyTaken && EvalCond(g);
-                      condStack[^1] = (on, t.AnyTaken || on); return true; }
-                case AtomTerm { Name: "else" }:
-                    if (condStack.Count == 0) return true;
-                    { var t = condStack[^1]; bool on = CondOuter() && !t.AnyTaken;
-                      condStack[^1] = (on, true); return true; }
-                case AtomTerm { Name: "endif" }:
-                    if (condStack.Count > 0) condStack.RemoveAt(condStack.Count - 1);
-                    return true;
-                default: return false;
-            }
-        }
+                int fid = FunctorTable.Intern(AtomTable.Intern(name, permanent: true).Id, arity);
+                if (E._preludeFunctors.Contains(fid)) return true;
+                if (E._dynStore.IsDynamic(fid) || E._dynStore.HasClauses(fid)) return true;
+                if (E._precompiledStaticPredicates.ContainsKey(fid)) return true;
+                foreach (var cl in clauses) if (HeadFunctorIdOf(cl) == fid) return true;
+                return false;
+            },
+            LibraryKnown: name => E.TryResolveLibrary(name, out _),
+            FileExists: name => System.IO.File.Exists(E._directory.Resolve(name)),
+            Unsupported: cond => E.Warn($"warning: unsupported :- if/elif condition ({cond}) — treated as false")));
 
         foreach (var rawClause0 in rawClauses)
         {
@@ -1752,9 +1700,9 @@ internal sealed class ConsultPipeline
             // consumed; a clause in an inactive branch is dropped before expansion.
             if (rawClause0.Kind == ClauseKind.Directive
                 && rawClause0.Term is CompoundTerm { Args.Length: 1 } condWrap
-                && TryCondCompile(condWrap.Args[0]))
+                && conditional.TryConsume(condWrap.Args[0]))
                 continue;
-            if (!CondIncluding()) continue;
+            if (!conditional.Including) continue;
             // In-file term_expansion hooks + a same-file directive that needs
             // them (lazy_lists' `:- lazy_list_iterator(...)` macro directives).
             // Hooks normally compile only when this consult commits, so
@@ -2049,20 +1997,14 @@ internal sealed class ConsultPipeline
                 // see the execution loop at the end of this method.
                 (initializationGoals ??= new List<Term>()).Add(initDir.Args[0]);
             }
-            else if (body is CompoundTerm spf
-                     && spf.Functor == "set_prolog_flag"
-                     && spf.Args.Length == 2
-                     && spf.Args[0] is AtomTerm spfFlag
-                     && spf.Args[1] is AtomTerm spfValue)
+            else if (body is CompoundTerm { Functor: "set_prolog_flag", Args.Length: 2 } spf)
             {
-                // flags that the parser doesn't already
-                // pre-process (double_quotes is the only one) get
-                // applied at consult time. Mirrors the runtime
-                // set_prolog_flag/2 builtin so the directive form
-                // takes effect before subsequent clauses are
-                // processed (e.g. implicit_dynamic toggles the
-                // CollectImplicitDynamics pre-scan).
-                E.ApplyConsultSetPrologFlag(spfFlag.Name, spfValue.Name);
+                // Set now, so the rest of this consult sees it, and as the
+                // runtime builtin sets it: an unknown flag or a value outside
+                // its domain is reported as any directive that raises, and the
+                // load goes on. The reader has applied double_quotes and
+                // arity_compat to its own lexing already.
+                SetFlagFromDirective(spf);
             }
             else if (Shumway.Compiler.Modes.ModeDirectiveParser.TryParseAll(
                 body, out var modeDecls, out string? modeError))
@@ -2111,6 +2053,16 @@ internal sealed class ConsultPipeline
                 // where the directive stands. A file name stays a goal below.
                 string? src = E.ExecuteUseModuleDirective(elLib);
                 RecordLibraryLoad(elLib, src, filter: null);
+            }
+            else if (body is CompoundTerm { Functor: "ensure_loaded",
+                         Args: [CompoundTerm { Functor: "bundle", Args: [AtomTerm elBundle] }] })
+            {
+                // ADR-075: attaches the library, so that this file's calls
+                // into it resolve when they run. Recorded on the module for
+                // the linker (decision 3).
+                E.AttachBundleByName(elBundle.Name);
+                if (!(pendingAttachedLibraries ??= new()).Contains(elBundle.Name))
+                    pendingAttachedLibraries.Add(elBundle.Name);
             }
             else
             {
@@ -2213,7 +2165,7 @@ internal sealed class ConsultPipeline
         foreach (var c0 in clauses)
             if (IsHookClauseHead(c0)) { inFileHooks = true; break; }
         if (!inFileHooks)
-            ValidateContiguity(clauses, pendingDiscontiguous);
+            ValidateContiguity(clauses, pendingDiscontiguous, pendingMultifile);
 
         // ADR-022 — embedded native-code wiring. Rewrite each captured
         // `$native_goal(RawText)` body goal into a portable `'$native_run'('$nb$…',
@@ -2267,7 +2219,7 @@ internal sealed class ConsultPipeline
                 => multifileCtx ??= E.NewRewriteContext(
                     moduleName,
                     ComputeConsultLocalFunctors(clauses, publics),
-                    ConsultImports(), ownsDynamics);
+                    ConsultImports(), ownsDynamics, scopesOperators: isExportQualified);
 
             // Reconsult: the predicates this source defines are replaced, not
             // extended. Done here rather than by scanning the text first,
@@ -2561,6 +2513,8 @@ internal sealed class ConsultPipeline
                 foreach (var (fid, src) in pendingImports) manifest.Imports[fid] = src;
             if (pendingImportedModules is not null)
                 manifest.ImportedModules.AddRange(pendingImportedModules);
+            if (pendingAttachedLibraries is not null)
+                manifest.AttachedLibraries.AddRange(pendingAttachedLibraries);
             CommitDeclarations(manifest, moduleName, ownsDynamics, pendingDiscontiguous, pendingMultifileKeys);
             if (pendingModes is not null)
                 foreach (var (fid, modes) in pendingModes) manifest.ModeDeclarations[fid] = modes;
@@ -2623,6 +2577,9 @@ internal sealed class ConsultPipeline
             if (pendingImportedModules is not null)
                 foreach (string m in pendingImportedModules)
                     if (!existing.ImportedModules.Contains(m)) existing.ImportedModules.Add(m);
+            if (pendingAttachedLibraries is not null)
+                foreach (string lib in pendingAttachedLibraries)
+                    if (!existing.AttachedLibraries.Contains(lib)) existing.AttachedLibraries.Add(lib);
             CommitDeclarations(existing, moduleName, ownsDynamics, pendingDiscontiguous, pendingMultifileKeys);
             if (pendingModes is not null)
                 foreach (var (fid, modes) in pendingModes)
@@ -2758,7 +2715,7 @@ internal sealed class ConsultPipeline
                 moduleName, pendingMultifile,
                 () => E.NewRewriteContext(moduleName,
                     ComputeConsultLocalFunctors(clauses, publics),
-                    ConsultImports(), ownsDynamics));
+                    ConsultImports(), ownsDynamics, scopesOperators: isExportQualified));
 
         // ISO §7.4.2 general goal directives run now, after the batch commit
         // and in source order — before initialization/1 (§7.4.2.7), which ISO
@@ -2774,8 +2731,7 @@ internal sealed class ConsultPipeline
         // committed, in source order (SWI load-time semantics).
         if (initializationGoals is not null)
             foreach (var g in initializationGoals)
-                RunConsultGoal(QualifyGoalForModule(g, moduleName),
-                    "initialization goal", g.ToString() ?? "");
+                RunInitializationGoal(g, moduleName);
 
         // RESUME-boundary reconciliation: this consult (and any query
         // nested in it, one a goal started with the host API) may have mutated
@@ -2920,6 +2876,23 @@ internal sealed class ConsultPipeline
         return prefix + text[..DirectiveTextLimit] + "...";
     }
 
+    /// <summary>A <c>:- set_prolog_flag(F, V)</c> directive, set as the runtime
+    /// builtin sets it; what the builtin raises is reported as a raising
+    /// directive's goal is (<see cref="RunConsultGoal"/>).</summary>
+    private void SetFlagFromDirective(CompoundTerm directive)
+    {
+        try
+        {
+            MetaBuiltins.ApplySetPrologFlag(E, directive.Args[0], directive.Args[1], E._liveConsultEngine);
+        }
+        catch (ShumwayPrologException ex)
+        {
+            Term ball = IsoError.CloseContext(ex.Term, "set_prolog_flag", 2);
+            E.Warn($"Warning: directive raised: {DescribeDirective(directive)}: "
+                + AstTermRenderer.Render(ball, 999, E.Operators, quoted: true));
+        }
+    }
+
     /// <summary>Runs a consult-time goal (a <c>:- Goal</c> directive, an
     /// <c>initialization/1</c> goal) once the file's clauses are in place. A goal
     /// that fails or raises warns and loading goes on; <c>halt/0-1</c> and
@@ -2933,6 +2906,20 @@ internal sealed class ConsultPipeline
     /// whenever the program changed, so a load of many files with a directive
     /// each (every Logtalk entity) rebuilt it per file, quadratic in the files.
     /// A host consult has no running goal and runs each goal as a query.</para></summary>
+    /// <summary>A file's or a bundle's <c>:- initialization/1</c> goal, run
+    /// in its module at the end of the load. The host is told while it runs
+    /// (<see cref="PrologEngine.InitializationRunning"/>).</summary>
+    internal void RunInitializationGoal(Term goal, string moduleName)
+    {
+        E.InitializationRunning?.Invoke(true);
+        try
+        {
+            RunConsultGoal(QualifyGoalForModule(goal, moduleName),
+                "initialization goal", goal.ToString() ?? "");
+        }
+        finally { E.InitializationRunning?.Invoke(false); }
+    }
+
     private void RunConsultGoal(Term goal, string what, string described)
     {
         bool ok;
@@ -3007,9 +2994,10 @@ internal sealed class ConsultPipeline
     /// Splitting them is almost always a bug — the discontiguous
     /// declaration is the explicit opt-in that turns the diagnostic
     /// off for predicates that legitimately need scattered
-    /// definitions.</summary>
+    /// definitions. A multifile predicate is not checked: its clauses come
+    /// from several sources, and a file that gathers them interleaves them.</summary>
     private void ValidateContiguity(
-        IReadOnlyList<Clause> clauses, HashSet<int>? discontiguous)
+        IReadOnlyList<Clause> clauses, HashSet<int>? discontiguous, HashSet<int>? multifile)
     {
         bool warnOnly = E.Flags.DiscontiguousCheck == "warning";
         // A module-qualified head (`prolog:message(X) --> …`) is a multifile
@@ -3039,6 +3027,8 @@ internal sealed class ConsultPipeline
             currentFid = fid;
             if (closed.Contains(fid)
                 && (discontiguous is null || !discontiguous.Contains(fid))
+                && multifile?.Contains(fid) != true
+                && !E.IsMultifileFunctor(fid)
                 // term_expansion / goal_expansion are hooks — implicitly
                 // discontiguous + multifile in every Prolog; a library scatters
                 // their clauses among helpers (format.pl, clpz.pl).

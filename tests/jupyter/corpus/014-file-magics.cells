@@ -1,0 +1,70 @@
+### call
+%%user
+p(1).
+p(2).
+### call
+p(X).
+### call
+retry.
+### call
+%%user+
+p(3).
+### call
+findall(X, p(X), L).
+### call
+%%user
+q(a).
+### call
+q(X).
+### call
+findall(X, p(X), L).
+### call
+%%file facts.pl
+r(1).
+r(2).
+### reference
+%%file facts.lgt
+r(1).
+r(2).
+### call
+findall(X, r(X), L).
+### call
+%%file+ facts.pl
+r(3).
+### reference
+%%file+ facts.lgt
+r(3).
+### call
+findall(X, r(X), L).
+### call
+%%save notes.txt
+any text, not Prolog (
+### call
+%%load more.pl
+s(1).
+### reference
+%%load more.lgt
+s(1).
+### call
+s(X).
+### call
+%%user
+broken(.
+### call
+%%user
+t(1).
+t(X) :- no_such_thing(X).
+### call
+t(X).
+### call
+%%highlight
+foo :- bar.
+### call
+%%user
+:- write(loading), nl.
+u(1).
+### call
+%%nosuchmagic
+v(1).
+### call
+%%user

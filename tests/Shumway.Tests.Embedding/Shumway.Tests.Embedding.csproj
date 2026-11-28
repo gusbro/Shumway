@@ -58,9 +58,11 @@
     <Compile Remove="Chunk168Tests.cs" />
     <Compile Remove="Chunk170Tests.cs" />
     <Compile Remove="Chunk174Tests.cs" />
+    <Compile Remove="LinkAttachDirectiveCliTests.cs" />
     <Compile Remove="QuadsCommandLineTests.cs" />
     <Compile Remove="ReplCommandLineTests.cs" />
     <Compile Remove="ReplStdinEncodingTests.cs" />
+    <Compile Remove="ReplStdinEndTests.cs" />
     <Compile Remove="ReplAbortTests.cs" />
     <Compile Remove="LibraryEmitterTests.cs" />
     <Compile Remove="LinkGoalRefsTests.cs" />
@@ -69,6 +71,8 @@
     <Compile Remove="PreludeIlBakeTests.cs" />
     <Compile Remove="TablingBundleTests.cs" />
     <Compile Remove="ToolchainStaleOutputTests.cs" />
+    <Compile Remove="LibraryGoalCliTests.cs" />
+    <Compile Remove="RecipeCliTests.cs" />
   </ItemGroup>
 
 </Project>

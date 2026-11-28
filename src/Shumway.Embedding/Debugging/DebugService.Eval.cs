@@ -771,6 +771,11 @@ public sealed partial class DebugService
         else OnInteropExit?.Invoke();
     }
 
+    // Ports of the tracer's: a stop names the goal it is at, and neither of
+    // these is one. Declared for net48, which has no default implementations.
+    void IDebugSession.OnRedoExit(Activation engine) { }
+    void IDebugSession.OnUnwind(Activation engine) { }
+
     void IDebugSession.OnInlineGoal(Activation engine)
     {
         RecordPortMark(engine);   // ADR-035 D5+

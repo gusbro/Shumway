@@ -62,6 +62,7 @@ public static class WasmPredicateCompiler
         var c = new Compilation(members, env, moduleId, cps ?? CpsMode, grain ?? CpsGrain);
         c.RejectDispatchOnlyPredicates();
         c.Decode();
+        c.RejectOversizeMembers();
         c.RejectIfCrossingsDominate();
         c.AssignCursors();
         byte[] bytes = c.Emit();
@@ -77,13 +78,15 @@ public static class WasmPredicateCompiler
     /// before anything is emitted, or null: the phases of
     /// <see cref="CompileGroup"/> that find most refusals, without a module
     /// for each member. A refusal only emission finds still needs a compile.</summary>
-    public static string? RefusalBeforeEmit(WasmGroupMember member, IWasmCompileEnv env)
+    public static string? RefusalBeforeEmit(WasmGroupMember member, IWasmCompileEnv env,
+                                            bool? cps = null, WasmCpsGrain? grain = null)
     {
-        var c = new Compilation(new[] { member }, env, 0, CpsMode, CpsGrain);
+        var c = new Compilation(new[] { member }, env, 0, cps ?? CpsMode, grain ?? CpsGrain);
         try
         {
             c.RejectDispatchOnlyPredicates();
             c.Decode();
+            c.RejectOversizeMembers();
             c.RejectIfCrossingsDominate();
             return null;
         }
@@ -92,6 +95,18 @@ public static class WasmPredicateCompiler
             return e.Message;
         }
     }
+
+    /// <summary>The largest function body a browser takes, in bytes: the
+    /// limit the WebAssembly JavaScript interface gives its implementations.
+    /// A module with a larger one is refused whole. A member is one function
+    /// at the least, so a member that large cannot be compiled.</summary>
+    public static int MaxFunctionBytes { get; set; } = 7_654_321;
+
+    /// <summary>A member with more instructions than this is refused before
+    /// anything is emitted: at what an instruction comes to on average its
+    /// function is at the limit already. A smaller one that still comes out
+    /// too large is found when its function is written.</summary>
+    public static int MaxMemberInstructions { get; set; } = 20_000;
 
     /// <summary>Diagnostic: emit a dispatch counter + loop breaker into the
     /// dispatcher (see the guard at the loop top). Off in production.</summary>
@@ -268,6 +283,8 @@ public static class WasmPredicateCompiler
         private readonly Dictionary<int, int> _callee = new();   // call-site pc -> functor
         // fid -> entry address (the member's bias): the in-group call map.
         private readonly Dictionary<int, int> _entryByFid = new();
+        // fid -> the module of a library that defines it (WasmGroupMember.Module).
+        private readonly Dictionary<int, string> _moduleByFid = new();
         // (callerFid, calleeFid) -> call sites between them, for the coupling
         // report. Filled by the cursor pass, which walks every instruction
         // anyway, so it costs nothing at run time and nothing extra to compile.
@@ -277,6 +294,18 @@ public static class WasmPredicateCompiler
         private WasmGroupMember Sec(Instr ins) => _members[ins.Section];
         private int Bias(Instr ins) => _members[ins.Section].Bias;
         private int SelfFid(Instr ins) => _members[ins.Section].Predicate.FunctorId;
+
+        // A call that jumps straight to the callee's entry. Between two
+        // modules of a library it goes through the table instead, whose row
+        // for the callee is there only once its module is in (ADR-075,
+        // decision 12): a jump would run a member whose bytecode is not
+        // linked.
+        private bool InGroup(int caller, int callee, out int calleeEntry)
+            => _entryByFid.TryGetValue(callee, out calleeEntry)
+               && (!_moduleByFid.TryGetValue(caller, out var from)
+                   || !_moduleByFid.TryGetValue(callee, out var to) || from == to);
+
+        private int OwnerAt(int pc) => _members[_instrs[_byPc[pc]].Section].Predicate.FunctorId;
 
         public IReadOnlyDictionary<int, int> CursorByAddress => _cursorByAddr;
         private int _failCase;      // pseudo-cursor: backtrack (not re-enterable)
@@ -323,7 +352,8 @@ public static class WasmPredicateCompiler
         private int AcyclicIndex => _parts.Count + 6;   // and K+6 acyclic_term/1
         private int CompareIndex => _parts.Count + 7;   // and K+7 the standard order
         private int UnwindIndex => _parts.Count + 8;    // and K+8 the extra trail's unwind
-        private const int HelperCount = 7;              // K+2 .. K+8
+        private int ParkIndex => _parts.Count + 9;      // and K+9 an attributed variable's binding
+        private const int HelperCount = 8;              // K+2 .. K+9
 
         // The helpers the emitted code calls. A helper no call names keeps
         // its slot with a stub: the fixed cost of a module is what it uses
@@ -336,8 +366,8 @@ public static class WasmPredicateCompiler
             _helperUsed[index - UnifierIndex] = true;
             return (uint)index;
         }
-        private int RouterIndex => _parts.Count + 9;    // CPS only: K+9 the cursor router
-        private int EpilogueIndex => _parts.Count + 9;  // not CPS: K+9 the verdict epilogue
+        private int RouterIndex => _parts.Count + 10;   // CPS only: K+10 the cursor router
+        private int EpilogueIndex => _parts.Count + 10; // not CPS: K+10 the verdict epilogue
 
         /// <summary>CPS: the locals a transfer carries as arguments, 0 to
         /// <see cref="LCP"/>: the mailbox, the cursor (twice: the entry
@@ -362,6 +392,7 @@ public static class WasmPredicateCompiler
                 // would run the old snapshot for it.
                 if (!m.Predicate.IsDynamicSnapshot)
                     _entryByFid[m.Predicate.FunctorId] = m.Bias;
+                if (m.Module is { } module) _moduleByFid[m.Predicate.FunctorId] = module;
                 foreach (var site in m.Predicate.CallSites)
                     _callee[m.Bias + site.OpcodeOffset] = site.CalleeFunctorId;
                 DecodeSection(sec);
@@ -459,6 +490,31 @@ public static class WasmPredicateCompiler
                     $"{Shumway.Core.AtomTable.GetById(aid)?.Name}/{ar} is "
                     + "dispatched by the interpreter, not run as written");
             }
+        }
+
+        public void RejectOversizeMembers()
+        {
+            var instructions = new int[_members.Count];
+            foreach (var ins in _instrs) instructions[ins.Section]++;
+            for (int sec = 0; sec < _members.Count; sec++)
+            {
+                if (instructions[sec] > MaxMemberInstructions)
+                    throw Oversize(sec, $"{instructions[sec]} instructions -- its function "
+                        + "would be larger than a browser takes");
+                if (_members[sec].Predicate.IsDynamicSnapshot
+                    && instructions[sec] > Shumway.Embedding.WasmPromotionStore.MaxSnapshotInstructions)
+                    throw Oversize(sec, $"a snapshot of {instructions[sec]} instructions, over "
+                        + $"{Shumway.Embedding.WasmPromotionStore.MaxSnapshotInstructions} -- the browser would compile it "
+                        + "in the query that first calls it");
+            }
+        }
+
+        private WasmOversizeException Oversize(int section, string why)
+        {
+            int fid = _members[section].Predicate.FunctorId;
+            var (aid, ar) = Shumway.Core.FunctorTable.Lookup(fid);
+            return new WasmOversizeException(fid,
+                $"{Shumway.Core.AtomTable.GetById(aid)?.Name}/{ar}: {why}");
         }
 
         public void RejectIfCrossingsDominate()
@@ -1302,7 +1358,8 @@ public static class WasmPredicateCompiler
             // fail/proceed resolver; K+2: the general unifier; K+3: term
             // identity; K+4: arithmetic evaluation; K+5: ground/1's walk;
             // K+6: acyclic_term/1's; K+7: the standard order of two terms;
-            // K+8: the extra trail's unwind. All internal but run.
+            // K+8: the extra trail's unwind; K+9: the binding of an
+            // attributed variable. All internal but run.
             module.Types.Add(new WebAssemblyType
             {
                 Parameters = [WebAssemblyValueType.Int64, WebAssemblyValueType.Int32],
@@ -1325,6 +1382,7 @@ public static class WasmPredicateCompiler
             module.Functions.Add(new Function { Type = 2 });
             module.Functions.Add(new Function { Type = 1 });
             module.Functions.Add(new Function { Type = 2 });
+            module.Functions.Add(new Function { Type = 3 });
             module.Exports.Add(new Export
             {
                 Kind = ExternalKind.Function, Index = 0, Name = WasmAbi.EntryExport,
@@ -1341,32 +1399,43 @@ public static class WasmPredicateCompiler
                 module.CustomSections.Add(WasmCpsLayout.Section(_failCase, _parts.Select(p => p.Lo)));
             }
 
-            module.Codes.Add(BuildDispatcherBody());
+            // A body is written out when it is built, and its instructions
+            // are let go: held until the module was written, the bodies of a
+            // large module took some thirty times the module's size.
+            var bodies = new List<byte[]>(k + HelperCount + 3);
+            bodies.Add(Written(BuildDispatcherBody()));
             var addrsInOrder = new List<int>(_leaders);
             foreach (var part in _parts)
-                module.Codes.Add(BuildPartitionBody(part, addrsInOrder));
-            module.Codes.Add(BuildResolverBody());
+            {
+                byte[] function = Written(BuildPartitionBody(part, addrsInOrder));
+                if (function.Length > MaxFunctionBytes)
+                    throw Oversize(LargestMemberOf(part, addrsInOrder), $"{function.Length} bytes -- its function "
+                        + "would be larger than a browser takes");
+                bodies.Add(function);
+            }
+            bodies.Add(Written(BuildResolverBody()));
             // Every call into a helper is emitted by now. A helper's body is
             // built when a call names it, and a body that calls another marks
             // it in turn, until none is left; the others keep their slots
             // with a stub that traps, since nothing reaches it.
-            var helpers = new FunctionBody?[HelperCount];
+            var helpers = new byte[]?[HelperCount];
             for (bool more = true; more;)
             {
                 more = false;
                 for (int h = 0; h < HelperCount; h++)
                     if (_helperUsed[h] && helpers[h] is null)
                     {
-                        helpers[h] = BuildHelper(h);
+                        helpers[h] = Written(BuildHelper(h));
                         more = true;
                     }
             }
             for (int h = 0; h < HelperCount; h++)
-                module.Codes.Add(helpers[h] ?? new FunctionBody { Locals = [], Code = [new Unreachable(), new End()] });
+                bodies.Add(helpers[h]
+                    ?? Written(new FunctionBody { Locals = [], Code = [new Unreachable(), new End()] }));
             if (_cps)
             {
                 module.Functions.Add(new Function { Type = 3 });
-                module.Codes.Add(BuildCpsRouterBody());
+                bodies.Add(Written(BuildCpsRouterBody()));
             }
             else if (_epilogueUsed)
             {
@@ -1377,7 +1446,7 @@ public static class WasmPredicateCompiler
                 args.Add(WebAssemblyValueType.Int32);
                 module.Types.Add(new WebAssemblyType { Parameters = args.ToArray(), Returns = [WebAssemblyValueType.Int32] });
                 module.Functions.Add(new Function { Type = (uint)(module.Types.Count - 1) });
-                module.Codes.Add(BuildVerdictEpilogueBody());
+                bodies.Add(Written(BuildVerdictEpilogueBody()));
             }
 
             // A diagnostic build names its functions, so a browser profile
@@ -1389,12 +1458,138 @@ public static class WasmPredicateCompiler
             foreach (byte[] image in _images)
                 module.Data.Add(new Data { Kind = DataKind.Passive, RawData = image });
 
-            foreach (var live in _liveAllPatches)
-                live.Value = ((long)RegisterDemand << 32) | (uint)WasmAbi.WakeRequest;
+            long liveAll = ((long)RegisterDemand << 32) | (uint)WasmAbi.WakeRequest;
+            foreach (var (body, at) in _liveAllSites)
+                WasmRelocatableModule.WritePaddedLeb(body, at, liveAll, LiveAllWidth);
 
+            // Every section but the code, which is put in from the bodies.
             using var ms = new MemoryStream();
             module.WriteToBinary(ms);
-            return _images.Count == 0 ? ms.ToArray() : WithDataCount(ms.ToArray(), _images.Count);
+            byte[] bytes = WithCode(ms.ToArray(), bodies);
+            return _images.Count == 0 ? bytes : WithDataCount(bytes, _images.Count);
+        }
+
+        // The member with the most instructions among those the partition holds.
+        private int LargestMemberOf((int Lo, int Hi) part, List<int> addrsInOrder)
+        {
+            var instructions = new int[_members.Count];
+            foreach (var ins in _instrs) instructions[ins.Section]++;
+            int largest = _instrs[_byPc[addrsInOrder[part.Lo]]].Section;
+            for (int i = part.Lo + 1; i < part.Hi; i++)
+            {
+                int section = _instrs[_byPc[addrsInOrder[i]]].Section;
+                if (instructions[section] > instructions[largest]) largest = section;
+            }
+            return largest;
+        }
+
+        // A request for every live register carries the module's register
+        // demand, known once every body is built. A written body holds a
+        // stand-in of full width where the request goes.
+        private readonly List<(byte[] Body, int At)> _liveAllSites = new();
+        private const long LiveAllStandIn = (0x7E00_0000L << 32) | (uint)WasmAbi.WakeRequest;
+        private const int LiveAllWidth = 10;
+
+        /// <summary>The body as its entry of the code section: its size and
+        /// its bytes. The library writes instructions only as part of a
+        /// module, so the body goes through a module of its own.</summary>
+        private byte[] Written(FunctionBody body)
+        {
+            foreach (var live in _liveAllPatches) live.Value = LiveAllStandIn;
+            byte[] entry = CodeEntry(body);
+            if (_liveAllPatches.Count > 0)
+            {
+                // Where the stand-ins are: written again with another one,
+                // the entry differs in one byte of each, the fifth.
+                foreach (var live in _liveAllPatches) live.Value = LiveAllStandIn ^ (1L << 32);
+                byte[] other = CodeEntry(body);
+                int found = 0;
+                for (int i = 0; i < entry.Length; i++)
+                {
+                    if (entry[i] == other[i]) continue;
+                    _liveAllSites.Add((entry, i - 4));
+                    found++;
+                }
+                if (other.Length != entry.Length || found != _liveAllPatches.Count)
+                    throw new WasmCompileException("a request for every live register was not found in its body");
+                _liveAllPatches.Clear();
+            }
+            return entry;
+        }
+
+        private static byte[] CodeEntry(FunctionBody body)
+        {
+            var alone = new Module();
+            alone.Codes.Add(body);
+            using var ms = new MemoryStream();
+            alone.WriteToBinary(ms);
+            // Magic and version, the section's id and size, one entry.
+            if (!ms.TryGetBuffer(out ArraySegment<byte> written) || written.Array is null)
+                throw new WasmCompileException("the body's bytes cannot be read");
+            int at = written.Offset + 8;
+            if (written.Array[at++] != 10)
+                throw new WasmCompileException("a body did not come out as a code section");
+            ReadLeb(written.Array, ref at);
+            if (ReadLeb(written.Array, ref at) != 1)
+                throw new WasmCompileException("a body did not come out as one entry");
+            return written.Array.AsSpan(at, written.Offset + written.Count - at).ToArray();
+        }
+
+        /// <summary>The module with its code section, put where the library
+        /// would have written it: before the data section, which is last.</summary>
+        private static byte[] WithCode(byte[] module, List<byte[]> bodies)
+        {
+            long payload = 0;
+            foreach (byte[] body in bodies) payload += body.Length;
+            byte[] count = Leb(bodies.Count);
+            payload += count.Length;
+            byte[] size = Leb(checked((int)payload));
+            int at = 8;                                     // magic and version
+            while (at < module.Length && module[at] != 11)
+            {
+                int next = at + 1;
+                int length = ReadLeb(module, ref next);
+                at = next + length;
+            }
+            var whole = new byte[checked((int)(module.Length + 1 + size.Length + payload))];
+            Array.Copy(module, 0, whole, 0, at);
+            int to = at;
+            whole[to++] = 10;
+            size.CopyTo(whole, to); to += size.Length;
+            count.CopyTo(whole, to); to += count.Length;
+            foreach (byte[] body in bodies)
+            {
+                body.CopyTo(whole, to);
+                to += body.Length;
+            }
+            Array.Copy(module, at, whole, to, module.Length - at);
+            return whole;
+        }
+
+        private static int ReadLeb(byte[] bytes, ref int at)
+        {
+            int value = 0, shift = 0;
+            while (true)
+            {
+                byte b = bytes[at++];
+                value |= (b & 0x7F) << shift;
+                if ((b & 0x80) == 0) return value;
+                shift += 7;
+            }
+        }
+
+        private static byte[] Leb(int value)
+        {
+            var bytes = new List<byte>();
+            do
+            {
+                byte b = (byte)(value & 0x7F);
+                value >>= 7;
+                if (value != 0) b |= 0x80;
+                bytes.Add(b);
+            }
+            while (value != 0);
+            return bytes.ToArray();
         }
 
         /// <summary>The body of helper <paramref name="h"/>, counted from the
@@ -1456,11 +1651,12 @@ public static class WasmPredicateCompiler
                 ],
                 Code = BuildCompareBody(),
             },
-            _ => new FunctionBody
+            6 => new FunctionBody
             {
                 Locals = [new Local { Count = 10, Type = WebAssemblyValueType.Int32 }],
                 Code = BuildUnwindExtraBody(),
             },
+            _ => BuildParkAttvarBody(),
         };
 
         /// <summary>ADR-063: a module with passive data segments carries a
@@ -1486,31 +1682,11 @@ public static class WasmPredicateCompiler
                     Array.Copy(module, pos, withCount, pos + 1 + header.Length + payload.Length, module.Length - pos);
                     return withCount;
                 }
-                int size = 0, shift = 0, at = pos + 1;
-                while (true)
-                {
-                    byte b = module[at++];
-                    size |= (b & 0x7F) << shift;
-                    if ((b & 0x80) == 0) break;
-                    shift += 7;
-                }
+                int at = pos + 1;
+                int size = ReadLeb(module, ref at);
                 pos = at + size;
             }
             return module;
-
-            static byte[] Leb(int value)
-            {
-                var bytes = new List<byte>();
-                do
-                {
-                    byte b = (byte)(value & 0x7F);
-                    value >>= 7;
-                    if (value != 0) b |= 0x80;
-                    bytes.Add(b);
-                }
-                while (value != 0);
-                return bytes.ToArray();
-            }
         }
 
         /// <summary>run(mailbox, cursor): route the cursor to the partition
@@ -1685,7 +1861,7 @@ public static class WasmPredicateCompiler
             }
             names.Add("resolver"); names.Add("unifier"); names.Add("identity");
             names.Add("arith"); names.Add("ground"); names.Add("acyclic");
-            names.Add("compare"); names.Add("unwind");
+            names.Add("compare"); names.Add("unwind"); names.Add("park");
             if (_cps) names.Add("router");
             else if (_epilogueUsed) names.Add("epilogue");
 
@@ -2232,7 +2408,47 @@ public static class WasmPredicateCompiler
         /// ring, the trail or the heap has no room.</para></summary>
         private void EmitParkAttvarBind(int pc, int cells, Action writeCells, Action pushBoundCell)
         {
-            OpenBlock();                                    // $done
+            // An ATTVAR cell's payload is its home. LDa is not: a register
+            // can hold the bare cell, which Deref does not follow.
+            Op(new LocalGet(LC0));
+            Op(new Int64Constant(Cell.PayloadMask));
+            Op(new Int64And());
+            Op(new Int32WrapInt64());
+            Op(new LocalSet(LAtHome));
+            // The function takes the machine as a partition of continuation
+            // functions does, in its arguments: the home where the entry
+            // cursor goes, and the cells less one where LCur does.
+            Op(new LocalGet(0));
+            Op(new LocalGet(LAtHome));
+            Op(new Int32Constant(cells - 1));
+            for (uint l = LHeapB; l <= LCP; l++) Op(new LocalGet(l));
+            Op(new WebAssembly.Instructions.Call(UseHelper(ParkIndex)));
+            Op(new Int32EqualZero());
+            OpenIf();
+            EmitDeopt(pc, 24);
+            CloseNested();
+            // The term the variable is bound to, at H, and the binding.
+            Op(new LocalGet(LH));
+            Op(new LocalSet(LAtIns));
+            writeCells();
+            Op(new LocalGet(LH));
+            Op(new Int32Constant(cells));
+            Op(new Int32Add());
+            Op(new LocalSet(LH));
+            CellStoreDyn(LHeapB, LAtHome, 0, pushBoundCell);
+            _wakeMayPend = true;
+        }
+
+        /// <summary>What <see cref="EmitParkAttvarBind"/> calls: everything
+        /// of the binding but the term's cells and the cell that binds, which
+        /// differ from site to site and are written there once this answers
+        /// 1. It answers 0, with nothing written, to step aside. One copy in
+        /// a module: inline it was a fifth of a large one, at sites a program
+        /// with no attributed variable never runs.</summary>
+        private FunctionBody BuildParkAttvarBody()
+        {
+            _code = new List<Instruction>();
+            _extraDepth = 0;
             OpenBlock();                                    // $slow
             LoadSlot32(WasmAbi.WakeRingBase);
             Op(new Int32EqualZero());
@@ -2261,18 +2477,13 @@ public static class WasmPredicateCompiler
             Op(new Int32GreaterThanOrEqualSigned());
             Op(new BranchIf(0));
             Op(new LocalGet(LH));
-            Op(new Int32Constant(cells - 1));
+            Op(new LocalGet(LCur));                         // the cells, less one
             Op(new Int32Add());
             LoadSlot32(WasmAbi.HeapWatermark);
             Op(new Int32GreaterThanOrEqualSigned());
             Op(new BranchIf(0));
 
-            // An ATTVAR cell's payload is its home. LDa is not: a register
-            // can hold the bare cell, which Deref does not follow.
-            Op(new LocalGet(LC0));
-            Op(new Int64Constant(Cell.PayloadMask));
-            Op(new Int64And());
-            Op(new Int32WrapInt64());
+            Op(new LocalGet(1));
             Op(new LocalSet(LAtHome));
             EmitAttrCountProbe();
             Op(new LocalGet(LAtCount));
@@ -2311,14 +2522,10 @@ public static class WasmPredicateCompiler
             CloseNested();                                  // $next
             CloseNested();                                  // $found
 
-            // The term the variable is bound to, at H.
+
+            // Where the caller writes the term.
             Op(new LocalGet(LH));
             Op(new LocalSet(LAtIns));
-            writeCells();
-            Op(new LocalGet(LH));
-            Op(new Int32Constant(cells));
-            Op(new Int32Add());
-            Op(new LocalSet(LH));
 
             // The wakeup: module, value, the term, the home.
             LoadSlot32(WasmAbi.WakeRingBase);
@@ -2365,18 +2572,18 @@ public static class WasmPredicateCompiler
                 });
             }
             CloseNested();
-            CellStoreDyn(LHeapB, LAtHome, 0, pushBoundCell);
             StoreSlot64(WasmAbi.Flags, () =>
             {
                 LoadSlot64(WasmAbi.Flags);
                 Op(new Int64Constant(WasmAbi.FlagWakeupPending));
                 Op(new Int64Or());
             });
-            _wakeMayPend = true;
-            Op(new Branch(1));                              // -> $done
+            Op(new Int32Constant(1));
+            Op(new Return());
             CloseNested();                                  // $slow
-            EmitDeopt(pc, 24);
-            CloseNested();                                  // $done
+            Op(new Int32Constant(0));
+            Op(new End());                                  // the function
+            return new FunctionBody { Locals = CpsEngineLocals(), Code = _code };
         }
 
         /// <summary>The image row of (LAtHome, LAtMod): its value's heap
@@ -5352,7 +5559,7 @@ public static class WasmPredicateCompiler
             StoreSlotFromI32Local(WasmAbi.CutBarrier, LB);
             Op(new Int32Constant(_env.EncodeReturnMarker(SelfFid(ins), ins.Pc + 9)));
             Op(new LocalSet(LCP));
-            if (_entryByFid.TryGetValue(callee, out int calleeEntry))
+            if (InGroup(SelfFid(ins), callee, out int calleeEntry))
             {
                 // In-group non-tail call: jump straight to the entry; the
                 // proceed will match the Cp marker just staged and jump back
@@ -5444,6 +5651,19 @@ public static class WasmPredicateCompiler
                     case Opcode.Try:
                     case Opcode.Retry:
                     case Opcode.Trust:
+                        return false;
+                    // The end of the clause laid out before: an indexed
+                    // predicate keeps its try/retry/trust in the index block,
+                    // so past this the scan reads that clause's Allocate.
+                    case Opcode.Proceed:
+                    case Opcode.DeallocateProceed:
+                    case Opcode.CutProceed:
+                    case Opcode.CutDeallocateProceed:
+                    case Opcode.Execute:
+                    case Opcode.DeallocateExecute:
+                    case Opcode.ExecuteBuiltin:
+                    case Opcode.ExecuteIl:
+                    case Opcode.ExecuteBytecode:
                         return false;
                 }
             }
@@ -10514,7 +10734,7 @@ public static class WasmPredicateCompiler
                 EmitReturn(WasmVerdict.BuiltinRequest);
                 return;
             }
-            if (_entryByFid.TryGetValue(callee, out int calleeEntry))
+            if (InGroup(OwnerAt(pc), callee, out int calleeEntry))
             {
                 // An in-group tail call: back to the dispatch at the entry,
                 // unless the heap crossed the watermark (the engine collects
@@ -12566,7 +12786,19 @@ public static class WasmPredicateCompiler
             int n = image.Length;
             var bytes = new byte[n * 8];
             for (int i = 0; i < n; i++)
-                System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(i * 8), image.Cells[i].Data);
+            {
+                // Atom and functor ids are the process's: through the env, so
+                // a baked module relocates them in the segment as it does in
+                // the code. The raw id named another functor elsewhere.
+                Cell c = image.Cells[i];
+                long data = c.Tag switch
+                {
+                    Tag.Atom => _env.AtomCell(c.AsAtomId),
+                    Tag.Functor => _env.FunctorCell(c.AsFunctorId),
+                    _ => c.Data,
+                };
+                System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(i * 8), data);
+            }
             uint segment = (uint)_images.Count;
             _images.Add(bytes);
 

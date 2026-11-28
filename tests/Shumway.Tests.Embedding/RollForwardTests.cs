@@ -21,5 +21,18 @@ public sealed class RollForwardTests
         Assert.Contains("<TargetFramework>net10.0</TargetFramework>", project);
         Assert.Contains("<RollForward>Major</RollForward>", project);
     }
+
+    /// <summary>An executable is a program run from the command line, often
+    /// for a short time, as the toolchain's own are: .NET's dynamic PGO,
+    /// which runs newly compiled code instrumented first, is off in it.</summary>
+    [Theory]
+    [InlineData(ExecutableDeploymentMode.FrameworkDependent)]
+    [InlineData(ExecutableDeploymentMode.SelfContained)]
+    public void AnExecutablesProjectTurnsDynamicPgoOff(ExecutableDeploymentMode mode)
+    {
+        string project = ExecutableEmitter.GenerateProjectFile("app", "win-x64", mode,
+            Array.Empty<string>(), Array.Empty<string>());
+        Assert.Contains("<TieredPGO>false</TieredPGO>", project);
+    }
 #endif
 }

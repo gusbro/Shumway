@@ -18,6 +18,7 @@
 // Only for the examples' bookkeeping: which version of each one this profile
 // was given, so a shipped change can reach it without writing over an edit.
 import * as settings from './settings.js';
+import { createMirror } from './mirror.js';
 
 let engine = null;
 
@@ -42,6 +43,8 @@ export const consultFile = (name) => engine.ConsultWorkspaceFile(name);
 export async function removeWorkspace(name) {
   const err = await engine.WorkspaceRemove(name);
   if (err) return err;
+  // A workspace made later under this name starts with nothing copied.
+  mirrors.delete(name);
   if (persistent()) {
     try { (await root()).removeEntry(name, { recursive: true }); } catch { /* never stored */ }
   }
@@ -50,9 +53,21 @@ export async function removeWorkspace(name) {
 
 // --- the persistent side (OPFS) ------------------------------------------
 
+// Whether storage answered when it was asked, not whether the interface is
+// there: a private window has getDirectory and throws from it, and a page
+// that believed the interface told the user their files were kept.
+let usable = typeof navigator !== 'undefined' && !!navigator.storage?.getDirectory;
+
 /** True when this browser gives us origin-private storage. */
-export const persistent = () =>
-  typeof navigator !== 'undefined' && navigator.storage && !!navigator.storage.getDirectory;
+export const persistent = () => usable;
+
+/** Asks storage for its root, once, before anything relies on it. */
+export async function probe() {
+  if (!usable) return false;
+  usable = await withTimeout(
+    navigator.storage.getDirectory().then(() => true, () => false), 3000, false);
+  return usable;
+}
 
 const root = async () => (await navigator.storage.getDirectory())
   .getDirectoryHandle('workspaces', { create: true });
@@ -76,6 +91,46 @@ export async function restoreAll() {
   return withTimeout(restoreCore(), 5000, 0);
 }
 
+// One mirror for each workspace, kept: it remembers what it copied, which is
+// what tells a file deleted here from one that was never brought here.
+const mirrors = new Map();
+
+function mirrorOf(workspace) {
+  let mirror = mirrors.get(workspace);
+  if (mirror) return mirror;
+  const stored = async () => (await root()).getDirectoryHandle(workspace, { create: true });
+  mirror = createMirror(
+    // The engine's side is the SELECTED workspace: whoever copies selects
+    // `workspace` first. Neither side tells versions apart, so a copy takes
+    // every file.
+    {
+      list: async () => (await list()).map((path) => ({ path })),
+      read: async (name) => (await read(name)) ?? '',
+      write: async (name, text) => { await write(name, text); },
+      remove: async (name) => { await remove(name); },
+    },
+    {
+      async list() {
+        const files = [];
+        for await (const [name, handle] of (await stored()).entries())
+          if (handle.kind === 'file') files.push({ path: name });
+        return files;
+      },
+      read: async (name) => (await (await (await stored()).getFileHandle(name)).getFile()).text(),
+      async write(name, text) {
+        const handle = await (await stored()).getFileHandle(name, { create: true });
+        const writable = await handle.createWritable();
+        await writable.write(text);
+        await writable.close();
+      },
+      async remove(name) {
+        try { await (await stored()).removeEntry(name); } catch { /* not stored */ }
+      },
+    });
+  mirrors.set(workspace, mirror);
+  return mirror;
+}
+
 async function restoreCore() {
   let count = 0;
   const active = await activeName();
@@ -84,11 +139,7 @@ async function restoreCore() {
     for await (const [workspace, handle] of dir.entries()) {
       if (handle.kind !== 'directory') continue;
       await select(workspace);
-      for await (const [name, file] of handle.entries()) {
-        if (file.kind !== 'file') continue;
-        await write(name, await (await file.getFile()).text());
-        count++;
-      }
+      count += (await mirrorOf(workspace).pull()).copied;
     }
   } catch {
     // A browser that refuses storage is not a failure worth stopping for.
@@ -105,17 +156,7 @@ export async function persist() {
 
 async function persistCore() {
   try {
-    const dir = await (await root()).getDirectoryHandle(await activeName(), { create: true });
-    const present = new Set(await list());
-    for (const name of present) {
-      const handle = await dir.getFileHandle(name, { create: true });
-      const writable = await handle.createWritable();
-      await writable.write((await read(name)) ?? '');
-      await writable.close();
-    }
-    for await (const [name, handle] of dir.entries()) {
-      if (handle.kind === 'file' && !present.has(name)) await dir.removeEntry(name);
-    }
+    await mirrorOf(await activeName()).push();
     lastError = null;
     return true;
   } catch (ex) {
@@ -215,10 +256,13 @@ export async function openFiles(confirmReplace = async () => true) {
 /**
  * Reads the files the user picks. Falls back to an <input type=file> where the
  * picker does not exist, which every browser has — the difference is only that
- * saving cannot write back to the same file.
+ * saving cannot write back to the same file. The picker opens before this
+ * returns its promise, so a caller in a click handler calls it before any
+ * await of its own: a browser that wants a user's gesture to open a picker
+ * does not see one after an await.
  * @returns {Promise<Array<{name: string, text: string}>>} empty if dismissed
  */
-async function pickFiles() {
+export async function pickFiles() {
   const picked = [];
   if (canPickFiles()) {
     let handles;

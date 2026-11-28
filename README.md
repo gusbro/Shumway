@@ -50,6 +50,10 @@ when 10 is not installed. The test gate currently runs on Windows.
 
 ## Try it online: [gusbro.github.io/Shumway](https://gusbro.github.io/Shumway/)
 
+The same engine runs [Jupyter notebooks](https://gusbro.github.io/Shumway/jupyter/)
+in the browser, with example notebooks to start from
+([guide](docs/guide/jupyter.md)).
+
 ## Highlights
 
 - **ISO Prolog** passing all seven of the [Neumerkel conformity suites](tests/conformity/README.md) (Aug 2026): syntax (365/365), number_chars/2 (67/67), variable_names/1 (63/63), dif/2 (26/26), length/2 (37/37), phrase/2,3 (58/58) and setup_call_cleanup/3 (23/23).
@@ -84,10 +88,10 @@ when 10 is not installed. The test gate currently runs on Windows.
   [SWI-Prolog](docs/guide/swi-library-support.md),
   [Scryer Prolog](docs/guide/scryer-library-support.md) and
   [Trealla Prolog](docs/guide/trealla-library-support.md) libraries
-  load under per-subtree dialects, [Logtalk](docs/guide/logtalk.md) (3.101.0) runs as a
-  first-class backend.
+  load under per-subtree dialects, and [Logtalk](docs/guide/logtalk.md) runs on it
+  as a first-class backend, supported by Logtalk itself since 3.103.0.
 - **Runs in a browser**: the same engine on WebAssembly as a static site with
-  no backend ([WebShumway](docs/guide/webshumway.md)).
+  no backend ([WebShumway](docs/guide/webshumway.md), [Jupyter](docs/guide/jupyter.md)).
 - **Source-level debugging** in [Visual Studio and VS Code](docs/guide/debugger.md),
   with the same capabilities in [WebShumway](docs/guide/webshumway.md)'s embedded
   debugger: breakpoints
@@ -136,7 +140,9 @@ $env:PATH = "$PWD\dist\Release;$env:PATH"      # PowerShell
 ```
 
 (`-c Debug` is the same layout under `dist/Debug/`, but the engine is markedly
-slower, so use Release unless you are debugging Shumway itself.)
+slower, so use Release unless you are debugging Shumway itself. Release also
+compiles the assemblies to native code for your machine, so the tools start
+sooner; its first build downloads the SDK's compiler for that.)
 
 ### Run
 

@@ -43,18 +43,50 @@ public sealed partial class Activation
             ClearPendingWakeups();
             return false;
         }
-        var addrs = CurrentFunctorAddresses;
-        if (arity < 0 || addrs is null
-            || !addrs.TryGetValue(WakeDriverFunctorId, out int driverAddr))
+        if (arity < 0 || !TryGetWakeDriverAddress(out int driverAddr))
             return false;
 
+        // No meta-call runs before the driver takes over, so no GC inhibit:
+        // once X0 holds the list every cell is reachable.
+        Cell list = TakeWakeBatchList();
+
+        // The frame: Allocate() stores E and CP (the interrupted
+        // continuation); the Y slots take the live registers and the three
+        // control words. RawInt keeps the GC's Y-slot scan off them.
+        Allocate(arity + 3);
+        for (int i = 0; i < arity; i++)
+            SetY(i, GetRegister(i));
+        SetY(arity, Cell.RawInt(B0));
+        SetY(arity + 1, Cell.RawInt(resumePc));
+        SetY(arity + 2, Cell.RawInt(arity));
+
+        SetCp(WakeReturnCp);
+        SetB0(B);                 // the driver's own cut barrier
+        SetRegister(0, list);
+        SetPc(driverAddr);
+        return true;
+    }
+
+    /// <summary>The address of the prelude's <c>'$wake_driver'/1</c>, or
+    /// false when the query has none linked.</summary>
+    public bool TryGetWakeDriverAddress(out int driverAddr)
+    {
+        driverAddr = -1;
+        var addrs = CurrentFunctorAddresses;
+        return addrs is not null && addrs.TryGetValue(WakeDriverFunctorId, out driverAddr);
+    }
+
+    /// <summary>Takes the pending wakeups as the list
+    /// <c>'$wake_driver'/1</c> runs: <c>'$wake'(Module, AttrValue, Other)</c>
+    /// for a hook, <c>'$wake_lazy'(Goal)</c> for a goal queued behind the
+    /// hooks. Plain heap construction.</summary>
+    public Cell TakeWakeBatchList()
+    {
         var batch = TakePendingWakeups();
         for (int n = 0; n < batch.Count; n++)
             Profiler.Note("wakeup_hook_run");
 
-        // The batch list, built back-to-front. Plain heap construction — no
-        // meta-call runs before the driver takes over, so no GC inhibit:
-        // once X0 holds the list every cell is reachable.
+        // Built back-to-front.
         Cell list = Cell.Atom(AtomTable.EmptyListId);
         for (int i = batch.Count - 1; i >= 0; i--)
         {
@@ -81,22 +113,7 @@ public sealed partial class Activation
             SetHeap(cons + 1, list);
             list = Cell.Lis(cons);
         }
-
-        // The frame: Allocate() stores E and CP (the interrupted
-        // continuation); the Y slots take the live registers and the three
-        // control words. RawInt keeps the GC's Y-slot scan off them.
-        Allocate(arity + 3);
-        for (int i = 0; i < arity; i++)
-            SetY(i, GetRegister(i));
-        SetY(arity, Cell.RawInt(B0));
-        SetY(arity + 1, Cell.RawInt(resumePc));
-        SetY(arity + 2, Cell.RawInt(arity));
-
-        SetCp(WakeReturnCp);
-        SetB0(B);                 // the driver's own cut barrier
-        SetRegister(0, list);
-        SetPc(driverAddr);
-        return true;
+        return list;
     }
 
     /// <summary>The driver proceeded into the sentinel: restore the

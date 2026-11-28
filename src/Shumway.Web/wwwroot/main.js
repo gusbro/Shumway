@@ -23,6 +23,36 @@ const programEl = document.getElementById('program');
 const program = () => (editor ? editor.getText() : '');
 const statusEl = document.getElementById('status');
 
+// --- starting ------------------------------------------------------------
+// What the page is doing while it starts: index.html has it from the first
+// paint. It stays the transcript's last line, with what is written meanwhile
+// above it, until the page can be used and its stored libraries are back.
+let startupEl = document.getElementById('startup');
+let askedWhileStarting = false;    // Enter on a goal before there was an engine
+const startup = {
+  counting: '',
+  share: 0,
+  /** Says the step. With `done` of `total`, the bar shows how far it is. */
+  step(text, done, total) {
+    if (!startupEl) return;
+    const counted = total > 0;
+    document.getElementById('startup-step').textContent =
+      counted ? `${text}: ${done} of ${total}…` : `${text}…`;
+    startupEl.classList.toggle('counted', counted);
+    // A total that grows while the step finds out how much there is must
+    // not take the bar back.
+    if (startup.counting !== text) { startup.counting = text; startup.share = 0; }
+    if (counted) startup.share = Math.max(startup.share, done / total);
+    document.getElementById('startup-fill').style.width =
+      counted ? `${Math.round(100 * startup.share)}%` : '';
+  },
+  /** Everything is in place, or the page will not start. */
+  end() {
+    startupEl?.remove();
+    startupEl = null;
+  },
+};
+
 // Attached once the engine exists (its colouring comes from the engine's lexer),
 // so the handlers registered below must tolerate it being absent for that moment.
 let editor = null;
@@ -66,7 +96,7 @@ function emit(text, role = '') {
   const span = document.createElement('span');
   if (role) span.className = role;
   span.textContent = text;
-  out.appendChild(span);
+  out.insertBefore(span, startupEl);     // at the end, once the page has started
   atLineStart = text.endsWith('\n');
 }
 
@@ -92,6 +122,8 @@ const emitNote = (text) => emit(text, 'note');
 const ISOLATION_ABORT = 'boot aborted: the page is not cross-origin isolated';
 const emitFailure = (what, detail) => {
   if (detail && detail.message === ISOLATION_ABORT) return;
+  // What escapes before the page can be used is the start itself failing.
+  if (document.body.classList.contains('starting')) startup.end();
   emit(`% ${what}: ${detail && detail.stack ? detail.stack : detail}\n`, 'error');
 };
 addEventListener('error', (e) => emitFailure('script error', e.error ?? e.message));
@@ -136,10 +168,28 @@ let answersShown = 0;      // answers reported for the query in progress — wha
 // program instead of being a new query.
 
 let awaitingInput = false;
+// The goal running now has read input: how long it runs is the user's time
+// too, and is not shown (time/1 says it, when asked).
+let inputThisRun = false;
+
+// Initialization goals running inside a consult, nested when one loads a file
+// with its own: the program is running then, not the consult.
+let initializing = 0;
+let initStarted = 0;
+
+/** Called by the engine when an initialization goal starts and ends. */
+function initializationRunning(on) {
+  if (on) {
+    if (initializing++ === 0) initStarted = performance.now();
+  } else if (initializing > 0) {
+    initializing--;
+  }
+}
 
 /** Called by the engine when a read has no characters left to give. */
 function askForInput() {
   awaitingInput = true;
+  inputThisRun = true;
   freshLine();
   emit('|: ', 'note');
   statusEl.textContent = 'the program is reading — type a term and press Enter  (Esc: end of file)';
@@ -161,7 +211,17 @@ async function withBusy(label, work) {
   // files is not compiling, and a wait that says which is which is a wait
   // somebody can judge.
   const text = typeof label === 'function' ? label : () => label;
+  inputThisRun = false;
   const tick = () => {
+    // As runningIndicator's: a program asking for input, or stopped at a
+    // breakpoint, owns the line, and an initialization goal is the program
+    // running.
+    if (awaitingInput || debugUi.isStopped()) return;
+    if (initializing > 0) {
+      const running = Math.round((performance.now() - initStarted) / 1000);
+      statusEl.textContent = inputThisRun || running < 2 ? '' : `running goal… ${running}s`;
+      return;
+    }
     const seconds = Math.round((performance.now() - started) / 1000);
     statusEl.textContent = seconds < 1 ? `${text()}…` : `${text()}… ${seconds}s`;
   };
@@ -206,11 +266,13 @@ async function supplyEndOfFile() {
 function runningIndicator() {
   const started = performance.now();
   let ticking = 0;
+  inputThisRun = false;
   const tick = () => {
     // The status line belongs to whoever needs it more: a program asking for
     // input has something for the user to DO, and a query STOPPED at a
-    // breakpoint is not running — the debug UI owns the line then.
-    if (awaitingInput || debugUi.isStopped()) return;
+    // breakpoint is not running — the debug UI owns the line then. Once the
+    // goal has read input, its time is not shown.
+    if (awaitingInput || debugUi.isStopped() || inputThisRun) return;
     statusEl.textContent =
       `running goal… ${((performance.now() - started) / 1000).toFixed(0)}s   (Stop to abandon)`;
   };
@@ -334,9 +396,40 @@ async function abandonQuery() {
 const stop = abandonQuery;
 
 document.getElementById('clear').addEventListener('click', () => {
-  out.replaceChildren();
+  out.replaceChildren(...(startupEl ? [startupEl] : []));
   atLineStart = true;
   queryInput.focus();
+});
+
+/** The transcript as text: what the pane shows, without the start-up line. */
+function transcriptText() {
+  let text = '';
+  for (const node of out.childNodes) if (node !== startupEl) text += node.textContent;
+  return text;
+}
+
+const copyButton = document.getElementById('copy');
+let copyLabelTimer = 0;
+function sayOnCopyButton(label) {
+  copyButton.textContent = label;
+  clearTimeout(copyLabelTimer);
+  copyLabelTimer = setTimeout(() => { copyButton.textContent = 'Copy'; }, 1500);
+}
+copyButton.addEventListener('click', () => {
+  // The write is asked for in the click itself: Safari allows one only while
+  // the gesture lasts, so nothing is awaited before it.
+  const written = navigator.clipboard
+    ? navigator.clipboard.writeText(transcriptText())
+    : Promise.reject(new Error('no clipboard'));
+  written.then(() => sayOnCopyButton('Copied'), () => {
+    // Refused: the transcript is selected, for the keyboard to copy it.
+    const range = document.createRange();
+    range.selectNodeContents(out);
+    const selection = getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    sayOnCopyButton('Selected');
+  });
 });
 
 // --- query entry ---------------------------------------------------------
@@ -356,6 +449,8 @@ document.getElementById('query-form').addEventListener('submit', async (e) => {
     return;
   }
   if (pending) return;          // Enter means "stop" while a query is pending
+  // No engine yet: the goal stays in the box, and is asked once there is.
+  if (document.body.classList.contains('starting')) { askedWhileStarting = true; return; }
   const text = queryInput.value.trim();
   if (!text) return;
   queryInput.value = '';
@@ -627,14 +722,30 @@ function showBuildStatus(text, onStop) {
   buildStatusEl.hidden = false;
 }
 
+/** Stops the build of `name`, if it is running, once the library it is
+ *  compiling lands. A removal waits for this: a build left running stores into
+ *  the collection again, and refuses to build the next import of it. */
+async function stopBuilding(name) {
+  const run = buildRun;
+  if (!run || run.name !== name) return;
+  run.cancel = true;
+  showBuildStatus('finishing the current library…');
+  while (buildRun === run) await idle(100);
+}
+
 async function buildCollection(name) {
   if (buildRun) { emit(`% already building ${buildRun.name}\n`, 'note'); return; }
   const run = { name, cancel: false };
   buildRun = run;
 
+  // Nor one refused: compiling its source in its place is for whoever asks
+  // for that library (ADR-076).
   const queue = (await libraries.entries(name))
-    .filter((e) => !e.compiled && e.state !== 'native');
+    .filter((e) => !e.compiled && e.state !== 'native' && e.state !== 'refused');
   const total = queue.length;
+  // A collection that came compiled has nothing to build, and the import
+  // said so.
+  if (total === 0) { buildRun = null; return; }
   let built = 0, stoppedEarly = false;
   const failed = [];
   let wanted = await librariesInUse();
@@ -693,7 +804,7 @@ async function buildCollection(name) {
      + (stoppedEarly
           ? '. That is what your programs import; “compile the rest” for the others,'
             + ' which still load from source.\n'
-          : '. The rest still load from source.\n'), 'note');
+          : queue.length > 0 ? '. The rest still load from source.\n' : '.\n'), 'note');
 
   // Named, because "11 could not be" leaves you having to find out which. The
   // list marks them and holds the reason.
@@ -728,7 +839,7 @@ async function refreshLibraries() {
 
     // Compiling what is left, for a collection imported before this existed or
     // one whose batch was stopped.
-    if (provided.some((e) => !e.compiled)) {
+    if (provided.some((e) => !e.compiled && e.state !== 'refused')) {
       const buildRest = document.createElement('button');
       buildRest.type = 'button';
       buildRest.className = 'heading-action';
@@ -745,6 +856,7 @@ async function refreshLibraries() {
       if (!await ask(`Remove library “${name}”?`,
                      'Its files are deleted from this browser. Programs that '
                      + 'import it will stop finding it.', 'Remove')) return;
+      await stopBuilding(name);
       await libraries.remove(name);
       await libraries.forget(name);
       await dropLibraryFiles(name);
@@ -765,20 +877,28 @@ async function refreshLibraries() {
       open.type = 'button';
       open.className = 'file';
       open.textContent = `library(${entry.name})`;
-      open.title = `open ${entry.name}.pl`;
-      open.addEventListener('click', async () => {
-        await openLibraryFile(name, entry.name + '.pl');
-        librariesDialog.close('');
-      });
+      if (entry.source) {
+        open.title = `open ${entry.name}.pl`;
+        open.addEventListener('click', async () => {
+          await openLibraryFile(name, entry.name + '.pl');
+          librariesDialog.close('');
+        });
+      } else {
+        open.disabled = true;
+        open.title = 'it came compiled, without its source';
+      }
 
       const state = document.createElement('span');
       state.textContent = entry.state === 'native' ? 'provided by Shumway'
         : entry.state === 'failed' ? 'will not compile'
+        : entry.state === 'refused' ? 'could not be built again'
         : entry.note ? 'compiled, with warnings'
+        : !entry.source ? 'compiled, no source'
         : entry.compiled ? 'compiled'
         : 'source only';
       if (entry.note) {
-        state.className = entry.state === 'failed' ? 'library-broken' : 'library-note';
+        state.className = entry.state === 'failed' || entry.state === 'refused'
+          ? 'library-broken' : 'library-note';
         state.title = entry.note;
       }
 
@@ -796,7 +916,7 @@ async function refreshLibraries() {
           const said = await libraries.diagnostic(name, entry.name);
           librariesDialog.close('');          // modal: its backdrop hides output
           emit(`% ${entry.name}:\n${said.split('\n').slice(1).join('\n')}\n`,
-               entry.state === 'failed' ? 'error' : 'note');
+               entry.state === 'failed' || entry.state === 'refused' ? 'error' : 'note');
         });
       }
 
@@ -817,7 +937,8 @@ async function refreshLibraries() {
       });
 
       // The engine has its own version: nothing to build.
-      row.append(open, state, ...(entry.state === 'native' ? [] : [build]));
+      // Nor for one that came compiled without its source.
+      row.append(open, state, ...(entry.state === 'native' || !entry.source ? [] : [build]));
       if (why) row.append(why);
       parts.push(row);
     }
@@ -832,12 +953,33 @@ document.getElementById('libraries').addEventListener('click', async () => {
 
 /** Names a set of fetched sources, writes them in, and starts building. Shared
  *  by both ways in — where the files came from stops mattering here. */
-async function adoptCollection(files, { name: suggestedName, dialect = '', from }) {
-  document.getElementById('import-detail').textContent =
-    `${files.length} source file(s) from “${from}”.`;
-  document.getElementById('import-name').value = suggestedName;
+async function adoptCollection(files, { name: suggestedName, dialect = '', from, source = '' }) {
+  // A bundle this engine cannot read nor build again, with no source of its
+  // library, is a library that could not load: one built with this
+  // Shumway's tools is what to bring.
+  const stale = libraries.unreadable(files);
+  if (stale.length > 0) {
+    const many = stale.length > 1;
+    emit(`% ${nameList(stale)}: ${many ? 'these bundles use' : 'this bundle uses'}`
+       + ' a format of compiled code that this Shumway cannot read, and'
+       + ` ${many ? 'they do' : 'it does'} not say how to build ${many ? 'them' : 'it'} again.`
+       + ` Build ${many ? 'them' : 'it'} with this Shumway's tools, or import the library's`
+       + ' source in its place.\n', 'error');
+    return;
+  }
+  const compiled = files.filter(libraries.compiledAhead).length;
+  const sources = files.length - compiled;
+  document.getElementById('import-detail').textContent = `From “${from}”: `
+    + [sources > 0 ? `${sources} source file(s)` : '',
+       compiled > 0 ? `${compiled} librar${compiled === 1 ? 'y' : 'ies'} compiled ahead` : '']
+      .filter(Boolean).join(', ') + '.';
+  const nameInput = document.getElementById('import-name');
+  nameInput.value = suggestedName;
   document.getElementById('import-dialect').value = dialect;
   importDialog.showModal();
+  // Selected, as askFor does: a name typed replaces the suggested one.
+  nameInput.focus();
+  nameInput.select();
   const answer = await new Promise((resolve) =>
     importDialog.addEventListener('close', () => resolve(importDialog.returnValue), { once: true }));
   if (answer !== 'ok') return;
@@ -849,12 +991,15 @@ async function adoptCollection(files, { name: suggestedName, dialect = '', from 
   let phase = 'importing';
   const err = await withBusy(
     () => `${phase} ${name}`,
-    () => libraries.importFolder(name, dial, files, (p) => { phase = p; }));
+    () => libraries.importFolder(name, dial, files, (p) => { phase = p; }, source));
 
   if (err) { emit(`% ${name}: ${err}\n`, 'error'); return; }
   const provided = await libraries.entries(name);
+  const ready = provided.filter((entry) => entry.compiled).length;
   emit(`% ${name}: ${provided.length} librar${provided.length === 1 ? 'y' : 'ies'} available`
-     + ` — compiling them in the background; each gets faster as it lands\n`, 'note');
+     + (ready === provided.length ? ', compiled ahead\n'
+       : ` — compiling ${ready > 0 ? 'the others' : 'them'} in the background;`
+         + ' each gets faster as it lands\n'), 'note');
   await refreshLibraries();
   buildCollection(name);        // not awaited: it runs while the page is used
 }
@@ -866,7 +1011,22 @@ document.getElementById('import-library').addEventListener('click', async () => 
   const picked = await libraries.pickFolder();
   if (!picked) return;
   if (picked.files.length === 0) {
-    emit('% that folder holds no Prolog sources\n', 'error');
+    emit('% that folder holds no Prolog sources nor libraries compiled ahead\n', 'error');
+    return;
+  }
+  await adoptCollection(picked.files, { name: picked.name, from: picked.name });
+});
+
+document.getElementById('import-files').addEventListener('click', async () => {
+  librariesDialog.close('');          // see import-library: modal hides progress
+  // Opened before anything is awaited: see libraries.pickCollectionFiles.
+  const chosen = await libraries.pickCollectionFiles();
+  if (chosen.length === 0) return;
+  let picked;
+  try {
+    picked = await withBusy('reading the files', () => libraries.collectionOfFiles(chosen));
+  } catch (ex) {
+    emit(`% ${ex.message ?? ex}\n`, 'error');
     return;
   }
   await adoptCollection(picked.files, { name: picked.name, from: picked.name });
@@ -896,35 +1056,36 @@ document.getElementById('import-url').addEventListener('click', async () => {
   if (answer !== 'ok') return;
 
   const url = urlInput.value.trim();
-  const where = libraries.parseGitHubTree(url);
-  if (!where) {
-    emit('% that is not a GitHub directory address'
-       + ' (https://github.com/owner/repo/tree/branch/path)\n', 'error');
+  let address;
+  try { address = new URL(url); } catch {
+    emit('% that is not a URL\n', 'error');
     return;
   }
-
+  // A GitHub directory, or a Prolog file or an archive anywhere.
+  const where = libraries.parseGitHubTree(url);
   const known = libraries.SUGGESTED.find((s) => s.url === url);
-  emit(`% fetching ${where.owner}/${where.repo}`
-     + (where.path ? `/${where.path}` : '') + `…\n`, 'note');
+  emit(`% fetching ${where ? `${where.owner}/${where.repo}${where.path ? `/${where.path}` : ''}` : url}…\n`,
+    'note');
 
   let fetched = 0, expected = 0;
-  let files;
+  let got;
   try {
-    files = await withBusy(
-      () => expected === 0
-        ? `asking GitHub what is in ${where.repo}`
-        : `fetching ${where.repo}: ${fetched} of ${expected} files`,
-      () => libraries.fetchGitHubTree(where, (done, total) => { fetched = done; expected = total; }));
+    got = await withBusy(
+      () => !where ? `fetching from ${address.host}`
+        : expected === 0 ? `asking GitHub what is in ${where.repo}`
+          : `fetching ${where.repo}: ${fetched} of ${expected} files`,
+      () => libraries.fetchCollection(url, (done, total) => { fetched = done; expected = total; }));
   } catch (ex) {
     emit(`% ${ex.message ?? ex}\n`, 'error');
     return;
   }
-  emit(`% fetched ${files.length} file(s)\n`, 'note');
+  emit(`% fetched ${got.files.length} file(s)\n`, 'note');
 
-  await adoptCollection(files, {
-    name: known?.name ?? (where.path.split('/').pop() || where.repo),
+  await adoptCollection(got.files, {
+    name: libraries.collectionName(url),
     dialect: known?.dialect ?? '',
-    from: `${where.owner}/${where.repo}`,
+    from: got.from,
+    source: url,
   });
 });
 
@@ -981,6 +1142,15 @@ document.getElementById('reference-filter')
   .addEventListener('input', (e) => renderReference(e.target.value));
 
 document.getElementById('guide').addEventListener('click', () => guideDialog.showModal());
+
+// The notebook site is published beside the demo (ADR-073), but a demo hosted
+// on its own has none: its links show only when the site answers.
+fetch('jupyter/jupyter-lite.json', { method: 'HEAD', cache: 'no-store' })
+  .then((response) => {
+    if (!response.ok) return;
+    for (const element of document.querySelectorAll('[data-needs-notebooks]')) element.hidden = false;
+  })
+  .catch(() => { });
 
 // --- workspaces ----------------------------------------------------------
 // A workspace is a project: its own directory, its own files, and — because
@@ -1159,8 +1329,10 @@ async function openWorkspaceFile(name) {
 
 async function refreshFiles() {
   // Runs after every change of which file is on screen, so it is also the
-  // one place that tells the debug gutter to show THAT file's dots.
+  // one place that tells the debug gutter to show THAT file's dots, and the
+  // Consult button whether it loads that file.
   debugUi.fileChanged();
+  syncConsultButton();
   const names = await workspace.list();
   const chips = names.map((name) => {
     const item = document.createElement('button');
@@ -1276,13 +1448,15 @@ document.getElementById('export-workspace').addEventListener('click', async () =
 // --- files ---------------------------------------------------------------
 
 document.getElementById('open-file').addEventListener('click', async () => {
-  // Saved BEFORE the picker opens, not after it returns: what you typed
-  // belongs to the file you were on whether you go on to open that same file,
-  // a different one, or nothing at all. (It ran after, and so reopening the
-  // file you were editing wrote the stale buffer back over what had just
-  // arrived — the file could only be brought in again by deleting it first.)
+  // The picker opens first, in the click: a browser that wants a user's
+  // gesture for it does not see one after an await. What you typed is saved
+  // while it is open, and before what you picked comes in: it belongs to the
+  // file you were on whether you go on to open that same file, a different
+  // one, or nothing at all. (Saved after, reopening the file you were editing
+  // wrote the stale buffer back over what had just arrived.)
+  const picking = workspace.pickFiles();
   await saveBuffer();               // may be a library file: it saves where it belongs
-  const arrived = await workspace.openFiles(async (name) =>
+  const arrived = await workspace.acceptFiles(await picking, async (name) =>
     (await askChoice(
       `Replace “${name}” in this workspace?`,
       'The file you picked holds different text from the copy here. '
@@ -1551,12 +1725,15 @@ addEventListener('hashchange', () => openSharedFromHash());
  * returns whether it loaded.
  */
 async function consultBuffer(note) {
+  if (!consultable(currentFile)) {
+    emit(`% ${currentFile} is not a Prolog source: Consult loads .pl, .pro and .prolog files\n`, 'note');
+    return false;
+  }
   // Loading a program ends any query still open over the old one — running, or
   // waiting for the next solution. Otherwise `;` would go on asking a search
   // whose clauses have been replaced underneath it.
   await abandonQuery();
   await saveBuffer();
-  const started = performance.now();
   // In debug mode a workspace file is consulted BY ITS FILE (it was just
   // saved), so its debug sites — and everyone's breakpoints — key by the
   // file's name instead of the anonymous buffer. A library file keeps the
@@ -1566,7 +1743,6 @@ async function consultBuffer(note) {
       debugUi.active() && currentLib === null
         ? workspace.consultFile(currentFile)
         : session.consult(program(), currentDialect)));
-  const took = Math.round(performance.now() - started);
   if (!err) {
     editor?.markError(null);
     // Operators the program declared are now in the table, so the buffer's
@@ -1577,10 +1753,8 @@ async function consultBuffer(note) {
     await debugUi.afterConsult();
     consultedSomething = true;
     wasmAllTick();
-    // How long it took, when it took long enough to have been noticed: loading
-    // a library is seconds of work and saying so is the difference between
-    // "slow" and "broken".
-    emit(took >= 1000 ? note.replace(/\n$/, ` (${(took / 1000).toFixed(1)}s)\n`) : note, 'note');
+    // No time: time/1 says how long, when asked.
+    emit(note, 'note');
     return true;
   }
   emit(err + '\n', 'error');
@@ -1595,6 +1769,20 @@ async function consultBuffer(note) {
 // worth a word first.
 let consultedSomething = false;
 
+/** Whether Consult loads this file: a Prolog source, or a name with no
+ *  extension. A workspace may hold other files, a program's data or another
+ *  language's source, which a query loads its own way. */
+const consultable = (name) => libraries.isSource(name) || !/\.[^./]+$/.test(name);
+
+/** The Consult button says whether the file on screen is one it loads. */
+function syncConsultButton() {
+  const button = document.getElementById('consult');
+  const yes = consultable(currentFile);
+  button.disabled = !yes;
+  button.title = yes ? 'load this program into the engine (Ctrl-Enter)'
+    : `${currentFile} is not a Prolog source: Consult loads .pl, .pro and .prolog files`;
+}
+
 document.getElementById('consult').addEventListener('click',
   () => consultBuffer('% consulted.\n'));
 
@@ -1604,8 +1792,6 @@ const config = settings.load();
 theme.attach(document.getElementById('theme'), config.theme,
              (choice) => settings.update({ theme: choice }));
 layout.init();
-
-out.textContent = '';
 
 // isolate.js (a plain script, ahead of this module) has already decided what
 // to do about cross-origin isolation. Aborting boot is CONTROL FLOW here, not
@@ -1617,6 +1803,7 @@ function explainIsolationFailure() {
   // one, and it asserts on SharedArrayBuffer before answering anything. The
   // old fallback message promised a shared-thread engine that no longer
   // exists in this build — what actually happened was that assert.
+  startup.end();
   freshLine();
   emit('% the engine needs cross-origin isolation (SharedArrayBuffer) and this'
      + ' page has not managed it yet — the worker that provides it did not'
@@ -1642,6 +1829,7 @@ if (!crossOriginIsolated) {
     // Normally invisible (the page is hidden and the reload is milliseconds
     // away); on a slow connection the hide times out and THIS text is what
     // the visitor reads while the install keeps going underneath.
+    startup.step('Setting up the first visit');
     emit('% first visit setup: installing the worker that lets this page run'
        + ' the engine. The page reloads itself when it is ready.\n', 'note');
     window.addEventListener('shumway-isolation-failed',
@@ -1679,8 +1867,21 @@ window.shumwayDebug = {
   toggle: () => debugUi.toggle(),
 };
 
-emit(await session.boot(emitEngineOutput, askForInput, emitDiagnostic, onDebugStop, emitNote) + '\n\n', 'note');
+// A runtime that stops answering cannot be started again from here: the
+// page says so, once. In the transcript, which keeps what is written to it:
+// the status line is written over by whatever happens next.
+session.onRuntimeStopped(() => {
+  const text = "The page's runtime stopped answering, and only reloading the page starts it again. "
+    + 'Copy what you changed in the editor first: it may not be saved.';
+  startup.end();
+  emit(`\n% ${text}\n\n`, 'error');
+  document.body.classList.add('runtime-stopped');
+});
+
+emit(await session.boot(emitEngineOutput, askForInput, emitDiagnostic, onDebugStop, emitNote, startup.step,
+  initializationRunning) + '\n\n', 'note');
 setPending(false);
+startup.step('Bringing back your files');
 
 editor = attach(
   programEl, session.highlight, await session.highlightKinds(), session.complete);
@@ -1712,11 +1913,17 @@ if (settings.wasDiscarded()) {
 
 // Files: bring back whatever the last session left, then open the workspace it
 // was left in.
+libraries.setPersistent(await workspace.probe());
 const restored = await workspace.restoreAll();
 // The libraries' sources come back now; their bundles while the page is in use
 // (see libraries.js). A consult or a query waits for those.
 const storedLibs = await libraries.restoreSources();
-libraries.restoreBundles(storedLibs).then(() => {
+const bundlesBack = libraries.restoreBundles(storedLibs,
+  (collection, library) => startup.step(`Bringing back library(${library}) of ${collection}`),
+  // Came as its bundle alone, in a format this Shumway does not read.
+  (collection, library) => emit(`% library(${library}) of ${collection}: its bundle uses a format`
+    + ' of compiled code that this Shumway cannot read. Import it again in the current format.\n', 'error'));
+bundlesBack.then(() => {
   if (storedLibs.length > 0) emit(`% ${storedLibs.length} library(ies) restored\n`, 'note');
 });
 // The examples workspace reappears whenever it is ABSENT: deleting it and
@@ -1812,7 +2019,12 @@ async function warmOfflineCache() {
   } catch { /* no worker, or it never took control: the session is unaffected */ }
 }
 
+// The page can be used from here. What it is doing stays on show until the
+// stored libraries are back too: a goal or a consult waits for them.
+document.body.classList.remove('starting');
+bundlesBack.finally(() => startup.end());
 queryInput.focus();
+if (askedWhileStarting) document.getElementById('query-form').requestSubmit();
 
 const persistMode = /^#persist=(write|check)$/.exec(location.hash);
 if (persistMode) {
@@ -1858,6 +2070,51 @@ if (persistMode) {
     try { await fetch('/collect', { method: 'POST', body: t }); } catch { }
   }
   try { window.close(); } catch { }
+} else if (location.hash.startsWith('#notebook')) {
+  // #notebook, or #notebook=<sessions>[&threads=<pool>]: notebook sessions
+  // driven as a kernel drives them (ADR-068).
+  let closing;
+  try {
+    const count = parseInt(location.hash.split('=')[1] ?? '2', 10) || 2;
+    const { run } = await import('./notebookprobe.js');
+    const lines = [];
+    closing = await run(count, (line) => { lines.push(line); emit(line); });
+    emit(closing);
+    closing = lines.join('') + closing;
+  } catch (ex) {
+    closing = '--- notebook probe: done (STOPPED: ' + (ex && ex.message ? ex.message : ex) + ') ---\n';
+    emit(closing);
+  }
+  try { await fetch('/collect', { method: 'POST', body: closing }); } catch { }
+} else if (location.hash.startsWith('#sessionsmem')) {
+  // #sessionsmem=<sessions>[&what=<level>][&threads=<pool>]: what a session
+  // costs (ADR-068).
+  try {
+    const count = parseInt(location.hash.split('=')[1] ?? '4', 10) || 4;
+    const before = session.wasmMemoryBytes();
+    const what = /[#&]what=(\w+)/.exec(location.hash)?.[1] ?? 'clpfd';
+    const report = await session.exports().SessionsMemoryProbe(count, what);
+    const after = session.wasmMemoryBytes();
+    const mb = (bytes) => (bytes / 1048576).toFixed(1);
+    emit(`note the runtime's memory: ${mb(before)} MB before, ${mb(after)} MB after; `
+       + `threads asked for at boot: ${session.threadPoolSize()}\n`);
+    emit(report);
+  } catch (ex) {
+    emit('--- sessions memory probe: done (STOPPED: ' + (ex && ex.message ? ex.message : ex) + ') ---\n');
+  }
+} else if (location.hash.startsWith('#sessions')) {
+  // #sessions, or #sessions=<rounds>: two sessions beside the page's own, each
+  // with its engine, thread and tier (ADR-068), run against each other.
+  try {
+    const rounds = parseInt(location.hash.split('=')[1] ?? '3', 10) || 3;
+    const report = await session.exports().SessionsProbe(rounds);
+    emit(report);
+    try { await fetch('/collect', { method: 'POST', body: report }); } catch { }
+  } catch (ex) {
+    const t = '--- sessions probe: STOPPED: ' + (ex && ex.message ? ex.message : ex) + ' ---\n';
+    emit(t);
+    try { await fetch('/collect', { method: 'POST', body: t }); } catch { }
+  }
 } else if (location.hash.startsWith('#wasmsplit')) {
   // #wasmsplit, or #wasmsplit=<hops>x<rounds>. Phase 0 of the many-modules
   // arc: two modules hand control to each other with return_call_indirect

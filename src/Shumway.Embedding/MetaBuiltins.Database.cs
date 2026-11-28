@@ -34,7 +34,7 @@ public static partial class MetaBuiltins
         AtomTerm a => a.Name is "built_in" or "dynamic" or "static" or "defined"
             or "multifile" or "discontiguous" or "control_construct"
             or "logtalk" or "foreign" or "iso" or "deterministic"
-            or "non_terminal" or "redefined",
+            or "non_terminal" or "redefined" or "exported",
         CompoundTerm { Functor: "imported_from", Args.Length: 1 } => true,
         CompoundTerm { Functor: "meta_predicate", Args.Length: 1 } => true,
         CompoundTerm { Functor: "number_of_clauses", Args.Length: 1 } => true,
@@ -102,13 +102,14 @@ public static partial class MetaBuiltins
                     ? "dynamic" : "static"),
                 new AtomTerm("defined"),
             };
+            if (host.ModuleExportsFunctor(module, fid)) props.Add(new AtomTerm("exported"));
         }
         else
         {
             // A bare head is asked from user's viewpoint, whose import table
             // holds what a top-level use_module brought in (an engine library
             // that is an export-qualified module among them).
-            if (host.ModuleImportSource(module ?? PrologEngine.DefaultModuleName, fid) is { } src
+            if (host.ViewImportSource(module ?? PrologEngine.DefaultModuleName, fid) is { } src
                 && host.ModuleDefinesFunctor(src, fid))
             {
                 importedFrom = src;
@@ -655,6 +656,10 @@ public static partial class MetaBuiltins
             throw new InvalidOperationException("trace/0 requires a PrologEngine host.");
         host.SetTracing(true, engine.Out);
         engine.Debug = host.DebugSession;
+        // The query that is running was set up with its compiled code linked.
+        // A call misses an empty table and finds the bytecode; what is already
+        // running in compiled code is resumed through the store.
+        engine.IlByFunctorId = null;
         return true;
     }
 

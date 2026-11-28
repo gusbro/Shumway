@@ -17,15 +17,15 @@ internal static partial class WebShumwayApp
     /// <para>No filesystem is involved on either path: the bundle is a manifest
     /// resource and the fallback prelude is compiled-in source. That matters here
     /// beyond speed — the page must boot before any workspace is mounted.</para></summary>
-    internal static PrologEngine BootEngine()
+    internal static PrologEngine BootEngine(WasmTierSettings tier)
     {
         var engine = EngineFromStdlib(announce: true);
         // The wasm Tier-1 (plan phase 2): promotion through the ordinary
         // dispatch machinery, execution as native wasm. No-op unless the
         // Shumway.WasmCodegen switch is on.
-        BrowserWasmTier.WireJitControl(engine);
-        BrowserWasmTier.Attach(engine);
-        InstallBundleWasm(engine);
+        BrowserWasmTier.WireJitControl(engine, tier);
+        BrowserWasmTier.Attach(engine, tier);
+        InstallBundleWasm(engine, tier);
         return engine;
     }
 
@@ -36,9 +36,8 @@ internal static partial class WebShumwayApp
     /// prelude first.</summary>
     internal static PrologEngine EngineFromStdlib(bool announce)
     {
-        using Stream? rs = typeof(WebShumwayApp).Assembly
-            .GetManifestResourceStream(StdlibResourceName);
-        if (rs is null)
+        Bundle? stdlib = StdlibBundle;
+        if (stdlib is null)
         {
             // The bake target did not run. Correct, just slower — surfaced rather
             // than silent, or a build regression reads as a sluggish engine.
@@ -46,23 +45,53 @@ internal static partial class WebShumwayApp
                 WriteToPage($"% no {StdlibResourceName} embedded — compiling the prelude\n");
             return new PrologEngine();
         }
+        return PrologEngine.FromBundle(stdlib);
+    }
+
+    private static readonly object StdlibGate = new();
+    private static Bundle? _stdlib;
+    private static bool _stdlibRead;
+
+    /// <summary>The stdlib bundle, read once and shared by every engine of
+    /// the page: loading a bundle only reads it.</summary>
+    private static Bundle? StdlibBundle
+    {
+        get
+        {
+            lock (StdlibGate)
+            {
+                if (!_stdlibRead)
+                {
+                    _stdlibRead = true;
+                    _stdlib = ReadStdlib();
+                }
+                return _stdlib;
+            }
+        }
+    }
+
+    private static Bundle? ReadStdlib()
+    {
+        using Stream? rs = typeof(WebShumwayApp).Assembly
+            .GetManifestResourceStream(StdlibResourceName);
+        if (rs is null) return null;
         var ms = new MemoryStream();
         rs.CopyTo(ms);
-        return PrologEngine.FromBundle(BundleReader.FromBytes(ms.ToArray()));
+        return BundleReader.FromBytes(ms.ToArray());
     }
 
     /// <summary>The stdlib bundle's wasm module (linked with --wasm when the
     /// tier is built in): installed now rather than at the first query, so
     /// the boot pays for it and not the user's first goal. Nothing is
     /// written to the page: jit_compile(status) reports the note.</summary>
-    internal static void InstallBundleWasm(PrologEngine engine)
+    internal static void InstallBundleWasm(PrologEngine engine, WasmTierSettings tier)
     {
         if (engine.IlPromotion.Wasm is not { } wasm) return;
         // jit_compile(off) asked for no wasm: installing 530 predicates of
         // it at boot would answer a different question.
         // Left queued, not dropped: with no tier attached nothing installs
         // them, and a later jit_compile that attaches one installs them then.
-        if (BrowserWasmTier.Disabled)
+        if (tier.Disabled)
         {
             BrowserWasmTier.BundleInstallNote = "not installed (jit_compile off)";
             return;

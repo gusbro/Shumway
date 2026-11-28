@@ -147,6 +147,8 @@ public static class ShmoWriter
             WriteLengthPrefixedUtf8(bw, od.Type);
             WriteLengthPrefixedUtf8(bw, od.Name);
         }
+        BundleWriter.WriteFlags(bw, obj.Flags);
+        BundleWriter.WriteInitializationGoals(bw, obj.InitializationGoals);
 
         // ADR-038 — export-qualification trailer: the export surface, resolved
         // import table, and library dependencies of a :- module/2 module.
@@ -185,8 +187,12 @@ public static class ShmoWriter
         bw.Write(obj.Dialect is not null);
         if (obj.Dialect is not null) WriteLengthPrefixedUtf8(bw, obj.Dialect);
 
+        // ADR-075, decision 3 — the library bundles the module attaches.
+        bw.Write((uint)obj.DynamicLibraries.Count);
+        foreach (string lib in obj.DynamicLibraries) WriteLengthPrefixedUtf8(bw, lib);
+
         bw.Flush();
-        return BundleFormat.FinalizeImage(ms.ToArray());
+        return BundleFormat.FinalizeImage(ms.ToArray(), obj.Recipe);
     }
 
     private static void WriteLengthPrefixedUtf8(BinaryWriter bw, string s)

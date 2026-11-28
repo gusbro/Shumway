@@ -1,0 +1,22 @@
+### call
+jupyter:print_and_save_table(member(X, [a, 'B c', "d,e"]), csv, 'out.csv').
+### reference
+jupyter::print_and_save_table(member(X, [a, 'B c', "d,e"]), csv, 'out.csv').
+### call
+catch((open('out.csv', read, _S), close(_S), R = written), _, R = missing).
+### call
+jupyter:print_and_save_table((member(X, [1, 2]), member(Y, [p, q])), tsv, 'out.tsv').
+### reference
+jupyter::print_and_save_table((member(X, [1, 2]), member(Y, [p, q])), tsv, 'out.tsv').
+### call
+%%csv table.csv
+member(X, [1, 2]), Y is X * X.
+### call
+%%tsv table.tsv
+member(X, [1, 2]), Y is X * X
+### call
+jupyter:print_and_save_table(member(X, [1]), xml, 'out.xml').
+### reference
+jupyter::print_and_save_table(member(X, [1]), xml, 'out.xml').
+### call
+print_and_save_table(fail, csv, 'empty.csv').

@@ -39,6 +39,13 @@ Two panes. On the left a program and the files it belongs to; on the right the
 top level. The interaction is the one every Prolog top level has: type a goal,
 get an answer, press `;` for the next one and `.` to stop.
 
+While the page starts, the top level says what it is doing: downloading the
+runtime, with how many of its files have arrived, starting it, starting the
+engine, and bringing back your files and your compiled libraries. The first
+visit downloads the runtime, and so does the first after the site is updated.
+Later ones start from the browser's copy. A goal entered before the engine is
+there stays in its box and is asked once the page has started.
+
 Your program runs on two tiers, as it does on the desktop: the bytecode
 interpreter (Tier-0), and a just-in-time compiler (Tier-1) that turns it into
 WebAssembly. By default the whole program is compiled after each consult; the
@@ -95,11 +102,22 @@ Files live in the browser's private storage (OPFS) and survive a reload.
 **Download** saves one file to your computer; **Export** saves the whole
 workspace as a zip.
 
+Should the engine stop answering, which has been seen in Safari, the page
+says so and that only reloading it starts the engine again. Copy what you
+changed in the editor before you reload: it may not have been saved. A
+query may take as long as it needs: the page tells an engine that stopped
+from one that is busy.
+
 **Open** brings files from your computer into the workspace. It is also how you
 pick up an edit you made to one of them elsewhere: open it again and the newer
 text comes in. If the copy here differs, you are asked which of the two to
-keep. Whatever you were editing is saved before the picker opens, so choosing
-either one costs you nothing.
+keep. The file you were editing is saved before the opened files are added,
+so you lose nothing whichever copy you keep.
+
+**Consult** loads the file on screen. It only works for Prolog files: `.pl`,
+`.pro`, `.prolog`, or a name without an extension. A workspace can also hold
+other files, such as data that a program reads or code in another language.
+For those files the button is disabled, and you load them from a query.
 
 The `examples` workspace comes back whenever it is missing, so deleting it and
 reloading the page is how you ask for a fresh copy. On later visits the
@@ -117,15 +135,30 @@ over.
 
 ### Importing
 
-Two ways in:
+There are three ways to import:
 
 - **Import folder…**: a folder from your computer.
-- **Import from URL…**: a GitHub directory address, the one you get by
-  navigating there and copying the bar. Scryer's, SWI's and Trealla's are
-  offered, so borrowing a library does not mean installing a Prolog system.
+- **Import files…**: files from your computer. Either an archive of a
+  collection (`.zip`, `.tar.gz`, `.tgz` or `.tar`), or the files of a
+  collection (`.pl`, `.pro`, `.prolog`, `.shum`), selected together.
+- **Import from URL…**: one of these.
+  - A GitHub directory address, the one you get by navigating there and
+    copying the bar. Scryer's, SWI's and Trealla's are offered, so borrowing
+    a library does not mean installing a Prolog system.
+  - The address of one Prolog file, or of a `.zip` or `.tar.gz` archive of a
+    collection, on any site. Only GitHub lets a page list a directory, so
+    from anywhere else it is a file. The site must let pages of other sites
+    read its files (CORS); a site that does not is named in the error. A
+    directory that holds the whole archive, as a release's does, is not part
+    of the libraries' names.
+
+Any of them can include libraries that are already compiled (see
+[Collections with compiled libraries](#collections-with-compiled-libraries)).
 
 What you import is a **collection**, not a library. Scryer's `lib/` is one
-folder and about sixty libraries: every `x.pl` in it is `library(x)`.
+folder and about sixty libraries: every `x.pl` in it is `library(x)`. A
+collection imported from a URL keeps the URL, which the Jupyter notebooks use
+to tell the same collection from another of the same name.
 
 A collection carries a **dialect** (`scryer`, `swi`, `trealla`, or none). A library
 resolved from a collection tagged `scryer` loads under Scryer's name resolution
@@ -133,7 +166,10 @@ and `double_quotes`, which is what lets both systems' versions of the same
 library sit in one engine: see [ADR-040](../architecture/adr/040-multi-dialect-shims.md).
 
 Libraries are **global**: shared by every workspace, unaffected by switching,
-and not part of a workspace's zip or share link.
+and not part of a workspace's zip or share link. The
+[Jupyter notebooks](jupyter.md#libraries) published beside
+the demo share them too: a collection imported here is there for the next
+cell of a notebook, and one a notebook imports is here after a reload.
 
 ### Compiling
 
@@ -209,6 +245,65 @@ each of them:
 The mark and its reason survive a reload, which is when it matters: the batch
 that found out runs once, at import. A library recompiled cleanly loses the
 mark, since the record describes the *last* compile.
+
+### Collections with compiled libraries
+
+If you publish a collection, you can compile a library in advance and include
+the compiled file, `x.shum`, in the collection. It can sit next to the
+library's source `x.pl`, or be there without it. The page uses that file the
+first time the library is loaded, so nothing is compiled in the browser. This
+matters for large libraries: one that takes half a minute to compile in the
+browser loads in a few seconds.
+
+Build the bundle with the linker. It needs the WebAssembly modules (`--wasm`):
+
+```
+shumway-link --library --wasm -o x.shum x.pl
+```
+
+The library's `initialization/1` goals run where it loads, in the page. A
+library that generates clauses while it loads, through its expansion hooks
+or the operators of a library it uses, is compiled with `--consult` as well,
+the way the page compiles it. Its initialization goals then run once, when it
+is linked, and the bundle holds what they leave: a value they take from the
+machine, such as a temporary directory, is that machine's.
+
+**A bundle without its `.pl` file.** If you import `x.shum` without `x.pl`,
+the library is listed as compiled, with no source file. If the bundle itself
+contains the library's source, the page saves that source as `x.pl` next to
+the bundle, and you can open it like any other library source. To put the
+source in the bundle, compile the library with `--with-source` first and link
+the result without `--strip`:
+
+```
+shumway-compile --with-source x.pl
+shumway-link --library --wasm -o x.shum x.shmo
+```
+
+For a library compiled with `--consult`, add `--with-source` to that compile
+and link the `.shmo` files it writes.
+
+**A bundle in another format.** A bundle works with every version of
+Shumway that uses the same format of compiled code. The format is written in
+the first bytes of the bundle, and after it the bundle says how it was built:
+the tool, its inputs in order and its options, such as `--goal`. When the
+page imports a bundle in another format, it builds the bundle again from
+that, with the collection's sources or the copy the bundle carries when it
+was built with `--with-source`, and keeps what that builds. The page does the
+same with the bundles it keeps when it changes to another format.
+
+- A library the page compiled itself is compiled again from its `.pl` file
+  the first time it is used.
+- A bundle that cannot be built again is refused, and the list of libraries
+  says why: it was built by Shumway 0.9.3 or earlier, before bundles said
+  how they were built, or a source it names was not imported and it carries
+  no copy. The library is not compiled from its `.pl` file in its place:
+  that would lose what the link added, such as its `--goal`. Build the
+  bundle again with the current tools, or import the library's sources
+  without it.
+- The libraries a page kept from Shumway 0.9.3 or earlier do not say how
+  they were built: one with its `.pl` file is compiled again from it once,
+  and one imported only as a bundle has to be imported again.
 
 ### Sources are sources
 
@@ -360,15 +455,11 @@ page to be **cross-origin isolated**:
 
 ```
 Cross-Origin-Opener-Policy: same-origin
-Cross-Origin-Embedder-Policy: credentialless
+Cross-Origin-Embedder-Policy: require-corp
 ```
 
-`credentialless` rather than `require-corp` so that the library importer can
-read GitHub's listing API, which sends CORS but no `Cross-Origin-Resource-Policy`.
-Everything else it fetches (`raw.githubusercontent.com`) does send CORP and
-would work under either. Safari does not support `credentialless` today: the app
-runs there, but importing a library from a URL does not (importing a folder
-does).
+The library importer reads other hosts with CORS requests, which this policy
+allows.
 
 ### A host that can send them
 
@@ -392,13 +483,17 @@ Two things make that work, and both are load-bearing:
 - `session.js` imports the runtime **when it starts it**, not when the module
   loads, so the page's own startup happens first.
 
-If the worker never takes control, the app starts un-isolated and says so
-instead of failing: everything works except that a long query blocks the tab.
+If the worker never takes control, the page says so and does not start the
+engine. Reloading almost always fixes it.
 
-`.github/workflows/webshumway.yml` builds and deploys on every push to `main`.
-It needs **Settings → Pages → Source: GitHub Actions** in the repository, and
+`.github/workflows/webshumway.yml` builds and deploys on every push to `main`,
+with the notebook site under `jupyter/`
+([gusbro.github.io/Shumway/jupyter/](https://gusbro.github.io/Shumway/jupyter/);
+see [`jupyterlite/README.md`](../../jupyterlite/README.md)). It needs
+**Settings → Pages → Source: GitHub Actions** in the repository, and
 publishes a `.nojekyll` because Pages otherwise skips `_framework`, where the
-whole runtime lives.
+whole runtime lives. The page links to the notebooks only when `jupyter/`
+answers, so a demo hosted on its own shows no link to them.
 
 ### Offline
 

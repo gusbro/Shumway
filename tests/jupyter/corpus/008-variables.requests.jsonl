@@ -1,0 +1,7 @@
+{"jsonrpc":"2.0","id":1,"method":"call","params":{"code":"X = hola(Y, A, B), Y = como(Z), A = 'C'."}}
+{"jsonrpc":"2.0","id":2,"method":"call","params":{"code":"X = Y, Z = 'X'."}}
+{"jsonrpc":"2.0","id":3,"method":"call","params":{"code":"X = Y, Y = Z."}}
+{"jsonrpc":"2.0","id":4,"method":"call","params":{"code":"X = f(Y), Y = Z."}}
+{"jsonrpc":"2.0","id":5,"method":"call","params":{"code":"X = f(Y, 'Y')."}}
+{"jsonrpc":"2.0","id":6,"method":"call","params":{"code":"X = Y, W = g(X, Y, 'X')."}}
+{"jsonrpc":"2.0","id":7,"method":"call","params":{"code":"X = 'Y'."}}

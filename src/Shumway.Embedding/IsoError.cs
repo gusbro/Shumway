@@ -146,6 +146,21 @@ public static class IsoError
     /// user's own variables stay as they are.</summary>
     internal static readonly VarTerm OpenContext = new("_");
 
+    /// <summary>The ball with its context <c>Name/Arity</c>, when the context
+    /// is still <see cref="OpenContext"/>: for an error raised outside a
+    /// running builtin on its behalf. Any other ball comes back as it is.</summary>
+    internal static Term CloseContext(Term ball, string name, int arity)
+    {
+        if (ball is not CompoundTerm { Functor: "error", Args.Length: 2 } e
+            || !ReferenceEquals(e.Args[1], OpenContext))
+            return ball;
+        return new CompoundTerm("error", new Term[]
+        {
+            e.Args[0],
+            new CompoundTerm("/", new Term[] { new AtomTerm(name), new IntTerm(arity) }),
+        }) { Position = e.Position };
+    }
+
     /// <summary>The ball with its context filled in, when the context is
     /// still <see cref="OpenContext"/> and the engine names a running
     /// builtin: <c>error(Kind, Name/Arity)</c>. Any other ball comes back

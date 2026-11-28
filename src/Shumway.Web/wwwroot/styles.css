@@ -49,6 +49,32 @@ h1 { font-size: 1.3rem; margin: 0; letter-spacing: -.01em; }
 }
 .icon-button:hover { color: inherit; }
 
+/* The one tool with words: the notebook site is a place to go, not a panel of
+   this page. Drawn as the buttons beside it are. */
+.tool-link {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  height: 2.1rem;
+  padding: 0 .7rem;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: .5rem;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  color: var(--muted);
+  font-size: .9rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.tool-link:hover { color: inherit; background: color-mix(in srgb, currentColor 16%, transparent); }
+/* Without this the display above beats the hidden attribute. */
+.tool-link[hidden] { display: none; }
+@media (max-width: 36rem) {
+  .tool-link { padding: 0 .5rem; }
+  .tool-link span { display: none; }
+}
+
 /* --- panes -------------------------------------------------------------- */
 
 /* The two panes are the same height, top and bottom. They do not hold the same
@@ -290,6 +316,38 @@ pre#out .query  { color: var(--muted); }
 pre#out .answer { color: var(--answer); }
 pre#out .error  { color: var(--error); }
 pre#out .note   { color: var(--muted); font-style: italic; }
+
+/* --- starting ---
+   The transcript's last line while the page starts: what it is doing, over a
+   bar that fills when the step can be counted and slides when it cannot. */
+.startup { display: block; color: var(--accent); }
+.startup-bar {
+  display: block;
+  height: 3px;
+  max-width: 22rem;
+  margin: .35rem 0 .2rem;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+#startup-fill {
+  display: block;
+  height: 100%;
+  width: 30%;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: startup-slide 1.4s ease-in-out infinite;
+}
+.startup.counted #startup-fill { animation: none; transition: width .2s; }
+@keyframes startup-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(334%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #startup-fill { animation: none; width: 100%; opacity: .5; }
+}
+/* No engine yet to answer a goal or to consult. */
+body.starting #query-form, body.starting #consult { opacity: .6; pointer-events: none; }
 
 .status {
   font: 12px var(--mono);
@@ -643,6 +701,9 @@ body.busy #consult, body.busy #libraries { opacity: .6; pointer-events: none; }
     flex-direction: column;
     overflow: hidden;
     padding: .9rem 1rem 1rem;
+    /* The whole width as well: the panes share it by the splitter's
+       percentage, so a wider window gives both more room. */
+    max-width: none;
   }
   header { flex: none; margin-bottom: .8rem; }
   .panes { flex: 1 1 0; min-height: 0; }

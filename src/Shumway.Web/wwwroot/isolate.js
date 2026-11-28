@@ -14,9 +14,18 @@
 //
 // Where the server DOES send the headers, this returns immediately and neither
 // the worker nor the reload is involved.
+//
+// A page of the notebook site (ADR-069) loads a copy of this script from its
+// own directory and says where the worker is: data-worker="../sw.js". It is
+// the demo's worker, not one of its own: the runtime's threads are workers
+// whose scripts are in the demo's _framework, and a worker registered under
+// the notebook site does not reach them to add the headers they need.
 
 (() => {
   const TRIED = 'shumway.isolating';
+  // Read now: document.currentScript is null once this script has returned.
+  const script = document.currentScript;
+  const WORKER = new URL(script?.dataset.worker ?? 'sw.js', script?.src || location.href).href;
 
   if (window.crossOriginIsolated) {
     // Clear the one-reload guard on every ISOLATED load. Left set, it outlives
@@ -64,7 +73,7 @@
 
   let reloading = false;
   const PURGED = 'shumway.zombie-purged';
-  navigator.serviceWorker.register('sw.js')
+  navigator.serviceWorker.register(WORKER)
     .then((reg) => {
       // A CORRUPTED registration record: it has our scope but no worker in
       // any state, and update() rejects with InvalidStateError, script

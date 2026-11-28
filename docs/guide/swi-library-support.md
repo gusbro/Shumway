@@ -50,6 +50,12 @@ a library is written against code lists. (While a swi-dialect library itself
 loads, the flag is whatever that dialect pack declares: what those library
 sources are written against.)
 
+**SWI's own flags are accepted without effect while a swi-dialect library
+loads.** Library sources set `generate_debug_info`, `quasi_quotations` and
+`float_format` in directives; under the dialect `set_prolog_flag/2` takes them
+and changes nothing. Anywhere else they are unknown flags, and the directive
+is reported with `domain_error(prolog_flag, F)`.
+
 **A native Shumway builtin wins over an imported library predicate of the same
 name.** Importing a library never shadows a builtin. This is what makes the
 "no-op (native)" resolutions below work, and it is also why a library's

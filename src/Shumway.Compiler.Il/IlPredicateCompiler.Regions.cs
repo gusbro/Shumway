@@ -93,7 +93,7 @@ public sealed partial class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate> Map, Dictionary<int, List<int>> Callers);
     private CallersIndex? _callersIndex;
 
-    private IReadOnlyCollection<int>? CallersOf(int fid, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    internal IReadOnlyCollection<int>? CallersOf(int fid, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
         var map = CalleeRecorder.Underlying(calleeMap);
         if (map is null) return null;
@@ -101,13 +101,17 @@ public sealed partial class IlPredicateCompiler
         if (current is null || !ReferenceEquals(current.Map, map))
         {
             var index = new Dictionary<int, List<int>>();
-            foreach (var pred in map.Values)
+            foreach (var (key, pred) in map)
             {
-                if (IsQueryStubHelper(FidName(pred.FunctorId))) continue;
+                // ADR-056, amendment: a bare name keys a library predicate
+                // again; its callers are indexed under the predicate's own.
+                if (key != pred.FunctorId || IsQueryStubHelper(FidName(pred.FunctorId))) continue;
                 foreach (var cs in pred.CallSites)
                 {
-                    if (!index.TryGetValue(cs.CalleeFunctorId, out var callers))
-                        index[cs.CalleeFunctorId] = callers = new List<int>();
+                    int callee = map.TryGetValue(cs.CalleeFunctorId, out var target)
+                        ? target.FunctorId : cs.CalleeFunctorId;
+                    if (!index.TryGetValue(callee, out var callers))
+                        index[callee] = callers = new List<int>();
                     // One predicate's sites come together: the last entry is it.
                     if (callers.Count == 0 || callers[^1] != pred.FunctorId) callers.Add(pred.FunctorId);
                 }
@@ -1628,6 +1632,7 @@ public sealed partial class IlPredicateCompiler
                 var member = ctx.Region.Members[ctx.CurrentMemberIndex];
                 int fid = FindCallSiteFunctorId(member.CallSites, pc);
                 if (fid < 0) return false;   // malformed — let the normal path throw
+                fid = ctx.Region.CallTarget(fid);
                 // The cut barrier for the callee — set before the wake
                 // boundary: the call-shape resume dispatches the callee by
                 // forward marker without re-running this site, and
@@ -1858,7 +1863,8 @@ public sealed partial class IlPredicateCompiler
                     // meta-call + backtrackable builtins need resume cursors /
                     // the enclosing-call machinery — not a flat body.
                     // precomputed flags instead of name compares.
-                    if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable)
+                    if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable
+                        || entry.OpensCatchScope)
                         return false;
                     pc += OpcodeTable.Get((byte)op).Size;
                     continue;

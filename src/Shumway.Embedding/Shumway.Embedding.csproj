@@ -10,6 +10,9 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Shumway.Tests.Embedding" />
+    <!-- The wasm tests read the code space's counters: a predicate laid out
+         in place, a build of the product, the buffer laid out again. -->
+    <InternalsVisibleTo Include="Shumway.Tests.Wasm" />
     <!-- The top level reads Solution.ValueRootAddresses to display cyclic terms
          as their query variable (A = [a, b | A]). Granted to the shared library
          rather than to a front-end: the REPL and the web UI both format answers
@@ -21,6 +24,12 @@
     <!-- The library bake points LibraryBundles at the bundles it has already
          baked: a library that imports another loads it at bake time. -->
     <InternalsVisibleTo Include="shumway-librarybake" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- RFC 7932, appendix A: the static dictionary of the Brotli decoder. -->
+    <EmbeddedResource Include="Compression/brotli-dictionary.deflate"
+                      LogicalName="Shumway.Embedding.Compression.brotli-dictionary.deflate" />
   </ItemGroup>
 
   <PropertyGroup>

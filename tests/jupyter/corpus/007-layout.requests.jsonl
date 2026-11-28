@@ -1,0 +1,7 @@
+{"jsonrpc":"2.0","id":1,"method":"call","params":{"code":"X = 1. % a comment after the term"}}
+{"jsonrpc":"2.0","id":2,"method":"call","params":{"code":"% a comment before the term\nX = 2."}}
+{"jsonrpc":"2.0","id":3,"method":"call","params":{"code":"X = 3.\n% a comment on the last line"}}
+{"jsonrpc":"2.0","id":4,"method":"call","params":{"code":"/* a block comment */"}}
+{"jsonrpc":"2.0","id":5,"method":"call","params":{"code":""}}
+{"jsonrpc":"2.0","id":6,"method":"call","params":{"code":"X = 4."}}
+{"jsonrpc":"2.0","id":7,"method":"call","params":{"code":"X\n  =\n    5."}}

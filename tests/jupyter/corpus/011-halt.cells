@@ -1,0 +1,6 @@
+### call
+X = 1.
+### call
+halt.
+### call
+X = 2.

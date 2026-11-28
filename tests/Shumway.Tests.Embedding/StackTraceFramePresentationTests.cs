@@ -88,13 +88,13 @@ public class StackTraceFramePresentationTests
         Assert.Equal(2, divider.Position.Line);
     }
 
-    /// <summary>A clause asserted by the running query has no predicate linked for it, and
-    /// no Name/Arity to show.</summary>
+    /// <summary>A clause asserted by the running query has no predicate linked for it: the
+    /// chain that holds it names its predicate, with no position.</summary>
     [Fact]
-    public void AClauseTheQueryAssertedReadsAsADynamicClause()
+    public void AClauseTheQueryAssertedReadsAsItsPredicate()
     {
         var e = new PrologEngine { Out = new System.IO.StringWriter() };
         var lines = DescribeFailure(e, "assertz((ap(X) :- atom_length(X, _))), ap(_).");
-        Assert.Contains("  at <dynamic clause>", lines);
+        Assert.Contains("  at ap/1", lines);
     }
 }

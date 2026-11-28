@@ -266,13 +266,13 @@ public static class StreamBuiltins
     /// Appending never does, and an encoding with no mark ignores bom/1.</summary>
     public static StreamHandle OpenTextWriter(
         int id, string path, string? alias, string mode,
-        string? encodingName, bool? bomOpt, string defaultEncoding)
+        string? encodingName, bool? bomOpt, string defaultEncoding, string? osPath = null)
     {
         string effective = encodingName ?? defaultEncoding;
         bool writeBom = mode == "write" && TextEncodings.IsUnicode(effective)
             && (bomOpt ?? TextEncodings.LeavesByteOrderToMark(effective));
         return new StreamHandle(id,
-            SharedWriter(path, mode == "append", effective, writeBom), mode, path, alias)
+            SharedWriter(osPath ?? path, mode == "append", effective, writeBom), mode, path, alias)
         {
             EncodingName = effective,
             HadBom = writeBom,
@@ -286,9 +286,9 @@ public static class StreamBuiltins
     /// bom(false) delivers a leading U+FEFF as data.</summary>
     public static StreamHandle OpenTextReader(
         int id, string path, string? alias, string? encodingName, bool? bomOpt,
-        string defaultEncoding)
+        string defaultEncoding, string? osPath = null)
     {
-        var fs = SharedFileStream(path, FileMode.Open, FileAccess.Read);
+        var fs = SharedFileStream(osPath ?? path, FileMode.Open, FileAccess.Read);
         string effective = encodingName ?? defaultEncoding;
         bool hadBom = false;
         if (bomOpt != false)
@@ -357,9 +357,9 @@ public static class StreamBuiltins
                 ? NullDeviceHandle(id, mode, path, alias: null, registry.DefaultEncodingName)
                 : mode == "read"
                     ? OpenTextReader(id, path, alias: null, encodingName: null, bomOpt: null,
-                        registry.DefaultEncodingName)
+                        registry.DefaultEncodingName, engine.OsPath(path))
                     : OpenTextWriter(id, path, alias: null, mode, encodingName: null, bomOpt: null,
-                        registry.DefaultEncodingName);
+                        registry.DefaultEncodingName, engine.OsPath(path));
         }
         catch (FileNotFoundException)
         {
@@ -616,18 +616,18 @@ public static class StreamBuiltins
                         "domain_error", "io_mode", engine, modeCell),
                 };
                 FileAccess fa = mode == "read" ? FileAccess.Read : FileAccess.Write;
-                handle = new StreamHandle(id, SharedFileStream(path, fm, fa),
+                handle = new StreamHandle(id, SharedFileStream(engine.OsPath(path), fm, fa),
                     mode, path, alias);
             }
             else if (mode == "read")
             {
                 handle = OpenTextReader(id, path, alias, encodingName, bomOpt,
-                    registry.DefaultEncodingName);
+                    registry.DefaultEncodingName, engine.OsPath(path));
             }
             else
             {
                 handle = OpenTextWriter(id, path, alias, mode, encodingName, bomOpt,
-                    registry.DefaultEncodingName);
+                    registry.DefaultEncodingName, engine.OsPath(path));
             }
         }
         catch (FileNotFoundException)
@@ -1140,13 +1140,18 @@ public static class StreamBuiltins
     /// <summary>The pre-read gate: a read on a stream already past
     /// end-of-stream raises <c>permission_error(input, past_end_of_stream, S)</c>
     /// under <c>eof_action(error)</c>, and under <c>reset</c> tries the source
-    /// again. Public: the term readers of the embedding layer share it.</summary>
+    /// again, telling a source that waits for that (<see cref="IReopenableInput"/>).
+    /// Public: the term readers of the embedding layer share it.</summary>
     public static void CheckPastEof(Activation engine, StreamHandle h)
     {
         if (h.PastEof && h.EofAction == "error")
             throw new PrologRuntimeException("permission_error",
                 "input,past_end_of_stream", engine, MakeStreamTerm(engine, h));
-        if (h.PastEof && h.EofAction == "reset") h.PastEof = false;
+        if (h.PastEof && h.EofAction == "reset")
+        {
+            h.PastEof = false;
+            if (h.Reader?.Inner is IReopenableInput source) source.Reopen();
+        }
     }
 
     /// <summary><c>'$lazy_window'(+Stream, +Offset, +N, +Kind, -Window, -Length)</c>
@@ -1565,9 +1570,11 @@ public static class StreamBuiltins
     {
         if (!h.IsReader) return false;            // a writer is never "at end"
         if (h.PastEof) return true;
-        // user_input's underlying console reader doesn't support
-        // non-blocking Peek — report "not at end" conservatively.
-        if (ReferenceEquals(h, engine.Streams!.UserInput)) return false;
+        // user_input: a console cannot be asked without stopping until a
+        // line is typed, so it is not at its end until the end was read. A
+        // source that can be waited on says.
+        if (ReferenceEquals(h, engine.Streams!.UserInput))
+            return h.Reader is { } input && input.TryAtEndOfInput(out bool atEnd) && atEnd;
         if (h.Reader is not null) return h.Reader.Peek() < 0;
         return h.PeekByte() < 0;
     }

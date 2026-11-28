@@ -51,6 +51,13 @@ public sealed class BuiltinEntry
     /// backtracks at the call, with no builtin call around it.</summary>
     public bool IsFail { get; }
 
+    /// <summary>True for <c>'$catch_begin'/2</c>. Its frame records the choice
+    /// point register and its caller's environment header, so it runs only
+    /// where both are the machine's own: called from its goal helper's frame,
+    /// never inlined into a clause that keeps an alternative in IL locals
+    /// (ADR-031).</summary>
+    public bool OpensCatchScope { get; }
+
     /// <summary>True for builtins that push a choice point and resume via
     /// <c>ResumeAtReturnPc</c> — their Tier-1 IL
     /// <c>call_builtin</c> site needs a forward-resume cursor.
@@ -85,6 +92,7 @@ public sealed class BuiltinEntry
         Summary = summary;
         IsCall = name == "call";
         IsDollarCall = name == "$call";
+        OpensCatchScope = name == "$catch_begin" && arity == 2;
         IsUnification = name == "=" && arity == 2;
         IsFail = arity == 0 && name is "fail" or "false";
     }

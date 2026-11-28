@@ -1852,6 +1852,7 @@ public sealed partial class IlPredicateCompiler
                 if (siteFunctorId < 0)
                     throw new InvalidOperationException(
                         $"Call opcode at pc={pc} has no matching call site in the predicate's metadata.");
+                siteFunctorId = CallTarget(siteFunctorId, calleeMap);
 
                 // multi-clause fact inline (gated SHUMWAY_INLINE_FACTS).
                 // Emit the callee fact's clause chain in-method instead of the
@@ -1956,14 +1957,7 @@ public sealed partial class IlPredicateCompiler
                         emit.LoadArgument(0);
                         emit.LoadConstant((okCur << 16) | failCur);
                         EmitHelperCall(emit, EnginePushGuardContMethod);
-                        if (!guardContCtx.CalleeEntry.TryGetValue(
-                                siteFunctorId, out var entryLbl))
-                        {
-                            entryLbl = emit.DefineLabel($"gc_callee_{siteFunctorId}");
-                            guardContCtx.CalleeEntry[siteFunctorId] = entryLbl;
-                            guardContCtx.PendingCallees.Add(fdCallee);
-                        }
-                        emit.Branch(entryLbl);
+                        emit.Branch(GetOrAddGuardContCopy(emit, guardContCtx, fdCallee));
                         emit.MarkLabel(okLbl);
                     }
                     else
@@ -2141,6 +2135,7 @@ public sealed partial class IlPredicateCompiler
                 if (siteFunctorId < 0)
                     throw new InvalidOperationException(
                         $"Execute opcode at pc={pc} has no matching call site in the predicate's metadata.");
+                siteFunctorId = CallTarget(siteFunctorId, calleeMap);
 
                 // Un-tail. When this body is being inlined at
                 // a non-tail site (suppressProceedReturn), a trailing tail Execute
@@ -2782,7 +2777,8 @@ public sealed partial class IlPredicateCompiler
             EmitIndexedDispatchBody(emit, predicate, info, calleeMap, emitSelf,
                 typeof(Func<Activation, int, bool>));   // runtime path: SelfFromHolder → Func
             var del = FinishEmit(emit,
-            $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}");
+            $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}",
+            declinePastJitLimits: DeclinesPastJitLimits(predicate));
             IndexedDelegateHolder.Register(holderKey, del);
             _nextHolderKey = holderKey + 1;
             return del;
@@ -3269,7 +3265,8 @@ public sealed partial class IlPredicateCompiler
             typeof(Func<Activation, int, bool>));   // runtime path: SelfFromHolder → Func
 
         var del = FinishEmit(emit,
-            $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}");
+            $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}",
+            declinePastJitLimits: DeclinesPastJitLimits(predicate));
         IndexedDelegateHolder.Register(holderKey, del);
         _nextHolderKey = holderKey + 1;
         return del;

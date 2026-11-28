@@ -45,153 +45,22 @@ internal static class LinkCli
         var opts = ParseArgs(args);
         if (opts is null) return ExitUsageError;
 
-        // Inputs route by extension (C-toolchain style): .shum is a library (its
-        // members are pulled on demand, FIFO), .pl is source (compiled on the fly
-        // to an object), anything else is an object (.shmo, always linked). A .shum
-        // must be a shumway-lib librarian archive (it carries its objects); a
-        // linked bundle has none and can't serve as a library.
-        var objects = new List<ShmoObject>();
-        var libraries = new List<LinkLibrary>();
-        var sourceInputs = new List<string>();
-        foreach (var path in opts.InputPaths)
+        // The inputs in order, compiled or read, and the configuration of the
+        // link with the recipe of its bundle (ADR-076): the plan a rebuild
+        // runs again.
+        var libraryDirs = CollectLibraryDirs(opts.LibraryDirs);
+        var plan = new LinkPlan
         {
-            try
-            {
-                if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
-                {
-                    var lib = BundleReader.ReadFromFile(path);
-                    if (lib.ArchiveMembers.Count == 0)
-                    {
-                        Console.Error.WriteLine(
-                            $"shumway-link: library '{path}' is a linked bundle, not a "
-                            + "librarian archive — it has no objects to link against. "
-                            + "Build a library with shumway-lib.");
-                        RemoveStaleOutputs(opts);
-                        return ExitLinkError;
-                    }
-                    var members = new List<ShmoObject>(lib.ArchiveMembers.Count);
-                    foreach (var m in lib.ArchiveMembers)
-                        members.Add(ShmoReader.FromBytes(m.ShmoBytes));
-                    libraries.Add(new LinkLibrary(System.IO.Path.GetFileName(path), members));
-                }
-                else if (path.EndsWith(".pl", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Source input: collected and compiled below (all sources
-                    // together under --consult; one at a time otherwise).
-                    sourceInputs.Add(path);
-                }
-                else
-                {
-                    objects.Add(ShmoReader.ReadFromFile(path));
-                }
-            }
-            catch (Exception ex) when (ex is InvalidDataException || ex is IOException)
-            {
-                Console.Error.WriteLine($"shumway-link: error reading '{path}': {ex.Message}");
-                RemoveStaleOutputs(opts);
-                return ExitLinkError;
-            }
-        }
-
-        if (sourceInputs.Count > 0)
-        {
-            var libraryDirs = CollectLibraryDirs(opts.LibraryDirs);
-            if (opts.Consult)
-            {
-                // Consult all sources into one engine (directives + expansion
-                // hooks run, use_module dependencies load) and link every module
-                // the load brought in — the shumway-compile --consult pipeline.
-                var errors = new List<ShmoCompileError>();
-                List<(string ModuleName, ShmoObject Object, DateTime SourceTimeUtc, bool IsRoot)> compiled;
-                try
-                {
-                    compiled = ShmoViaConsult.CompileMany(
-                        sourceInputs, libraryDirs, ShmoBuildMode.Release, errors);
-                }
-                catch (Exception ex)
-                {
-                    Console.Error.WriteLine($"shumway-link: consult failed: {ex.Message}");
-                    RemoveStaleOutputs(opts);
-                    return ExitLinkError;
-                }
-                foreach (var e in errors)
-                    Console.Error.WriteLine($"error: {e.Message}");
-                if (errors.Count > 0 || compiled.Count == 0)
-                {
-                    Console.Error.WriteLine(
-                        $"shumway-link: {Math.Max(errors.Count, 1)} error(s) compiling sources (consult mode).");
-                    RemoveStaleOutputs(opts);
-                    return ExitLinkError;
-                }
-                foreach (var (_, obj, _, _) in compiled) objects.Add(obj);
-            }
-            else
-            {
-                // File-at-a-time compile of each source (no load-time hooks, no
-                // dependency pull). Convenience so a small program need not be
-                // pre-compiled to a .shmo.
-                foreach (var path in sourceInputs)
-                {
-                    var res = ShmoCompiler.TryCompileFile(path, ShmoBuildMode.Release);
-                    foreach (var w in res.Warnings)
-                        Console.Error.WriteLine(
-                            $"{w.Where(path)}: warning: {w.Message}");
-                    if (res.Object is null)
-                    {
-                        foreach (var e in res.Errors)
-                            Console.Error.WriteLine(
-                                $"{e.Where(path)}: error: {e.Message}");
-                        MaybeHintConsult(path);
-                        RemoveStaleOutputs(opts);
-                        return ExitLinkError;
-                    }
-                    // The same refusal as shumway-compile's: a hook compiled
-                    // file-at-a-time never fires, and the program linked from
-                    // it would mean something else than the consulted one.
-                    if (ShmoCompiler.WhatFileAtATimeLoses(res.Object) is { } lost)
-                    {
-                        Console.Error.WriteLine(
-                            $"shumway-link: {path} {lost} File-at-a-time compilation "
-                            + "would produce a program that means something else than the "
-                            + "consulted one, so it is refused rather than linked. Link "
-                            + "it with:" + Environment.NewLine
-                            + $"  shumway-link --consult -L <libdir> ... {path}");
-                        RemoveStaleOutputs(opts);
-                        return ExitLinkError;
-                    }
-                    MaybeHintConsult(path);
-                    objects.Add(res.Object);
-                }
-            }
-        }
-
-        // --goal Z validates syntactically and contributes reachability
-        // roots. The goal is any REPL-acceptable query — its call-position
-        // predicates may be user, builtin or prelude (`time(main)`), and any
-        // user predicate named inside it (a meta-call argument) stays linked.
-        var goalCallRefs = new List<PredicateRef>();
-        var goalTermRefs = new List<PredicateRef>();
-        if (!string.IsNullOrEmpty(opts.Goal))
-        {
-            if (!ExecutableEmitter.TryCollectGoalRefs(opts.Goal,
-                    out goalCallRefs, out goalTermRefs, out string? goalErr))
-            {
-                Console.Error.WriteLine($"shumway-link: --goal: {goalErr}");
-                return ExitUsageError;
-            }
-        }
-
-        var config = new LinkConfig
-        {
-            Objects = objects,
+            Consult = opts.Consult,
+            Library = opts.Library,
             EntryPoints = opts.EntryPoints,
-            GoalCallRefs = goalCallRefs,
-            GoalTermRefs = goalTermRefs,
+            Goal = string.IsNullOrEmpty(opts.Goal) ? null : opts.Goal,
+            Executable = !string.IsNullOrEmpty(opts.ExePath),
             AllowUndefined = opts.AllowUndefined,
-            WarnShadow = opts.WarnShadow,
-            Libraries = libraries,
-            // ADR-038 — --library-dir flags plus SHUMWAY_LIBRARY_PATH.
-            LibraryDirs = CollectLibraryDirs(opts.LibraryDirs),
+            StripSource = opts.StripSource,
+            IncludeCompiledIl = opts.IncludeCompiledIl,
+            StripWam = opts.StripWam,
+            Wasm = opts.Wasm,
             // --exe deploys a startup-sensitive single-engine app, so bake the
             // prelude by default there; otherwise only on explicit opt-in. Under
             // --with-compiled-il / --strip-wam the baked prelude is itself
@@ -200,24 +69,30 @@ internal static class LinkCli
             BakePrelude = opts.BakePrelude || !string.IsNullOrEmpty(opts.ExePath)
                 || !string.IsNullOrEmpty(opts.DllPath),
             PrunePrelude = opts.PrunePrelude,
-            Library = opts.Library,
-            VerboseOut = opts.Verbose ? Console.Error : null,
-            StripSource = opts.StripSource,
-            IncludeCompiledIl = opts.IncludeCompiledIl,
-            StripWam = opts.StripWam,
-            RegionPruneReport = opts.RegionPruneReport,
             RegionPrune = opts.RegionPrune,
-            DumpWamPath = opts.DumpWamPath,
-            DumpIlPath = opts.DumpIlPath,
+            DynamicLibraries = opts.DynamicLibraries,
             ForeignAssemblies = opts.ForeignDlls,
             NativeLibraries = opts.NativeDlls,
+            // ADR-038 — --library-dir flags plus SHUMWAY_LIBRARY_PATH.
+            LibraryDirs = libraryDirs,
+            WarnShadow = opts.WarnShadow,
+            RegionPruneReport = opts.RegionPruneReport,
+            DumpWamPath = opts.DumpWamPath,
+            DumpIlPath = opts.DumpIlPath,
+            VerboseOut = opts.Verbose ? Console.Error : null,
 #if !NETFRAMEWORK
-            WasmBaker = opts.Wasm
-                ? b => Shumway.Compiler.Wasm.WasmBundleTier.Bake(b, opts.BakePrelude,
-                    msg => Console.Error.WriteLine("shumway-link: " + msg))
-                : null,
+            WasmBaker = b => Shumway.Compiler.Wasm.WasmBundleTier.Bake(b, opts.BakePrelude,
+                msg => Console.Error.WriteLine("shumway-link: " + msg), library: opts.Library),
 #endif
+            Report = Console.Error.WriteLine,
         };
+        var config = plan.Prepare(opts.InputPaths, out bool usageError);
+        if (config is null)
+        {
+            if (usageError) return ExitUsageError;
+            RemoveStaleOutputs(opts);
+            return ExitLinkError;
+        }
 
         LinkResult result;
         Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.Reset();
@@ -433,6 +308,8 @@ internal static class LinkCli
         // ADR-038 --library-dir: directories searched to resolve a
         // use_module(library(X)) dependency not passed explicitly.
         public List<string> LibraryDirs { get; } = new();
+        // ADR-075 --dynlib: dynamic libraries to link against, files or names.
+        public List<string> DynamicLibraries { get; } = new();
     }
 
     private static Options? ParseArgs(string[] args)
@@ -485,6 +362,12 @@ internal static class LinkCli
                     opts.LibraryDirs.Add(NormalizeLibDirArg(args[i]));
                     break;
 
+                case "--dynlib":
+                case "-dl":
+                    if (++i >= args.Length) { ReportMissing(arg); return null; }
+                    opts.DynamicLibraries.Add(args[i]);
+                    break;
+
                 case "--strip":
                 case "-s":
                     opts.StripSource = true;
@@ -524,8 +407,7 @@ internal static class LinkCli
                     break;
 
                 case "--no-compress":
-                    // For a host whose runtime has no Brotli codec (browser-wasm).
-                    // The image stays a normal bundle — flag 0 is part of the format.
+                    // Flag 0 is part of the format: the image stays a normal bundle.
                     Shumway.Embedding.BundleFormat.DisableCompression = true;
                     break;
 
@@ -683,6 +565,13 @@ internal static class LinkCli
                 + "(otherwise no module would be reachable).");
             return null;
         }
+        if (opts.Library && opts.EntryPoints.Count > 0)
+        {
+            Console.Error.WriteLine(
+                "shumway-link: --entry does not go with --library: a library keeps every "
+                + "predicate of its inputs. To run a goal when the bundle loads, use --goal.");
+            return null;
+        }
         if (!string.IsNullOrEmpty(opts.ExePath) && string.IsNullOrEmpty(opts.Goal))
         {
             Console.Error.WriteLine(
@@ -812,22 +701,6 @@ internal static class LinkCli
     /// dependencies or load-time expansion hooks will link with unresolved
     /// references (its libraries were never loaded) — point the user at
     /// <c>--consult</c>, which loads them.</summary>
-    private static void MaybeHintConsult(string path)
-    {
-        string text;
-        try { text = System.IO.File.ReadAllText(path); } catch { return; }
-        bool hasLibDeps = text.Contains("use_module(library(");
-        bool hasHooks = text.Contains("term_expansion(")
-            || text.Contains("goal_expansion(")
-            || text.Contains(":- attribute");
-        if (hasLibDeps || hasHooks)
-            Console.Error.WriteLine(
-                $"shumway-link: hint: {path} uses library dependencies or load-time "
-                + "hooks that a file-at-a-time compile does not load; link it through "
-                + "the consult pipeline instead:\n"
-                + $"  shumway-link --consult -L <libdir> ... {path}");
-    }
-
     // ADR-038 — the library search path: --library-dir flags first (highest
     // precedence), then SHUMWAY_LIBRARY_PATH entries, then the shipped lib/
     // directories.
@@ -922,6 +795,11 @@ internal static class LinkCli
             + "                           use_module(library(X)) dependency not passed\n"
             + "                           explicitly (X.pl / X.shmo). Repeatable; also reads\n"
             + "                           SHUMWAY_LIBRARY_PATH.\n"
+            + "  -dl, --dynlib <lib>      Link against a library bundle without linking it in:\n"
+            + "                           calls the inputs leave undefined are looked up in it,\n"
+            + "                           and the bundle attaches it when it loads. A .shum\n"
+            + "                           file, or a name found as <lib>.shum in the -L\n"
+            + "                           directories. Repeatable.\n"
             + "      --consult            Compile .pl inputs THROUGH the consult pipeline\n"
             + "                           (directives + term/goal_expansion hooks run,\n"
             + "                           use_module dependencies load) instead of\n"
@@ -949,8 +827,9 @@ internal static class LinkCli
             + "                           generated code; bundles are larger and typically\n"
             + "                           slower.\n"
             + "      --library            Keep every predicate of every input: the bundle\n"
-            + "                           is a library loaded whole, so no --entry is\n"
-            + "                           needed and nothing is pruned.\n"
+            + "                           is a library loaded whole, so nothing is pruned\n"
+            + "                           and --entry is refused. With --goal (and no\n"
+            + "                           --exe), the goal runs when the bundle loads.\n"
             + "      --stdlib             Embed the precompiled standard library (the\n"
             + "                           prelude) in the bundle so loading it skips\n"
             + "                           compiling the stdlib at startup (and, under\n"
@@ -958,10 +837,8 @@ internal static class LinkCli
             + "                           Automatic with --exe. Larger bundle, faster start;\n"
             + "                           load via PrologEngine.FromBundle (a plain\n"
             + "                           new PrologEngine()+LoadBundle ignores it).\n"
-            + "      --no-compress        Store the bundle uncompressed. Needed for a host\n"
-            + "                           whose runtime has no Brotli codec — browser-wasm\n"
-            + "                           throws on a compressed bundle. The image is still\n"
-            + "                           an ordinary bundle every reader accepts.\n"
+            + "      --no-compress        Store the bundle uncompressed: larger, read without\n"
+            + "                           decoding. Every reader accepts either form.\n"
             + "      --prune-prelude      With --stdlib/--exe: bake only the prelude\n"
             + "                           predicates the program can reach (closure over\n"
             + "                           the prelude call graph) instead of the whole\n"
@@ -1017,7 +894,10 @@ internal static class LinkCli
             + "                           fine in call position). The trailing '.' is\n"
             + "                           optional. Checked at link time; every user\n"
             + "                           predicate the goal names counts as a reachability\n"
-            + "                           root, so it stays linked.\n"
+            + "                           root, so it stays linked. With --library and no\n"
+            + "                           --exe: the goal the bundle runs when it loads,\n"
+            + "                           after the initialization goals of the last input,\n"
+            + "                           in its module.\n"
             + "  -c, --self-contained     With --exe, bundle the .NET runtime into the\n"
             + "                           executable (~70 MB, runs on a machine with\n"
             + "                           nothing installed). Default is framework-\n"

@@ -29,7 +29,8 @@ reference see [`predicates.md`](predicates.md).
 
 Related guides outside this document: [embedded native C](embedded-native-c.md)
 (`:- c` / `{…}` blocks), [the interop guide](interop.md) (every C# ↔ Prolog
-mechanism, routed), and [WebShumway](webshumway.md) (the engine in a browser).
+mechanism, routed), [WebShumway](webshumway.md) (the engine in a browser), and
+[the Jupyter notebooks](jupyter.md) (Prolog in notebooks, in a browser).
 
 ---
 
@@ -94,6 +95,15 @@ The directory is collected by `build/Shumway.Dist`, which runs after the CLIs
 build. `dotnet clean` removes it, so a stale executable never lingers on
 someone's PATH. Under `-p:ShumwayNetFx=true` (ADR-043) the .NET Framework
 flavour lands in `dist/<configuration>/net48/`.
+
+In Release the assemblies in the directory carry native code for the machine
+that built them (.NET's ReadyToRun). A tool, and an executable that
+`shumway-link --exe` or `shumway --save-toplevel` builds from the directory,
+starts without the JIT compiling the engine first: `shumway -g halt` takes
+0.6 s instead of 1.1. The code is for the .NET the SDK ships with; on another
+platform or major version the runtime compiles the IL the assemblies still
+hold. The first Release build downloads the SDK's ReadyToRun compiler for the
+platform (36 MB); `-p:ShumwayReadyToRun=false` keeps the directory IL only.
 
 For a single self-contained executable instead, see
 [Native AOT](native-aot.md) or `shumway-link --exe`.
@@ -237,8 +247,9 @@ false.
   (`use_module(library(X))`). If two bare modules would define the same name,
   **neither** is promoted (all-or-nothing per module, so `user` is never left
   half-populated); the REPL says so (`%   NOT promoted 'a' - name clash …`)
-  and you call those by qualifying (`a:pred(…)`). This convenience is
-  REPL-only; an embedded `PrologEngine.LoadBundle` leaves the namespaces
+  and you call those by qualifying (`a:pred(…)`). A module promoted with an
+  earlier bundle stays promoted when a later bundle clashes with it. This
+  convenience is REPL-only; an embedded `PrologEngine.LoadBundle` leaves the namespaces
   exactly as linked.
 
 The REPL is also AOT-publishable: see
@@ -357,9 +368,16 @@ the range leaves its side of the domain open:
 ```prolog
 ?- X #= 576460752303423487 + 1.
 % error: representation_error(max_clpfd_integer)
+%   at clpfd_dom_below/3
+%   at clpfd_narrow_bounds/3
+%   at clpfd_post/2
+%   at #=/2
 
 ?- X in 1..1000000000, Y in 1..1000000000000, Z #= X * Y.
-Z in 1..sup, ...
+X in 1..1000000000,
+X*Y#=Z,
+Y in 1..1000000000000,
+Z in 1..sup.
 ```
 
 A domain is an integer, `L..H`, or a union of domains (`X in 1..3 \/ 7..9`).
@@ -370,7 +388,9 @@ read a variable's domain:
 
 ```prolog
 ?- X in 0..20, X mod 7 #= 2, fd_dom(X, D).
-D = 2..16, ...
+X in 2..16,
+X mod 7#=2,
+D = 2..16.
 ```
 
 `@L` denotes the length of the list `L` and can appear in a constraint
@@ -380,14 +400,20 @@ a lower bound, the list gets that many elements, and when the length is fixed
 the list is closed:
 
 ```prolog
-?- @L #= N, L = [a|_].
-L = [a|_A], N in 1..sup, @[a|_A] #= N.
+?- @L #= N, L = [foo|_].
+L = [foo | _A],
+N in 1..sup,
+@ [foo | _A]#=N.
 
 ?- @L #> N, N #> 5.
-L = [_A,_B,_C,_D,_E,_F,_G|_H], ...
+L = [_A, _B, _C, _D, _E, _F, _G | _H],
+N in 6..sup,
+N#<_I,
+_I in 7..sup,
+@ [_A, _B, _C, _D, _E, _F, _G | _H]#=_I.
 
 ?- @L #= 3.
-L = [_A,_B,_C].
+L = [_A, _B, _C].
 ```
 
 `@A #= @B` constrains two lists to have the same length. `label/1` and
@@ -403,7 +429,7 @@ element may be cyclic, so `L = [L]` has length 1.
 ?- @L #< 3, label([@L]).
 L = [] ;
 L = [_A] ;
-L = [_A,_B].
+L = [_A, _B].
 ```
 
 `@L` has its meaning only inside the constraints of `clpfd` (`#=`, `#\=`,
@@ -417,7 +443,10 @@ value, or that two lists differ in length, use the disequality of `clpfd`:
 false.
 
 ?- @A #\= @B, A = [1,2], B = [_|T].
-A = [1,2], B = [_A|T], @[_A|T] #= _B, _B in 1\/3..sup.
+A = [1, 2],
+B = [_A | T],
+@ [_A | T]#=_B,
+_B in 1\/3..sup.
 ```
 
 Besides `all_different/1`, `all_distinct/1`, `sum/3` and `scalar_product/4`,
@@ -431,7 +460,9 @@ a stretch keeps the others off it:
 ```prolog
 ?- S in 0..10, cumulative([task(2,3,_,1,_), task(S,2,_,1,_)]).
 S in 0\/5..10,
-...
+cumulative([task(2, 3, 5, 1, _A), task(S, 2, _B, 1, _C)], [limit(1)]),
+S+2#=_B,
+_B in 2..12.
 ```
 
 `labeling/2` takes `min(Expr)` and `max(Expr)`, and then gives the solutions
@@ -439,9 +470,14 @@ best first:
 
 ```prolog
 ?- [X,Y] ins 1..3, X #\= Y, labeling([min(X+Y)], [X,Y]).
-X = 1, Y = 2 ;
-X = 2, Y = 1 ;
-X = 1, Y = 3 ;
+X = 1,
+Y = 2 ;
+X = 2,
+Y = 1 ;
+X = 1,
+Y = 3 ;
+X = 3,
+Y = 1 ;
 ...
 ```
 
@@ -462,8 +498,10 @@ constraint: `true` with the unification, `false` with `dif/2`.
 
 ```prolog
 ?- if_(X = a, R = yes, R = no).
-X = a, R = yes ;
-dif(X, a), R = no.
+X = a,
+R = yes ;
+dif(X, a),
+R = no.
 ```
 
 `(=)/3` and `dif/3` are the basic conditions, `(',')/3` and `(;)/3`
@@ -553,6 +591,20 @@ fed by all of:
 - the embedding API: `engine.AddLibraryDirectory("/path/to/libs")` (or
   `engine.AddDefaultLibraryDirectories()` for the shipped `lib/`).
 
+The first directory with either file answers. With both `X.pl` and `X.shum`
+in it, the bundle is the library when it is not older than the source; else
+the source is. Editing the source therefore loads the source until the
+bundle is built again. A bundle in another format of compiled code is built
+again in memory from what it says it was built from, or refused with the
+reason (see [the format stamp](#separate-compilation-workflow)); the source
+beside a refused bundle is not loaded in its place.
+
+A library without `:- module/2` defines predicates of `user`, whether it
+loads from its source or from its bundle: the top level, other modules and
+other libraries call them by name. `consult/1` of a bundle is different: a
+module of it without `:- module/2` keeps its predicates, which are called
+qualified (`m:pred(…)`).
+
 ```prolog
 :- use_module(library(lists_ext)).      % imports its whole export surface
 :- use_module(library(lists_ext), [take/3, drop/3]).  % only these
@@ -586,8 +638,8 @@ At the REPL you load a library the same way, as a goal:
 
 ```
 ?- use_module(library(lists_ext)).
-?- take(2, [a,b,c,d], L).
-L = [a, b].
+?- take(2, [ann,bob,cid,dan], L).
+L = [ann, bob].
 ```
 
 As a goal, `use_module/2` imports into `user` only the predicates it lists,
@@ -660,6 +712,56 @@ happened deeper down, for example in a file the query consulted. `catch/3` in
 the program cannot stop it, and every cleanup set up with
 `setup_call_cleanup/3` has already run when you receive it. Those cleanups
 also run when you cancel a query through its `CancellationToken`.
+
+### A working directory per engine
+
+By default an engine uses the directory of the process. Relative paths go to
+the operating system as written, and `working_directory/2` moves the whole
+process, so every engine of the process moves with it. That is the right
+thing for a program with one engine.
+
+A host that runs several engines at once, each on its own files, gives each
+one a directory of its own:
+
+```csharp
+var engine = new PrologEngine();
+engine.SetCwdScope(CwdScope.Engine, @"C:\projects\alpha");
+
+engine.ConsultFile("rules.pl");                 // C:\projects\alpha\rules.pl
+engine.Query("open('out.txt', write, S), close(S).");   // C:\projects\alpha\out.txt
+engine.Query("working_directory(_, reports).");          // this engine only
+Console.WriteLine(engine.WorkingDirectory);    // C:\projects\alpha\reports
+```
+
+With no directory the engine starts where it stands, which for a new engine is
+the process directory at that moment. While the scope is `CwdScope.Engine`:
+
+- The engine neither reads nor changes the process directory.
+- Every relative path the engine resolves is relative to its own directory:
+  `open/4`, `consult/1`, `include/1`, `absolute_file_name/2`, `see/1` and
+  `tell/1`, the file-system predicates, saved states, and the host's own
+  calls that take a path, such as `ConsultFile`.
+- A process the program starts, with `shell/1,2` or `process_create/3`,
+  starts in the engine's directory. The `cwd/1` option still chooses another,
+  and a relative one is relative to the engine's.
+- The read-only flag `cwd_scope` is `engine`. It is `process` for an engine
+  that did not ask. A program cannot change it.
+
+The host can change its mind at any time. `SetCwdScope(CwdScope.Process)`
+takes the engine back to the process directory and drops its own, and
+assigning `engine.WorkingDirectory` moves the engine without a query.
+
+Two things run outside the engine and still see the process directory:
+
+- **Native code.** A `:- native` function that receives a relative file name
+  resolves it in the operating system. Pass it an absolute one;
+  `absolute_file_name/2` makes it absolute against the engine's directory.
+- **Your own foreign predicates.** `File.Open("data.txt")` inside a
+  `[PrologPredicate]` is ordinary .NET. `engine.ResolvePath("data.txt")`
+  returns the path as the builtins would resolve it.
+
+An `EnginePool` needs nothing special: its factory creates the engines, so
+the factory calls `SetCwdScope`.
 
 ### Loading a precompiled bundle
 
@@ -734,7 +836,7 @@ shumway-compile [options] input1.pl [input2.pl ...]
   call graph, the `:- ensure_linked` set, and any module-qualified
   references.
 - File header: magic bytes `SHMO` + a `uint32` version field
-  (currently `3`). The format is frozen pre-release: writer and reader
+  (currently `4`). The format is frozen pre-release: writer and reader
   require exactly this version: there is no backward compatibility with
   older `.shmo` versions until the first public release.
 - Every `.shmo` and `.shum` also records **the Shumway version that wrote
@@ -745,6 +847,28 @@ shumway-compile [options] input1.pl [input2.pl ...]
   format eventually changes, rather than only rejected. `shumway-link
   --map` prints it, and it is on `Bundle.GeneratorVersion` /
   `ShmoObject.GeneratorVersion` for embedders.
+- Every `.shmo` and `.shum` carries **a stamp of its format** after the
+  version field (a `uint64`): a fingerprint of the instruction set and its
+  encoding, of the cell tags and of the two files' layouts. It is computed,
+  not counted, so it stays the same from one release to the next for as
+  long as the format does, and a bundle built once keeps loading. The code
+  of a file with another stamp is not read. `BundleReader.IsCurrent`
+  answers the same question from a file's first sixteen bytes.
+- After the stamp, every `.shmo` and `.shum` says **how it was built**
+  (ADR-076), in a part every format reads: the tool, the inputs in order,
+  the options that change the product (`--library`, `--goal`, `--entry`,
+  `--consult`, `--strip`, `--wasm` and the like), and for each source its
+  digest and the time it was last written. Built with `--with-source`, it
+  also holds a copy of each input source. `use_module(library(X))`,
+  `shumway-link` and `shumway-lib` build a file with another stamp again
+  from that, in memory, and say they did. A source is found by its name
+  beside the file or on the library search path, or taken from the copy;
+  when the two differ, the newer is compiled, with a warning. Nothing is
+  written: linking again is how a rebuilt file is kept. A file that cannot
+  be built again is refused, and the message says why: it was built before
+  files said how they were built, a source it names is not there, a host
+  or `save_state/1` wrote it, or it was built under rules this Shumway does
+  not rebuild.
 
 Flags:
 
@@ -753,11 +877,12 @@ Flags:
 | `-o, --output <path>` | Single-input output file, or multi-input output directory. |
 | `-r, --release` | Release build (default). Smaller `.shmo`, no per-instruction debug info. |
 | `-d, --debug` | Debug build. The build mode is recorded in the `.shmo` and surfaces in `shumway-link --map` output. |
+| `--with-source` | Keep the source in a release `.shmo`. A bundle linked from it (without `--strip`) includes the source of each module, so it can be read, but the bundle still runs its compiled code, which is promoted to Tier-1 like any release code. With `--consult`, each `.shmo` keeps its module's file exactly as it is on disk. Keeping the source does not make a module debuggable: for that, compile with `--debug`. |
 | `-v, --verbose` | After each file, list every `:- public` and `:- dynamic` indicator the module exports. |
 | `--dump-wam <file>` | Append a readable disassembly of each predicate's WAM bytecode to `<file>` (analysis aid; see below). |
 | `--dump-il <file>` | Append the Tier-1 IL the compiler generates for each predicate to `<file>` (analysis aid; see below). |
 | `--regions` | With `--dump-il`, enable **region compilation** so the IL dump shows region methods (flat local code space) instead of one method per predicate. |
-| `-c, --consult` | Compile by **consulting** the file(s) in an ephemeral engine (directives execute, `term_expansion` / `goal_expansion` hooks run, `use_module` dependencies load) and emit one `.shmo` per module the load brought in. Required for libraries that *generate clauses at load time* or need operators defined by their dependencies: the file-at-a-time compile above cannot run those hooks. All inputs are consulted into **one** engine, so a module several inputs share (a library and its dependencies) compiles **once**; and a dragged-in dependency's `.shmo` is **reused when up to date** (it exists, is at least as new as the module's source, and was built in the same mode), so compiling `a.pl` then `b.pl` in separate runs produces the same object set as one batch. Each object is self-contained (it carries its own clauses, dynamic seeds, and operators) so any reachability-complete subset links correctly. See [Packaging a third-party library](#packaging-a-third-party-library-into-a-bundle---consult). |
+| `-c, --consult` | Compile by **consulting** the file(s) in an ephemeral engine (directives execute, `term_expansion` / `goal_expansion` hooks run, `use_module` dependencies load) and emit one `.shmo` per module the load brought in. Required for libraries that *generate clauses at load time* or need operators defined by their dependencies: the file-at-a-time compile above cannot run those hooks. All inputs are consulted into **one** engine, so a module several inputs share (a library and its dependencies) compiles **once**; and a dragged-in dependency's `.shmo` is **reused when up to date** (it exists, is at least as new as the module's source, and was built with the same mode and the same `--with-source` setting), so compiling `a.pl` then `b.pl` in separate runs produces the same object set as one batch. Each object is self-contained (it carries its own clauses, dynamic seeds, and operators) so any reachability-complete subset links correctly. See [Packaging a third-party library](#packaging-a-third-party-library-into-a-bundle---consult). |
 | `-L, --library-dir <dir>` | With `--consult`: an extra directory searched to resolve `use_module(library(X))` when a dependency is not next to the compiled file. Repeatable; also reads `SHUMWAY_LIBRARY_PATH`. (The compiled file's *own* directory is always searched, so siblings resolve with no flag.) |
 | `-h, --help` | Usage summary. |
 
@@ -849,8 +974,8 @@ work *at load time* that its own clauses then depend on:
   `clpz`, `dcgs`, the `atts` machinery all do this);
 - **operators** (`:- op(...)`) declared by a *dependency* that the
   importing file's clauses need in order to parse;
-- **`:- initialization`** or other directives whose effects are part of
-  the compiled program.
+- **goal directives** (`:- assertz(...)`, any directive that is not a
+  declaration) whose effects are part of the compiled program.
 
 A file-at-a-time compile cannot see any of that (the hooks never run), so
 it either fails to parse or silently drops the generated clauses. **`--consult`
@@ -927,11 +1052,20 @@ Two things to know going in:
   run and the clause would define a predicate named `:`. A file that only
   declares one of those hooks `multifile` or `dynamic`, with no clause, is
   not refused: the declaration installs nothing.
-- **A file-at-a-time compile does not run directives.** An
-  `:- initialization(G)` and a goal directive (`:- assertz(...)`, anything
-  that is not a declaration) are dropped, and each one is reported as a
-  warning naming it. `--consult` runs them while compiling, and the object
-  carries the state they leave in its dynamic predicates.
+- **A file-at-a-time compile does not run directives, and carries
+  `:- initialization`.** An `:- initialization(G)` goal runs when the bundle
+  loads, once all of it is in and in its module, as a compiled program runs
+  it when it starts. A goal directive (`:- assertz(...)`, anything that is not
+  a declaration) is dropped and reported as a warning naming it: write it as
+  `:- initialization(...)`, or compile with `--consult`. `--consult` runs both
+  while compiling; the object then carries the state they leave in its
+  dynamic predicates, and its `initialization` goals do not run again when
+  the bundle loads.
+- **Conditional compilation keeps the same clauses either way.** A
+  condition of `:- if`, `:- elif` is answered from the flags, the builtins,
+  the prelude, the libraries Shumway ships and what the file defined above
+  it, without running a query. A condition neither compile can answer is
+  reported and taken as false.
 
 ### Step 2: `shumway-link` (linker)
 
@@ -949,16 +1083,19 @@ shumway-link -o app.shum \
 - **Reachability root** is either `--entry pred/N` (repeatable;
   comma-separated within a flag) or `--goal Term` (see
   [Producing a runnable executable](#step-3a-producing-a-runnable-executable)).
-  At least one is required.
+  At least one is required, except with `--library`. A predicate of a module
+  with `:- module/2` is a root only if the module exports it.
 
 | Flag | Effect |
 |---|---|
 | `-o, --output <path>` | Output `.shum` path (required). |
-| `--entry pred/N[,…]` | Entry-point predicates. Repeatable; comma-separated within a flag. |
-| `--goal Term` | Adds the goal's head as an implicit entry point. Required when `--exe` is set. |
+| `--entry pred/N[,…]` | Entry-point predicates. Repeatable; comma-separated within a flag. Refused with `--library`. |
+| `--goal Term` | Adds the goal's head as an implicit entry point. Required when `--exe` is set. With `--library` and no `--exe`, the goal the bundle runs when it loads (see `--library`). |
+| `--library` | Keep every predicate of every input: the bundle is a library loaded whole, and nothing is pruned. A `--goal` runs when the bundle loads, as the last `initialization/1` goal of the last input, in its module. |
 | `--allow-undefined` | Downgrade missing-predicate errors to warnings; still produce the bundle. The engine raises `existence_error/2` at call time if the missing predicate is actually invoked. |
 | `--warn-shadow` | Warn when a module's **local** predicate shares an indicator with another linked module's public: the C `static`-shadows-global shape. Legal either way (inside its module the local wins); the `--map` file always lists these regardless of the flag. (Two *publics* with the same indicator are always a `duplicate_public` **error**.) |
 | `-L, --library-dir <dir>` | Directory searched to resolve a `use_module(library(X))` dependency not passed explicitly: `X.pl`/`X.shmo` is compiled and linked in (transitively), C-linker style: already-provided inputs win, source is the last resort. Repeatable; also reads `SHUMWAY_LIBRARY_PATH`. |
+| `-dl, --dynlib <lib>` | Link against a library bundle (one linked with `--library`) without linking its code in. A call the inputs leave undefined is looked up in the library; the bundle records what it uses, and when it loads it attaches the library, checks that it still offers those predicates, and loads the modules that define them. `<lib>` is a `.shum` file, or a name found as `<lib>.shum` in the `-L` directories; at load the bundle finds it next to itself or on the library search path. Repeatable. A source with `:- ensure_loaded(bundle(<lib>))` is linked the same way without the option: the compiler records the directive in its `.shmo`, and the link finds `<lib>.shum` in the `-L` directories (under `--consult`, the file the consult attached). See [ADR-075](../architecture/adr/075-dynamic-library-bundles.md). |
 | `--consult` | Compile `.pl` inputs **through the consult pipeline** (directives and `term_expansion` / `goal_expansion` hooks run, `use_module` dependencies load) instead of file-at-a-time: the linker equivalent of `shumway-compile --consult`. Needed when a source uses a library's operators or generates clauses at load time; every module the load brings in is linked. Without it, a `.pl` that uses `library(...)` compiles file-at-a-time and the linker prints a hint pointing here; one that defines an expansion hook or a clause for another module is refused. |
 | `-s, --strip` | Remove the embedded Prolog source and the clause terms from every bundle entry. Bytecode preserved, so the program runs the same; `clause/2` and `listing/1` no longer see its static predicates. Useful for size analysis / IP-protection. Without it, a release bundle (no source) still ships each module's clause terms, so `clause/2` and `listing/1` answer exactly as they do on the consulted source. A `.shmo` always carries the clause terms: it is an *intermediate* build artifact, like an object file with embedded IR, and the linker uses them for cross-module optimization (e.g. the meta-wrapper unfold). |
 | `-m, --map <path>` | Write a C-toolchain-style audit file describing what landed in the bundle: per-module sizes, exported / dynamic predicate lists, local-shadows-public listing, dropped modules, totals. |
@@ -971,7 +1108,7 @@ shumway-link -o app.shum \
 | `-e, --exe <path>` | Emit a single-file native executable. See [step 3a](#step-3a-producing-a-runnable-executable). |
 | `-g, --goal Term` | The goal the `--exe` runs at startup. Trailing `.` optional. |
 | `--self-contained` | Used with `--exe`: bake the .NET runtime into the binary (~70 MB exe, runs on machines without .NET). Default is framework-dependent (~5-10 MB exe, requires the .NET 10 runtime on the target, or a later major version when 10 is not installed). |
-| `--debug` | Used with `--exe`: build the executable debuggable, so its modules compile debuggable and it materialises their embedded source at startup, so a debugger attached to the process sets breakpoints and steps (see [`debugger.md`](debugger.md)). Requires the bundle to carry source (compile inputs with `shumway-compile --debug`; not with `--strip`). |
+| `--debug` | Used with `--exe`: build the executable for debugging. It runs the debug code of its modules and writes their source to files at startup, so a debugger attached to the process can set breakpoints and step (see [`debugger.md`](debugger.md)). Needs at least one module compiled with `shumway-compile --debug`, and no `--strip`. |
 | `--debug-wait` | Like `--debug`, but the executable also blocks at startup until a debugger has attached and armed its breakpoints, so the first goal can be stopped in. Implies `--debug`. |
 | `--dap-port <port>` | With `--exe --debug`: bake a VS Code (DAP) debug endpoint into the executable: it listens on `127.0.0.1:<port>` whenever it runs. At run time `SHUMWAY_DAP_PORT` overrides the baked port (`0` disables). Implies `--debug`. See [`debugger-vscode.md`](debugger-vscode.md). |
 | `-d, --dll <path>` | Emit a loadable .NET class library embedding the bundle, with a factory that hands back a ready engine. See [step 3b](#step-3b-producing-a-loadable-net-class-library---dll). Mutually exclusive with `--exe`. |
@@ -1236,7 +1373,17 @@ link-time meaning:
 | `:- ensure_linked [a/1, b/2].` | List form of the above. |
 
 Other directives (`set_prolog_flag/2`, etc.) are honoured at consult time
-but do not affect link-time decisions.
+but do not affect link-time decisions. A `:- set_prolog_flag(F, V)` directive
+sets the flag as the consult reads it, and as the builtin does: a flag the
+engine does not know, or a value outside the flag's domain, is reported with
+the builtin's error, as any directive that raises is, and the load goes on.
+
+A `set_prolog_flag/2` directive also travels with its module, and compiled
+through the consult (`--consult`), so does every call to `set_prolog_flag/2`
+that succeeded while the module loaded, an `initialization` goal's among
+them. Loading the `.shum` makes those calls again, in order, once the bundle
+is in, so a flag such as `lenient_escapes` or `double_quotes` governs what a
+linked program reads at run time as it does after consulting the source.
 
 `?- Goal.` in Prolog text is the Edinburgh spelling of a directive and is
 equivalent to `:- Goal.` so the goal runs at consult time. This makes a 
@@ -1251,7 +1398,9 @@ never the value**: every float sorts before every integer. The value only
 breaks ties within one type.
 
 ```prolog
-?- compare(Order, 1.1, 1).      % Order = (<): float first, though 1.1 > 1
+?- compare(Order, 1.1, 1).      % the float first, though 1.1 > 1
+Order = <.
+
 ?- msort([3, 1.5, 2, 0.5, 1], L).
 L = [0.5, 1.5, 1, 2, 3].
 ```
@@ -1277,7 +1426,7 @@ containing that same variable:
 ?- set_prolog_flag(occurs_check, true), -X = X.
 false.
 ?- set_prolog_flag(occurs_check, error), X = f(X).
-caught: error(representation_error(term), ...)
+% error: representation_error(term)
 ```
 
 The setting covers every unification: explicit `=/2`, clause-head matching,
@@ -1489,6 +1638,14 @@ again after it got the end should open the file with
 
 A peek at the end, such as `peek_code/2`, gives the end and does not move
 the stream past it. `at_end_of_stream/1` never raises.
+
+On the standard input, `at_end_of_stream/0,1` waits for the next character
+when the input is a file or a pipe, and holds once there is none, as it does
+for any file: a program that reads its requests from a pipe ends its loop on
+it. At a console it does not wait for a line to be typed, and the input is
+not at its end until the end has been read. The reader an embedding host
+gives to `PrologEngine.In` is treated as a console unless it implements
+`IEndOfInputReader`.
 
 ### Reading one key
 
@@ -1720,6 +1877,23 @@ a file without a module directive into `m`, and so does `consult(File)`
 called from `m`'s own code. The same rules hold on the two reference
 systems for modules.
 
+**Asking what a module has.** `current_predicate(m:Name/Arity)` enumerates
+what `m` defines, private or exported. Without a module it asks the module
+the call is written in: `user` at the top level and in a plain file, the
+module itself in a `:- module/2` file. An import is not a definition, so it
+is not listed where it is imported. `predicate_property/2` is what tells
+where a predicate comes from:
+
+```prolog
+?- predicate_property(m:helper(_), exported).           % m exports it
+?- predicate_property(user:helper(_), imported_from(M)). % user imports it from M
+?- predicate_property(Head, defined).                   % callable from here, imports included
+```
+
+It fails for a predicate the asking module can neither call by name nor
+import, another module's private among them. `current_module/1` enumerates
+the modules.
+
 The engine's own libraries are modules with export lists, so loading two
 libraries with overlapping surfaces (say `clpfd` and `clpz`, which share
 `#=`, `in`, …) is two imports that collide: the first import wins the bare
@@ -1843,10 +2017,12 @@ for the deployment matrix, the app.config a Framework host wants, and the
 
 ## Logtalk
 
-Shumway is a working backend for [Logtalk](https://logtalk.org/); the glue
-(a backend adapter and a launcher) ships in the repository under `logtalk/`,
-and the standard Logtalk library test suites and benchmarks run on it
-(Tier-1 IL promotion included). See [`logtalk.md`](logtalk.md).
+Shumway is a working backend for [Logtalk](https://logtalk.org/). Logtalk
+3.103.0 and later support it as they come (its `shumwaylgt` script); for an
+earlier release, the glue (a backend adapter and a launcher) ships in this
+repository under `logtalk/`. The standard Logtalk library test suites and
+benchmarks run on it (Tier-1 IL promotion included). See
+[`logtalk.md`](logtalk.md).
 
 ## Debugging
 

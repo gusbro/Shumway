@@ -66,14 +66,20 @@ internal sealed class BundleLoader
     /// <summary>ADR-038 §4: loads each library a member of an archive imports
     /// that the archive does not hold and the engine has not loaded, through
     /// use_module(library(X)), before the archive's code. The archive holds a
-    /// library when a member module is named like it.</summary>
-    private void LoadMissingLibraries(IReadOnlyList<ShmoObject> members)
+    /// library when a member module is named like it. A library bundle a
+    /// member attaches is attached first, found next to the archive or on the
+    /// library search path (ADR-075, decision 3).</summary>
+    private void LoadMissingLibraries(IReadOnlyList<ShmoObject> members, string? bundleDir = null)
     {
         var held = new List<string>();
         foreach (var member in members)
             if (_archiveModulesLoading.Add(member.ModuleName)) held.Add(member.ModuleName);
         try
         {
+            foreach (var member in members)
+                foreach (string library in member.DynamicLibraries)
+                    E.AttachLinkedLibrary(
+                        new BundleDynamicLibrary(library, Array.Empty<QualifiedPredicateRef>()), bundleDir);
             foreach (var member in members)
                 foreach (var dep in member.LibraryDeps)
                 {
@@ -178,21 +184,39 @@ internal sealed class BundleLoader
     /// <summary>ADR-035 — does this entry's bytecode carry the baked debug side tables (was it
     /// compiled <see cref="ShmoBuildMode.Debuggable"/>)? Decodes the module and looks for any
     /// stop site — a real module compiled debuggable always has some (even a fact gets one).
-    /// Only ever called on the debug-session load path, so the decode cost is never on a
-    /// release load; the decode re-interns the sites, which is idempotent with the load that
-    /// follows.</summary>
+    /// Called only for an entry that carries its text, so the decode cost is never on the load
+    /// of one without; the decode re-interns the sites, which is idempotent with the load that
+    /// follows. The answer is kept: a load asks it more than once.</summary>
     private static bool EntryCarriesDebugWam(BundleEntry entry)
     {
         if (entry.CompiledBytecode is not { Length: > 0 }) return false;
+        if (s_debugWam.TryGetValue(entry, out var known)) return known.Value;
+        bool found = false;
         try
         {
             var module = CompiledModuleCodec.Decode(entry.CompiledBytecode);
             foreach (var pred in module.Predicates)
-                if (pred.DebugStops.Count > 0) return true;
+                if (pred.DebugStops.Count > 0) { found = true; break; }
         }
         catch (Exception) { /* undecodable → not a debug entry we can use directly */ }
-        return false;
+        s_debugWam.AddOrUpdate(entry, new System.Runtime.CompilerServices.StrongBox<bool>(found));
+        return found;
     }
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
+        BundleEntry, System.Runtime.CompilerServices.StrongBox<bool>> s_debugWam = new();
+
+    /// <summary>Does this entry load from its code? Release code does, whatever text it
+    /// carries: the text is there to be read (<c>shumway-compile --with-source</c>), in a
+    /// debug session too. Debuggable code does in a debug session. Outside one it cannot be
+    /// debugged and only runs slower, so when the entry carries the text that debug build
+    /// compiled, the text is consulted, as code that can be promoted (ADR-035); without
+    /// it the debug code runs. An entry with no code of its own (no defined list: a bundle
+    /// written from sources) is consulted from its text.</summary>
+    private bool LoadsFromBytecode(BundleEntry entry)
+        => entry.CompiledBytecode is not null && entry.Defined.Count > 0
+           && (E._flags.DebugCodegen || string.IsNullOrEmpty(entry.Source)
+               || !EntryCarriesDebugWam(entry));
 
     /// <summary>Arity programs assume unknown=fail (a call to a predicate
     /// nothing defined or asserted just fails). Applied when a loaded
@@ -216,7 +240,11 @@ internal sealed class BundleLoader
         Justification = "Only reached when the bundle declares foreign assemblies, "
         + "which are loaded from disk beside it and are outside the trimmer's view "
         + "by construction.")]
-    internal void LoadBundleCore(Bundle bundle, string? bundleDir)
+    /// <param name="deferredInitialization">When given, the entries'
+    /// initialization goals are added to it, for the caller to run, instead of
+    /// run here.</param>
+    internal void LoadBundleCore(Bundle bundle, string? bundleDir,
+        List<(Shumway.Compiler.Ast.Term Goal, string Module)>? deferredInitialization = null)
     {
         ArgumentNullException.ThrowIfNull(bundle);
         // A bundle linked from Arity modules expects Arity call semantics:
@@ -254,6 +282,11 @@ internal sealed class BundleLoader
         // bundle, before this bundle's code.
         foreach (var libName in bundle.EngineLibraries)
             E.UseEngineLibrary(libName);
+        // ADR-075, decision 6: the libraries the bundle was linked against are
+        // attached, what it uses of each is checked, and the modules that
+        // define it are brought in, before this bundle's code.
+        foreach (var library in bundle.DynamicLibraries)
+            E.AttachLinkedLibrary(library, bundleDir);
         // A shumway-lib librarian archive stores its modules as verbatim
         // .shmo objects (bundle.ArchiveMembers) rather than post-link
         // Entries. Derive a runnable entry from each — exactly the fields a
@@ -285,13 +318,15 @@ internal sealed class BundleLoader
                     dynamicSeeds: shmo.DynamicSeeds,
                     nativeBlocks: shmo.NativeBlocks,
                     operators: shmo.Operators,
+                    flags: shmo.Flags,
+                    initializationGoals: shmo.InitializationGoals,
                     isExportQualified: shmo.IsExportQualified,
                     exports: shmo.Exports,
                     imports: shmo.Imports,
                     dialect: shmo.Dialect,
                     clauseTerms: shmo.ClauseTerms));
             }
-            LoadMissingLibraries(members);
+            LoadMissingLibraries(members, bundleDir);
             effectiveEntries = combined;
         }
         // A bundle may bake a precompiled `$prelude` entry (shumway-link
@@ -346,58 +381,56 @@ internal sealed class BundleLoader
                         xl.Add((od.Priority, t, od.Name));
                 }
             }
-            // source-less load. When the bundle was built
-            // with --strip (or compiled in Release with
-            // source omission), Source is empty and we cannot
-            // ConsultString. The entry's CompiledBytecode + Defined
-            // metadata carry everything we need — the bytecode is
-            // already runtime-ready (mangled) and the
-            // Defined list tells us which functors are public /
-            // dynamic / local. Set up a ModuleManifest from the
-            // metadata and queue the precompiled predicates for the
-            // static-link region; SetupQueryFromTerm will plug them
-            // in next time it rebuilds the link.
-            if (string.IsNullOrEmpty(entry.Source)
-                && entry.CompiledBytecode is not null
-                && entry.Defined.Count > 0)
+            // The entry's CompiledBytecode + Defined metadata carry everything the
+            // module needs: the bytecode is runtime-ready (mangled) and the Defined
+            // list tells which functors are public / dynamic / local. Set up a
+            // ModuleManifest from them and queue the precompiled predicates for the
+            // static-link region; SetupQueryFromTerm plugs them in when it next
+            // rebuilds the link.
+            if (LoadsFromBytecode(entry))
             {
-                LoadEntryFromBytecode(entry);
-                continue;
-            }
-            // ADR-035 — a Debuggable bundle bakes the debug-shape WAM (frames, Y-slots, no
-            // trimming/LCO, stop sites + frame/variable maps) straight into its bytecode. Under
-            // a debug session we run that directly — no re-consult, zero recompile at load — and
-            // materialise the embedded source only for the debugger to open. The baked stop
-            // sites already reference "<module>.pl" (by base name), and the materialised file
-            // has that base name, so interning its full path upgrades the site's file to an
-            // openable one; the stop sites then flow into the query-setup breakpoint index
-            // (SetupQueryFromTerm) exactly as a fresh debug consult's would.
-            if (E._flags.DebugCodegen && entry.CompiledBytecode is { Length: > 0 }
-                && entry.Defined.Count > 0 && EntryCarriesDebugWam(entry))
-            {
-                string dbgFile = MaterialiseDebugSource(entry.ModuleName, entry.Source);
-                Shumway.Core.DebugSiteTable.InternFile(dbgFile);   // upgrade to an openable path
-                if (E.DebugSession is not null)
-                    Debugging.ShumwayDebugHelper.NoteSourceFile(dbgFile);
-                LoadEntryFromBytecode(entry);
+                // ADR-035 — under a debug session, debuggable code is shown from
+                // the text it carries: materialise it for the debugger to open.
+                // The baked stop sites reference "<module>.pl" (by base name),
+                // and the materialised file has that base name, so interning its
+                // full path upgrades the sites' file to an openable one.
+                if (E._flags.DebugCodegen && !string.IsNullOrEmpty(entry.Source)
+                    && EntryCarriesDebugWam(entry))
+                {
+                    string dbgFile = MaterialiseDebugSource(entry.ModuleName, entry.Source);
+                    Shumway.Core.DebugSiteTable.InternFile(dbgFile);   // upgrade to an openable path
+                    if (E.DebugSession is not null)
+                        Debugging.ShumwayDebugHelper.NoteSourceFile(dbgFile);
+                }
+                // ADR-075: a module of a library being attached is declared,
+                // and its code waits for the first call into it. One with
+                // initialization goals comes in before its goals run
+                // (decision 10), as a module a call brings in.
+                if (E._attachingLibrary is not null && entry.ModuleName != Prelude.ModuleName)
+                {
+                    var declare = PrologEngine.ProfMark.Now();
+                    E.NoteAttachedModule(entry, LoadEntryFromBytecode(entry, deferCode: true));
+                    declare.AddTo(ref PrologEngine.ProfAttachDeclareTicks, ref PrologEngine.ProfAttachDeclareBytes);
+                }
+                else
+                    LoadEntryFromBytecode(entry);
                 continue;
             }
 
-            // Otherwise (a non-Debuggable source-carrying entry): when debugging, show the code
-            // from that source. The source-stripped entry took the bytecode branch above; there
-            // is nothing to show but the module name, and the debugger resolves it the ordinary
-            // way (by module name to a `<module>.pl` on disk). But here the exact text the
-            // module was compiled from is in hand, so materialise it to a file the debugger can
-            // open and stamp this consult's stop sites with that path — a breakpoint in the
-            // .shum's code then resolves to the code that is in the .shum, not a possibly-
-            // different .pl someone happens to have on disk. (This re-consult path is the
-            // fallback for a Debug — not Debuggable — bundle loaded under a debug session.)
+            // Consulted from its text: debuggable code outside a debug session,
+            // or an entry with no code of its own, a bundle written from sources
+            // (whose bytecode, if any, is a cache of that text, compiled without
+            // the module's mangling and with no defined list). Under a debug
+            // session its stop sites are stamped with a materialised copy of the
+            // text, so a breakpoint resolves to the code the bundle holds, not to
+            // a possibly different .pl on disk.
+            string text = entry.Source;
             int prevDebugFile = E._debugFileId;
             try
             {
-                if (E._flags.DebugCodegen)
+                if (E._flags.DebugCodegen && text.Length > 0)
                 {
-                    string materialised = MaterialiseDebugSource(entry.ModuleName, entry.Source);
+                    string materialised = MaterialiseDebugSource(entry.ModuleName, text);
                     E._debugFileId = Shumway.Core.DebugSiteTable.InternFile(materialised);
                     if (E.DebugSession is not null)
                         Debugging.ShumwayDebugHelper.NoteSourceFile(materialised);
@@ -406,7 +439,7 @@ internal sealed class BundleLoader
                 // module-less file keeps the per-file module identity its
                 // .shmo bytecode was compiled (and mangled) with, instead of
                 // merging into the rolling "user" module.
-                E.ConsultStringInner(entry.Source, recordInHistory: true,
+                E.ConsultStringInner(text, recordInHistory: true,
                     moduleNameFallback: entry.ModuleName);
             }
             finally
@@ -417,25 +450,26 @@ internal sealed class BundleLoader
 
         // Bind persisted Tier-1 IL. RegisterBoundDelegate is first-wins, so this
         // must precede any IL warm — else warm compiles a region root
-        // standalone and blocks the persisted delegate. A source-STRIPPED entry
-        // warms inside LoadEntryFromBytecode (the entry loop above), which is why
-        // that path binds its own persisted IL first (BindPersistedIlForEntry at
-        // the top of LoadEntryFromBytecode); this loop is the idempotent
-        // whole-bundle pass (cached, first-wins) that also covers source-carrying
-        // entries, whose warm runs in the loop below.
+        // standalone and blocks the persisted delegate. An entry loaded from its
+        // code warms inside LoadEntryFromBytecode (the entry loop above), which is
+        // why that path binds its own persisted IL first (BindPersistedIlForEntry
+        // at the top of LoadEntryFromBytecode); this loop is the idempotent
+        // whole-bundle pass (cached, first-wins) that also covers the others,
+        // whose warm runs in the loop below.
         foreach (var entry in effectiveEntries)
-            BindPersistedIlForEntry(entry);
+            if (!E.IsCodePending(entry.ModuleName)) BindPersistedIlForEntry(entry);
 
-        // Decode each source-carrying entry's CompiledModule and feed IL warmup
+        // Decode the CompiledModule of each entry not loaded from it and feed IL warmup
         // (its PrecompiledClauseCache substitution remains active — made the
         // .shmo bytecode byte-identical to what SetupQueryFromTerm would
         // produce, so the warmed IL delegates' call sites resolve correctly).
         foreach (var entry in effectiveEntries)
         {
             if (entry.CompiledBytecode is null) continue;
-            // Source-less entries already decoded above (via LoadEntryFromBytecode).
+            if (E.IsCodePending(entry.ModuleName)) continue;   // ADR-075: with its code
+            // Those already decoded above (via LoadEntryFromBytecode).
             if (E._precompiledModules.ContainsKey(entry.ModuleName)
-                && string.IsNullOrEmpty(entry.Source)) continue;
+                && LoadsFromBytecode(entry)) continue;
             // Source-carrying: the source consult is the truth, so the bytecode is an
             // IL-warm / skip-compile cache only — don't register static predicates.
             // (The shared helper also remaps literals, which fixes float value-baking
@@ -444,19 +478,58 @@ internal sealed class BundleLoader
         }
         // A bundle's predicates join the static program — drop the
         // ADR-015 cached static linked region so the next query rebuilds it.
-        E._staticLink = null;
-        E.InvalidatePersistent();
+        // An attach that only declared modules adds no static code: the goal
+        // it runs in keeps the layout and adopts the dynamic predicates it
+        // declared (ADR-075), or lays the program out again
+        // (PrologEngine.LoadBundleLinkingLive).
+        if (E._attachingLibrary is not null && E._liveConsultEngine is not null
+            && bundle.WasmModules.Count == 0 && OnlyDeclared(effectiveEntries))
+            E._attachDeclaredOnly = true;
+        else
+        {
+            E._staticLink = null;
+            E.InvalidatePersistent();
+        }
         // The bundle's wasm modules wait for that link: a wasm tier installs
         // them when the next query setup links (or on its own tick). Queued
         // whether or not a tier is attached yet -- the web boot attaches its
-        // tier after loading the stdlib bundle.
-        foreach (var module in bundle.WasmModules)
-            E.IlPromotion.PendingWasmModules.Add(module);
+        // tier after loading the stdlib bundle. An attached library's wait for
+        // its modules (ADR-075).
+        if (E._attachingLibrary is { } attaching)
+            E.QueueLibraryWasm(attaching, bundle.WasmModules);
+        else
+            foreach (var module in bundle.WasmModules)
+                E.IlPromotion.PendingWasmModules.Add(module);
         LastLoadedModules = effectiveEntries
             .Select(e => string.IsNullOrEmpty(e.ModuleName) ? PrologEngine.DefaultModuleName : e.ModuleName)
             .Distinct().ToList();
         foreach (string module in LastLoadedModules)
             if (module != PrologEngine.DefaultModuleName) E._modulesFromBundles.Add(module);
+        // Before the live link and the initialization goals, which resolve
+        // through the bare aliases this gives (ADR-056, amendment).
+        if (E._libraryBundleLoadDepth > 0)
+            foreach (string module in LastLoadedModules)
+                if (module != PrologEngine.DefaultModuleName
+                    && E._modules.TryGetValue(module, out var loadedManifest)
+                    && !loadedManifest.IsExportQualified
+                    && !E._bareLibraryModules.Contains(module))
+                    E._bareLibraryModules.Add(module);
+
+        // The set_prolog_flag/2 calls the modules' loads made, in entry order.
+        // Nothing loaded above reads them: an entry loaded from its code is
+        // not read, and one consulted from its text made its own calls.
+        foreach (var entry in effectiveEntries)
+            foreach (var fs in entry.Flags) E.ApplyBundleFlag(fs);
+
+        // The initialization/1 goals of the modules compiled from the file
+        // alone, once the whole program is in (ISO 7.4.2.8), each in its
+        // module. One that fails or raises is reported and the next runs;
+        // halt ends the load.
+        var later = deferredInitialization ?? E._deferredBundleInitialization;
+        foreach (var entry in effectiveEntries)
+            foreach (var goal in entry.InitializationGoals)
+                if (later is not null) later.Add((goal, entry.ModuleName));
+                else E.RunInitializationGoal(goal, entry.ModuleName);
 
         // Cross-process functor-id drift diagnostic (see PersistedIlBuilder).
         var dumpFidsEnv = System.Environment.GetEnvironmentVariable("SHUMWAY_PERSIST_DUMP_FIDS");
@@ -596,9 +669,12 @@ internal sealed class BundleLoader
             }
         }
         // The interp gets its own copy; the pristine array is the template.
-        interp.IlByFunctorId = ilTable is null
+        // Under a tracer the query starts with no compiled code to call: a
+        // linked site misses the table and goes back to a plain call.
+        bool interpreted = E.IlPromotion.CallsStayInterpreted;
+        interp.IlByFunctorId = ilTable is null || interpreted
             ? null : (Func<Shumway.Core.Activation, int, bool>?[])ilTable.Clone();
-        InstallCpsTables(interp);
+        if (!interpreted) InstallCpsTables(interp);
         DiagIlTable(interp.IlByFunctorId);
 
         // Stage B.2 — build a fid-keyed view of
@@ -751,7 +827,9 @@ internal sealed class BundleLoader
     private void OnCalleePromoted(int calleeFid, Shumway.Compiler.Il.PredicateDelegate del)
     {
         var interp = _rewriteInterp;
-        if (interp is null) return;
+        // A tracer keeps calls on the interpreter: the table stays empty and
+        // the sites plain, and the next query's setup links them.
+        if (interp is null || E.IlPromotion.CallsStayInterpreted) return;
         // 1. Direct dispatch table (grow if needed; engine thread — no races).
         var table = interp.IlByFunctorId;
         if (table is null || calleeFid >= table.Length)
@@ -1178,16 +1256,14 @@ internal sealed class BundleLoader
     // its bytecode is copied into each engine's persistent buffer (per-engine
     // Call→CallIl patches land in the copy), and static switch tables are
     // never mutated (in-place mutation applies to dynamics only).
-    private static readonly Dictionary<string, Shumway.Compiler.Wam.Linker.LinkResult>
-        _sharedStaticLinks = new();
-    private static readonly object _sharedStaticLinksLock = new();
-
-    // Crude growth bound: a long-lived process churning distinct static
-    // programs (a test suite, a REPL consulting repeatedly) would otherwise
-    // accumulate full program images forever. The pool scenario this cache
-    // exists for uses a handful of distinct programs, so wholesale reset on
-    // overflow is simpler than LRU and costs one relink per evicted program.
+    // A growth bound: a long-lived process churning distinct static programs
+    // (a test suite, a REPL consulting repeatedly) would otherwise hold every
+    // program image forever. Not a wholesale reset when full: another thread
+    // linking one program then dropped the link two engines were sharing.
     private const int SharedStaticLinkCapacity = 64;
+    private static readonly OldestOutCache<string, Shumway.Compiler.Wam.Linker.LinkResult>
+        _sharedStaticLinks = new(SharedStaticLinkCapacity);
+    private static readonly object _sharedStaticLinksLock = new();
 
     /// <summary>Test/diagnostic: the number of real static-region link runs
     /// (identical static programs link once for the whole process).</summary>
@@ -1201,26 +1277,26 @@ internal sealed class BundleLoader
     internal Shumway.Compiler.Wam.Linker.LinkResult GetOrLinkStatic(
         List<Shumway.Compiler.Wam.CompiledPredicate> staticPreds, int loadOffset)
     {
-        string key = StaticLinkKey(staticPreds, loadOffset);
+        var aliases = E.BareLibraryAliases();
+        string key = StaticLinkKey(staticPreds, loadOffset, aliases);
         lock (_sharedStaticLinksLock)
         {
-            if (_sharedStaticLinks.TryGetValue(key, out var hit))
+            if (_sharedStaticLinks.Find(key) is { } hit)
             {
                 LastStaticLinkWasSharedHit = true;
                 return hit;
             }
             LastStaticLinkWasSharedHit = false;
-            if (_sharedStaticLinks.Count >= SharedStaticLinkCapacity)
-                _sharedStaticLinks.Clear();
             var link = new Shumway.Compiler.Wam.Linker
             {
                 // Superseded predicate versions a reconsult left behind: laid
                 // out, owning nothing, so the code after them keeps its
                 // address (PrologEngine.OrderStaticRegion).
                 DeadIndices = E.StaticDeadIndices,
+                Aliases = aliases,
             }.Link(staticPreds, loadOffset: loadOffset);
             System.Threading.Interlocked.Increment(ref StaticLinkBuildCount);
-            _sharedStaticLinks[key] = link;
+            _sharedStaticLinks.Add(key, link);
             return link;
         }
     }
@@ -1228,9 +1304,11 @@ internal sealed class BundleLoader
     /// <summary>Content fingerprint of the static link inputs: load offset
     /// plus, per predicate in order, functor id, bytecode bytes, and the
     /// switch-table content (keys/values/default live outside the bytecode)
-    /// and call-site table (drives the linker's resolution).</summary>
+    /// and call-site table (drives the linker's resolution), and the aliases
+    /// the link resolves bare names through.</summary>
     private static string StaticLinkKey(
-        List<Shumway.Compiler.Wam.CompiledPredicate> staticPreds, int loadOffset)
+        List<Shumway.Compiler.Wam.CompiledPredicate> staticPreds, int loadOffset,
+        IReadOnlyDictionary<int, int>? aliases)
     {
         using var sha = System.Security.Cryptography.IncrementalHash.CreateHash(
             System.Security.Cryptography.HashAlgorithmName.SHA256);
@@ -1241,56 +1319,75 @@ internal sealed class BundleLoader
             sha.AppendData(word);
         }
         AddInt(loadOffset);
+        AddInt(aliases?.Count ?? 0);
+        if (aliases is not null)
+            foreach (var (from, to) in aliases) { AddInt(from); AddInt(to); }
         AddInt(staticPreds.Count);
         foreach (var p in staticPreds)
+            sha.AppendData(_linkDigests.GetValue(p, LinkDigest));
+        return Convert.ToHexString(sha.GetHashAndReset());
+    }
+
+    // A compiled predicate does not change, so what it gives the key is
+    // computed once: hashing every predicate's bytecode at each link of the
+    // static region cost the size of the program per consult.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
+        Shumway.Compiler.Wam.CompiledPredicate, byte[]> _linkDigests = new();
+
+    private static byte[] LinkDigest(Shumway.Compiler.Wam.CompiledPredicate p)
+    {
+        using var sha = System.Security.Cryptography.IncrementalHash.CreateHash(
+            System.Security.Cryptography.HashAlgorithmName.SHA256);
+        var word = new byte[4];
+        void AddInt(int v)
         {
-            AddInt(p.FunctorId);
-            AddInt(p.Bytecode.Length);
-            sha.AppendData(p.Bytecode);
-            AddInt(p.SwitchTables.Count);
-            foreach (var t in p.SwitchTables)
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(word, v);
+            sha.AppendData(word);
+        }
+        AddInt(p.FunctorId);
+        AddInt(p.Bytecode.Length);
+        sha.AppendData(p.Bytecode);
+        AddInt(p.SwitchTables.Count);
+        foreach (var t in p.SwitchTables)
+        {
+            AddInt(t.DefaultAddress);
+            AddInt(t.Count);
+            for (int i = 0; i < t.Count; i++) { AddInt(t.Keys[i]); AddInt(t.Values[i]); }
+        }
+        AddInt(p.CallSites.Count);
+        foreach (var c in p.CallSites)
+        {
+            AddInt(c.OpcodeOffset);
+            AddInt(c.CalleeFunctorId);
+            AddInt(c.IsExecute ? 1 : 0);
+        }
+        // ADR-035 — the debug metadata is part of the identity, even though it is
+        // not part of the bytecode. Two programs can compile to byte-identical code
+        // and be written on entirely different lines: the stop sites and the frame
+        // maps are what tell them apart. Leaving them out of the key let one
+        // program's link be handed to another, which then reported its neighbour's
+        // source positions — a debugger showing the wrong file, with no error
+        // anywhere.
+        AddInt(p.DebugStops.Count);
+        foreach (var s in p.DebugStops)
+        {
+            AddInt(s.Offset);
+            AddInt(s.SiteId);
+        }
+        AddInt(p.DebugFrames.Count);
+        foreach (var f in p.DebugFrames)
+        {
+            AddInt(f.Start);
+            AddInt(f.End);
+            AddInt(f.HasFrame ? 1 : 0);
+            AddInt(f.Variables.Count);
+            foreach (var v in f.Variables)
             {
-                AddInt(t.DefaultAddress);
-                AddInt(t.Count);
-                for (int i = 0; i < t.Count; i++) { AddInt(t.Keys[i]); AddInt(t.Values[i]); }
-            }
-            AddInt(p.CallSites.Count);
-            foreach (var c in p.CallSites)
-            {
-                AddInt(c.OpcodeOffset);
-                AddInt(c.CalleeFunctorId);
-                AddInt(c.IsExecute ? 1 : 0);
-            }
-            // ADR-035 — the debug metadata is part of the identity, even though it is
-            // not part of the bytecode. Two programs can compile to byte-identical code
-            // and be written on entirely different lines: the stop sites and the frame
-            // maps are what tell them apart. Leaving them out of the key let one
-            // program's link be handed to another, which then reported its neighbour's
-            // source positions — a debugger showing the wrong file, with no error
-            // anywhere. Debug programs are also exactly the case this cache was never
-            // for (it exists so a pool can load one bundle N times), so the extra
-            // hashing costs nothing that matters.
-            AddInt(p.DebugStops.Count);
-            foreach (var s in p.DebugStops)
-            {
-                AddInt(s.Offset);
-                AddInt(s.SiteId);
-            }
-            AddInt(p.DebugFrames.Count);
-            foreach (var f in p.DebugFrames)
-            {
-                AddInt(f.Start);
-                AddInt(f.End);
-                AddInt(f.HasFrame ? 1 : 0);
-                AddInt(f.Variables.Count);
-                foreach (var v in f.Variables)
-                {
-                    AddInt(v.Slot);
-                    sha.AppendData(System.Text.Encoding.UTF8.GetBytes(v.Name));
-                }
+                AddInt(v.Slot);
+                sha.AppendData(System.Text.Encoding.UTF8.GetBytes(v.Name));
             }
         }
-        return Convert.ToHexString(sha.GetHashAndReset());
+        return sha.GetHashAndReset();
     }
 
     /// <summary>SHUMWAY_BUNDLE_DIAG audit: recompute every patch site's
@@ -1517,7 +1614,7 @@ internal sealed class BundleLoader
         bool followsTier = LibraryBundles.IsBakedPrelude(entry);
         bool atLoad = E.IlPromotion.PersistedThreshold <= 0 && !followsTier;
         HashSet<int>? withBytecode = null;
-        if (string.IsNullOrEmpty(entry.Source)
+        if (LoadsFromBytecode(entry)
             && E._precompiledModules.TryGetValue(entry.ModuleName, out var precompiled))
         {
             withBytecode = new HashSet<int>();
@@ -1684,7 +1781,13 @@ internal sealed class BundleLoader
         return module;
     }
 
-    private void LoadEntryFromBytecode(BundleEntry entry)
+    /// <summary>Loads a source-less entry: declares its module (exports,
+    /// imports, dynamic predicates and their clauses, hooks) and then loads
+    /// its code. With <paramref name="deferCode"/> only the first half runs
+    /// (ADR-075: a module of an attached library), and
+    /// <see cref="LoadEntryCode"/> runs the second when the module is brought
+    /// in. Answers whether the entry's shipped clauses were read.</summary>
+    private bool LoadEntryFromBytecode(BundleEntry entry, bool deferCode = false)
     {
         if (entry.CompiledBytecode is null)
             throw new InvalidOperationException(
@@ -1807,7 +1910,10 @@ internal sealed class BundleLoader
         // which expands nothing: a library that exists to install a hook
         // (Scryer's atts) did nothing for a program loaded after it.
         bool joinedHook = false;
-        if (!isPrelude)
+        // Deferred with the code, unless the module has clauses of a hook,
+        // which join the global hook now.
+        bool readClauses = !isPrelude && (!deferCode || DefinesGlobalHook(entry));
+        if (readClauses)
             foreach (var encoded in entry.ClauseTerms)
             {
                 var clause = TermCodec.DecodeClause(encoded);
@@ -1836,9 +1942,10 @@ internal sealed class BundleLoader
         // at born=current-gen / died=MAX initial clauses.
         foreach (var seed in entry.DynamicSeeds)
         {
-            int fid = Shumway.Core.FunctorTable.Intern(
+            int bareFid = Shumway.Core.FunctorTable.Intern(
                 Shumway.Core.AtomTable.Intern(seed.Indicator.Name, permanent: true).Id,
                 seed.Indicator.Arity);
+            int fid = bareFid;
             // A module that owns its dynamics keys them by its name; the seed
             // names the predicate bare (ADR-038, amendment). Its multifile
             // predicate is its own too: what other sources gave it is in the
@@ -1853,6 +1960,20 @@ internal sealed class BundleLoader
             // tabling driver reads it through.
             if (isPrelude && seed.EncodedClauses.Count > 0)
                 E._preludeFunctors.Add(fid);
+            // ADR-075, decision 9: an attached library's clauses wait for the
+            // predicate's first touch, those of a module brought in at the
+            // attach too, so the predicate gets them in the library's order.
+            if (E._attachingLibrary is not null && !isPrelude)
+            {
+                if (seed.EncodedClauses.Count > 0)
+                    E.NotePendingSeed(fid, bareFid,
+                        manifest.OwnsDynamics ? entry.ModuleName : null, seed);
+                if (entry.ModuleName != PrologEngine.DefaultModuleName && !seed.Multifile)
+                    E._dynamicSeedModule[fid] = entry.ModuleName;
+                continue;
+            }
+            // Loaded now: after the clauses attached libraries hold for it.
+            E.InstallPendingClauses(E._liveConsultEngine, fid);
             bool hadClauses = E._dynStore.TryGetClauses(fid, out var prior)
                 && prior.Count > 0;
             foreach (var encoded in seed.EncodedClauses)
@@ -1897,6 +2018,44 @@ internal sealed class BundleLoader
                 E._dynamicSeedModule[fid] = entry.ModuleName;
         }
 
+        if (!deferCode) LoadEntryCode(entry, shippedClausesRead: true);
+        return readClauses;
+    }
+
+    // Every entry was declared and its code waits: no static predicate and no
+    // hook clause joined the program.
+    private bool OnlyDeclared(IEnumerable<BundleEntry> entries)
+    {
+        foreach (var entry in entries)
+            if (!LoadsFromBytecode(entry) || !E.IsCodePending(entry.ModuleName) || DefinesGlobalHook(entry))
+                return false;
+        return true;
+    }
+
+    private static bool DefinesGlobalHook(BundleEntry entry)
+    {
+        foreach (var d in entry.Defined)
+            if (PrologEngine.IsGlobalHookFunctor(Shumway.Core.FunctorTable.Intern(
+                    Shumway.Core.AtomTable.Intern(d.Indicator.Name, permanent: true).Id,
+                    d.Indicator.Arity)))
+                return true;
+        return false;
+    }
+
+    /// <summary>The second half of <see cref="LoadEntryFromBytecode"/>: the
+    /// entry's static clauses for clause/2, its native blocks, its bytecode
+    /// and its persisted Tier-1 code.</summary>
+    internal void LoadEntryCode(BundleEntry entry, bool shippedClausesRead, bool broughtIn = false)
+    {
+        E.DropStaticClauseCaches();
+        if (!shippedClausesRead && entry.ModuleName != Prelude.ModuleName
+            && E._modules.TryGetValue(entry.ModuleName, out var manifest))
+            foreach (var encoded in entry.ClauseTerms)
+            {
+                var clause = TermCodec.DecodeClause(encoded);
+                if (!ConsultPipeline.IsHookClauseHead(clause)) manifest.ShippedClauses.Add(clause);
+            }
+
         // ADR-022 — repopulate this engine's native-block table so the baked
         // `'$native_run'('$nb$…', Vars)` dispatch (in the entry's bytecode) finds
         // its block at run time. The C statement source is re-parsed here (the C
@@ -1931,6 +2090,15 @@ internal sealed class BundleLoader
         // The static program just changed shape — drop the cached
         // static link region so the next query rebuild picks up the
         // new predicates.
+        // The module of an attached library was declared when the library
+        // was attached (ADR-075): its code changes what is linked and nothing
+        // a transform reads, so the derivation stays and so does every
+        // compile. How it gets linked is the caller's (BringInModule).
+        if (broughtIn)
+        {
+            E._skipCompileMergedCache = null;   // the precompiled cache grew
+            return;
+        }
         E._staticLink = null;
         E._staticPredicateCache.Clear();
         E._skipCompileMergedCache = null;   // static cache cleared
@@ -1969,6 +2137,7 @@ internal sealed class BundleLoader
 
     private Bundle BuildSnapshotBundle(bool dynamicOnly)
     {
+        E.InstallAllPendingClauses(null);
         var consultHistory = dynamicOnly
             ? (IReadOnlyList<string>)Array.Empty<string>()
             : E._consultHistory.ToArray();
@@ -1987,7 +2156,11 @@ internal sealed class BundleLoader
                 new PredicateRef(name, arity), encoded));
         }
         var snapshot = new BundleSnapshot(dynamicOnly, consultHistory, dynamicSeeds);
-        return new Bundle(Array.Empty<BundleEntry>(), foreignAssemblies: null, snapshot);
+        // A saved state is the state of an engine: nothing builds it again.
+        return new Bundle(Array.Empty<BundleEntry>(), foreignAssemblies: null, snapshot)
+        {
+            Recipe = new BundleRecipe { Tool = "save_state" },
+        };
     }
 
     /// <summary>Save-state restores a snapshot previously
@@ -2035,9 +2208,10 @@ internal sealed class BundleLoader
             E._modules.Clear();
             E._modules[PrologEngine.DefaultModuleName] = new ModuleManifest(PrologEngine.DefaultModuleName);
             E._dynStore.ClearAllSlots();
+            E.ForgetAttachedLibraries();
             E.ResetDynChains();
             E._staticPredicateCache.Clear();
-            E._dynamicPredicateCache.Clear();
+            E.ClearDynamicCompiles();
             E._skipCompileMergedCache = null;   // both caches cleared
             E._precompiledStaticPredicates.Clear();
             E._staticLink = null;

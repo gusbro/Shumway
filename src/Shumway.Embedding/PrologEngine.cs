@@ -36,13 +36,13 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// these three numbers, so they can never disagree.</summary>
     public const int VersionMajor = 0;
     public const int VersionMinor = 9;
-    public const int VersionPatch = 3;
+    public const int VersionPatch = 4;
 
     /// <summary>The version as <c>Major.Minor.Patch</c>.</summary>
     public static string VersionString =>
         $"{VersionMajor}.{VersionMinor}.{VersionPatch}";
 
-    /// <summary>The top-level greeting — <c>Shumway Prolog 0.9.3 (64
+    /// <summary>The top-level greeting — <c>Shumway Prolog 0.9.4 (64
     /// bits)</c>, in the shape GNU Prolog's banner uses. The bitness is the
     /// PROCESS's, not the machine's: a 32-bit .NET Framework host says
     /// <c>32 bits</c>, which is what a caller sizing a program to the address
@@ -197,6 +197,9 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     // Built by the same scan, invalidated with it: the head functors a
     // grammar rule defines (predicate_property(H, non_terminal)).
     internal HashSet<int>? _nonTerminalFunctorsCache;
+    // Built by the same scan, invalidated with it: the head functors of the
+    // global namespace, which an export-qualified module adds nothing to.
+    internal HashSet<int>? _globalStaticHeadFunctorsCache;
     // The static clauses by the head functor they define, for clause/2 —
     // dropped with _staticHeadFunctorsCache (DropStaticClauseCaches) and by
     // a derivation bump, the two signals that the module manifests changed.
@@ -299,7 +302,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     {
         try
         {
-            string full = System.IO.Path.GetFullPath(path);
+            string full = _directory.FullPath(path);
             _consultedPaths.Add(full);
             _loadStamps[full] = StampOf(full);
         }
@@ -325,14 +328,14 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// whether it has changed since.</summary>
     internal bool WasConsulted(string path)
     {
-        try { return _consultedPaths.Contains(System.IO.Path.GetFullPath(path)); }
+        try { return _consultedPaths.Contains(_directory.FullPath(path)); }
         catch { return false; }
     }
 
     internal bool IsLoadedAndUnchanged(string path)
     {
         string full;
-        try { full = System.IO.Path.GetFullPath(path); }
+        try { full = _directory.FullPath(path); }
         catch { return false; }
         return _consultedPaths.Contains(full) && !FileDiffersFromLoad(full);
     }
@@ -366,6 +369,11 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// source for incremental rebuilds.</summary>
     internal readonly Dictionary<string, string?> _moduleSourceFile = new();
 
+    /// <summary>ADR-076: the text of a source a rebuild holds in memory, by
+    /// its full path: consulting that path reads this text, and nothing is
+    /// written to disk for it.</summary>
+    internal IReadOnlyDictionary<string, string>? _sourcesInMemory;
+
     /// <summary>The source file a module was consulted from, or <c>null</c> if
     /// it came from an embedded string (baked-in library, prelude, shim).</summary>
     internal string? ModuleSourceFile(string moduleName) =>
@@ -374,6 +382,19 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// <summary>ADR-038 §4: the modules that bundle loads brought in. They are
     /// their bundle's code, so compiling a library emits no object for them.</summary>
     internal readonly HashSet<string> _modulesFromBundles = new(StringComparer.Ordinal);
+
+    /// <summary>ADR-056, amendment: the modules without a module directive that
+    /// a library's bundle brought (use_module, ensure_loaded), in load order.
+    /// Their predicates are user's, as the library's source defines them.</summary>
+    internal readonly List<string> _bareLibraryModules = new();
+
+    /// <summary>Loads of a library from its bundle in progress.</summary>
+    internal int _libraryBundleLoadDepth;
+
+    /// <summary>Where a bundle load inside a running goal puts the bundle's
+    /// initialization goals, to run once its code is linked into the goal
+    /// (<see cref="LoadBundleLinkingLive"/>); null otherwise.</summary>
+    internal List<(Shumway.Compiler.Ast.Term Goal, string Module)>? _deferredBundleInitialization;
 
     /// <summary>ADR-038 §4: the dynamic clauses that bundle loads seeded, kept
     /// only by an engine that compiles a library (null elsewhere): its object
@@ -587,7 +608,8 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// engine that never touches streams pays nothing.</summary>
     private StreamRegistry? _streams;
     internal StreamRegistry Streams =>
-        _streams ??= new StreamRegistry(new FollowingWriter(() => Out), In);
+        _streams ??= new StreamRegistry(new FollowingWriter(() => Out), In,
+            new FollowingWriter(() => Error));
 
     /// <summary>Activation-wide mutable flag state. Builtins
     /// <c>set_prolog_flag/2</c> and <c>current_prolog_flag/2</c> read
@@ -729,6 +751,81 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
 
     private System.IO.TextWriter? _warnings;
 
+    /// <summary>Told true when an <c>initialization/1</c> goal of a file or a
+    /// bundle starts and false when it ends, nested when one loads another:
+    /// a host that shows a consult shows a running program meanwhile.</summary>
+    public Action<bool>? InitializationRunning { get; set; }
+
+    /// <summary>What <c>user_error</c> writes to. Defaults to standard
+    /// error. A host with several engines gives each its own, so one
+    /// engine's diagnostics do not come out among another's. Resolved
+    /// late, like <see cref="Warnings"/>.</summary>
+    public System.IO.TextWriter Error
+    {
+        get => _error ?? Console.Error;
+        set => _error = value;
+    }
+
+    private System.IO.TextWriter? _error;
+
+    // ADR-071. Shared with every activation of this engine.
+    internal readonly Shumway.Core.EngineDirectory _directory = new();
+
+    /// <summary>Chooses what this engine's working directory is (ADR-071).
+    /// The host may call it at any time; a program cannot change the scope.
+    ///
+    /// <para><see cref="CwdScope.Engine"/> gives the engine a directory of its
+    /// own, starting at <paramref name="initialDirectory"/>, or where the
+    /// engine stands now when null. While it lasts the engine neither reads
+    /// nor changes the process directory: <c>working_directory/2</c> moves
+    /// this engine only, and every relative path the engine resolves, from
+    /// Prolog or from a host call such as <see cref="ConsultFile(string)"/>,
+    /// is relative to it.</para>
+    ///
+    /// <para><see cref="CwdScope.Process"/> is what an engine has without this
+    /// call: the process directory, which every engine of the process
+    /// shares. Going back to it drops the engine's own directory.</para></summary>
+    /// <exception cref="ArgumentException">An initial directory was given
+    /// with <see cref="CwdScope.Process"/>.</exception>
+    /// <exception cref="DirectoryNotFoundException">The initial directory
+    /// does not exist.</exception>
+    public void SetCwdScope(CwdScope scope, string? initialDirectory = null)
+    {
+        if (scope == CwdScope.Process)
+        {
+            if (initialDirectory is not null)
+                throw new ArgumentException(
+                    "The process scope has no initial directory.", nameof(initialDirectory));
+            _directory.UseProcess();
+            return;
+        }
+        _directory.UseOwn(initialDirectory);
+    }
+
+    /// <summary>What this engine's working directory is: see
+    /// <see cref="SetCwdScope"/>.</summary>
+    public CwdScope CwdScope => _directory.IsPerEngine ? CwdScope.Engine : CwdScope.Process;
+
+    /// <summary>The directory this engine resolves relative paths against:
+    /// its own under <see cref="CwdScope.Engine"/>, the process directory
+    /// otherwise. Absolute, in the host's form. Setting it is what
+    /// <c>working_directory/2</c> does: under <see cref="CwdScope.Engine"/> it
+    /// moves this engine, under <see cref="CwdScope.Process"/> the whole
+    /// process. A relative value is relative to the current one.</summary>
+    /// <exception cref="DirectoryNotFoundException">The directory does not
+    /// exist.</exception>
+    public string WorkingDirectory
+    {
+        get => _directory.Current;
+        set => _directory.Change(value);
+    }
+
+    /// <summary>The path to hand to the operating system for
+    /// <paramref name="path"/>, as the engine's builtins resolve it (ADR-071).
+    /// For a foreign predicate that takes a file name. An engine on the
+    /// process directory returns the path unchanged.</summary>
+    public string ResolvePath(string path) => _directory.Resolve(path);
+
     /// <summary>Whether a solution's values are materialized only as far as
     /// the answer will be shown. Off by default: an embedder's <c>Query</c>
     /// hands back the whole term, always.
@@ -848,13 +945,24 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
 
     /// <summary>The source <c>user_input</c> reads from — <c>read/1</c>,
     /// <c>get_char/1</c> and the rest. Null means the host's standard input
-    /// (and end-of-file where the host has none, as a browser does). Set it
-    /// before the first query: the stream registry is built during query setup
-    /// and <c>user_input</c> keeps whatever reader it was handed then. A reader
-    /// that also implements <see cref="Shumway.Core.IKeyReader"/> gives
-    /// <c>get_unbuffered_char/1</c> and <c>get_unbuffered_code/1</c> single
-    /// keys.</summary>
-    public System.IO.TextReader? In { get; set; }
+    /// (and end-of-file where the host has none, as a browser does). It can be
+    /// set at any time, before or after a query: <c>user_input</c> reads from
+    /// the new source from its next read on. A reader that also implements
+    /// <see cref="Shumway.Core.IKeyReader"/> gives <c>get_unbuffered_char/1</c>
+    /// and <c>get_unbuffered_code/1</c> single keys.</summary>
+    public System.IO.TextReader? In
+    {
+        get => _in;
+        set
+        {
+            _in = value;
+            // The registry is built at the first query, or earlier by
+            // whatever boots the engine; user_input then held the reader of
+            // that moment.
+            _streams?.SetUserInput(value);
+        }
+    }
+    private System.IO.TextReader? _in;
 
     /// <summary>Per-engine state for Tier-0 → Tier-1 auto-promotion: an
     /// invocation counter per functor plus a cache of successfully
@@ -1152,11 +1260,18 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         // their `$native_run` call sites. The provider returns null until a block
         // is registered, so non-native programs pay nothing.
         IlPromotion.NativeInlineProvider = GetNativeInlineContext;
-        IlPromotion.PromotabilityChanged = () => InvalidatePersistent("PromotabilityChanged");
+        IlPromotion.PromotabilityChanged = () =>
+        {
+            _staticRelinkPending = true;
+            InvalidateLayout(statics: false, "PromotabilityChanged");
+        };
         // ADR-023 — let a read-hot, mutation-cold `:- dynamic` predicate run as
         // Tier-1 IL (a snapshot of its visible clauses), evicted on any mutation.
         IlPromotion.DynamicSnapshotProvider = BuildDynamicSnapshot;
+        IlPromotion.SnapshotInstructionsAtLeastProvider = SnapshotInstructionsAtLeast;
         IlPromotion.ShadowSnapshotProvider = BuildShadowSnapshot;
+        IlPromotion.ShadowOfSnapshotProvider = BuildShadowSnapshot;
+        IlPromotion.DynamicDigestProvider = DynamicClauseDigest;
         IlPromotion.FloatPoolProvider = FloatPoolForFid;
         IlPromotion.ImagePoolProvider = ImagePoolForFid;
         IlPromotion.StringPoolProvider = StringPoolForFid;
@@ -1225,6 +1340,18 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         return LoadBundleBare(bundle, bundleDir: null, debug);
     }
 
+    /// <summary>As <see cref="FromBundle(Bundle, Debugging.DebugOptions)"/>, with the
+    /// program's arguments, the <c>argv</c> flag, set before the bundle's
+    /// <c>:- initialization</c> goals run: what an executable's <c>Main</c>
+    /// passes.</summary>
+    public static PrologEngine FromBundle(Bundle bundle, Debugging.DebugOptions? debug,
+        IReadOnlyList<string> argv)
+    {
+        ArgumentNullException.ThrowIfNull(bundle);
+        ArgumentNullException.ThrowIfNull(argv);
+        return LoadBundleBare(bundle, bundleDir: null, debug, argv);
+    }
+
     /// <summary>File-path overload of <see cref="FromBundle(Bundle)"/>.</summary>
     public static PrologEngine FromBundle(string path)
     {
@@ -1243,9 +1370,11 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     }
 
     private static PrologEngine LoadBundleBare(
-        Bundle bundle, string? bundleDir, Debugging.DebugOptions? debug = null)
+        Bundle bundle, string? bundleDir, Debugging.DebugOptions? debug = null,
+        IReadOnlyList<string>? argv = null)
     {
         var engine = new PrologEngine(consultPrelude: false);
+        if (argv is not null) engine.Flags.Argv = argv;
         // ADR-035 — a host that asked for a debuggable engine gets the switch thrown before
         // any module is consulted (debuggability is a compile-time property), exactly as when
         // the host builds the engine by hand. The prelude below is consulted and marked
@@ -1288,7 +1417,8 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
             // predicate_property/2 reports them like a live engine.
             engine.SeedMetaTemplatesFromSource(Prelude.Source);
         }
-        engine.LoadBundleCore(bundle, bundleDir);
+        var initialization = new List<(Term Goal, string Module)>();
+        engine.LoadBundleCore(bundle, bundleDir, initialization);
         // ADR-035 — the baked prelude is still the prelude: not the user's code,
         // never debuggable. Without this a debug-compiled program on a baked-
         // prelude engine (the browser's stdlib bundle, every --exe) steps into
@@ -1302,6 +1432,10 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
         // so an attach-to-debug-from-the-first-goal launcher can safely wait for the debugger.
         if (waitForAttach && debugSession is not null)
             engine.WaitForDebuggerReady(debugSession, debug!.AttachTimeout);
+        // The program's initialization goals, once a debugger that was to
+        // attach has: a breakpoint in one of them is hit.
+        foreach (var (goal, module) in initialization)
+            engine.RunInitializationGoal(goal, module);
         return engine;
     }
 
@@ -1314,6 +1448,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     /// independently of the calling engine's choice-point stack.</summary>
     internal PrologEngine CreateSubEngine()
     {
+        InstallAllPendingClauses(null);
         var sub = new PrologEngine { Out = Out, _madeBy = this };
         // Replace the sub-engine's default empty module set with deep copies
         // of ours so modifications in the sub-engine never bleed back.
@@ -1421,7 +1556,32 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     private sealed class OpCollectFrame
     {
         public readonly List<(string Name, int Precedence, OperatorType Type)> Ops = new();
+        public readonly List<ShmoFlagSetting> Flags = new();
         public string? Module;
+    }
+
+    // The set_prolog_flag/2 calls each module's consult made, in the order they ran.
+    private readonly Dictionary<string, List<ShmoFlagSetting>> _moduleFlags = new();
+
+    /// <summary>The <c>set_prolog_flag/2</c> calls that succeeded while a
+    /// module's consult ran, in the order they ran (empty if none).</summary>
+    internal IReadOnlyList<ShmoFlagSetting> ModuleFlags(string moduleName) =>
+        _moduleFlags.TryGetValue(moduleName, out var l)
+            ? l
+            : System.Array.Empty<ShmoFlagSetting>();
+
+    /// <summary>Whether a consult is collecting what its module defines.</summary>
+    internal bool CollectingConsult => _opCollect.Count > 0;
+
+    /// <summary>Records a <c>set_prolog_flag/2</c> the consult in progress ran
+    /// (<paramref name="value"/> as <c>writeq</c> writes it), for the module its
+    /// collection frame commits.</summary>
+    internal void NoteConsultFlag(string flag, string value)
+    {
+        // A dialect library's load restores these when it ends: what it set
+        // stays with it, and is no module's to carry.
+        if (_loadingDialect is not null && DialectScopedFlags.Contains(flag)) return;
+        if (_opCollect.Count > 0) _opCollect.Peek().Flags.Add(new ShmoFlagSetting(flag, value));
     }
     private readonly Stack<OpCollectFrame> _opCollect = new();
 
@@ -1449,7 +1609,13 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost, Shum
     {
         if (_opCollect.Count == 0) return;
         var f = _opCollect.Pop();
-        if (f.Module is not { } m || f.Ops.Count == 0) return;
+        if (f.Module is not { } m) return;
+        if (f.Flags.Count > 0)
+        {
+            if (!_moduleFlags.TryGetValue(m, out var flags)) _moduleFlags[m] = flags = new();
+            flags.AddRange(f.Flags);
+        }
+        if (f.Ops.Count == 0) return;
         if (!_moduleOperators.TryGetValue(m, out var list))
             _moduleOperators[m] = list = new List<(string, int, OperatorType)>();
         foreach (var o in f.Ops)

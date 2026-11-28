@@ -70,9 +70,11 @@ public sealed class Bundle
         ShumwayVersion? generatorVersion = null,
         bool arityCompat = false,
         IReadOnlyList<byte[]>? wasmModules = null,
-        IReadOnlyList<string>? engineLibraries = null)
+        IReadOnlyList<string>? engineLibraries = null,
+        IReadOnlyList<BundleDynamicLibrary>? dynamicLibraries = null)
     {
         Entries = entries;
+        DynamicLibraries = dynamicLibraries ?? Array.Empty<BundleDynamicLibrary>();
         WasmModules = wasmModules ?? Array.Empty<byte[]>();
         EngineLibraries = engineLibraries ?? Array.Empty<string>();
         ForeignAssemblies = foreignAssemblies ?? Array.Empty<string>();
@@ -104,17 +106,61 @@ public sealed class Bundle
     /// </summary>
     public IReadOnlyList<string> EngineLibraries { get; }
 
+    /// <summary>ADR-075, decisions 5 and 6: the dynamic libraries this bundle
+    /// was linked against (<c>shumway-link --dynlib</c>), each with the
+    /// predicates the bundle calls from it. Loading the bundle attaches each
+    /// library, checks that it still offers them, and brings in the modules
+    /// that define them, before this bundle's code.</summary>
+    public IReadOnlyList<BundleDynamicLibrary> DynamicLibraries { get; }
+
     /// <summary>The same bundle carrying <paramref name="wasmModules"/>.
     /// </summary>
     public Bundle WithWasmModules(IReadOnlyList<byte[]> wasmModules)
         => new(Entries, ForeignAssemblies, Snapshot, ArchiveMembers, NativeLibraries,
-               GeneratorVersion, ArityCompat, wasmModules, EngineLibraries);
+               GeneratorVersion, ArityCompat, wasmModules, EngineLibraries, DynamicLibraries)
+        {
+            Recipe = Recipe,
+            RecipeRules = RecipeRules,
+        };
+
+    /// <summary>This bundle with the recipe of its build (ADR-076).</summary>
+    public Bundle WithRecipe(BundleRecipe recipe)
+        => new(Entries, ForeignAssemblies, Snapshot, ArchiveMembers, NativeLibraries,
+               GeneratorVersion, ArityCompat, WasmModules, EngineLibraries, DynamicLibraries)
+        {
+            Recipe = recipe,
+            RecipeRules = BundleRecipe.CurrentRules,
+        };
+
+    /// <summary>ADR-076: how the bundle was built, or null when its rules
+    /// version (<see cref="RecipeRules"/>) is not one this engine reads.
+    /// A writer writes <see cref="BundleRecipe.Host"/> when it is null.</summary>
+    public BundleRecipe? Recipe { get; init; }
+
+    /// <summary>ADR-076: the rules version the bundle was built under.</summary>
+    public int RecipeRules { get; init; } = BundleRecipe.CurrentRules;
 
     /// <summary>The Shumway version that wrote this bundle. Every writer
     /// stamps it, so a <c>.shum</c> can always say which build produced it —
     /// what a future format change needs in order to diagnose an old file
     /// instead of only rejecting it.</summary>
     public ShumwayVersion GeneratorVersion { get; }
+}
+
+/// <summary>A dynamic library a bundle was linked against, by the name it is
+/// found by (<c>Name.shum</c> on the library search path or next to the
+/// bundle), and the predicates the bundle calls from it: by their module
+/// (<c>m:p/1</c>), or with an empty module for a call by name.</summary>
+public sealed class BundleDynamicLibrary
+{
+    public BundleDynamicLibrary(string name, IReadOnlyList<QualifiedPredicateRef> uses)
+    {
+        Name = name;
+        Uses = uses;
+    }
+
+    public string Name { get; }
+    public IReadOnlyList<QualifiedPredicateRef> Uses { get; }
 }
 
 /// <summary>One member of a <c>shumway-lib</c> librarian archive: the
@@ -233,7 +279,9 @@ public sealed class BundleEntry
         IReadOnlyList<PredicateRef>? exports = null,
         IReadOnlyList<ShmoImportEntry>? imports = null,
         string? dialect = null,
-        IReadOnlyList<byte[]>? clauseTerms = null)
+        IReadOnlyList<byte[]>? clauseTerms = null,
+        IReadOnlyList<ShmoFlagSetting>? flags = null,
+        IReadOnlyList<Shumway.Compiler.Ast.Term>? initializationGoals = null)
     {
         ModuleName = moduleName;
         Source = source;
@@ -252,13 +300,15 @@ public sealed class BundleEntry
         Imports = imports ?? Array.Empty<ShmoImportEntry>();
         Dialect = dialect;
         ClauseTerms = clauseTerms ?? Array.Empty<byte[]>();
+        Flags = flags ?? Array.Empty<ShmoFlagSetting>();
+        InitializationGoals = initializationGoals ?? Array.Empty<Shumway.Compiler.Ast.Term>();
     }
 
     /// <summary>The same entry with another compiled payload.</summary>
     internal BundleEntry WithCompiledBytecode(byte[]? compiledBytecode) => new(
         ModuleName, Source, compiledBytecode, CompiledIl, Defined, CompiledIlPatches,
         CompiledIlEntries, DynamicSeeds, NativeBlocks, NativeFunctions, NativeDecls, Operators,
-        IsExportQualified, Exports, Imports, Dialect, ClauseTerms);
+        IsExportQualified, Exports, Imports, Dialect, ClauseTerms, Flags, InitializationGoals);
 
     /// <summary>The module's raw static clauses (<see cref="TermCodec"/>
     /// blobs, the <see cref="ShmoObject.ClauseTerms"/> of its object), so a
@@ -299,4 +349,12 @@ public sealed class BundleEntry
     /// (see <see cref="ShmoObject.Operators"/>), replayed into the engine's
     /// operator table at <c>LoadBundle</c>.</summary>
     public IReadOnlyList<ShmoOperatorDef> Operators { get; }
+
+    /// <summary>The module's <c>:- set_prolog_flag/2</c> directives (see
+    /// <see cref="ShmoObject.Flags"/>), applied at <c>LoadBundle</c>.</summary>
+    public IReadOnlyList<ShmoFlagSetting> Flags { get; }
+
+    /// <summary>The module's <c>:- initialization/1</c> goals (see
+    /// <see cref="ShmoObject.InitializationGoals"/>), run at <c>LoadBundle</c>.</summary>
+    public IReadOnlyList<Shumway.Compiler.Ast.Term> InitializationGoals { get; }
 }

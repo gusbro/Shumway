@@ -1,0 +1,166 @@
+# Builds the notebook site on the demo's wasm app and runs its checks in
+# headless browsers (ADR-073): jupyterlite/tests/kernel.mjs and limit.mjs, in
+# Chromium, Firefox and WebKit. See jupyterlite/README.md.
+#
+# The site's answers come from the engine, so a change to src/ runs it too.
+
+name: Notebooks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'build/**'
+      - 'jupyterlite/**'
+      - 'Directory.Build.props'
+      - 'Directory.Build.targets'
+      - 'global.json'
+      - 'nuget.config'
+      - '.github/workflows/notebooks.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'build/**'
+      - 'jupyterlite/**'
+      - 'Directory.Build.props'
+      - 'Directory.Build.targets'
+      - 'global.json'
+      - 'nuget.config'
+      - '.github/workflows/notebooks.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: notebooks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  site:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      # browser-wasm is not part of the SDK.
+      - name: Install the WebAssembly workload
+        run: dotnet workload install wasm-tools
+
+      - name: Publish the demo
+        run: dotnet publish src/Shumway.Web -c Release -o publish
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: jupyterlite/extension/package-lock.json
+
+      # No browser and no site: the notebook mirror's push, with and without
+      # the listing a cell's call took, and the wake of the runtime's threads.
+      - name: mirror.mjs
+        run: node jupyterlite/tests/mirror.mjs
+
+      - name: threads.mjs
+        run: node jupyterlite/tests/threads.mjs
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: jupyterlite/requirements.txt
+
+      - name: Install the site's builder
+        run: python -m pip install -r jupyterlite/requirements.txt
+
+      - name: Build the notebook site
+        run: node jupyterlite/build.mjs --out site --with-demo publish/wwwroot
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notebook-site
+          path: site
+          retention-days: 3
+
+  browsers:
+    needs: site
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    defaults:
+      run:
+        working-directory: jupyterlite/tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: notebook-site
+          path: site
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: jupyterlite/tests/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Install ${{ matrix.browser }}
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      # A step that hangs ends kernel.mjs in minutes, with a diagnosis: what
+      # the page said last, and a screenshot, kept below.
+      - name: kernel.mjs
+        timeout-minutes: 20
+        env:
+          NOTEBOOK_CHECK_OUTPUT: ${{ runner.temp }}/notebook-check
+        run: node kernel.mjs ../../site ${{ matrix.browser }}
+
+      # Runs after a failed kernel.mjs too: the two check different things.
+      - name: limit.mjs
+        if: success() || failure()
+        timeout-minutes: 10
+        run: node limit.mjs ../../site ${{ matrix.browser }}
+
+      # In WebKit too: a thread of the runtime that loses its wait is woken
+      # (jupyterlite/README.md, Configuration), so the short waits of this
+      # check no longer take a call that was only late for a stopped runtime.
+      - name: stall.mjs
+        if: success() || failure()
+        timeout-minutes: 10
+        env:
+          NOTEBOOK_CHECK_OUTPUT: ${{ runner.temp }}/notebook-check
+        run: node stall.mjs ../../site ${{ matrix.browser }}
+
+      - name: answers.mjs
+        if: success() || failure()
+        timeout-minutes: 10
+        env:
+          NOTEBOOK_CHECK_OUTPUT: ${{ runner.temp }}/notebook-check
+        run: node answers.mjs ../../site ${{ matrix.browser }}
+
+      - name: fresh.mjs
+        if: success() || failure()
+        timeout-minutes: 10
+        env:
+          NOTEBOOK_CHECK_OUTPUT: ${{ runner.temp }}/notebook-check
+        run: node fresh.mjs ../../site ${{ matrix.browser }}
+
+      - name: Keep the diagnosis of a hang
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: notebook-check-${{ matrix.browser }}
+          path: ${{ runner.temp }}/notebook-check
+          if-no-files-found: ignore
+          retention-days: 7

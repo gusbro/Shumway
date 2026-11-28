@@ -19,7 +19,8 @@ public static class ShmoReader
     public static ShmoObject FromBytes(byte[] data)
     {
         ArgumentNullException.ThrowIfNull(data);
-        using var ms = new MemoryStream(data);
+        // Its buffer visible: a Brotli body is decoded in place (OpenBody).
+        using var ms = new MemoryStream(data, 0, data.Length, writable: false, publiclyVisible: true);
         using var headerReader = new BinaryReader(ms, Encoding.UTF8, leaveOpen: true);
 
         byte[] magic = headerReader.ReadBytes(4);
@@ -37,8 +38,10 @@ public static class ShmoReader
                 $".shmo: format version {version} is not supported by this linker "
                 + $"(requires {ShmoFormat.CurrentVersion}; pre-release formats are "
                 + "not backward compatible — recompile the source).");
+        BundleFormat.RequireStamp(headerReader, ".shmo");
+        var (rules, recipe) = BundleFormat.ReadRecipe(headerReader);
 
-        // the byte after the version selects the body encoding
+        // the byte after the stamp selects the body encoding
         // (raw / Brotli), sharing the .shum framing; see BundleFormat.
         byte compression = headerReader.ReadByte();
         using var br = BundleFormat.OpenBody(compression, ms);
@@ -215,6 +218,8 @@ public static class ShmoReader
             string name = ReadLengthPrefixedUtf8(br);
             operators[i] = new ShmoOperatorDef(prio, type, name);
         }
+        var flags = BundleReader.ReadFlags(br);
+        var initializationGoals = BundleReader.ReadInitializationGoals(br);
 
         // ADR-038 — export-qualification trailer.
         bool isExportQualified = br.ReadBoolean();
@@ -261,13 +266,24 @@ public static class ShmoReader
         // ADR-040 — the source dialect (null = Shumway/ISO).
         string? dialect = br.ReadBoolean() ? ReadLengthPrefixedUtf8(br) : null;
 
+        // ADR-075, decision 3 — the library bundles the module attaches.
+        uint dynlibCount = br.ReadUInt32();
+        var dynamicLibraries = new string[dynlibCount];
+        for (uint i = 0; i < dynlibCount; i++) dynamicLibraries[i] = ReadLengthPrefixedUtf8(br);
+
         return new ShmoObject(moduleName, source, bytecode,
             defined, ensureLinked, callGraph, qrefs, buildMode, dynamicSeeds,
             clauseTerms, arityCompat, nativeBlocks, nativeFunctions, nativeDecls,
             operators,
             isExportQualified: isExportQualified, exports: exports,
             imports: imports, libraryDeps: libraryDeps, dialect: dialect,
-            generatorVersion: generatorVersion);
+            generatorVersion: generatorVersion, flags: flags,
+            initializationGoals: initializationGoals,
+            dynamicLibraries: dynamicLibraries)
+        {
+            Recipe = recipe,
+            RecipeRules = rules,
+        };
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)
