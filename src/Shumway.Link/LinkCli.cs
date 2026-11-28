@@ -48,7 +48,7 @@ internal static class LinkCli
         // The inputs in order, compiled or read, and the configuration of the
         // link with the recipe of its bundle (ADR-076): the plan a rebuild
         // runs again.
-        var libraryDirs = CollectLibraryDirs(opts.LibraryDirs);
+        var libraryDirs = LibrarySearchPath.Of(opts.LibraryDirs);
         var plan = new LinkPlan
         {
             Consult = opts.Consult,
@@ -695,42 +695,6 @@ internal static class LinkCli
         if (c > 0 && PrologEngine.IsKnownLibraryDialect(arg.Substring(0, c)))
             return arg;
         try { return System.IO.Path.GetFullPath(arg); } catch { return arg; }
-    }
-
-    /// <summary>A source compiled file-at-a-time that uses <c>library</c>
-    /// dependencies or load-time expansion hooks will link with unresolved
-    /// references (its libraries were never loaded) — point the user at
-    /// <c>--consult</c>, which loads them.</summary>
-    // ADR-038 — the library search path: --library-dir flags first (highest
-    // precedence), then SHUMWAY_LIBRARY_PATH entries, then the shipped lib/
-    // directories.
-    //
-    // The last two are what PrologEngine searches by default, and the linker
-    // has to agree with it: a toolchain unpacked into one directory has lib/
-    // sitting next to the executables, so a program the REPL runs and
-    // shumway-compile compiles must also link without being told where the
-    // libraries are. Lowest precedence, so an explicit -L still wins.
-    private static List<string> CollectLibraryDirs(List<string> flagged)
-    {
-        var dirs = new List<string>(flagged);
-        string? env = Environment.GetEnvironmentVariable("SHUMWAY_LIBRARY_PATH");
-        if (!string.IsNullOrEmpty(env))
-            // Manual Trim: net48 has no StringSplitOptions.TrimEntries.
-            foreach (string raw in env.Split(System.IO.Path.PathSeparator,
-                StringSplitOptions.RemoveEmptyEntries))
-            {
-                string d = raw.Trim();
-                if (d.Length > 0) dirs.Add(d);
-            }
-        AddIfExists(dirs, System.IO.Path.Combine(AppContext.BaseDirectory, "lib"));
-        AddIfExists(dirs, System.IO.Path.Combine(
-            System.IO.Directory.GetCurrentDirectory(), "lib"));
-        return dirs;
-    }
-
-    private static void AddIfExists(List<string> dirs, string dir)
-    {
-        if (System.IO.Directory.Exists(dir)) dirs.Add(dir);
     }
 
     /// <summary>Every artifact this run was asked to produce. A failure anywhere

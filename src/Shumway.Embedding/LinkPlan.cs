@@ -168,15 +168,16 @@ public sealed class LinkPlan
                     var res = sourceTexts.TryGetValue(path, out string? text)
                         ? ShmoCompiler.TryCompileSource(text, Path.GetFileNameWithoutExtension(path),
                             ShmoBuildMode.Release,
-                            includeBaseDir: Path.GetDirectoryName(Path.GetFullPath(path)))
-                        : ShmoCompiler.TryCompileFile(path, ShmoBuildMode.Release);
+                            includeBaseDir: Path.GetDirectoryName(Path.GetFullPath(path)),
+                            libraryDirs: LibraryDirs)
+                        : ShmoCompiler.TryCompileFile(path, ShmoBuildMode.Release, libraryDirs: LibraryDirs);
                     foreach (var w in res.Warnings)
                         Report($"{w.Where(path)}: warning: {w.Message}");
                     if (res.Object is null)
                     {
                         foreach (var e in res.Errors)
                             Report($"{e.Where(path)}: error: {e.Message}");
-                        HintConsult(path);
+                        HintConsult(path, res, text);
                         return null;
                     }
                     // The same refusal as shumway-compile's: a hook compiled
@@ -191,7 +192,7 @@ public sealed class LinkPlan
                             + $"  shumway-link --consult -L <libdir> ... {path}");
                         return null;
                     }
-                    HintConsult(path);
+                    HintConsult(path, res, text);
                     objects.Add(res.Object);
                     if (lastInputIsSource) lastInputModule = res.Object.ModuleName;
                 }
@@ -350,20 +351,12 @@ public sealed class LinkPlan
         catch (IOException) { return false; }
     }
 
-    // A source with library dependencies or load-time hooks, compiled one
-    // file at a time: the consult pipeline is what loads those.
-    private void HintConsult(string path)
+    // A source the consult would read or expand otherwise (ConsultHint).
+    private void HintConsult(string path, ShmoCompileResult result, string? text)
     {
-        string text;
-        try { text = File.Exists(path) ? File.ReadAllText(path) : ""; } catch { return; }
-        bool hasLibDeps = text.Contains("use_module(library(");
-        bool hasHooks = text.Contains("term_expansion(")
-            || text.Contains("goal_expansion(")
-            || text.Contains(":- attribute");
-        if (hasLibDeps || hasHooks)
-            Report($"shumway-link: hint: {path} uses library dependencies or load-time "
-                + "hooks that a file-at-a-time compile does not load; link it through "
-                + "the consult pipeline instead:\n"
+        if (ConsultHint.Reason(path, result, LibraryDirs, text) is { } reason)
+            Report($"shumway-link: hint: {reason} Link it with:"
+                + Environment.NewLine
                 + $"  shumway-link --consult -L <libdir> ... {path}");
     }
 }

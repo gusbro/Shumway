@@ -2130,7 +2130,8 @@ public static class ShmoLinker
                         pulled = ShmoReader.FromBytes(System.IO.File.ReadAllBytes(path));
                     else
                         pulled = ShmoCompiler.CompileSource(
-                            Shumway.Core.TextFile.ReadAllText(path), dep.LibName);
+                            Shumway.Core.TextFile.ReadAllText(path), dep.LibName,
+                            libraryDirs: libraryDirs);
                 }
                 catch (Exception ex)
                 {
