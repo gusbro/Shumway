@@ -10,6 +10,18 @@ a JupyterLite site whose kernel runs Prolog on WebShumway. This plan is the
 second variant of ADR-066 D2. The facts about Hercutalk are read from
 `logtalk-jupyter-kernel` 0.47.1 (73e2175).
 
+**What changed since (2026-11-28).** Three changes in Shumway bear on this
+plan:
+
+- A bundle says how it was built, and the page builds a bundle of another
+  format again from that (ADR-076, #298). The third form of section 7 then
+  keeps the options of the link, such as `--goal`, when the format changes.
+- A bundle can be linked against a library bundle and attach it when it
+  loads (ADR-075, #288). The Logtalk core, the server and Logtalk's
+  libraries can be separate bundles (section 7).
+- The page reads a bundle the linker compressed (#299): a bundle for the
+  browser no longer needs `--no-compress`.
+
 ## 1. What Hercutalk web is
 
 The same Logtalk notebooks, with the same kernel identity (`logtalk_kernel`,
@@ -115,15 +127,15 @@ top level's choices under an answer: Next, 5, All and Stop.
    `logtalk_load(library(...))` needs the library's sources where the
    engine reads files. The site ships them as an archive, mounted when a
    session first needs them. The mechanism exists for Prolog libraries
-   (`jupyter:import_library/1`).
+   (`jupyter:import_library/1`). ADR-075 gives another way: the libraries
+   as one library bundle, attached when a notebook first uses them.
 5. **A package** (section 6). The server ships with a bundle compiled
    ahead beside its source (section 7), so also the toolchain as something
    a build elsewhere can download: `shumway-link`, which makes the bundle.
 6. **An archive that carries a library compiled.** The import of a
    collection took the sources of an archive and nothing else. It takes
    the bundle beside a source too, and a bundle says in its first bytes
-   which format of compiled code it has. Done, on the branch
-   `baked-library-in-collection`.
+   which format of compiled code it has. Done (#285).
 
 ## 6. Packages, and who publishes what
 
@@ -181,7 +193,7 @@ form a session can load. There are three:
 |---|---|---|
 | A bundle compiled ahead, with Shumway's linker, and nothing else | the versions of Shumway with the format of compiled code the bundle has. A bundle says which in its first bytes, and a Shumway with another refuses it | a release of Shumway that changes the format leaves the Logtalk package unusable until it is built and published again |
 | Prolog source, as Logtalk's embedding writes it, compiled by the browser the first time and kept in its storage | a wide range: any Shumway the Logtalk adapter supports | the first visit compiles, 23 to 47 s, and so does the first after the format changes |
-| Both in one archive: the source, and beside it the bundle compiled ahead | the same wide range | a few seconds on the first visit. After a release of Shumway that changes the format, the first visit compiles from the source, until the Logtalk package is built again |
+| Both in one archive: the source, and beside it the bundle compiled ahead | the same wide range | a few seconds on the first visit. After a release of Shumway that changes the format, the first visit builds the bundle again from the source, until the Logtalk package is built again |
 
 **This plan proposes the third.** The bundle is a convenience and the source
 is what the package depends on, so the two packages are released
@@ -189,14 +201,26 @@ independently of each other and neither side follows the other's calendar.
 A format of compiled code is not a version: it changes when the instruction
 set or the layout of a bundle does, which is not at every release, and a
 bundle built once is good for every Shumway with the same one. When it does
-change, nothing breaks: the page finds the bundle is of another format,
-leaves it out and compiles the source, once, as it does today for any
-Prolog library.
+change, nothing breaks: the page finds the bundle is of another format and
+builds it again, once, from what the bundle says it was built from and the
+source beside it (ADR-076). The new bundle has the same `--goal` and the
+other options of the link. A bundle built by Shumway 0.9.3 or earlier does
+not say how it was built, and the page refuses it.
 
 The archive is a `.tar.gz` or a `.zip` with `x.pl` and `x.shum` side by side.
-A bundle for the browser is written without the bundle's own compression,
-which the runtime there cannot read, and the archive's compression does that
-work: 93 MB of bundle and 2.5 MB of source are 8.7 MB to download.
+The page reads a bundle the linker compressed (#299), and keeps it
+uncompressed once it has read it. Before that change a bundle for the
+browser was written uncompressed and the archive's compression did the work:
+93 MB of bundle and 2.5 MB of source were 8.7 MB to download.
+
+**The core, the server and the libraries as separate bundles.** With
+ADR-075 a bundle is linked against another one with `--dynlib`, and when it
+loads it attaches that library. So the Logtalk core can be a bundle of its
+own, with its WebAssembly compiled ahead, and the server and each
+application can be bundles of bytecode linked against it. This answers the
+question asked on #285, whether a bundle should include the core: as a
+library of its own, and inside an application's bundle only for an
+application that ships alone.
 
 Measured (section 9): from the archive with the bundle, 2.2 s to import and
 1.7 s to load the first time in Chromium, 3.8 s and 3.3 s in Firefox.
@@ -312,8 +336,15 @@ on the branch `wasm-bounded-modules`, in the demo's page.
 
   With a bundle of another format in the archive the import leaves it out,
   the library compiles the first time (31 s in Chromium) and loads in 2.1 s
-  on the next visit. Not measured yet: the same in a notebook's session, and
-  the memory a session takes.
+  on the next visit. Since ADR-076 the page builds such a bundle again from
+  what it says it was built from, in place of compiling the library from its
+  source; that has not been timed. Not measured yet: the same in a
+  notebook's session, and the memory a session takes.
+- **Logtalk's libraries as a library bundle, measured for ADR-075
+  (2026-11-26)** in a page: the core with its WebAssembly compiled ahead and
+  the 967 modules of the libraries as bytecode, 17.5 MB together in a
+  `.tar.gz`. The libraries are attached in 3.1 to 3.2 s. The first message to
+  an object of a library takes about 0.6 s, and the next 0.19 s.
 - **A notebook compiles what its cells define.** A session did not: its
   program ran on the interpreter however often it ran. Each predicate is
   compiled when it has been called 16 times, and a library a cell loads
@@ -343,9 +374,9 @@ Steps 1 and 2 end with Hercutalk web running in a site built by hand. Steps
    Hercutalk takes.
 5. **The server's form** (section 7). This plan proposes the source with
    a bundle compiled ahead beside it. The Logtalk package then works with
-   any Shumway its source does, and is built again only to give the fast
-   first visit back after a release of Shumway that changes the format of
-   compiled code. Hercutalk is published by hand and has no CI, so making
+   any Shumway its source does. After a release of Shumway that changes the
+   format of compiled code, the page builds the bundle again on the first
+   visit, and the package is built again only to spare visitors that wait. Hercutalk is published by hand and has no CI, so making
    the bundle would be a workflow in Logtalk's repository, or a script run
    by hand.
 6. **What Hercutalk web says of itself**: its `implementation` and version

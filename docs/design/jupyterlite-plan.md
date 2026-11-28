@@ -3,9 +3,9 @@
 Status: Phase 0 done; Phase 1 done (2026-11-15); Phase 2 done (2026-11-16);
 Phase 3 done (2026-11-19), published at https://gusbro.github.io/Shumway/jupyter/;
 Phase 4 done (2026-11-19); Phase 5 done (2026-11-19); Phase 6 waits for
-Hercutalk. The architecture is in
+Hercutalk; Phase 7 done (2026-11-21). The architecture is in
 [`jupyterlite-architecture.md`](jupyterlite-architecture.md); the decisions
-are in ADR-066 to ADR-073.
+are in ADR-066 to ADR-074.
 
 Each phase ends with its acceptance criteria met, and with
 `jupyterlite-features.yaml` and the reference docs updated to say what is now
