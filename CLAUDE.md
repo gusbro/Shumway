@@ -347,6 +347,15 @@ When proposing changes:
 | A ground term of a clause body is copied from an image | ADR-063 |
 | Big integers live on the heap (blocks of 60-bit limbs) | ADR-064 |
 | Reclaiming the helpers of runtime-asserted rules (proposed) | ADR-065 |
+| Jupyter notebooks on WebShumway: scope, variants, identity | ADR-066 |
+| The notebook kernel protocol and the Prolog-side server | ADR-067 |
+| Hosting the runtime in a notebook page: one engine per kernel | ADR-068 |
+| Service workers and cross-origin isolation for the notebook site | ADR-069 |
+| Files in notebooks: a mirror between the contents store and MEMFS | ADR-070 |
+| Working directory per engine, as an option of the host | ADR-071 |
+| Rich outputs in notebooks, no Python in the kernel (accepted in part) | ADR-072 |
+| What the notebook site adds to the build, protocol versioning, feature table | ADR-073 |
+| More solutions of a notebook's query, asked for from its answer | ADR-074 |
 | Dynamic library bundles: attached, their modules brought in on demand | ADR-075 |
 | A bundle says how it was built, and is rebuilt from that | ADR-076 |
 | PSTR design | docs/design/pstr-design.md |
